@@ -162,6 +162,10 @@ export function createMainWindowController({
         webSecurity: true,
       },
     });
+    if (process.platform === "win32" || process.platform === "linux") {
+      window.setAutoHideMenuBar(false);
+      window.setMenuBarVisibility(false);
+    }
 
     window.once("ready-to-show", () => {
       performance.mark("openbot:window-ready");
@@ -469,6 +473,10 @@ export function createComputerUsePermissionHelpWindow(translate: AppTranslate): 
       webSecurity: true,
     },
   });
+  if (process.platform === "win32" || process.platform === "linux") {
+    window.setAutoHideMenuBar(false);
+    window.setMenuBarVisibility(false);
+  }
   // Over System Settings, which opens in front of everything: a window the pane covers would carry
   // the steps to nobody.
   window.setAlwaysOnTop(true, "floating");
@@ -570,10 +578,6 @@ export function loadDynamicIslandRenderer(window: BrowserWindow, display: Displa
  * must be declared here: without it macOS has no Settings shortcut.
  */
 export function configureApplicationMenu(service: AgentService, updater: UpdateService, translate: AppTranslate): void {
-  if (process.platform === "win32" || process.platform === "linux") {
-    Menu.setApplicationMenu(null);
-    return;
-  }
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
       {
@@ -616,4 +620,10 @@ export function configureApplicationMenu(service: AgentService, updater: UpdateS
       { role: "windowMenu" },
     ]),
   );
+  if (process.platform === "win32" || process.platform === "linux") {
+    for (const window of BrowserWindow.getAllWindows()) {
+      window.setAutoHideMenuBar(false);
+      window.setMenuBarVisibility(false);
+    }
+  }
 }

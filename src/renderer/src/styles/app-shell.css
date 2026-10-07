@@ -860,8 +860,6 @@ html.panel-resizing {
 }
 
 .window-drag {
-  /* Electron reserves this width for the native caption buttons when WCO is active. */
-  margin-right: max(0px, calc(100vw - env(titlebar-area-width, 100vw)));
   -webkit-app-region: drag;
 }
 
