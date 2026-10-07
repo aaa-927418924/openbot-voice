@@ -63,6 +63,10 @@ export interface SettingsModalProps {
   onTestNotification?: () => void | Promise<void>;
   /** Opens the operating system notification settings. Shown only on macOS and Windows. */
   onOpenNotificationSettings?: () => void | Promise<void>;
+  /** Servers hidden from the rail and the menu, for restore. Hiding never leaves a server. */
+  hiddenServers?: { readonly id: string; readonly name: string }[];
+  onUnhideServer?: (serverId: string) => void;
+  onUnhideAllServers?: () => void;
   restoreFocusTarget?: HTMLElement | null;
   /** The tab shown when the modal is created. Read once; the user moves between tabs after that. */
   initialTab?: SettingsTab;
@@ -199,6 +203,9 @@ export function SettingsModal(props: SettingsModalProps) {
                 ? props.onOpenNotificationSettings
                 : undefined
             }
+            hiddenServers={props.hiddenServers ?? []}
+            onUnhideServer={props.onUnhideServer ?? (() => {})}
+            onUnhideAllServers={props.onUnhideAllServers ?? (() => {})}
           />
         </Tabs.Content>
 

@@ -19,6 +19,8 @@ export function useServerActions() {
   const {
     activeServerId,
     servers,
+    hiddenServerIds,
+    hideServer,
     setServerMuted,
     setServerNotificationLevel,
     setJoinServerOpen,
@@ -29,11 +31,12 @@ export function useServerActions() {
   const { selectServer } = useServerSelection();
   const { openServerSettings } = useServerSettings();
 
-  /** Local servers above the saved remote-server order, as the rail draws them. */
+  /** Local servers above the saved remote-server order, as the rail draws them, without hidden ones. */
   function orderedServers(): ServerSummary[] {
+    const hidden = new Set(hiddenServerIds());
     return [
-      ...servers().filter((server) => server.kind === "local"),
-      ...servers().filter((server) => server.kind === "remote"),
+      ...servers().filter((server) => server.kind === "local" && !hidden.has(server.id)),
+      ...servers().filter((server) => server.kind === "remote" && !hidden.has(server.id)),
     ];
   }
 
@@ -74,6 +77,7 @@ export function useServerActions() {
       );
     },
     onOpenSettings: openServerSettings,
+    onHideServer: (serverId) => hideServer(serverId),
   };
 
   return { orderedServers, select, add, addCreatesServer: hostedServersAvailable, callbacks };

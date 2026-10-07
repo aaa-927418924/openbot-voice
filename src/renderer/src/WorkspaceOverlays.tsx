@@ -583,7 +583,7 @@ function AppSettings(props: AccountProps) {
   const platform = usePlatform();
   const auth = useAuth();
   const updates = useUpdates();
-  const { setAddServerOpen } = useServers();
+  const { setAddServerOpen, hiddenServers, unhideServer, unhideAllServers } = useServers();
   const {
     appSettingsOpen,
     setAppSettingsOpen,
@@ -627,6 +627,9 @@ function AppSettings(props: AccountProps) {
         turboModePending={turboModePending()}
         onTestNotification={sendTestNotification}
         onOpenNotificationSettings={openNotificationSettings}
+        hiddenServers={hiddenServers()}
+        onUnhideServer={unhideServer}
+        onUnhideAllServers={unhideAllServers}
         restoreFocusTarget={appSettingsRestoreTarget()}
         openTab={appSettingsTab()}
       />

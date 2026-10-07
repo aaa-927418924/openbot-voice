@@ -32,6 +32,12 @@ export const messages = defineMessages("settings", {
   "settings.restoreWorkspace.description": "Open the workspace and tasks from your previous session.",
   "settings.externalLinks.title": "Open external links in",
   "settings.externalLinks.description": "Choose where links from conversations open.",
+  "settings.hiddenServers.title": "Hidden servers",
+  "settings.hiddenServers.description":
+    "Servers hidden from the rail and the menu. Hiding never leaves or deletes a server.",
+  "settings.hiddenServers.show": "Show",
+  "settings.hiddenServers.showAll": "Show all",
+  "settings.hiddenServers.empty": "No hidden servers.",
   // The two link targets. The saved value stays in English; only the label is translated.
   "settings.externalLinks.defaultBrowser": "Default browser",
   "settings.externalLinks.openbot": "OpenBot",

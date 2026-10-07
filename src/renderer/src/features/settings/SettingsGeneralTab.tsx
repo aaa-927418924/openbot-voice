@@ -23,7 +23,7 @@ import { LanguageSelect } from "@openbot/ui/features/settings/LanguageSelect";
 import { LogoColorPicker } from "@openbot/ui/features/settings/LogoColorPicker";
 import { SendShortcutSelect } from "@openbot/ui/features/settings/SendShortcutSelect";
 import { SoundThemePicker } from "@openbot/ui/features/settings/SoundThemePicker";
-import { createSignal, Show } from "solid-js";
+import { createSignal, For, Show } from "solid-js";
 import { replayActionSoundChoice } from "../../action-sounds";
 import { useI18n } from "../../i18n-context";
 import { useLogoColorChoice } from "../../logo-color";
@@ -54,6 +54,10 @@ interface SettingsGeneralTabProps {
   onTestNotification?: () => void | Promise<void>;
   /** Opens the operating system notification settings. Absent where the system has no such page. */
   onOpenNotificationSettings?: () => void | Promise<void>;
+  /** Servers hidden from the rail and the menu, for restore. Hiding never leaves a server. */
+  hiddenServers?: { readonly id: string; readonly name: string }[];
+  onUnhideServer?: (serverId: string) => void;
+  onUnhideAllServers?: () => void;
 }
 
 export function SettingsGeneralTab(props: SettingsGeneralTabProps) {
@@ -168,6 +172,40 @@ export function SettingsGeneralTab(props: SettingsGeneralTabProps) {
               </Select>
             </ItemActions>
           </Item>
+          <Item class="settings-modal-row">
+            <ItemContent>
+              <ItemTitle>{i18n.t("settings.hiddenServers.title")}</ItemTitle>
+              <ItemDescription>{i18n.t("settings.hiddenServers.description")}</ItemDescription>
+            </ItemContent>
+            <ItemActions>
+              <Show when={(props.hiddenServers ?? []).length > 1}>
+                <Button type="button" size="sm" variant="ghost" onClick={() => props.onUnhideAllServers?.()}>
+                  {i18n.t("settings.hiddenServers.showAll")}
+                </Button>
+              </Show>
+            </ItemActions>
+          </Item>
+          <For each={props.hiddenServers ?? []}>
+            {(server) => (
+              <Item class="settings-modal-row">
+                <ItemContent>
+                  <ItemTitle>{server.name}</ItemTitle>
+                </ItemContent>
+                <ItemActions>
+                  <Button type="button" size="sm" variant="outline" onClick={() => props.onUnhideServer?.(server.id)}>
+                    {i18n.t("settings.hiddenServers.show")}
+                  </Button>
+                </ItemActions>
+              </Item>
+            )}
+          </For>
+          <Show when={(props.hiddenServers ?? []).length === 0}>
+            <Item class="settings-modal-row">
+              <ItemContent>
+                <ItemDescription>{i18n.t("settings.hiddenServers.empty")}</ItemDescription>
+              </ItemContent>
+            </Item>
+          </Show>
         </ItemGroup>
       </SettingsSection>
 

@@ -11,6 +11,8 @@ import { createSimpleContext } from "../../simple-context";
 import { createHostRestartToasts } from "../updates/host-restart-toast";
 import { watchHostUpdate } from "./host-update-toast";
 import { olderAppSide, remoteAdminServer, serverSupportsCapability } from "./server-capabilities";
+import type { HiddenServerEntry } from "./server-visibility";
+import { hideServerId, readHiddenServerIds, unhideServerId, writeHiddenServerIds } from "./server-visibility";
 import { serversPort } from "./servers-port";
 
 /**
@@ -53,6 +55,34 @@ const Servers = createSimpleContext({
     // True when the account can create hosted servers. The plus button then opens the plans.
     const [hostedServersAvailable, setHostedServersAvailable] = createSignal(false);
     const [serverLoadRequest, setServerLoadRequest] = createSignal<{ serverId: string; nonce: number } | null>(null);
+    /**
+     * Servers hidden from the rail and the menu, stored on this computer only. Hiding never
+     * leaves or deletes a server; Settings lists them again for restore.
+     */
+    const [hiddenServerIds, setHiddenServerIds] = createSignal<string[]>(readHiddenServerIds(window.localStorage));
+
+    function hideServer(serverId: string): void {
+      const next = hideServerId(hiddenServerIds(), serverId);
+      writeHiddenServerIds(window.localStorage, next);
+      setHiddenServerIds(next);
+    }
+
+    function unhideServer(serverId: string): void {
+      const next = unhideServerId(hiddenServerIds(), serverId);
+      writeHiddenServerIds(window.localStorage, next);
+      setHiddenServerIds(next);
+    }
+
+    function unhideAllServers(): void {
+      writeHiddenServerIds(window.localStorage, []);
+      setHiddenServerIds([]);
+    }
+
+    const hiddenServers = createMemo((): HiddenServerEntry[] =>
+      servers()
+        .filter((server) => hiddenServerIds().includes(server.id))
+        .map((server) => ({ id: server.id, name: server.name })),
+    );
     let loadRequestNonce = 0;
     let pendingCompatibilityRetryServerId: string | null = null;
     let serverSelectionGeneration = 0;
@@ -373,6 +403,11 @@ const Servers = createSimpleContext({
       reorderServers,
       setServerMuted,
       setServerNotificationLevel,
+      hiddenServerIds,
+      hiddenServers,
+      hideServer,
+      unhideServer,
+      unhideAllServers,
       retryServerConnection,
       serverLoadRequest,
       initialServersReady,
