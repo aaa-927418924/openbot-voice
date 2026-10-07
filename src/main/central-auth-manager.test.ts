@@ -814,18 +814,22 @@ describe("CentralAuthManager", () => {
     await expect(readFile(storagePath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("shows an unavailable error after 30 seconds and supports a shared manual retry", async () => {
+  it("reports a safe startup diagnostic and supports a shared manual retry", async () => {
     const root = await createRoot();
-    const fetchMock = vi.fn().mockRejectedValue(new TypeError("fetch failed"));
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValue(new TypeError("authorization=do-not-log", { cause: { code: "ECONNREFUSED" } }));
+    const diagnostics: unknown[] = [];
     const manager = new CentralAuthManager({
       apiUrl: "http://127.0.0.1:3100",
       storagePath: join(root, "session.bin"),
       encrypt: (value) => Buffer.from(value),
       decrypt: (value) => value.toString(),
       fetch: fetchMock,
-      startupRetryWindowMs: 25,
-      startupRequestTimeoutMs: 5,
-      startupRetryDelaysMs: [5, 10],
+      onInitializationDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
+      startupRetryWindowMs: 100,
+      startupRequestTimeoutMs: 50,
+      startupRetryDelaysMs: [20, 40],
     });
 
     const initialization = runCauseEffect(manager.initialize());
@@ -839,6 +843,16 @@ describe("CentralAuthManager", () => {
     });
 
     await expect(concurrentRetry).resolves.toEqual(await initialization);
+    expect(fetchMock).toHaveBeenCalled();
+    expect(diagnostics).toEqual([
+      {
+        origin: "http://127.0.0.1:3100",
+        kind: "transport_or_decode",
+        errorName: "TypeError",
+        code: "ECONNREFUSED",
+      },
+    ]);
+    expect(JSON.stringify(diagnostics)).not.toContain("do-not-log");
     fetchMock.mockResolvedValueOnce(Response.json({ service: "openbot-auth-api", status: "ok" }));
     await expect(runCauseEffect(manager.retry())).resolves.toEqual({
       status: "signed_out",

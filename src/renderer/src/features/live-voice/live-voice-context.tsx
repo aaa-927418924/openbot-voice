@@ -29,10 +29,15 @@ const LiveVoice = createSimpleContext({
     const [origin, setOrigin] = createSignal<LiveVoiceOrigin>();
     const api = liveVoicePort();
     const controller = createLiveVoiceController(api, setState);
-    createEffect(() => {
-      const current = state();
-      if (!current.hostSessionActive && (current.phase === "idle" || current.phase === "error")) setOrigin(undefined);
-    });
+    createEffect(
+      () => {
+        const current = state();
+        return !current.hostSessionActive && (current.phase === "idle" || current.phase === "error");
+      },
+      (shouldClearOrigin) => {
+        if (shouldClearOrigin) setOrigin(undefined);
+      },
+    );
     const start = (target: LiveVoiceOrigin): void => {
       if (!api || state().hostSessionActive || state().phase === "connecting") return;
       setOrigin(target);

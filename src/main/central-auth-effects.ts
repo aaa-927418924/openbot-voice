@@ -16,7 +16,10 @@ export class CentralAuthTransport extends Context.Service<
     fetch(input: string | URL | Request, init?: RequestInit): Effect.Effect<Response, CentralAuthOperationError>;
   }
 >()("openbot/main/CentralAuthTransport") {
-  static layer(fetcher: (input: string | URL | Request, init?: RequestInit) => Promise<Response>) {
+  static layer(
+    fetcher: (input: string | URL | Request, init?: RequestInit) => Promise<Response>,
+    onFetchFailure?: (cause: unknown, input: string | URL | Request) => void,
+  ) {
     return Layer.succeed(
       CentralAuthTransport,
       CentralAuthTransport.of({
@@ -24,7 +27,14 @@ export class CentralAuthTransport extends Context.Service<
           Effect.tryPromise({
             try: (signal) =>
               fetcher(input, { ...init, signal: init?.signal ? AbortSignal.any([init.signal, signal]) : signal }),
-            catch: (cause) => new CentralAuthOperationError({ cause }),
+            catch: (cause) => {
+              try {
+                onFetchFailure?.(cause, input);
+              } catch {
+                // Diagnostic callbacks cannot change the request result.
+              }
+              return new CentralAuthOperationError({ cause });
+            },
           }),
       }),
     );

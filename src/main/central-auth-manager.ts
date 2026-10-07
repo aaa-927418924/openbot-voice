@@ -66,12 +66,21 @@ interface CentralAuthManagerOptions {
   storagePath: string;
   encrypt: (value: string) => Buffer;
   decrypt: (value: Buffer) => string;
+  onInitializationDiagnostic?: (diagnostic: CentralAuthInitializationDiagnostic) => void;
   canPersist?: () => boolean;
   fetch?: AuthFetcher;
   startupRetryWindowMs?: number;
   startupRequestTimeoutMs?: number;
   startupRetryDelaysMs?: readonly number[];
   emailCodeRequestTimeoutMs?: number;
+}
+
+export interface CentralAuthInitializationDiagnostic {
+  origin: string;
+  kind: "network_blocked" | "http_response" | "transport_or_decode";
+  errorName: "AuthApiError" | "NetworkBlockedError" | "TypeError" | "AbortError" | "TimeoutError" | "Error";
+  status?: number;
+  code?: string;
 }
 
 interface EmailCodeRequest {
@@ -133,6 +142,7 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
     CentralAuthTransport
   > | null = null;
   #initialization: Deferred.Deferred<CentralAuthState, CentralAuthOperationError> | null = null;
+  #startupFailureForDiagnostics: CentralAuthInitializationDiagnostic | null = null;
   #emailCodeRequest: EmailCodeRequest | null = null;
   #profileRefresh: Deferred.Deferred<CentralAuthState, CentralAuthOperationError> | null = null;
   #profileRefreshGeneration = 0;
@@ -140,10 +150,18 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
   constructor(options: CentralAuthManagerOptions) {
     super();
     const fetcher = detectBlockingNetwork(options.fetch ?? fetch, options.apiUrl);
-    this.#transport = CentralAuthTransport.layer(fetcher);
+    this.#transport = CentralAuthTransport.layer(fetcher, (cause, input) => {
+      if (!this.#initialization) return;
+      const requestUrl = input instanceof Request ? input.url : input.toString();
+      const path = new URL(requestUrl, options.apiUrl).pathname;
+      if (path === "/health/live" || path === "/v1/me") {
+        this.#startupFailureForDiagnostics = initializationDiagnostic(cause, options.apiUrl);
+      }
+    });
     this.#options = {
       ...options,
       mobileConnectApiUrl: options.mobileConnectApiUrl ?? options.apiUrl,
+      onInitializationDiagnostic: options.onInitializationDiagnostic ?? (() => undefined),
       canPersist: options.canPersist ?? (() => true),
       fetch: fetcher,
       startupRetryWindowMs: options.startupRetryWindowMs ?? STARTUP_RETRY_WINDOW_MS,
@@ -952,6 +970,7 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
   readonly #initialize = Effect.fn("CentralAuth.initialize")(function* (
     this: CentralAuthManager,
   ): Effect.fn.Return<CentralAuthState, CentralAuthOperationError, CentralAuthTransport> {
+    this.#startupFailureForDiagnostics = null;
     this.#setState({ status: "loading" });
     if (this.#options.canPersist()) {
       const attempt4 = yield* Effect.gen({ self: this }, function* () {
@@ -1291,10 +1310,12 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
   ): Effect.fn.Return<T, CentralAuthOperationError, CentralAuthTransport> {
     const deadline = Date.now() + this.#options.startupRetryWindowMs;
     let retryIndex = 0;
+    let lastFailure: CentralAuthOperationError | null = null;
     while (true) {
       const remainingMs = deadline - Date.now();
       if (remainingMs <= 0)
-        return yield* new CentralAuthOperationError({ cause: new Error(sourceText("error.auth.serviceUnavailable")) });
+        return yield* lastFailure ??
+          new CentralAuthOperationError({ cause: new Error(sourceText("error.auth.serviceUnavailable")) });
       const result = yield* this.#requestEffect(
         path,
         {
@@ -1307,6 +1328,7 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
       if (Result.isSuccess(result)) return result.success;
       const error = result.failure.cause;
       if (!isTransientStartupError(error)) return yield* result.failure;
+      lastFailure = result.failure;
       const delayMs = Math.min(
         this.#options.startupRetryDelaysMs[Math.min(retryIndex, this.#options.startupRetryDelaysMs.length - 1)] ?? 0,
         Math.max(0, deadline - Date.now()),
@@ -1431,6 +1453,13 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
   }
 
   #setInitializationError(error: unknown): CentralAuthState {
+    const diagnostic = this.#startupFailureForDiagnostics ?? initializationDiagnostic(error, this.#options.apiUrl);
+    this.#startupFailureForDiagnostics = null;
+    try {
+      this.#options.onInitializationDiagnostic(diagnostic);
+    } catch {
+      // Diagnostics cannot change the account state transition.
+    }
     if (error instanceof NetworkBlockedError) {
       return this.#setState({ status: "error", issue: { code: "auth_api_unavailable", message: error.message } });
     }
@@ -1445,6 +1474,42 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
       },
     });
   }
+}
+
+function initializationDiagnostic(error: unknown, apiUrl: string): CentralAuthInitializationDiagnostic {
+  const origin = new URL(apiUrl).origin;
+  let current = error;
+  let errorName: CentralAuthInitializationDiagnostic["errorName"] = "Error";
+  let code: string | undefined;
+  for (let depth = 0; depth < 4; depth += 1) {
+    if (current instanceof NetworkBlockedError)
+      return { origin, kind: "network_blocked", errorName: "NetworkBlockedError" };
+    if (current instanceof AuthApiError) {
+      const diagnostic: CentralAuthInitializationDiagnostic = {
+        origin,
+        kind: "http_response",
+        errorName: "AuthApiError",
+        status: current.status,
+      };
+      if (/^[a-z][a-z0-9_]{0,63}$/u.test(current.code)) diagnostic.code = current.code;
+      return diagnostic;
+    }
+    const name =
+      current instanceof Error ? current.name : isDynamicRecord(current) && isString(current.name) ? current.name : "";
+    if (name === "TypeError" || name === "AbortError" || name === "TimeoutError") errorName = name;
+    if (
+      code === undefined &&
+      isDynamicRecord(current) &&
+      isString(current.code) &&
+      /^[A-Z][A-Z0-9_]{0,63}$/u.test(current.code)
+    ) {
+      code = current.code;
+    }
+    const next = current instanceof Error ? current.cause : isDynamicRecord(current) ? current.cause : undefined;
+    if (next === undefined) break;
+    current = next;
+  }
+  return { origin, kind: "transport_or_decode", errorName, ...(code ? { code } : {}) };
 }
 
 export function readCentralAuthApiUrl(value: string | undefined, fallback = "http://127.0.0.1:3100"): string {
