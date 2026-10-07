@@ -147,7 +147,12 @@ export function createMainWindowController({
       // both of those rows. The setup window below uses the same offsets.
       ...(process.platform === "darwin"
         ? { titleBarStyle: "hidden" as const, trafficLightPosition: { x: 12, y: 13 } }
-        : {}),
+        : process.platform === "win32" || process.platform === "linux"
+          ? {
+              titleBarStyle: "hidden" as const,
+              titleBarOverlay: { color: "#141414", symbolColor: "#f2f2f2", height: 32 },
+            }
+          : {}),
       webPreferences: {
         preload: join(__dirname, "../preload/index.cjs"),
         contextIsolation: true,
@@ -192,6 +197,18 @@ export function createMainWindowController({
       if (isToggleDevToolsShortcut(input)) {
         event.preventDefault();
         window.webContents.toggleDevTools();
+        return;
+      }
+      const commandOrControl = process.platform === "darwin" ? input.meta : input.control;
+      if (commandOrControl && input.type === "keyDown" && input.key === ",") {
+        event.preventDefault();
+        sendToRenderer(window, IPC_ENDPOINTS.app.openSettings);
+        return;
+      }
+      if (commandOrControl && input.type === "keyDown" && input.key === ".") {
+        event.preventDefault();
+        const services = getServices();
+        if (services) Effect.runFork(services.service.interruptAll());
         return;
       }
       if (isSelectAllShortcut(input)) {
@@ -553,6 +570,10 @@ export function loadDynamicIslandRenderer(window: BrowserWindow, display: Displa
  * must be declared here: without it macOS has no Settings shortcut.
  */
 export function configureApplicationMenu(service: AgentService, updater: UpdateService, translate: AppTranslate): void {
+  if (process.platform === "win32" || process.platform === "linux") {
+    Menu.setApplicationMenu(null);
+    return;
+  }
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
       {
