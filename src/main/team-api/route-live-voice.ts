@@ -1,5 +1,9 @@
 import { LIVE_VOICE_SDP_LIMIT, type LiveVoiceSendTextInput, type LiveVoiceStartInput } from "@openbot/contracts/ipc";
 import {
+  LIVE_VOICE_CHANNEL_START_ROUTE,
+  LIVE_VOICE_CHANNEL_TRANSCRIPTS_CAPABILITY,
+} from "@openbot/contracts/team-protocol/live-voice-channel-v1";
+import {
   LIVE_VOICE_CAPABILITY,
   LIVE_VOICE_ROUTES,
   LiveVoiceRefusedError,
@@ -34,29 +38,38 @@ export async function routeLiveVoice(
   const { method, url, capabilities, request, json } = context;
   if (method !== "POST") return "unmatched";
   const route =
-    url.pathname === LIVE_VOICE_ROUTES.start
-      ? "start"
-      : url.pathname === LIVE_VOICE_ROUTES.stop
-        ? "stop"
-        : url.pathname === LIVE_VOICE_ROUTES.sendText
-          ? "sendText"
-          : null;
+    url.pathname === LIVE_VOICE_CHANNEL_START_ROUTE
+      ? "channel-start"
+      : url.pathname === LIVE_VOICE_ROUTES.start
+        ? "start"
+        : url.pathname === LIVE_VOICE_ROUTES.stop
+          ? "stop"
+          : url.pathname === LIVE_VOICE_ROUTES.sendText
+            ? "sendText"
+            : null;
   if (route === null) return "unmatched";
   if (!capabilities.has(LIVE_VOICE_CAPABILITY)) throw new HttpError(400, sourceText("error.team.liveVoiceUnsupported"));
+  if (route === "channel-start" && !capabilities.has(LIVE_VOICE_CHANNEL_TRANSCRIPTS_CAPABILITY))
+    throw new HttpError(400, sourceText("error.team.liveVoiceUnsupported"));
   // `readJson` has already run the body through the live-voice wire codec.
   const body = await readJson(request);
   const agentId = stringField(body, "agentId");
   if (hiddenAgentIds.has(agentId)) throw new HttpError(404, sourceText("error.team.agentNotFound"));
   const threadId = stringField(body, "threadId");
   try {
-    if (route === "start") {
+    if (route === "start" || route === "channel-start") {
       const input: LiveVoiceStartInput = {
         agentId,
         threadId,
         clientSessionId: stringField(body, "clientSessionId"),
         sdpOffer: stringField(body, "sdpOffer", false, LIVE_VOICE_SDP_LIMIT),
+        ...(route === "channel-start" ? { channelId: stringField(body, "channelId") } : {}),
       };
-      return json(200, await runCauseEffect(agents.startLiveVoice(input)));
+      const started =
+        route === "channel-start"
+          ? agents.startLiveVoice(input, { id: context.member.id, name: context.member.name ?? "" })
+          : agents.startLiveVoice(input);
+      return json(200, await runCauseEffect(started));
     }
     const sessionId = stringField(body, "sessionId");
     if (route === "stop") {

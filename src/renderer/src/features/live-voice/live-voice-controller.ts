@@ -23,6 +23,7 @@ export interface LiveVoiceTarget {
    * microphone even after the window has moved to another server.
    */
   serverId: string;
+  channelId?: string;
 }
 
 type LiveVoiceApi = Pick<OpenBotDesktopApi["liveVoice"], "start" | "stop" | "onEvent" | "sendText">;
@@ -371,6 +372,7 @@ export function createLiveVoiceController(api: LiveVoiceApi | undefined, onState
           threadId: target.threadId,
           clientSessionId: session.id,
           sdpOffer,
+          ...(target.channelId ? { channelId: target.channelId } : {}),
         },
         target.serverId,
       );

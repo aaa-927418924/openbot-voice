@@ -16,6 +16,9 @@ const { IPC_ENDPOINTS, LOCAL_SERVER_ID } = await import("@openbot/contracts/ipc"
 const { LIVE_VOICE_CAPABILITY, LIVE_VOICE_ROUTES, LiveVoiceRefusedError } = await import(
   "@openbot/contracts/team-protocol/live-voice-v1"
 );
+const { LIVE_VOICE_CHANNEL_START_ROUTE, LIVE_VOICE_CHANNEL_TRANSCRIPTS_CAPABILITY } = await import(
+  "@openbot/contracts/team-protocol/live-voice-channel-v1"
+);
 const { RemoteRequestError } = await import("../remote-server-errors");
 const { RemoteWorkflowError } = await import("../remote-service-effects");
 const { liveVoiceIpcHandlers, requireLiveVoiceWindowSender } = await import("./live-voice-handlers");
@@ -61,17 +64,22 @@ function bind(remoteSupportsLiveVoice = true, remoteStartFailure?: Error, localS
     requests.push({ serverId, path, body: init?.body, timeoutMs: init?.timeoutMs });
     if (path === LIVE_VOICE_ROUTES.start && remoteStartFailure)
       return Effect.fail(new RemoteWorkflowError({ cause: remoteStartFailure }));
-    return Effect.succeed(decode(path === LIVE_VOICE_ROUTES.start ? START_RESULT : undefined));
+    return Effect.succeed(
+      decode(path === LIVE_VOICE_ROUTES.start || path === LIVE_VOICE_CHANNEL_START_ROUTE ? START_RESULT : undefined),
+    );
   };
   const remoteServers = {
     supportsCapability: vi.fn(
-      (_serverId: string, capability: string) => capability === LIVE_VOICE_CAPABILITY && remoteSupportsLiveVoice,
+      (_serverId: string, capability: string) =>
+        (capability === LIVE_VOICE_CAPABILITY || capability === LIVE_VOICE_CHANNEL_TRANSCRIPTS_CAPABILITY) &&
+        remoteSupportsLiveVoice,
     ),
     request: requestRemote,
   };
   const handlers = liveVoiceIpcHandlers({
     service: local,
     getMainWindow: () => ({ isDestroyed: () => false, webContents: { id: MAIN_FRAME.sender.id } }),
+    channelActor: () => ({ id: "member-1", name: "Alex" }),
     remoteServers,
   });
   handlers.liveVoice.start(IPC_ENDPOINTS.liveVoice.start.channel);
@@ -135,6 +143,24 @@ describe("Live voice IPC routing", () => {
     ).resolves.toEqual(START_OUTCOME);
     expect(localSetup.local.startLiveVoice).toHaveBeenCalledWith(START_INPUT);
     expect(localSetup.requests).toEqual([]);
+  });
+
+  it("uses the additive channel-start route for remote channel calls", async () => {
+    const { requests } = bind();
+    const input = { ...START_INPUT, channelId: "channel-1" };
+    await expect(
+      invoke(IPC_ENDPOINTS.liveVoice.start.channel, { serverId: "remote-1", payload: input }),
+    ).resolves.toEqual(START_OUTCOME);
+    expect(requests).toEqual([
+      { serverId: "remote-1", path: LIVE_VOICE_CHANNEL_START_ROUTE, body: input, timeoutMs: 60_000 },
+    ]);
+  });
+
+  it("passes the trusted local channel actor only for channel calls", async () => {
+    const { local } = bind();
+    const input = { ...START_INPUT, channelId: "channel-1" };
+    await invoke(IPC_ENDPOINTS.liveVoice.start.channel, { serverId: LOCAL_SERVER_ID, payload: input });
+    expect(local.startLiveVoice).toHaveBeenCalledWith(input, { id: "member-1", name: "Alex" });
   });
 
   it("returns a definitive remote refusal as a result while preserving the host message", async () => {

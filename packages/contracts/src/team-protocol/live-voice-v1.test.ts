@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { TEAM_CURRENT_CAPABILITIES } from "./current";
+import { LIVE_VOICE_CHANNEL_START_ROUTE, LIVE_VOICE_CHANNEL_TRANSCRIPTS_CAPABILITY } from "./live-voice-channel-v1";
 import { LIVE_VOICE_CAPABILITY, LIVE_VOICE_ROUTES, liveVoiceEvent } from "./live-voice-v1";
 import { optionalRouteCodec } from "./optional-routes";
 
@@ -46,6 +47,16 @@ describe("live-voice-v1", () => {
       text: "Research this URL: https://example.com",
     });
     expect(codec(LIVE_VOICE_ROUTES.stop).response(200, { ignored: true })).toEqual({});
+  });
+
+  it("keeps channel transcript routing behind a separate additive capability and route", () => {
+    expect(TEAM_CURRENT_CAPABILITIES).toContain(LIVE_VOICE_CHANNEL_TRANSCRIPTS_CAPABILITY);
+    expect(codec(LIVE_VOICE_CHANNEL_START_ROUTE).request({ ...offer, channelId: "channel-1" })).toEqual({
+      ...offer,
+      channelId: "channel-1",
+    });
+    expect(() => codec(LIVE_VOICE_CHANNEL_START_ROUTE).request({ ...offer, channelId: "" })).toThrow();
+    expect(codec(LIVE_VOICE_ROUTES.start).request({ ...offer, channelId: "channel-1" })).toEqual(offer);
   });
 
   it("rejects incomplete or unbounded session requests and responses", () => {

@@ -13,6 +13,7 @@ import {
   type ChannelMessage,
   type ChannelRoutingConversationEventAction,
   type ChannelTask,
+  type ConversationMessage,
   type ConversationSnapshot,
   type CreateChannelMemoryInput,
   channelRoutingConversationEventItemType,
@@ -139,6 +140,39 @@ export class ChannelService {
         : this.#serialize(command.channelId, operation);
     },
   );
+
+  /** Persists one Live voice transcript segment as a channel message without starting agent work. */
+  appendLiveVoiceTranscript(input: {
+    channelId: string;
+    agent: Pick<AgentSummary, "id" | "name">;
+    actor: { id: string; name: string };
+    message: ConversationMessage;
+  }): void {
+    const channel = this.store.get(input.channelId);
+    if (channel.archived) return;
+    const author =
+      input.message.author === "user"
+        ? { kind: "member" as const, ...input.actor }
+        : { kind: "agent" as const, id: input.agent.id, name: input.agent.name };
+    this.store.update(
+      channel,
+      {
+        messages: [
+          {
+            id: input.message.id,
+            channelId: channel.id,
+            sequence: 0,
+            author,
+            taskId: null,
+            superseded: false,
+            message: input.message,
+          },
+        ],
+      },
+      `live-voice-channel-transcript:${channel.id}:${input.message.id}`,
+    );
+    this.publish(channel.id);
+  }
 
   readonly #serialize = Effect.fn("ChannelService.serialize")(
     <A extends Channel | void>(channelId: string, operation: Effect.Effect<A, ChannelOperationError>) =>

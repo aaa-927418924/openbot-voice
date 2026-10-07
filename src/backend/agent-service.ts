@@ -1030,22 +1030,37 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return this.#providers.status();
   }
 
-  #persistLiveVoiceTranscript(agentId: string, item: CodexTranscriptSegment): void {
+  #persistLiveVoiceTranscript(
+    agentId: string,
+    item: CodexTranscriptSegment,
+    channel?: { channelId: string; actor: { id: string; name: string } },
+  ): void {
     if (!item.text || item.text.length > INPUT_LIMITS.messageText) return;
     try {
       const messageId = liveVoiceConversationMessageId(item.id);
+      const author = item.role;
+      const message: ConversationMessage = {
+        id: messageId,
+        author,
+        source: author,
+        text: item.text,
+        createdAt: new Date().toISOString(),
+        status: "completed",
+        itemType: "realtime-transcript",
+      };
+      if (channel) {
+        const agent = this.#store.list().find((candidate) => candidate.id === agentId);
+        if (!agent) return;
+        this.channels.appendLiveVoiceTranscript({
+          channelId: channel.channelId,
+          agent,
+          actor: channel.actor,
+          message,
+        });
+        return;
+      }
       this.#conversation.withConversationTransaction(agentId, ({ threadId, snapshot }) => {
         if (snapshot.messages.some((message) => message.id === messageId)) return { result: undefined, snapshot };
-        const author = item.role;
-        const message: ConversationMessage = {
-          id: messageId,
-          author,
-          source: author,
-          text: item.text,
-          createdAt: new Date().toISOString(),
-          status: "completed",
-          itemType: "realtime-transcript",
-        };
         snapshot.messages.push(message);
         sortConversationMessages(snapshot.messages);
         snapshot.revision = this.#store.database.appendConversationMessage({
@@ -1079,6 +1094,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly startLiveVoice = Effect.fn("AgentService.startLiveVoice")(function* (
     this: AgentService,
     input: LiveVoiceStartInput,
+    channelActor?: { id: string; name: string },
   ) {
     const agent = this.#store.list().find((candidate) => candidate.id === input.agentId);
     if (!agent || agent.threadId !== input.threadId || agent.provider !== "codex")
@@ -1136,7 +1152,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
               return;
             }
           }
-          this.#persistLiveVoiceTranscript(agent.id, event.item);
+          if (input.channelId && channelActor)
+            this.#persistLiveVoiceTranscript(agent.id, event.item, { channelId: input.channelId, actor: channelActor });
+          else this.#persistLiveVoiceTranscript(agent.id, event.item);
         }
       },
     });

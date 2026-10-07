@@ -486,7 +486,7 @@ function registerIpcHandlers({
     }),
     ...providerIpcHandlers({ service, providerRuntimes, credentials: providerCredentials }),
     ...voiceIpcHandlers(),
-    ...liveVoiceIpcHandlers({ service, getMainWindow, remoteServers }),
+    ...liveVoiceIpcHandlers({ service, getMainWindow, channelActor: () => host.channelActor(), remoteServers }),
     ...accountIpcHandlers({ centralAuth, host }),
     ...skillIpcHandlers({ skills, getMainWindow, translate: language.translate }),
     ...hostedSiteIpcHandlers({ hostedSites, remoteServers, getMainWindow, translate: language.translate }),

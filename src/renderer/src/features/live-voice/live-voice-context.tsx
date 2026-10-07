@@ -43,7 +43,12 @@ const LiveVoice = createSimpleContext({
     const start = (target: LiveVoiceOrigin): void => {
       if (!api || state().hostSessionActive || state().phase === "connecting") return;
       setOrigin(target);
-      void controller.start({ agentId: target.agentId, threadId: target.threadId, serverId: target.serverId });
+      void controller.start({
+        agentId: target.agentId,
+        threadId: target.threadId,
+        serverId: target.serverId,
+        ...(target.channelId ? { channelId: target.channelId } : {}),
+      });
     };
     const stop = () => controller.stop();
     const toggleMute = () => controller.toggleMute();

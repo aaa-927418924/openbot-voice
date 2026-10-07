@@ -9,6 +9,7 @@ import {
   type FilePreview,
   type ServerSummary,
 } from "@openbot/contracts/ipc";
+import { LIVE_VOICE_CHANNEL_TRANSCRIPTS_CAPABILITY } from "@openbot/contracts/team-protocol/live-voice-channel-v1";
 import { LIVE_VOICE_CAPABILITY } from "@openbot/contracts/team-protocol/live-voice-v1";
 import { ArrowUp, Button, Mic, Plus, X } from "@openbot/ui";
 import { QuestionPromptBubble } from "@openbot/ui/components/QuestionPromptBubble";
@@ -576,7 +577,8 @@ export function ChannelConversation(props: ChannelConversationProps) {
       server?.kind === "local"
         ? server.id === "local"
         : server
-          ? serverSupportsCapability(server, LIVE_VOICE_CAPABILITY)
+          ? serverSupportsCapability(server, LIVE_VOICE_CAPABILITY) &&
+            serverSupportsCapability(server, LIVE_VOICE_CHANNEL_TRANSCRIPTS_CAPABILITY)
           : false;
     return channelLiveVoiceTarget({
       channelId: channel?.id,

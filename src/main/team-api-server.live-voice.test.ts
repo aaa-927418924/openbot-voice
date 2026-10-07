@@ -1,6 +1,10 @@
 // @vitest-environment node
 
 import type { AgentSummary } from "@openbot/contracts/ipc";
+import {
+  LIVE_VOICE_CHANNEL_START_ROUTE,
+  LIVE_VOICE_CHANNEL_TRANSCRIPTS_CAPABILITY,
+} from "@openbot/contracts/team-protocol/live-voice-channel-v1";
 import { LIVE_VOICE_CAPABILITY, LIVE_VOICE_ROUTES } from "@openbot/contracts/team-protocol/live-voice-v1";
 import {
   TEAM_APP_VERSION_HEADER,
@@ -144,5 +148,46 @@ describe("Team API live-voice-v1", () => {
 
     expect(response.status).toBe(404);
     expect(startLiveVoice).not.toHaveBeenCalled();
+  });
+
+  it("routes channel transcript starts only when the additive channel capability is present", async () => {
+    const startLiveVoice = vi.fn((input: { clientSessionId: string }, _actor?: { id: string; name: string }) =>
+      Effect.succeed({ sessionId: input.clientSessionId, sdpAnswer: "v=0\\r\\n" }),
+    );
+    const { start, signIn } = await createTeamApiFixture("live-voice-channel-start", { configure: true });
+    const { base } = await start({ agents: createAgents({ listAgents: () => [CODEX_AGENT], startLiveVoice }) });
+    const token = await signIn();
+    const body = {
+      agentId: CODEX_AGENT.id,
+      threadId: CODEX_AGENT.threadId,
+      clientSessionId: "channel-session",
+      sdpOffer: "v=0\\r\\n",
+      channelId: "channel-1",
+    };
+    const headers = {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      [TEAM_PROTOCOL_VERSION_HEADER]: "6",
+      [TEAM_APP_VERSION_HEADER]: "0.30.0",
+      [TEAM_CAPABILITIES_HEADER]: LIVE_VOICE_CAPABILITY,
+    };
+    const unsupported = await fetch(`${base}${LIVE_VOICE_CHANNEL_START_ROUTE}`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+    expect(unsupported.status).toBe(400);
+    expect(startLiveVoice).not.toHaveBeenCalled();
+
+    const started = await fetch(`${base}${LIVE_VOICE_CHANNEL_START_ROUTE}`, {
+      method: "POST",
+      headers: {
+        ...headers,
+        [TEAM_CAPABILITIES_HEADER]: `${LIVE_VOICE_CAPABILITY},${LIVE_VOICE_CHANNEL_TRANSCRIPTS_CAPABILITY}`,
+      },
+      body: JSON.stringify(body),
+    });
+    expect(started.status).toBe(200);
+    expect(startLiveVoice).toHaveBeenCalledWith(body, { id: expect.any(String), name: expect.any(String) });
   });
 });

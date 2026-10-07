@@ -8,6 +8,8 @@ export interface LiveVoiceStartInput {
   threadId: string;
   clientSessionId: string;
   sdpOffer: string;
+  /** Present only for a single-agent channel call. */
+  channelId?: string;
 }
 
 export interface LiveVoiceStopInput {
@@ -48,6 +50,7 @@ export function isLiveVoiceStartInput(value: unknown): value is LiveVoiceStartIn
     isBoundedString(value.agentId, 128) &&
     isBoundedString(value.threadId, 128) &&
     isUuid(value.clientSessionId) &&
+    (value.channelId === undefined || isBoundedString(value.channelId, 128)) &&
     isString(value.sdpOffer) &&
     value.sdpOffer.length > 0 &&
     value.sdpOffer.length <= LIVE_VOICE_SDP_LIMIT

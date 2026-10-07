@@ -13,6 +13,10 @@ import {
 } from "@openbot/contracts/ipc";
 import type { TeamCurrentCapability } from "@openbot/contracts/team-protocol/current";
 import {
+  LIVE_VOICE_CHANNEL_START_ROUTE,
+  LIVE_VOICE_CHANNEL_TRANSCRIPTS_CAPABILITY,
+} from "@openbot/contracts/team-protocol/live-voice-channel-v1";
+import {
   LIVE_VOICE_CAPABILITY,
   LIVE_VOICE_ROUTES,
   LiveVoiceRefusedError,
@@ -49,6 +53,7 @@ export interface LiveVoiceRemoteServers {
 export interface LiveVoiceIpcDependencies {
   service: Pick<AgentService, "startLiveVoice" | "stopLiveVoice" | "sendLiveVoiceText">;
   getMainWindow: () => LiveVoiceWindow | null;
+  channelActor: () => { id: string; name: string };
   remoteServers: LiveVoiceRemoteServers;
 }
 
@@ -85,6 +90,7 @@ function refused(message: string): LiveVoiceStartOutcome {
 export function liveVoiceIpcHandlers({
   service,
   getMainWindow,
+  channelActor,
   remoteServers,
 }: LiveVoiceIpcDependencies): Pick<IpcGroupHandlers, "liveVoice"> {
   const authorizeMainRenderer = (event: IpcMainInvokeEvent) =>
@@ -107,10 +113,16 @@ export function liveVoiceIpcHandlers({
       throw new Error(sourceText("error.team.liveVoiceUnsupported"));
   };
   const remoteStart = (serverId: string, input: LiveVoiceStartInput): Promise<LiveVoiceStartOutcome> => {
-    if (!remoteServers.supportsCapability(serverId, LIVE_VOICE_CAPABILITY))
+    const channelStart = input.channelId !== undefined;
+    const capability = channelStart ? LIVE_VOICE_CHANNEL_TRANSCRIPTS_CAPABILITY : LIVE_VOICE_CAPABILITY;
+    const path = channelStart ? LIVE_VOICE_CHANNEL_START_ROUTE : LIVE_VOICE_ROUTES.start;
+    if (
+      !remoteServers.supportsCapability(serverId, LIVE_VOICE_CAPABILITY) ||
+      !remoteServers.supportsCapability(serverId, capability)
+    )
       return Promise.resolve(refused(sourceText("error.team.liveVoiceUnsupported")));
     return runCauseEffect(
-      remoteServers.request(serverId, LIVE_VOICE_ROUTES.start, decodeStartResult, {
+      remoteServers.request(serverId, path, decodeStartResult, {
         method: "POST",
         body: input,
         timeoutMs: START_TIMEOUT_MS,
@@ -138,7 +150,11 @@ export function liveVoiceIpcHandlers({
       start: authorizedHandler(authorizeMainRenderer, agentRequest(decodeStart), (_event, scoped) =>
         routeToServer(scoped.serverId, {
           local: () =>
-            runCauseEffect(service.startLiveVoice(scoped.payload)).then(started, (error: unknown) => {
+            runCauseEffect(
+              scoped.payload.channelId
+                ? service.startLiveVoice(scoped.payload, channelActor())
+                : service.startLiveVoice(scoped.payload),
+            ).then(started, (error: unknown) => {
               if (error instanceof LiveVoiceRefusedError) return refused(error.message);
               throw error;
             }),

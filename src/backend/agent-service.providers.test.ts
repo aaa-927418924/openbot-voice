@@ -140,6 +140,88 @@ afterEach(async () => {
 });
 
 describe.sequential("AgentService: providers", () => {
+  it("persists Live voice transcripts from a channel only in that channel", async () => {
+    const liveClient = new FakeLiveVoiceClient(false);
+    const { service: agentService } = await startService(root, {
+      preferredProvider: "codex",
+      client: () => liveClient,
+    });
+    service = agentService;
+    await runCauseEffect(service.sendMessage({ agentId: "chief", text: "Create the Codex thread." }));
+    await waitForQueue(service, "chief", (queue) =>
+      queue.deliveries.every((delivery) => delivery.status === "completed"),
+    );
+    const agent = service.listAgents().find((candidate) => candidate.id === "chief");
+    if (!agent?.threadId) throw new Error("The Codex thread was not created.");
+    await runCauseEffect(
+      service.channels.command(
+        {
+          type: "save",
+          channelId: "channel-live-voice",
+          operationId: "create-live-voice-channel",
+          draft: {
+            name: "Voice notes",
+            title: "",
+            instructions: "",
+            members: [{ agentId: agent.id }],
+            leadAgentId: agent.id,
+          },
+        },
+        { id: "member-1", name: "Alex" },
+      ),
+    );
+
+    const started = await runCauseEffect(
+      service.startLiveVoice(
+        {
+          agentId: agent.id,
+          threadId: agent.threadId,
+          clientSessionId: randomUUID(),
+          sdpOffer: "offer-sdp",
+          channelId: "channel-live-voice",
+        },
+        { id: "member-1", name: "Alex" },
+      ),
+    );
+    const spoken = "Keep this transcription in the channel.";
+    liveClient.emit(
+      "notification",
+      notification("thread/realtime/item/completed", {
+        threadId: liveClient.realtimeThreadId,
+        item: {
+          id: "channel-spoken-item",
+          realtimeSessionId: "realtime-session",
+          type: "transcriptSegment",
+          role: "user",
+          text: spoken,
+        },
+      }),
+    );
+    const typed = "Keep typed Live voice text in the Bot chat.";
+    await runCauseEffect(
+      service.sendLiveVoiceText({
+        agentId: agent.id,
+        threadId: agent.threadId,
+        sessionId: started.sessionId,
+        text: typed,
+      }),
+    );
+
+    expect(service.channels.store.messages("channel-live-voice").map((entry) => entry.message.text)).toContain(spoken);
+    expect(service.channels.store.messages("channel-live-voice").map((entry) => entry.message.text)).not.toContain(
+      typed,
+    );
+    expect(
+      (await runCauseEffect(service.readConversation(agent.id))).messages.map((message) => message.text),
+    ).not.toContain(spoken);
+    expect(
+      (await runCauseEffect(service.readConversation(agent.id))).messages.map((message) => message.text),
+    ).toContain(typed);
+    await runCauseEffect(
+      service.stopLiveVoice({ agentId: agent.id, threadId: agent.threadId, sessionId: started.sessionId }),
+    );
+  });
+
   it("resumes the saved provider thread before the first Live voice start after host restart", async () => {
     const liveClient = new FakeLiveVoiceClient(false);
     const { service: agentService } = await startService(root, {
