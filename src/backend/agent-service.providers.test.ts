@@ -65,6 +65,8 @@ class FakeLiveVoiceClient extends FakeAgentClient {
   readonly #providerEcho: boolean;
   #itemSequence = 0;
   readonly #realtimeSessionId = "realtime-session";
+  #resumedSinceRestart = true;
+  readonly liveRequestOrder: string[] = [];
   realtimeThreadId: string | undefined;
 
   constructor(providerEcho: boolean) {
@@ -77,6 +79,11 @@ class FakeLiveVoiceClient extends FakeAgentClient {
     params: unknown,
     decoder: ResponseDecoder<T>,
   ): Effect.Effect<T, ProviderClientOperationError> {
+    this.liveRequestOrder.push(method);
+    if (method === "thread/resume") {
+      this.#resumedSinceRestart = true;
+      return super.request(method, params, decoder);
+    }
     if (
       method !== "thread/realtime/start" &&
       method !== "thread/realtime/stop" &&
@@ -87,6 +94,7 @@ class FakeLiveVoiceClient extends FakeAgentClient {
       const threadId = paramsRecord(params)?.threadId;
       if (typeof threadId !== "string") throw new Error("Live voice request has no thread id.");
       if (method === "thread/realtime/start") {
+        if (!this.#resumedSinceRestart) throw new Error("The provider thread was not resumed after restart.");
         this.realtimeThreadId = threadId;
         this.emit(
           "notification",
@@ -116,6 +124,10 @@ class FakeLiveVoiceClient extends FakeAgentClient {
       return decoder({});
     });
   }
+
+  markHostRestarted(): void {
+    this.#resumedSinceRestart = false;
+  }
 }
 
 beforeEach(async () => {
@@ -128,6 +140,39 @@ afterEach(async () => {
 });
 
 describe.sequential("AgentService: providers", () => {
+  it("resumes the saved provider thread before the first Live voice start after host restart", async () => {
+    const liveClient = new FakeLiveVoiceClient(false);
+    const { service: agentService } = await startService(root, {
+      preferredProvider: "codex",
+      client: () => liveClient,
+    });
+    service = agentService;
+    await runCauseEffect(service.sendMessage({ agentId: "chief", text: "Create the Codex thread." }));
+    await waitForQueue(service, "chief", (queue) =>
+      queue.deliveries.every((delivery) => delivery.status === "completed"),
+    );
+
+    const agent = service.listAgents().find((candidate) => candidate.id === "chief");
+    if (!agent?.threadId) throw new Error("The Codex thread was not created.");
+    liveClient.markHostRestarted();
+    const started = await runCauseEffect(
+      service.startLiveVoice({
+        agentId: agent.id,
+        threadId: agent.threadId,
+        clientSessionId: randomUUID(),
+        sdpOffer: "offer-sdp",
+      }),
+    );
+
+    const resumeIndex = liveClient.liveRequestOrder.lastIndexOf("thread/resume");
+    const realtimeIndex = liveClient.liveRequestOrder.lastIndexOf("thread/realtime/start");
+    expect(resumeIndex).toBeGreaterThan(-1);
+    expect(realtimeIndex).toBeGreaterThan(resumeIndex);
+    await runCauseEffect(
+      service.stopLiveVoice({ agentId: agent.id, threadId: agent.threadId, sessionId: started.sessionId }),
+    );
+  });
+
   it.each([true, false])(
     "persists repeated composer text once and keeps a later identical spoken item with provider echo %s",
     async (providerEcho) => {

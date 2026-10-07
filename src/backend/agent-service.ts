@@ -1164,6 +1164,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const account = yield* client.request("account/read", { refreshToken: false }, decodeAccountReadResult, 5_000);
       if (account.account?.type !== "chatgpt")
         throw new LiveVoiceRefusedError(sourceText("error.liveVoice.accountRequired"));
+      // The provider process may have restarted while its saved session stayed active. Normal
+      // turns resume that session before using it; Live voice must establish the same readiness
+      // barrier before app-server accepts a realtime start on the thread.
+      yield* this.#threads.resumeThread(agent, client, session.providerThreadId);
       const answer = yield* adapter.start(session.providerThreadId, input.sdpOffer);
       if (this.#liveVoiceSessions.get(agent.id) !== session)
         throw new LiveVoiceRefusedError(sourceText("error.liveVoice.unavailable"));
