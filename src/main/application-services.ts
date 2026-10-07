@@ -1655,11 +1655,16 @@ export async function createApplicationServices({
   const currentVersion = app.getVersion();
   // Skip the file check in dev: unpacked runs never enable updates, so avoid touching resourcesPath.
   const updateMetadataAvailable = app.isPackaged && existsSync(join(process.resourcesPath, "app-update.yml"));
+  // Personal fork policy: the app self-updater stays off in fork builds. Manual and remote
+  // update requests report unsupported. Provider runtimes, Marketplace, and MCP keep
+  // their own network paths and are not affected.
+  const FORK_DISABLE_APP_UPDATES = true;
   const updatesEnabled =
     app.isPackaged &&
     supportsInstalledUpdates(process.platform) &&
     updateMetadataAvailable &&
-    isValidSemver(currentVersion);
+    isValidSemver(currentVersion) &&
+    !FORK_DISABLE_APP_UPDATES;
   if (app.isPackaged && updateMetadataAvailable && !isValidSemver(currentVersion)) {
     logger.warn(`OpenBot updates are disabled because the application version is not valid SemVer: ${currentVersion}`);
   }
