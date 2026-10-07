@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { isLiveVoiceStartResult, type LiveVoiceStartResult } from "@openbot/contracts/ipc";
+import { isLiveVoiceStartOutcome, type LiveVoiceStartOutcome } from "@openbot/contracts/ipc";
 import { Effect } from "effect";
 import { describe, expect, it, vi } from "vitest";
 import type { LiveVoiceIpcDependencies } from "./live-voice-handlers";
@@ -13,7 +13,11 @@ vi.mock("electron", () => ({
 }));
 
 const { IPC_ENDPOINTS, LOCAL_SERVER_ID } = await import("@openbot/contracts/ipc");
-const { LIVE_VOICE_CAPABILITY, LIVE_VOICE_ROUTES } = await import("@openbot/contracts/team-protocol/live-voice-v1");
+const { LIVE_VOICE_CAPABILITY, LIVE_VOICE_ROUTES, LiveVoiceRefusedError } = await import(
+  "@openbot/contracts/team-protocol/live-voice-v1"
+);
+const { RemoteRequestError } = await import("../remote-server-errors");
+const { RemoteWorkflowError } = await import("../remote-service-effects");
 const { liveVoiceIpcHandlers, requireLiveVoiceWindowSender } = await import("./live-voice-handlers");
 
 const MAIN_FRAME = { sender: { id: 41 }, senderFrame: { url: "openbot-app://app/index.html" } };
@@ -27,16 +31,23 @@ const START_RESULT = {
   sessionId: "00000000-0000-4000-8000-000000000002",
   sdpAnswer: "answer",
 };
+const START_OUTCOME = { kind: "started", ...START_RESULT } satisfies LiveVoiceStartOutcome;
 const STOP_INPUT = {
   agentId: "agent-1",
   threadId: "thread-1",
   sessionId: START_RESULT.sessionId,
 };
 
-function bind(remoteSupportsLiveVoice = true) {
+function bind(remoteSupportsLiveVoice = true, remoteStartFailure?: Error, localStartFailure?: Error) {
   bound.clear();
   const local = {
-    startLiveVoice: vi.fn(() => Effect.succeed(START_RESULT)),
+    startLiveVoice: vi.fn(() =>
+      localStartFailure
+        ? Effect.sync(() => {
+            throw localStartFailure;
+          })
+        : Effect.succeed(START_RESULT),
+    ),
     stopLiveVoice: vi.fn(() => Effect.void),
     sendLiveVoiceText: vi.fn(() => Effect.void),
   };
@@ -48,6 +59,8 @@ function bind(remoteSupportsLiveVoice = true) {
     init?: { body?: unknown; timeoutMs?: number },
   ) => {
     requests.push({ serverId, path, body: init?.body, timeoutMs: init?.timeoutMs });
+    if (path === LIVE_VOICE_ROUTES.start && remoteStartFailure)
+      return Effect.fail(new RemoteWorkflowError({ cause: remoteStartFailure }));
     return Effect.succeed(decode(path === LIVE_VOICE_ROUTES.start ? START_RESULT : undefined));
   };
   const remoteServers = {
@@ -67,12 +80,12 @@ function bind(remoteSupportsLiveVoice = true) {
   return { local, remoteServers, requests };
 }
 
-function invoke(channel: string, payload: unknown): Promise<LiveVoiceStartResult | undefined> {
+function invoke(channel: string, payload: unknown): Promise<LiveVoiceStartOutcome | undefined> {
   const listener = bound.get(channel);
   if (!listener) throw new Error(`No IPC listener registered for ${channel}`);
   return Promise.resolve(listener(MAIN_FRAME, payload)).then((value) => {
     if (value === undefined) return undefined;
-    if (!isLiveVoiceStartResult(value)) throw new Error("Invalid Live voice IPC result.");
+    if (!isLiveVoiceStartOutcome(value)) throw new Error("Invalid Live voice IPC result.");
     return value;
   });
 }
@@ -83,7 +96,7 @@ describe("Live voice IPC routing", () => {
 
     await expect(
       invoke(IPC_ENDPOINTS.liveVoice.start.channel, { serverId: "remote-1", payload: START_INPUT }),
-    ).resolves.toEqual(START_RESULT);
+    ).resolves.toEqual(START_OUTCOME);
     await expect(
       invoke(IPC_ENDPOINTS.liveVoice.stop.channel, { serverId: "remote-1", payload: STOP_INPUT }),
     ).resolves.toBeUndefined();
@@ -115,19 +128,43 @@ describe("Live voice IPC routing", () => {
     ]);
   });
 
-  it("keeps local sessions on the local agent and rejects remote hosts without the capability", async () => {
+  it("keeps local sessions on the local agent", async () => {
     const localSetup = bind();
     await expect(
       invoke(IPC_ENDPOINTS.liveVoice.start.channel, { serverId: LOCAL_SERVER_ID, payload: START_INPUT }),
-    ).resolves.toEqual(START_RESULT);
+    ).resolves.toEqual(START_OUTCOME);
     expect(localSetup.local.startLiveVoice).toHaveBeenCalledWith(START_INPUT);
     expect(localSetup.requests).toEqual([]);
+  });
 
-    const unsupportedSetup = bind(false);
-    expect(() =>
+  it("returns a definitive remote refusal as a result while preserving the host message", async () => {
+    const { requests } = bind(true, new RemoteRequestError(409, "Codex account is required."));
+
+    await expect(
+      invoke(IPC_ENDPOINTS.liveVoice.start.channel, { serverId: "remote-1", payload: START_INPUT }),
+    ).resolves.toEqual({ kind: "refused", message: "Codex account is required." });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.path).toBe(LIVE_VOICE_ROUTES.start);
+  });
+
+  it("returns unsupported capability as a definitive refusal without requesting the host route", async () => {
+    const { remoteServers, requests } = bind(false);
+
+    await expect(
       invoke(IPC_ENDPOINTS.liveVoice.start.channel, { serverId: "old-host", payload: START_INPUT }),
-    ).toThrow();
-    expect(unsupportedSetup.requests).toEqual([]);
+    ).resolves.toMatchObject({ kind: "refused", message: expect.any(String) });
+    expect(remoteServers.supportsCapability).toHaveBeenCalledWith("old-host", LIVE_VOICE_CAPABILITY);
+    expect(requests).toEqual([]);
+  });
+
+  it("maps a local Live voice refusal to the definitive refusal outcome", async () => {
+    const { local, requests } = bind(true, undefined, new LiveVoiceRefusedError("Codex account is required."));
+
+    await expect(
+      invoke(IPC_ENDPOINTS.liveVoice.start.channel, { serverId: LOCAL_SERVER_ID, payload: START_INPUT }),
+    ).resolves.toEqual({ kind: "refused", message: "Codex account is required." });
+    expect(local.startLiveVoice).toHaveBeenCalledWith(START_INPUT);
+    expect(requests).toEqual([]);
   });
 
   it("accepts only the current main window as the sender", () => {

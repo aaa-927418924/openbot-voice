@@ -37,7 +37,11 @@ let emitEvent: ((event: LiveVoiceEvent) => void) | undefined;
 let states: LiveVoiceState[];
 let api: LiveVoiceApi;
 let controller: ReturnType<typeof createLiveVoiceController>;
-let startDeferred: { resolve: (value: { sessionId: string; sdpAnswer: string }) => void } | undefined;
+let startDeferred:
+  | {
+      resolve: (value: { kind: "started"; sessionId: string; sdpAnswer: string }) => void;
+    }
+  | undefined;
 
 beforeEach(() => {
   vi.stubGlobal("Audio", TestAudio);
@@ -53,7 +57,7 @@ beforeEach(() => {
     start: vi.fn<LiveVoiceApi["start"]>(async (input) => {
       const deferred = startDeferred;
       if (deferred) return await new Promise((resolve) => (deferred.resolve = resolve));
-      return { sessionId: input.clientSessionId, sdpAnswer: "v=0\r\n" };
+      return { kind: "started", sessionId: input.clientSessionId, sdpAnswer: "v=0\r\n" };
     }),
     stop: vi.fn<LiveVoiceApi["stop"]>(async () => undefined),
     sendText: vi.fn<LiveVoiceApi["sendText"]>(async () => undefined),
@@ -69,6 +73,7 @@ beforeEach(() => {
 
 afterEach(() => {
   controller.dispose();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -85,7 +90,7 @@ describe("Live voice media lifecycle", () => {
     expect(api.stop).toHaveBeenCalledWith({ ...stopPayload, sessionId: request.clientSessionId }, target.serverId);
     expect(states.at(-1)).toMatchObject({ phase: "stopping", hostSessionActive: true });
 
-    startDeferred.resolve({ sessionId: request.clientSessionId, sdpAnswer: "v=0\r\n" });
+    startDeferred.resolve({ kind: "started", sessionId: request.clientSessionId, sdpAnswer: "v=0\r\n" });
     await starting;
     await controller.start(target);
     expect(api.start).toHaveBeenCalledOnce();
@@ -128,11 +133,77 @@ describe("Live voice media lifecycle", () => {
     expect(states.at(-1)).toMatchObject({ phase: "error", hostSessionActive: false });
 
     api.start = vi.fn<LiveVoiceApi["start"]>(async (input) => ({
+      kind: "started",
       sessionId: input.clientSessionId,
       sdpAnswer: "v=0\\r\\n",
     }));
     await controller.start(target);
     expect(api.start).toHaveBeenCalledOnce();
     expect(states.at(-1)).toMatchObject({ phase: "connecting" });
+  });
+
+  it("releases a definitively refused start and permits an immediate retry", async () => {
+    api.start = vi.fn<LiveVoiceApi["start"]>(async () => ({
+      kind: "refused",
+      message: "Codex account is required.",
+    }));
+
+    await controller.start(target);
+
+    expect(api.stop).not.toHaveBeenCalled();
+    expect(states.at(-1)).toMatchObject({
+      phase: "error",
+      hostSessionActive: false,
+      stopPending: false,
+      error: "Codex account is required.",
+    });
+
+    api.start = vi.fn<LiveVoiceApi["start"]>(async (input) => ({
+      kind: "started",
+      sessionId: input.clientSessionId,
+      sdpAnswer: "v=0\r\n",
+    }));
+    await controller.start(target);
+
+    expect(api.start).toHaveBeenCalledOnce();
+    expect(states.at(-1)).toMatchObject({ phase: "connecting", hostSessionActive: true });
+  });
+
+  it("keeps an ambiguous start failure active until the host confirms stop", async () => {
+    vi.useFakeTimers();
+    api.start = vi.fn<LiveVoiceApi["start"]>(async () => {
+      throw new Error("Remote request timed out.");
+    });
+    api.stop = vi.fn<LiveVoiceApi["stop"]>(() => new Promise(() => undefined));
+
+    await controller.start(target);
+
+    expect(api.stop).toHaveBeenCalledOnce();
+    expect(states.at(-1)).toMatchObject({ phase: "error", hostSessionActive: true, stopPending: true });
+    vi.advanceTimersByTime(5_000);
+    expect(states.at(-1)).toMatchObject({ phase: "connecting", hostSessionActive: true, stopPending: true });
+    expect(states.at(-1)?.error).toBeUndefined();
+    api.start = vi.fn<LiveVoiceApi["start"]>(async (input) => ({
+      kind: "started",
+      sessionId: input.clientSessionId,
+      sdpAnswer: "v=0\r\n",
+    }));
+    await controller.start(target);
+    expect(api.start).not.toHaveBeenCalled();
+  });
+
+  it("clears a launch error after five seconds", async () => {
+    vi.useFakeTimers();
+    api.start = vi.fn<LiveVoiceApi["start"]>(async () => ({
+      kind: "refused",
+      message: "Codex account is required.",
+    }));
+
+    await controller.start(target);
+    expect(states.at(-1)).toMatchObject({ phase: "error", hostSessionActive: false });
+
+    vi.advanceTimersByTime(5_000);
+    expect(states.at(-1)).toMatchObject({ phase: "idle", hostSessionActive: false });
+    expect(states.at(-1)).not.toHaveProperty("error");
   });
 });

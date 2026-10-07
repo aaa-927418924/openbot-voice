@@ -25,6 +25,11 @@ export interface LiveVoiceStartResult {
   sdpAnswer: string;
 }
 
+/** The IPC result distinguishes a host refusal from a transport error with an unknown session state. */
+export type LiveVoiceStartOutcome =
+  | { kind: "started"; sessionId: string; sdpAnswer: string }
+  | { kind: "refused"; message: string };
+
 export type LiveVoiceStatus = "starting" | "started" | "closed" | "error";
 
 export interface LiveVoiceEvent {
@@ -69,6 +74,13 @@ export function isLiveVoiceStartResult(value: unknown): value is LiveVoiceStartR
     value.sdpAnswer.length > 0 &&
     value.sdpAnswer.length <= LIVE_VOICE_SDP_LIMIT
   );
+}
+
+export function isLiveVoiceStartOutcome(value: unknown): value is LiveVoiceStartOutcome {
+  if (!isDynamicRecord(value)) return false;
+  if (value.kind === "started")
+    return isLiveVoiceStartResult({ sessionId: value.sessionId, sdpAnswer: value.sdpAnswer });
+  return value.kind === "refused" && isBoundedString(value.message, 300);
 }
 
 export function isLiveVoiceEvent(value: unknown): value is LiveVoiceEvent {

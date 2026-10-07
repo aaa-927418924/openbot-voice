@@ -577,6 +577,7 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
     },
     liveVoice: {
       start: async (input) => ({
+        kind: "started",
         sessionId: input.clientSessionId,
         sdpAnswer: "v=0\r\n",
       }),

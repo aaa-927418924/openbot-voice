@@ -51,6 +51,7 @@ interface LiveVoiceSession {
 }
 
 const START_TIMEOUT_MS = 30_000;
+const LAUNCH_ERROR_CLEAR_MS = 5_000;
 const IDLE_STATE: LiveVoiceState = {
   phase: "idle",
   audioBlocked: false,
@@ -67,11 +68,29 @@ export function createLiveVoiceController(api: LiveVoiceApi | undefined, onState
   let active: LiveVoiceSession | undefined;
   let generation = 0;
   let audio: HTMLAudioElement | undefined;
+  let launchErrorTimer: number | undefined;
   let disposed = false;
   let latestState = IDLE_STATE;
 
   const setState = (state: LiveVoiceState) => {
     latestState = state;
+    if (!disposed && state.phase === "error") {
+      if (launchErrorTimer === undefined) {
+        launchErrorTimer = window.setTimeout(() => {
+          launchErrorTimer = undefined;
+          if (latestState.phase === "error") {
+            setState(
+              latestState.hostSessionActive
+                ? { ...latestState, phase: "connecting", error: undefined, microphoneBlocked: false }
+                : IDLE_STATE,
+            );
+          }
+        }, LAUNCH_ERROR_CLEAR_MS);
+      }
+    } else if (launchErrorTimer !== undefined) {
+      window.clearTimeout(launchErrorTimer);
+      launchErrorTimer = undefined;
+    }
     if (!disposed) onState(state);
   };
 
@@ -229,6 +248,10 @@ export function createLiveVoiceController(api: LiveVoiceApi | undefined, onState
 
   async function start(target: LiveVoiceTarget): Promise<void> {
     if (!api || active || disposed) return;
+    if (launchErrorTimer !== undefined) {
+      window.clearTimeout(launchErrorTimer);
+      launchErrorTimer = undefined;
+    }
     const session: LiveVoiceSession = {
       generation: ++generation,
       id: crypto.randomUUID(),
@@ -352,6 +375,13 @@ export function createLiveVoiceController(api: LiveVoiceApi | undefined, onState
         target.serverId,
       );
       session.startResolved = true;
+      if (result.kind === "refused") {
+        if (canContinue()) finish(session, "error", result.message);
+        else if (session.closedBeforeStartResolved && generation === session.generation && !active) {
+          setState({ ...IDLE_STATE, phase: "error", error: result.message });
+        }
+        return;
+      }
       if (!canContinue()) return;
       if (result.sessionId !== session.id) throw new Error("Live voice session identity changed.");
       await peer.setRemoteDescription({ type: "answer", sdp: result.sdpAnswer });
@@ -421,6 +451,8 @@ export function createLiveVoiceController(api: LiveVoiceApi | undefined, onState
   function dispose(): void {
     disposed = true;
     window.removeEventListener("beforeunload", stopOnUnload);
+    if (launchErrorTimer !== undefined) window.clearTimeout(launchErrorTimer);
+    launchErrorTimer = undefined;
     const session = active;
     if (session) {
       session.cancelled = true;

@@ -187,7 +187,7 @@ import type {
   LiveVoiceEvent,
   LiveVoiceSendTextInput,
   LiveVoiceStartInput,
-  LiveVoiceStartResult,
+  LiveVoiceStartOutcome,
   LiveVoiceStopInput,
 } from "./ipc-live-voice";
 import type {
@@ -405,7 +405,7 @@ export const IPC_ENDPOINTS = {
   // send-text must reach that same one even after the window has moved to another server. The
   // renderer therefore names it on every call rather than leaving it to the selected server.
   liveVoice: {
-    start: scopedRequest<LiveVoiceStartInput, LiveVoiceStartResult, "required">()("live-voice:start"),
+    start: scopedRequest<LiveVoiceStartInput, LiveVoiceStartOutcome, "required">()("live-voice:start"),
     stop: scopedRequest<LiveVoiceStopInput, void, "required">()("live-voice:stop"),
     sendText: scopedRequest<LiveVoiceSendTextInput, void, "required">()("live-voice:send-text"),
     event: event<LiveVoiceEvent>()("live-voice:event"),

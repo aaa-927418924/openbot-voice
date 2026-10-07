@@ -1,6 +1,7 @@
 import type {
   LiveVoiceSendTextInput,
   LiveVoiceStartInput,
+  LiveVoiceStartOutcome,
   LiveVoiceStartResult,
   LiveVoiceStopInput,
 } from "@openbot/contracts/ipc";
@@ -11,7 +12,11 @@ import {
   isLiveVoiceStopInput,
 } from "@openbot/contracts/ipc";
 import type { TeamCurrentCapability } from "@openbot/contracts/team-protocol/current";
-import { LIVE_VOICE_CAPABILITY, LIVE_VOICE_ROUTES } from "@openbot/contracts/team-protocol/live-voice-v1";
+import {
+  LIVE_VOICE_CAPABILITY,
+  LIVE_VOICE_ROUTES,
+  LiveVoiceRefusedError,
+} from "@openbot/contracts/team-protocol/live-voice-v1";
 import { sourceText } from "@openbot/i18n/source";
 import type { Effect } from "effect";
 import type { BrowserWindow, IpcMainInvokeEvent } from "electron";
@@ -19,6 +24,7 @@ import type { AgentService } from "../../backend/agent-service";
 import { runCauseEffect } from "../../backend/effect-boundary";
 import { acceptEmpty, type ResponseDecoder } from "../remote-host-decoding";
 import type { RemoteRequestInit } from "../remote-server-client";
+import { RemoteRequestError } from "../remote-server-errors";
 import type { RemoteWorkflowError } from "../remote-service-effects";
 import { agentRequest } from "./agent-inputs";
 import { authorizedHandler, type IpcGroupHandlers } from "./define-ipc-group";
@@ -62,6 +68,14 @@ function decodeStartResult(value: unknown): LiveVoiceStartResult {
   return value;
 }
 
+function started(result: LiveVoiceStartResult): LiveVoiceStartOutcome {
+  return { kind: "started", ...result };
+}
+
+function refused(message: string): LiveVoiceStartOutcome {
+  return { kind: "refused", message };
+}
+
 /**
  * One Live voice channel, two backends: the agent runs on this machine, or on a host this window is
  * joined to. Either arm may be reached from any conversation, so the server the session belongs to
@@ -92,15 +106,19 @@ export function liveVoiceIpcHandlers({
     if (!remoteServers.supportsCapability(serverId, LIVE_VOICE_CAPABILITY))
       throw new Error(sourceText("error.team.liveVoiceUnsupported"));
   };
-  const remoteStart = (serverId: string, input: LiveVoiceStartInput): Promise<LiveVoiceStartResult> => {
-    requireRoute(serverId);
+  const remoteStart = (serverId: string, input: LiveVoiceStartInput): Promise<LiveVoiceStartOutcome> => {
+    if (!remoteServers.supportsCapability(serverId, LIVE_VOICE_CAPABILITY))
+      return Promise.resolve(refused(sourceText("error.team.liveVoiceUnsupported")));
     return runCauseEffect(
       remoteServers.request(serverId, LIVE_VOICE_ROUTES.start, decodeStartResult, {
         method: "POST",
         body: input,
         timeoutMs: START_TIMEOUT_MS,
       }),
-    );
+    ).then(started, (error: unknown) => {
+      if (error instanceof RemoteRequestError && error.status === 409) return refused(error.message);
+      throw error;
+    });
   };
   const remoteStop = (serverId: string, input: LiveVoiceStopInput): Promise<void> => {
     requireRoute(serverId);
@@ -118,7 +136,11 @@ export function liveVoiceIpcHandlers({
     liveVoice: {
       start: authorizedHandler(authorizeMainRenderer, agentRequest(decodeStart), (_event, scoped) =>
         routeToServer(scoped.serverId, {
-          local: () => runCauseEffect(service.startLiveVoice(scoped.payload)),
+          local: () =>
+            runCauseEffect(service.startLiveVoice(scoped.payload)).then(started, (error: unknown) => {
+              if (error instanceof LiveVoiceRefusedError) return refused(error.message);
+              throw error;
+            }),
           remote: (serverId) => remoteStart(serverId, scoped.payload),
         }),
       ),

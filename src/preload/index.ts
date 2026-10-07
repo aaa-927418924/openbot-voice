@@ -28,9 +28,9 @@ import {
   IPC_ENDPOINTS,
   type IpcEndpointGroup,
   isLiveVoiceEvent,
-  isLiveVoiceStartResult,
+  isLiveVoiceStartOutcome,
   type LiveVoiceEvent,
-  type LiveVoiceStartResult,
+  type LiveVoiceStartOutcome,
   LOCAL_SERVER_ID,
   type OpenBotDesktopApi,
   type RequestEndpoint,
@@ -279,8 +279,8 @@ function bridgeGroup(group: IpcEndpointGroup, decoders: Readonly<Record<string, 
   return api;
 }
 
-function decodeLiveVoiceStartResult(value: unknown): LiveVoiceStartResult {
-  if (!isLiveVoiceStartResult(value)) throw new Error("Invalid Live voice response.");
+function decodeLiveVoiceStartResult(value: unknown): LiveVoiceStartOutcome {
+  if (!isLiveVoiceStartOutcome(value)) throw new Error("Invalid Live voice response.");
   return value;
 }
 
