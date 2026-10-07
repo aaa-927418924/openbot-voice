@@ -147,6 +147,27 @@ describe("Live voice IPC routing", () => {
     expect(requests[0]?.path).toBe(LIVE_VOICE_ROUTES.start);
   });
 
+  it.each([400, 404])("maps remote HTTP %i start responses to definitive refusals", async (status) => {
+    const message = status === 400 ? "Live voice is unsupported." : "The selected agent no longer exists.";
+    const { requests } = bind(true, new RemoteRequestError(status, message));
+
+    await expect(
+      invoke(IPC_ENDPOINTS.liveVoice.start.channel, { serverId: "remote-1", payload: START_INPUT }),
+    ).resolves.toEqual({ kind: "refused", message });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.path).toBe(LIVE_VOICE_ROUTES.start);
+  });
+
+  it("keeps remote server failures ambiguous", async () => {
+    const { requests } = bind(true, new RemoteRequestError(500, "Host service failed."));
+
+    await expect(
+      invoke(IPC_ENDPOINTS.liveVoice.start.channel, { serverId: "remote-1", payload: START_INPUT }),
+    ).rejects.toThrow("Host service failed.");
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.path).toBe(LIVE_VOICE_ROUTES.start);
+  });
+
   it("returns unsupported capability as a definitive refusal without requesting the host route", async () => {
     const { remoteServers, requests } = bind(false);
 

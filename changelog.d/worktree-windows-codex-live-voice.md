@@ -8,3 +8,4 @@
 ### Fixed
 
 - A host rejection now releases a failed Live voice launch so it can be retried. Launch errors clear after five seconds; an ambiguous remote failure keeps the session reserved while hiding the expired message.
+- Any definitive HTTP 4xx response from the remote Live voice start route releases the failed attempt; server and transport failures remain ambiguous.

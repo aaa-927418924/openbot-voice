@@ -116,7 +116,8 @@ export function liveVoiceIpcHandlers({
         timeoutMs: START_TIMEOUT_MS,
       }),
     ).then(started, (error: unknown) => {
-      if (error instanceof RemoteRequestError && error.status === 409) return refused(error.message);
+      if (error instanceof RemoteRequestError && error.status >= 400 && error.status < 500)
+        return refused(error.message);
       throw error;
     });
   };
