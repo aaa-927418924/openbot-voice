@@ -66,10 +66,25 @@ export function createRendererForwarders({
   getFormat,
   desktopNotificationsEnabled,
 }: RendererForwarderDependencies) {
-  function forwardLiveVoiceEvent(event: LiveVoiceEvent): void {
+  const liveVoiceSessions = new Map<string, Set<string>>();
+  const liveVoiceOrigin = (serverId: string, event: Pick<LiveVoiceEvent, "agentId" | "threadId">) =>
+    JSON.stringify([serverId, event.agentId, event.threadId]);
+
+  function forwardLiveVoiceEvent(serverId: string, event: LiveVoiceEvent): void {
+    const origin = liveVoiceOrigin(serverId, event);
+    if (event.status === "closed") {
+      const sessions = liveVoiceSessions.get(origin);
+      sessions?.delete(event.sessionId);
+      if (sessions?.size === 0) liveVoiceSessions.delete(origin);
+    } else {
+      // An error does not end the host session. It remains reserved until its close event.
+      const sessions = liveVoiceSessions.get(origin) ?? new Set<string>();
+      sessions.add(event.sessionId);
+      liveVoiceSessions.set(origin, sessions);
+    }
     const window = getMainWindow();
     if (!window || window.isDestroyed()) return;
-    sendToRenderer(window, IPC_ENDPOINTS.liveVoice.event, event);
+    sendToRenderer(window, IPC_ENDPOINTS.liveVoice.event, { ...event, serverId });
   }
 
   function forwardAgentEvent(serverId: string, event: AgentEvent, bufferedLive = false): void {
@@ -101,7 +116,13 @@ export function createRendererForwarders({
         ?.list()
         .find((candidate) => candidate.id === serverId);
       if (!window || window.isDestroyed() || window.isFocused() || !server || server.notificationsMuted) return null;
-      if (!desktopNotificationsEnabled() || server.notificationLevel === "nothing") return null;
+      const voiceOrigin = "agentId" in event && "threadId" in event ? liveVoiceOrigin(serverId, event) : null;
+      if (
+        !desktopNotificationsEnabled() ||
+        (voiceOrigin !== null && (liveVoiceSessions.get(voiceOrigin)?.size ?? 0) > 0) ||
+        server.notificationLevel === "nothing"
+      )
+        return null;
       return server.notificationLevel;
     };
     const initialLevel = notifyLevel();

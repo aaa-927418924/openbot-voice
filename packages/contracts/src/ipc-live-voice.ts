@@ -38,6 +38,8 @@ export interface LiveVoiceEvent {
   sessionId: string;
   status: LiveVoiceStatus;
   message?: string;
+  /** The client machine whose agent owns this session. Local service events are unscoped until forwarded. */
+  serverId?: string;
 }
 
 export function isLiveVoiceStartInput(value: unknown): value is LiveVoiceStartInput {
@@ -84,13 +86,15 @@ export function isLiveVoiceStartOutcome(value: unknown): value is LiveVoiceStart
 }
 
 export function isLiveVoiceEvent(value: unknown): value is LiveVoiceEvent {
+  const serverId = isDynamicRecord(value) ? value.serverId : undefined;
   return (
     isDynamicRecord(value) &&
     isBoundedString(value.agentId, 128) &&
     isBoundedString(value.threadId, 128) &&
     isUuid(value.sessionId) &&
     isOneOf(["starting", "started", "closed", "error"] as const, value.status) &&
-    (value.message === undefined || isBoundedString(value.message, 300))
+    (value.message === undefined || isBoundedString(value.message, 300)) &&
+    (serverId === undefined || isBoundedString(serverId, 128))
   );
 }
 

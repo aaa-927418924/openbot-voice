@@ -1,7 +1,7 @@
 import { remoteCall } from "./remote-service-effects";
 // @vitest-environment node
 
-import type { AgentEvent, AgentSummary, ServerSummary } from "@openbot/contracts/ipc";
+import type { AgentEvent, AgentSummary, LiveVoiceEvent, ServerSummary } from "@openbot/contracts/ipc";
 import { createFormat, translateFor } from "@openbot/i18n";
 import type { AgentNotificationContent } from "@openbot/team-client/agent-notifications";
 import { BrowserWindow } from "electron";
@@ -144,6 +144,77 @@ it("uses the local mute preference and local agent settings", () => {
   fixture.forwardAgentEvent("local", event);
   expect(mocks.content).toHaveBeenCalledWith({ title: "Local Chief", body: "Finished working." });
   expect(fixture.request).not.toHaveBeenCalled();
+});
+
+it("suppresses only the active Live voice origin and restores notifications when it closes", async () => {
+  const fixture = setup();
+  const liveVoice: LiveVoiceEvent = {
+    agentId: "chief",
+    threadId: "thread-chief",
+    sessionId: "00000000-0000-4000-8000-000000000001",
+    status: "started",
+  };
+
+  fixture.forwardLiveVoiceEvent("alpha", liveVoice);
+  expect(mocks.send).toHaveBeenCalledWith("live-voice:event", { ...liveVoice, serverId: "alpha" });
+  fixture.forwardAgentEvent("alpha", event);
+  expect(mocks.show).not.toHaveBeenCalled();
+  expect(fixture.request).not.toHaveBeenCalled();
+
+  fixture.forwardAgentEvent("beta", event);
+  await vi.waitFor(() => expect(mocks.show).toHaveBeenCalledOnce());
+
+  fixture.forwardLiveVoiceEvent("alpha", { ...liveVoice, status: "closed" });
+  fixture.forwardAgentEvent("alpha", event);
+  await vi.waitFor(() => expect(mocks.show).toHaveBeenCalledTimes(2));
+});
+
+it("keeps a newer Live voice session active when an older close event arrives", async () => {
+  const fixture = setup();
+  const liveVoice: LiveVoiceEvent = {
+    agentId: "chief",
+    threadId: "thread-chief",
+    sessionId: "00000000-0000-4000-8000-000000000001",
+    status: "started",
+  };
+
+  fixture.forwardLiveVoiceEvent("alpha", liveVoice);
+  fixture.forwardLiveVoiceEvent("alpha", {
+    ...liveVoice,
+    sessionId: "00000000-0000-4000-8000-000000000002",
+  });
+  fixture.forwardLiveVoiceEvent("alpha", { ...liveVoice, status: "closed" });
+  fixture.forwardAgentEvent("alpha", event);
+  expect(mocks.show).not.toHaveBeenCalled();
+  expect(fixture.request).not.toHaveBeenCalled();
+
+  fixture.forwardLiveVoiceEvent("alpha", {
+    ...liveVoice,
+    sessionId: "00000000-0000-4000-8000-000000000002",
+    status: "closed",
+  });
+  fixture.forwardAgentEvent("alpha", event);
+  await vi.waitFor(() => expect(mocks.show).toHaveBeenCalledOnce());
+});
+
+it("suppresses a notification if Live voice starts during its remote agent lookup", async () => {
+  const fixture = setup();
+  let resolve = (_agents: (typeof agent)[]) => {};
+  const promise = new Promise<(typeof agent)[]>((done) => {
+    resolve = done;
+  });
+  fixture.request.mockReturnValue(promise);
+  fixture.forwardAgentEvent("alpha", event);
+  fixture.forwardLiveVoiceEvent("alpha", {
+    agentId: event.agentId,
+    threadId: event.threadId,
+    sessionId: "00000000-0000-4000-8000-000000000001",
+    status: "starting",
+  });
+
+  resolve([{ ...agent, name: "Remote Chief" }]);
+  await fixture.waitForLookup();
+  expect(mocks.show).not.toHaveBeenCalled();
 });
 
 it.each(["mute", "remove", "focus", "agent-disabled"])(

@@ -1,6 +1,6 @@
 import { join, resolve } from "node:path";
 import { parseInviteUrl, selfHostedApiOrigin } from "@openbot/contracts/invite-links";
-import { type AppLogoColor, type CentralAuthState, IPC_ENDPOINTS } from "@openbot/contracts/ipc";
+import { type AppLogoColor, type CentralAuthState, IPC_ENDPOINTS, LOCAL_SERVER_ID } from "@openbot/contracts/ipc";
 import { createFormat, resolveLocale, translateFor } from "@openbot/i18n";
 import { createOpenBotLogger, toLogValue } from "@openbot/logging";
 import { createRemoteDirectoryRefresh } from "@openbot/team-client/remote-directory";
@@ -889,7 +889,7 @@ if (!hasSingleInstanceLock) {
       setIpcCallObserver((call) => trace.record({ kind: "ipc", ...call }));
       service.on("event", (event) => trace.observeAgentEvent(event));
       service.on("event", (event) => forwardAgentEvent("local", event));
-      service.on("liveVoice", forwardLiveVoiceEvent);
+      service.on("liveVoice", (event) => forwardLiveVoiceEvent(LOCAL_SERVER_ID, event));
       // Internal usage signals for analytics only. They are not agent events, so the renderer and
       // Team API clients never receive them.
       service.on("toolUsage", (usage) => built.analytics.handleToolUsage(usage));
@@ -914,8 +914,8 @@ if (!hasSingleInstanceLock) {
       // A remote host runs the session this window started, so its lifecycle arrives as an optional
       // team event rather than through the agent stream. The renderer matches it on the session id
       // it holds, which is what keeps a host's own local session out of this window.
-      remoteServers.on("liveVoice", (_serverId, event) =>
-        forwardLiveVoiceEvent({
+      remoteServers.on("liveVoice", (serverId, event) =>
+        forwardLiveVoiceEvent(serverId, {
           agentId: event.agentId,
           threadId: event.threadId,
           sessionId: event.sessionId,
