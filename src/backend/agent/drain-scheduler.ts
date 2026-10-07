@@ -100,6 +100,7 @@ export class DrainScheduler {
   readonly #channels: ChannelService | undefined;
   readonly #messaging: MessagingThreads | undefined;
   readonly #drainingAgents = new Set<string>();
+  readonly #voiceLeases = new Set<string>();
   /**
    * The model each agent's running turn was started with, by turn id. The agent record can be moved
    * to another model while that turn runs, but the CLI keeps the session it opened, so this is the
@@ -139,6 +140,7 @@ export class DrainScheduler {
       // A start whose `turn/start` timed out stays "starting" with no turn ID, and its turn can still run.
       isRunning: (agentId) =>
         this.#drainingAgents.has(agentId) ||
+        this.#voiceLeases.has(agentId) ||
         Boolean(this.#conversation.workingSnapshot(agentId)?.activeTurnId) ||
         this.#mailbox.startingDeliveryForAgent(agentId) !== null ||
         !this.#compaction.mayDrain(agentId),
@@ -151,6 +153,7 @@ export class DrainScheduler {
   /** The clauses of this agent's own state. `#heldByMachine` adds the memory and the turn slots. */
   mayDrain(agentId: string): boolean {
     return (
+      !this.#voiceLeases.has(agentId) &&
       !this.#conversation.workingSnapshot(agentId)?.activeTurnId &&
       (this.#channels?.mayDrain(agentId) ?? true) &&
       this.#profileSave.mayDrain(agentId) &&
@@ -164,6 +167,37 @@ export class DrainScheduler {
   scheduleDrain(agentId: string): void {
     this.#scheduleDrain(agentId);
     this.retrySlotWaiters();
+  }
+
+  /** Claims an idle agent before the caller's first await and holds queue turns until release. */
+  acquireVoiceLease(agentId: string): (() => void) | null {
+    if (
+      this.#voiceLeases.has(agentId) ||
+      this.#drainingAgents.has(agentId) ||
+      this.#mailbox.startingDeliveryForAgent(agentId) ||
+      this.#mailbox.nextQueued(agentId) ||
+      this.#conversation.workingSnapshot(agentId)?.activeTurnId ||
+      !this.#mayStartNow(agentId) ||
+      !this.#memory.mayDrain(agentId) ||
+      !this.#slots.mayStart(agentId)
+    )
+      return null;
+    this.#voiceLeases.add(agentId);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.#voiceLeases.delete(agentId);
+      this.scheduleDrain(agentId);
+    };
+  }
+
+  hasVoiceLease(agentId: string): boolean {
+    return this.#voiceLeases.has(agentId);
+  }
+
+  hasVoiceLeaseForProvider(provider: AgentProvider): boolean {
+    return this.#store.list().some((agent) => this.#voiceLeases.has(agent.id) && providerForAgent(agent) === provider);
   }
 
   /**
@@ -220,6 +254,7 @@ export class DrainScheduler {
 
   forgetAgent(agentId: string): void {
     this.#drainingAgents.delete(agentId);
+    this.#voiceLeases.delete(agentId);
     this.#scheduledDrains.delete(agentId);
     this.#slotWaiters.delete(agentId);
     this.retrySlotWaiters();
@@ -227,6 +262,7 @@ export class DrainScheduler {
 
   dispose(): void {
     this.#drainingAgents.clear();
+    this.#voiceLeases.clear();
     this.#scheduledDrains.clear();
     this.#slotWaiters.clear();
   }
@@ -264,6 +300,7 @@ export class DrainScheduler {
     if (
       this.#hooks.isStopping() ||
       this.#drainingAgents.has(agentId) ||
+      this.#voiceLeases.has(agentId) ||
       !this.mayDrain(agentId) ||
       !this.#providers.isReady() ||
       // Before the try, so the delivery is not rescheduled in a loop while the CLI is replaced.

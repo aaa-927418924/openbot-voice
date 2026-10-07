@@ -184,6 +184,13 @@ import type {
   ReplaceHostedSiteInput,
 } from "./ipc-hosted-sites";
 import type {
+  LiveVoiceEvent,
+  LiveVoiceSendTextInput,
+  LiveVoiceStartInput,
+  LiveVoiceStartResult,
+  LiveVoiceStopInput,
+} from "./ipc-live-voice";
+import type {
   AgentPublicationPreview,
   AgentSubmission,
   InstallMarketplaceAgentInput,
@@ -394,6 +401,12 @@ function untypedRequest<Channel extends string>(channel: Channel): RequestEndpoi
 }
 
 export const IPC_ENDPOINTS = {
+  liveVoice: {
+    start: request<LiveVoiceStartInput, LiveVoiceStartResult>()("live-voice:start"),
+    stop: request<LiveVoiceStopInput, void>()("live-voice:stop"),
+    sendText: request<LiveVoiceSendTextInput, void>()("live-voice:send-text"),
+    event: event<LiveVoiceEvent>()("live-voice:event"),
+  },
   app: {
     getAppInfo: request<undefined, AppInfo>()("app:get-info"),
     getSetupState: request<undefined, AppSetupState>()("app:get-setup-state"),
@@ -1021,6 +1034,7 @@ export type IpcEndpoints = typeof IPC_ENDPOINTS;
  * read this table; the preload and the preview mock are checked against it through the type.
  */
 export const IPC_GROUP_PATHS = {
+  liveVoice: "liveVoice",
   app: "",
   maintenance: "maintenance",
   providers: "",

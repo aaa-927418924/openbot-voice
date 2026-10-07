@@ -66,6 +66,7 @@ export { default as MemoryStick } from "lucide-solid/icons/memory-stick";
 export { default as MessageCircle } from "lucide-solid/icons/message-circle";
 export { default as MessageCircleQuestionMark } from "lucide-solid/icons/message-circle-question-mark";
 export { default as Mic } from "lucide-solid/icons/mic";
+export { default as MicOff } from "lucide-solid/icons/mic-off";
 export { default as Minimize2 } from "lucide-solid/icons/minimize-2";
 export { default as Minus } from "lucide-solid/icons/minus";
 export { default as Monitor } from "lucide-solid/icons/monitor";

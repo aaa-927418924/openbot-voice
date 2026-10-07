@@ -44,6 +44,11 @@ import type {
   HostAnalyticsInput,
   ListChannelRoutineRunsInput,
   ListRoutineRunsInput,
+  LiveVoiceEvent,
+  LiveVoiceSendTextInput,
+  LiveVoiceStartInput,
+  LiveVoiceStartResult,
+  LiveVoiceStopInput,
   McpServerConfig,
   McpTestResult,
   ProviderCodeLoginStart,
@@ -98,6 +103,7 @@ import { AttachmentGateway } from "./agent/attachment-gateway";
 import { AttentionRegistry } from "./agent/attention-registry";
 import { BootRecovery } from "./agent/boot-recovery";
 import { BrowserUploads } from "./agent/browser-uploads";
+import { CodexLiveVoiceAdapter, type CodexTranscriptSegment } from "./agent/codex-live-voice";
 import { ContextCompaction } from "./agent/context-compaction";
 import { ConversationReader } from "./agent/conversation-reader";
 import { ConversationRuntime } from "./agent/conversation-runtime";
@@ -141,7 +147,7 @@ import { ThreadLifecycle, ThreadOperationFailed } from "./agent/thread-lifecycle
 import { toToolOperationFailed } from "./agent/tool-operation";
 import { type AgentBrowserHost, TurnLifecycle } from "./agent/turn-lifecycle";
 import { toUsageReadFailed, UsageLimitGate } from "./agent/usage-limit-gate";
-import type { AgentProvider } from "./agent-client";
+import type { AgentClient, AgentProvider } from "./agent-client";
 import type { AgentTables } from "./agent-data/agent-tables";
 import type { AgentStore } from "./agent-store";
 import { automationRunCommand } from "./automation-command";
@@ -157,7 +163,7 @@ import { toMcpOperationError } from "./mcp-effects";
 import { McpServerStore } from "./mcp-server-store";
 import { MessagingThreads, toMessagingThreadFailed } from "./messaging/messaging-threads";
 import type { PasswordVault } from "./password-vault";
-import { decodeRecordResponse } from "./protocol";
+import { decodeAccountReadResult, decodeRecordResponse } from "./protocol";
 import { NO_PROVIDER_CREDENTIALS, type ProviderClientContext } from "./provider-drivers";
 import { recordAgentRestartActivity } from "./restart-activity";
 import type { RoutineHoldWindow } from "./routine-store";
@@ -186,8 +192,19 @@ export type { ResolvedSharedFile } from "./workspace-paths";
 
 interface AgentServiceEvents {
   event: [event: AgentEvent];
+  liveVoice: [event: LiveVoiceEvent];
   /** Finished tool steps for the local host's product analytics. Never forwarded to a client. */
   toolUsage: [usage: ToolUsageSignal];
+}
+
+interface LiveVoiceSession {
+  readonly agentId: string;
+  readonly threadId: string;
+  readonly providerThreadId: string;
+  readonly sessionId: string;
+  readonly adapter: CodexLiveVoiceAdapter;
+  readonly client: AgentClient;
+  readonly releaseLease: () => void;
 }
 
 export interface AgentServiceOptions {
@@ -305,6 +322,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #busyMessageMode: () => BusyMessageMode;
   /** The last turn of each agent's chat that the user stopped. One per agent, so it needs no clean-up. */
   readonly #stoppedTurns = new Map<string, string>();
+  readonly #liveVoiceSessions = new Map<string, LiveVoiceSession>();
+  readonly #usedLiveVoiceSessionIds = new Set<string>();
   #initialized = false;
   #stopping = false;
 
@@ -938,6 +957,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       hooks: {
         emit: (event) => this.#emit(event),
         listAgents: () => this.listAgents(),
+        stopLiveVoice: (agentId) => {
+          const session = this.#liveVoiceSessions.get(agentId);
+          return session
+            ? this.stopLiveVoice({ agentId, threadId: session.threadId, sessionId: session.sessionId })
+            : Effect.void;
+        },
       },
     });
     this.#tools = new OpenBotToolRouter({
@@ -995,6 +1020,191 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   getStatus(): AgentStatus {
     return this.#providers.status();
   }
+
+  #persistLiveVoiceTranscript(agentId: string, item: CodexTranscriptSegment): void {
+    if (!item.text || item.text.length > INPUT_LIMITS.messageText) return;
+    try {
+      const messageId = liveVoiceConversationMessageId(item.id);
+      this.#conversation.withConversationTransaction(agentId, ({ threadId, snapshot }) => {
+        if (snapshot.messages.some((message) => message.id === messageId)) return { result: undefined, snapshot };
+        const author = item.role;
+        const message: ConversationMessage = {
+          id: messageId,
+          author,
+          source: author,
+          text: item.text,
+          createdAt: new Date().toISOString(),
+          status: "completed",
+          itemType: "realtime-transcript",
+        };
+        snapshot.messages.push(message);
+        sortConversationMessages(snapshot.messages);
+        snapshot.revision = this.#store.database.appendConversationMessage({
+          agentId,
+          threadId,
+          activeTurnId: snapshot.activeTurnId,
+          message,
+          eventType: "thread.live-voice.transcript",
+          commandId: `live-voice-transcript:${messageId}`,
+        });
+        return { result: undefined, snapshot };
+      });
+    } catch {
+      logger.warn("Could not save a Codex Live transcript segment.", { agentId });
+    }
+  }
+
+  readonly startLiveVoice = Effect.fn("AgentService.startLiveVoice")(function* (
+    this: AgentService,
+    input: LiveVoiceStartInput,
+  ) {
+    const agent = this.#store.list().find((candidate) => candidate.id === input.agentId);
+    if (!agent || agent.threadId !== input.threadId || agent.provider !== "codex")
+      throw new Error(sourceText("error.liveVoice.unavailable"));
+    if (!this.#providers.hasCodexChatGptAccount()) throw new Error(sourceText("error.liveVoice.accountRequired"));
+    if (this.#liveVoiceSessions.size > 0 || this.#usedLiveVoiceSessionIds.has(input.clientSessionId))
+      throw new Error(sourceText("error.liveVoice.busy"));
+    const providerSession = this.#store.database.activeProviderSession(agent.threadId, "codex");
+    const client = this.#providers.clientForAgent(agent);
+    if (!providerSession || !client?.running || client.provider !== "codex")
+      throw new Error(sourceText("error.liveVoice.unavailable"));
+    const releaseLease = this.#drain.acquireVoiceLease(agent.id);
+    if (!releaseLease) throw new Error(sourceText("error.liveVoice.busy"));
+    this.#usedLiveVoiceSessionIds.add(input.clientSessionId);
+    if (this.#usedLiveVoiceSessionIds.size > 4096) {
+      const oldest = this.#usedLiveVoiceSessionIds.values().next();
+      if (!oldest.done) this.#usedLiveVoiceSessionIds.delete(oldest.value);
+    }
+    const finish = (session: LiveVoiceSession, status: "closed" | "error") => {
+      if (this.#liveVoiceSessions.get(session.agentId) !== session) return;
+      this.#liveVoiceSessions.delete(session.agentId);
+      session.releaseLease();
+      this.emit("liveVoice", {
+        agentId: session.agentId,
+        threadId: session.threadId,
+        sessionId: session.sessionId,
+        status,
+        ...(status === "error" ? { message: sourceText("error.liveVoice.unavailable") } : {}),
+      });
+    };
+    let session: LiveVoiceSession;
+    const adapter = new CodexLiveVoiceAdapter({
+      client,
+      onEvent: (event) => {
+        if (!session || this.#liveVoiceSessions.get(agent.id) !== session) return;
+        if (event.type === "closed") finish(session, "closed");
+        if (event.type === "error")
+          this.emit("liveVoice", {
+            agentId: session.agentId,
+            threadId: session.threadId,
+            sessionId: session.sessionId,
+            status: "error",
+            message: sourceText("error.liveVoice.unavailable"),
+          });
+        if (event.type === "item") this.#persistLiveVoiceTranscript(agent.id, event.item);
+      },
+    });
+    session = {
+      agentId: agent.id,
+      threadId: input.threadId,
+      providerThreadId: providerSession.externalSessionId,
+      sessionId: input.clientSessionId,
+      adapter,
+      client,
+      releaseLease,
+    };
+    this.#liveVoiceSessions.set(agent.id, session);
+    this.emit("liveVoice", {
+      agentId: session.agentId,
+      threadId: session.threadId,
+      sessionId: session.sessionId,
+      status: "starting",
+    });
+    const start = Effect.gen({ self: this }, function* () {
+      // Re-read the official account mode without refreshing credentials. API-key auth is not a
+      // supported subscription path for Codex Live.
+      const account = yield* client.request("account/read", { refreshToken: false }, decodeAccountReadResult, 5_000);
+      if (account.account?.type !== "chatgpt") throw new Error(sourceText("error.liveVoice.accountRequired"));
+      const answer = yield* adapter.start(session.providerThreadId, input.sdpOffer);
+      if (this.#liveVoiceSessions.get(agent.id) !== session) throw new Error(sourceText("error.liveVoice.unavailable"));
+      this.emit("liveVoice", {
+        agentId: session.agentId,
+        threadId: session.threadId,
+        sessionId: session.sessionId,
+        status: "started",
+      });
+      return { sessionId: session.sessionId, sdpAnswer: answer.sdp } satisfies LiveVoiceStartResult;
+    });
+    return yield* start.pipe(
+      Effect.onExit((exit) =>
+        Exit.isFailure(exit)
+          ? Effect.gen({ self: this }, function* () {
+              const stopExit = yield* Effect.exit(adapter.stop(session.providerThreadId));
+              if (Exit.isSuccess(stopExit) || !adapter.isActive(session.providerThreadId)) finish(session, "closed");
+              else
+                this.emit("liveVoice", {
+                  agentId: session.agentId,
+                  threadId: session.threadId,
+                  sessionId: session.sessionId,
+                  status: "error",
+                  message: sourceText("error.liveVoice.unavailable"),
+                });
+            })
+          : Effect.void,
+      ),
+    );
+  }).bind(this);
+
+  readonly stopLiveVoice = Effect.fn("AgentService.stopLiveVoice")(function* (
+    this: AgentService,
+    input: LiveVoiceStopInput,
+  ) {
+    const session = this.#liveVoiceSessions.get(input.agentId);
+    if (!session || session.threadId !== input.threadId || session.sessionId !== input.sessionId)
+      throw new Error(sourceText("error.liveVoice.unavailable"));
+    yield* session.adapter.stop(session.providerThreadId).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          if (this.#liveVoiceSessions.get(session.agentId) !== session) return;
+          this.#liveVoiceSessions.delete(session.agentId);
+          session.releaseLease();
+          this.emit("liveVoice", {
+            agentId: session.agentId,
+            threadId: session.threadId,
+            sessionId: session.sessionId,
+            status: "closed",
+          });
+        }),
+      ),
+    );
+  }).bind(this);
+
+  readonly sendLiveVoiceText = Effect.fn("AgentService.sendLiveVoiceText")(function* (
+    this: AgentService,
+    input: LiveVoiceSendTextInput,
+  ) {
+    const session = this.#liveVoiceSessions.get(input.agentId);
+    const agent = this.#store.list().find((candidate) => candidate.id === input.agentId);
+    if (
+      !session ||
+      session.threadId !== input.threadId ||
+      session.sessionId !== input.sessionId ||
+      !agent ||
+      agent.threadId !== input.threadId ||
+      agent.provider !== "codex" ||
+      !session.client.running ||
+      !this.#providers.hasCodexChatGptAccount()
+    )
+      throw new Error(sourceText("error.liveVoice.unavailable"));
+    const account = yield* session.client.request(
+      "account/read",
+      { refreshToken: false },
+      decodeAccountReadResult,
+      5_000,
+    );
+    if (account.account?.type !== "chatgpt") throw new Error(sourceText("error.liveVoice.accountRequired"));
+    yield* session.adapter.appendText(session.providerThreadId, input.text);
+  }).bind(this);
 
   getAnalytics(input: AgentAnalyticsInput) {
     if (!this.listAgents().some((agent) => agent.id === input.agentId))
@@ -1684,7 +1894,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const activeTurn =
         this.#conversation.workingSnapshot(input.agentId)?.activeTurnId ??
         (previous.threadId ? this.#store.database.readActiveTurnId(input.agentId, previous.threadId) : null);
-      if (hasPendingWork || activeTurn) {
+      if (hasPendingWork || activeTurn || this.#liveVoiceSessions.has(input.agentId)) {
         throw new Error(sourceText("error.agent.waitBeforeProviderChange"));
       }
     };
@@ -2221,6 +2431,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   readonly stop = Effect.fn("AgentService.stop")(function* (this: AgentService) {
     this.#stopping = true;
+    for (const session of [...this.#liveVoiceSessions.values()]) {
+      yield* session.adapter.stop(session.providerThreadId).pipe(Effect.ignore);
+      if (this.#liveVoiceSessions.get(session.agentId) === session) {
+        this.#liveVoiceSessions.delete(session.agentId);
+        session.releaseLease();
+        this.emit("liveVoice", {
+          agentId: session.agentId,
+          threadId: session.threadId,
+          sessionId: session.sessionId,
+          status: "closed",
+        });
+      }
+    }
     const channelStop = yield* Effect.forkChild(
       this.channels
         .stop()
@@ -2882,6 +3105,10 @@ export class AgentLifecycleFailed extends Schema.TaggedError<AgentLifecycleFaile
 
 function lifecycleStep<A>(operation: string, run: () => A): Effect.Effect<A, AgentLifecycleFailed> {
   return Effect.try({ try: run, catch: (cause) => new AgentLifecycleFailed({ operation, cause }) });
+}
+
+function liveVoiceConversationMessageId(providerItemId: string): string {
+  return `livevoice-${createHash("sha256").update(providerItemId).digest("hex").slice(0, 48)}`;
 }
 
 /** These tasks already run; stopping the service joins them without starting new work. */

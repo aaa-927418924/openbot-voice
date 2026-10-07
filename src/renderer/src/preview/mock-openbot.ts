@@ -575,6 +575,15 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
       transcribe: async () => ({ text: "Mock voice transcript" }),
       onModelStatus: () => () => undefined,
     },
+    liveVoice: {
+      start: async (input) => ({
+        sessionId: input.clientSessionId,
+        sdpAnswer: "v=0\r\n",
+      }),
+      stop: async () => undefined,
+      sendText: async () => undefined,
+      onEvent: () => () => undefined,
+    },
     auth: mockAuth.auth,
     skills: mockSkills.skills,
     hostedSites: {

@@ -1,0 +1,87 @@
+import { isBoundedString } from "./ipc-bounded-values";
+import { isDynamicRecord, isOneOf, isString } from "./runtime-values";
+
+export const LIVE_VOICE_SDP_LIMIT = 256_000;
+
+export interface LiveVoiceStartInput {
+  agentId: string;
+  threadId: string;
+  clientSessionId: string;
+  sdpOffer: string;
+}
+
+export interface LiveVoiceStopInput {
+  agentId: string;
+  threadId: string;
+  sessionId: string;
+}
+
+export interface LiveVoiceSendTextInput extends LiveVoiceStopInput {
+  text: string;
+}
+
+export interface LiveVoiceStartResult {
+  sessionId: string;
+  sdpAnswer: string;
+}
+
+export type LiveVoiceStatus = "starting" | "started" | "closed" | "error";
+
+export interface LiveVoiceEvent {
+  agentId: string;
+  threadId: string;
+  sessionId: string;
+  status: LiveVoiceStatus;
+  message?: string;
+}
+
+export function isLiveVoiceStartInput(value: unknown): value is LiveVoiceStartInput {
+  return (
+    isDynamicRecord(value) &&
+    isBoundedString(value.agentId, 128) &&
+    isBoundedString(value.threadId, 128) &&
+    isUuid(value.clientSessionId) &&
+    isString(value.sdpOffer) &&
+    value.sdpOffer.length > 0 &&
+    value.sdpOffer.length <= LIVE_VOICE_SDP_LIMIT
+  );
+}
+
+export function isLiveVoiceStopInput(value: unknown): value is LiveVoiceStopInput {
+  return (
+    isDynamicRecord(value) &&
+    isBoundedString(value.agentId, 128) &&
+    isBoundedString(value.threadId, 128) &&
+    isUuid(value.sessionId)
+  );
+}
+
+export function isLiveVoiceSendTextInput(value: unknown): value is LiveVoiceSendTextInput {
+  const text = isDynamicRecord(value) ? value.text : undefined;
+  return isLiveVoiceStopInput(value) && isString(text) && text.trim().length > 0 && text.length <= 128_000;
+}
+
+export function isLiveVoiceStartResult(value: unknown): value is LiveVoiceStartResult {
+  return (
+    isDynamicRecord(value) &&
+    isUuid(value.sessionId) &&
+    isString(value.sdpAnswer) &&
+    value.sdpAnswer.length > 0 &&
+    value.sdpAnswer.length <= LIVE_VOICE_SDP_LIMIT
+  );
+}
+
+export function isLiveVoiceEvent(value: unknown): value is LiveVoiceEvent {
+  return (
+    isDynamicRecord(value) &&
+    isBoundedString(value.agentId, 128) &&
+    isBoundedString(value.threadId, 128) &&
+    isUuid(value.sessionId) &&
+    isOneOf(["starting", "started", "closed", "error"] as const, value.status) &&
+    (value.message === undefined || isBoundedString(value.message, 300))
+  );
+}
+
+function isUuid(value: unknown): value is string {
+  return isString(value) && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}

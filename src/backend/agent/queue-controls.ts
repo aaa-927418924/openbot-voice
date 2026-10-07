@@ -213,6 +213,7 @@ export class QueueControls {
   readonly steer = Effect.fn("QueueControls.steer")(function* (this: QueueControls, input: SteerQueuedMessageInput) {
     const agent = yield* this.#store.getOrCreate(input.agentId).pipe(toQueueOperationFailed);
     const { client, session, snapshot, context, turnId } = yield* queueStep(() => {
+      if (this.#drain.hasVoiceLease(agent.id)) throw new Error(sourceText("error.liveVoice.busy"));
       const client = this.#providers.requireReadyClientForAgent(agent);
       const session = this.#store.activeProviderSession(agent.id);
       const snapshot = this.#conversation.ensureSnapshot(agent.id, agent.threadId);

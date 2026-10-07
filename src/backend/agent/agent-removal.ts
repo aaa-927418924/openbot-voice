@@ -19,6 +19,7 @@ import type { AgentBrowserHost, TurnLifecycle } from "./turn-lifecycle";
 export interface AgentRemovalHooks {
   emit(event: AgentEvent): void;
   listAgents(): AgentSummary[];
+  stopLiveVoice(agentId: string): Effect.Effect<void, unknown>;
 }
 
 export interface AgentRemovalOptions {
@@ -104,6 +105,11 @@ export class AgentRemoval {
       }
       return candidate;
     });
+    yield* this.#hooks
+      .stopLiveVoice(agentId)
+      .pipe(
+        Effect.mapError(() => new AgentRemovalFailed({ cause: new Error(sourceText("error.agent.deleteIncomplete")) })),
+      );
     yield* Effect.acquireUseRelease(
       removalStep(() => {
         const gate = this.#duplication.releaseForDelete(agentId);

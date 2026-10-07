@@ -455,6 +455,11 @@ export class ProviderRuntime implements ProviderPort {
     };
   }
 
+  /** The validated Codex account mode, kept inside the provider runtime. */
+  hasCodexChatGptAccount(): boolean {
+    return this.#accounts.get("codex")?.type === "chatgpt";
+  }
+
   /** The failure the provider row shows, or null after a good model list. */
   lastError(provider: AgentProvider): string | null {
     return this.#lastErrors.get(provider)?.message ?? null;

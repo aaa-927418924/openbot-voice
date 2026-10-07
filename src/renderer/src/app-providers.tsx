@@ -22,6 +22,7 @@ import { CustomProvidersProvider } from "./features/custom-providers/custom-prov
 import { ProviderDetectionProvider } from "./features/custom-providers/provider-detection-context";
 import { DynamicIslandBridge } from "./features/dynamic-island/dynamic-island-bridge";
 import { DynamicIslandProvider } from "./features/dynamic-island/dynamic-island-context";
+import { LiveVoiceProvider } from "./features/live-voice/live-voice-context";
 import { SetupProvider } from "./features/onboarding/onboarding-context";
 import { RemoteDesktopProvider } from "./features/remote-desktop/remote-desktop-context";
 import { ServerScopeProvider } from "./features/servers/server-scope";
@@ -108,10 +109,12 @@ export function AppProviders(props: ParentProps<AppProps>): JSX.Element {
                                     <UiErrorsProvider>
                                       <UsageProvider>
                                         <AgentReadTrackingProvider>
-                                          <AppBootstrap />
-                                          <ServerScopeBoundary stableConversation={stableConversation}>
-                                            {props.children}
-                                          </ServerScopeBoundary>
+                                          <LiveVoiceProvider>
+                                            <AppBootstrap />
+                                            <ServerScopeBoundary stableConversation={stableConversation}>
+                                              {props.children}
+                                            </ServerScopeBoundary>
+                                          </LiveVoiceProvider>
                                         </AgentReadTrackingProvider>
                                       </UsageProvider>
                                     </UiErrorsProvider>

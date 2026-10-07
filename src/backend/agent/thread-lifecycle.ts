@@ -533,6 +533,7 @@ export class ThreadLifecycle {
     {
       config?: {
         mcp_servers?: Record<string, CodexMcpServer | CodexDisabledMcpServer>;
+        features: { realtime_conversation: boolean };
         tools: typeof CODEX_TOOLS_CONFIG;
         [variable: `shell_environment_policy.set.${string}`]: string;
       } & ReturnType<typeof codexSandboxConfig>;
@@ -547,6 +548,7 @@ export class ThreadLifecycle {
     return {
       config: {
         ...(Object.keys(mcpServers).length > 0 ? { mcp_servers: mcpServers } : {}),
+        features: { realtime_conversation: true },
         tools: CODEX_TOOLS_CONFIG,
         ...codexSandboxConfig(agent, this.#store.sharedRoot),
         ...Object.fromEntries(

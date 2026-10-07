@@ -54,6 +54,7 @@ import { githubConnectorIpcHandlers } from "./ipc/github-connector-handlers";
 import { hostAdminIpcHandlers } from "./ipc/host-admin-handlers";
 import { hostedServerIpcHandlers } from "./ipc/hosted-server-handlers";
 import { hostedSiteIpcHandlers } from "./ipc/hosted-site-handlers";
+import { liveVoiceIpcHandlers } from "./ipc/live-voice-handlers";
 import { marketplaceAgentIpcHandlers } from "./ipc/marketplace-agent-handlers";
 import { mcpServerIpcHandlers } from "./ipc/mcp-server-handlers";
 import { memoryIpcHandlers } from "./ipc/memory-handlers";
@@ -261,6 +262,7 @@ const windowHolder = createMainWindowHolder();
 // Destructured so every `service.on("event", forwardX)` registration below reads as it always has.
 const {
   forwardAgentEvent,
+  forwardLiveVoiceEvent,
   forwardBrowserDisplayState,
   forwardUpdateStatus,
   forwardUpdatePreference,
@@ -485,6 +487,7 @@ function registerIpcHandlers({
     }),
     ...providerIpcHandlers({ service, providerRuntimes, credentials: providerCredentials }),
     ...voiceIpcHandlers({ voice }),
+    ...liveVoiceIpcHandlers({ service, getMainWindow }),
     ...accountIpcHandlers({ centralAuth, host }),
     ...skillIpcHandlers({ skills, getMainWindow, translate: language.translate }),
     ...hostedSiteIpcHandlers({ hostedSites, remoteServers, getMainWindow, translate: language.translate }),
@@ -887,6 +890,7 @@ if (!hasSingleInstanceLock) {
       setIpcCallObserver((call) => trace.record({ kind: "ipc", ...call }));
       service.on("event", (event) => trace.observeAgentEvent(event));
       service.on("event", (event) => forwardAgentEvent("local", event));
+      service.on("liveVoice", forwardLiveVoiceEvent);
       // Internal usage signals for analytics only. They are not agent events, so the renderer and
       // Team API clients never receive them.
       service.on("toolUsage", (usage) => built.analytics.handleToolUsage(usage));

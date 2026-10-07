@@ -18,6 +18,7 @@ import {
   type AgentEvent,
   type BrowserDisplayState,
   IPC_ENDPOINTS,
+  type LiveVoiceEvent,
   LOCAL_SERVER_ID,
   type VoiceModelStatus,
 } from "@openbot/contracts/ipc";
@@ -65,6 +66,12 @@ export function createRendererForwarders({
   getFormat,
   desktopNotificationsEnabled,
 }: RendererForwarderDependencies) {
+  function forwardLiveVoiceEvent(event: LiveVoiceEvent): void {
+    const window = getMainWindow();
+    if (!window || window.isDestroyed()) return;
+    sendToRenderer(window, IPC_ENDPOINTS.liveVoice.event, event);
+  }
+
   function forwardAgentEvent(serverId: string, event: AgentEvent, bufferedLive = false): void {
     if (serverId === LOCAL_SERVER_ID) getHostAnalytics()?.handleAgentEvent(event);
     const window = getMainWindow();
@@ -230,6 +237,7 @@ export function createRendererForwarders({
 
   return {
     forwardAgentEvent,
+    forwardLiveVoiceEvent,
     forwardBrowserDisplayState,
     forwardUpdateStatus,
     forwardUpdatePreference,

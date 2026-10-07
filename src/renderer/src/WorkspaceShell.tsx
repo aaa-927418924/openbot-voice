@@ -8,6 +8,7 @@ import { WorkspaceChannelConversation } from "./features/channels/WorkspaceChann
 import { useDirectMessages } from "./features/conversation/direct-messages-context";
 import { WorkspaceConversation } from "./features/conversation/WorkspaceConversation";
 import { WorkspaceDirectConversation } from "./features/conversation/WorkspaceDirectConversation";
+import { LiveVoiceLauncher } from "./features/live-voice/LiveVoiceLauncher";
 import { WorkspaceServerOnboarding } from "./features/onboarding/WorkspaceServerOnboarding";
 import { useRemoteDesktop } from "./features/remote-desktop/remote-desktop-context";
 import { SchedulePanel } from "./features/schedule/SchedulePanel";
@@ -99,7 +100,12 @@ export function WorkspaceShell(props: { account: () => CentralAuthUser }) {
           )}
         </Show>
       }
-      after={<WorkspaceOverlays account={props.account} />}
+      after={
+        <>
+          <WorkspaceOverlays account={props.account} />
+          <LiveVoiceLauncher />
+        </>
+      }
     >
       <Show when={serverOnboardingOpen()}>
         <WorkspaceServerOnboarding />

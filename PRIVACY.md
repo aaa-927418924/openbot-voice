@@ -313,6 +313,13 @@ fails before it recognizes any speech, the phone's recognition service, Apple or
 audio. The recognized text goes into the message field and is sent
 only when you send the message. OpenBot does not store or send the audio.
 
+Desktop Live voice is available only for a local Codex conversation on supported Windows builds.
+After you press Start, the renderer captures microphone audio and sends it directly to the provider
+over WebRTC. OpenBot does not store the audio or expose provider credentials to the renderer. The
+provider's finalized transcript and response return through its official Codex runtime and are saved
+with the local conversation, like other messages. Stopping Live voice closes the microphone tracks
+and the provider session.
+
 ## Email delivery and infrastructure providers
 
 OpenBot sends sign-in and team invitation messages through the configured SMTP provider. The

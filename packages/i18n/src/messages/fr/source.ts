@@ -9,6 +9,7 @@ import { messages as errorConnector } from "./error/connector";
 import { messages as errorHost } from "./error/host";
 import { messages as errorImport } from "./error/import";
 import { messages as errorKind } from "./error/kind";
+import { messages as errorLiveVoice } from "./error/liveVoice";
 import { messages as errorMarketplace } from "./error/marketplace";
 import { messages as errorMcp } from "./error/mcp";
 import { messages as errorMessaging } from "./error/messaging";
@@ -40,6 +41,7 @@ export const source = {
   ...errorProvider,
   ...errorComputerUse,
   ...errorVoice,
+  ...errorLiveVoice,
   ...errorBackend,
   ...errorSkill,
   ...errorMarketplace,

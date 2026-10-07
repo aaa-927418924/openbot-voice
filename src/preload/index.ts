@@ -27,6 +27,10 @@ import {
   type ImportAttachmentsInput,
   IPC_ENDPOINTS,
   type IpcEndpointGroup,
+  isLiveVoiceEvent,
+  isLiveVoiceStartResult,
+  type LiveVoiceEvent,
+  type LiveVoiceStartResult,
   LOCAL_SERVER_ID,
   type OpenBotDesktopApi,
   type RequestEndpoint,
@@ -275,6 +279,16 @@ function bridgeGroup(group: IpcEndpointGroup, decoders: Readonly<Record<string, 
   return api;
 }
 
+function decodeLiveVoiceStartResult(value: unknown): LiveVoiceStartResult {
+  if (!isLiveVoiceStartResult(value)) throw new Error("Invalid Live voice response.");
+  return value;
+}
+
+function decodeLiveVoiceEvent(value: unknown): LiveVoiceEvent {
+  if (!isLiveVoiceEvent(value)) throw new Error("Invalid Live voice event.");
+  return value;
+}
+
 // The server is the argument after the payload, or the only one when the scope carries nothing. It is
 // read at call time, so a method bridged before the user switches servers follows the switch.
 function scopedRequest(scope: ServerScope, args: readonly unknown[]): AgentIpcRequest<unknown> {
@@ -514,6 +528,12 @@ const openbotApi: OpenBotDesktopApi = {
     prepareModel: decodeVoiceModelStatus,
     transcribe: decodeVoiceTranscriptionResult,
     modelStatus: decodeVoiceModelStatus,
+  }),
+  liveVoice: bridgeGroup(IPC_ENDPOINTS.liveVoice, {
+    start: decodeLiveVoiceStartResult,
+    stop: decodeVoid,
+    sendText: decodeVoid,
+    event: decodeLiveVoiceEvent,
   }),
   auth: bridgeGroup(IPC_ENDPOINTS.auth, {
     getState: decodeCentralAuthState,

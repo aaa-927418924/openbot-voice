@@ -11,6 +11,8 @@ import {
   useContext,
 } from "solid-js";
 import { createScopeGuard } from "../../scope-lifetime";
+import { useLiveVoice } from "../live-voice/live-voice-context";
+import { routesComposerToLiveVoice } from "../live-voice/live-voice-routing";
 import { createAttachmentImportSounds } from "./attachment-import-sounds";
 import { useConversationController } from "./conversation-controller-context";
 import { agentConversationKey, composerDraftKey } from "./conversation-keys";
@@ -236,6 +238,7 @@ export function createConversationViewScope(props: ConversationProps) {
     setComposerErrorForTarget,
     clearChatErrors,
   } = composer;
+  const liveVoice = useLiveVoice();
   const queue = createQueueStore({ props, hiddenAwaitingReplyIds });
   const { activeDeliveries, awaitingReplies, orderedQueuedDeliveries, presentedQueueDeliveries, queuePanelVisible } =
     queue;
@@ -484,12 +487,38 @@ export function createConversationViewScope(props: ConversationProps) {
     editQueuedMessage,
     cancelQueuedMessageEdit,
     reorderPresentedQueue,
-    submitComposer,
+    submitComposer: submitStandardComposer,
     sendSelectionInstruction,
     retryPendingSend,
     editPendingSend,
     dismissPendingSend,
   } = actions;
+  const submitComposer = () => {
+    const target = currentTarget();
+    const owner = liveVoice.origin();
+    const agent = props.agent;
+    if (
+      target &&
+      routesComposerToLiveVoice(
+        owner,
+        target && agent ? { ...target, threadId: agent.threadId } : undefined,
+        liveVoice.state(),
+      )
+    ) {
+      const draft = currentDraft();
+      if (draft.attachments.length > 0) {
+        setScopedComposerError(currentText().t("composer.liveVoice.attachmentsUnsupported"), target);
+        return;
+      }
+      if (draft.text.length === 0) return;
+      void liveVoice.sendText(draft.text).then(
+        () => clearSubmittedDraft(target, draft),
+        () => setScopedComposerError(currentText().t("composer.liveVoice.error"), target),
+      );
+      return;
+    }
+    submitStandardComposer();
+  };
   createEffect(
     () => {
       const deliveryId = currentEditingDeliveryId();
