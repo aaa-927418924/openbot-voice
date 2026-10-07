@@ -21,6 +21,9 @@ export const messages = {
   "channel.composer.attach": "Joindre des fichiers",
   "channel.composer.send": "Envoyer le message",
   "channel.composer.stop": "Arrêter le travail",
+  "channel.composer.liveVoice.oneAgentRequired": "La voix en direct nécessite exactement un agent dans ce canal.",
+  "channel.composer.liveVoice.replyUnsupported":
+    "Les réponses ne sont pas prises en charge en voix en direct. Annulez la réponse pour envoyer du texte.",
   "channel.panel.label": "Panneau du canal",
   "channel.panel.close": "Fermer le panneau du canal",
   "channel.settings.title": "Réglages du canal",

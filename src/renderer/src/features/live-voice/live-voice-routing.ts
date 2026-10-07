@@ -5,9 +5,10 @@ export interface LiveVoiceComposerTarget {
   agentId: string;
   serverId: string;
   threadId: string | null;
+  channelId?: string;
 }
 
-/** Only the active call's exact origin chat bypasses normal conversation delivery. */
+/** Direct chats match the exact agent thread; channel composers also require the origin channel. */
 export function routesComposerToLiveVoice(
   origin: LiveVoiceOrigin | undefined,
   target: LiveVoiceComposerTarget | undefined,
@@ -19,6 +20,7 @@ export function routesComposerToLiveVoice(
     sessionOwnsComposer &&
     target.agentId === origin.agentId &&
     target.serverId === origin.serverId &&
-    target.threadId === origin.threadId
+    target.threadId === origin.threadId &&
+    (target.channelId === undefined || target.channelId === origin.channelId)
   );
 }

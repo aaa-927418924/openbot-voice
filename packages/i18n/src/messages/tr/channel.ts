@@ -21,6 +21,9 @@ export const messages = {
   "channel.composer.attach": "Dosya ekle",
   "channel.composer.send": "Mesaj gönder",
   "channel.composer.stop": "Çalışmayı durdur",
+  "channel.composer.liveVoice.oneAgentRequired": "Canlı ses için bu kanalda tam olarak bir ajan olmalı.",
+  "channel.composer.liveVoice.replyUnsupported":
+    "Canlı seste yanıtlama desteklenmiyor. Metin göndermek için yanıtı iptal edin.",
   "channel.panel.label": "Kanal paneli",
   "channel.panel.close": "Kanal panelini kapat",
   "channel.settings.title": "Kanal ayarları",

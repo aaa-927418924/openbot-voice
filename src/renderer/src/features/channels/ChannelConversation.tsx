@@ -7,8 +7,10 @@ import {
   type BrowserTakeoverRequest,
   canPreviewAttachment,
   type FilePreview,
+  type ServerSummary,
 } from "@openbot/contracts/ipc";
-import { ArrowUp, Button, Plus, X } from "@openbot/ui";
+import { LIVE_VOICE_CAPABILITY } from "@openbot/contracts/team-protocol/live-voice-v1";
+import { ArrowUp, Button, Mic, Plus, X } from "@openbot/ui";
 import { QuestionPromptBubble } from "@openbot/ui/components/QuestionPromptBubble";
 import {
   SettingsPanel,
@@ -78,7 +80,11 @@ import { useConversationController } from "../conversation/conversation-controll
 import type { ComposerDraft } from "../conversation/conversation-types";
 import { channelMemoriesPort } from "../conversation/memories-port";
 import { channelRoutinesPort } from "../conversation/routines-port";
+import { useLiveVoice } from "../live-voice/live-voice-context";
+import { routesComposerToLiveVoice } from "../live-voice/live-voice-routing";
+import { serverSupportsCapability } from "../servers/server-capabilities";
 import { ChannelEditor } from "./ChannelEditor";
+import { channelLiveVoiceTarget } from "./channel-live-voice";
 import { channelTimelineEntries, firstUnreadChannelMessageId } from "./channel-timeline";
 import { useChannels } from "./channels-context";
 
@@ -97,11 +103,14 @@ export interface ChannelConversationProps {
   onSelectAgent: (agentId: string) => void;
   /** The host is this computer, so it keeps the routine settings that the released Team API drops. */
   localHost?: boolean;
+  /** The selected server gates Live voice for remote runtimes. */
+  server?: ServerSummary | undefined;
 }
 
 export function ChannelConversation(props: ChannelConversationProps) {
   const channels = useChannels();
   const { t, format, sourceText } = useText();
+  const liveVoice = useLiveVoice();
   const runtime = () => channels.port();
   const agentList = channels.agents;
   const isOwnMessage = (authorId: string) => props.isOwnMessage(authorId);
@@ -181,12 +190,14 @@ export function ChannelConversation(props: ChannelConversationProps) {
     const selectedId = channels.state.selectedId;
     return (selectedId ? conversation.channelDrafts()[selectedId] : undefined) ?? EMPTY_DRAFT;
   });
+  const [liveVoiceError, setLiveVoiceError] = createSignal<string | null>(null);
   const updateDraft = (channelId: string, update: (draft: ComposerDraft) => ComposerDraft) =>
     conversation.setChannelDrafts((current) => ({
       ...current,
       [channelId]: update(current[channelId] ?? EMPTY_DRAFT),
     }));
   const updateComposer = (patch: Partial<ComposerDraft>) => {
+    setLiveVoiceError(null);
     const selectedId = channels.state.selectedId;
     if (selectedId) updateDraft(selectedId, (draft) => ({ ...draft, ...patch }));
   };
@@ -210,6 +221,7 @@ export function ChannelConversation(props: ChannelConversationProps) {
     () => {
       resetPanel();
       setCopyError(null);
+      setLiveVoiceError(null);
       setPanel((state) => {
         state.memories.count = 0;
         state.routines.count = 0;
@@ -557,10 +569,82 @@ export function ChannelConversation(props: ChannelConversationProps) {
       taskId,
       recipientAgentId,
     });
+  const liveVoiceTarget = createMemo(() => {
+    const channel = channels.state.page?.channel;
+    const server = props.server;
+    const serverSupportsLiveVoice =
+      server?.kind === "local"
+        ? server.id === "local"
+        : server
+          ? serverSupportsCapability(server, LIVE_VOICE_CAPABILITY)
+          : false;
+    return channelLiveVoiceTarget({
+      channelId: channel?.id,
+      serverId: server?.id,
+      members: channel?.members ?? [],
+      agents: agentList(),
+      isWindowsDesktop: props.platform === "win32",
+      available: liveVoice.available(),
+      serverSupportsLiveVoice,
+    });
+  });
+  const liveVoiceOwnsChannel = () => {
+    const channel = channels.state.page?.channel;
+    const origin = liveVoice.origin();
+    const server = props.server;
+    if (
+      !channel ||
+      !server ||
+      !origin?.channelId ||
+      origin.channelId !== channel.id ||
+      origin.serverId !== server.id ||
+      !channel.members.some((member) => member.agentId === origin.agentId)
+    ) {
+      return false;
+    }
+    const agent = agentList().find((candidate) => candidate.id === origin.agentId);
+    if (agent?.provider !== "codex" || agent.threadId !== origin.threadId) return false;
+    return routesComposerToLiveVoice(
+      origin,
+      { agentId: agent.id, threadId: agent.threadId, serverId: server.id, channelId: channel.id },
+      liveVoice.state(),
+    );
+  };
+  const liveVoiceBusy = () =>
+    liveVoice.state().hostSessionActive ||
+    liveVoice.state().phase === "connecting" ||
+    liveVoice.state().phase === "stopping";
+  const toggleChannelLiveVoice = () => {
+    if (liveVoiceOwnsChannel()) {
+      if (liveVoice.state().audioBlocked) void liveVoice.resumeAudio();
+      else void liveVoice.stop();
+      return;
+    }
+    if (liveVoiceBusy()) return;
+    const target = liveVoiceTarget();
+    if (target) liveVoice.start(target);
+  };
   const submit = () => {
     const { text, attachments, replyToMessageId } = composer();
     const channelId = channels.state.selectedId;
     if (channels.state.pending || (!text.trim() && !attachments.length) || !channelId) return;
+    if (liveVoiceOwnsChannel()) {
+      setLiveVoiceError(null);
+      if (attachments.length > 0) {
+        setLiveVoiceError(t("composer.liveVoice.attachmentsUnsupported"));
+        return;
+      }
+      if (replyToMessageId) {
+        setLiveVoiceError(t("channel.composer.liveVoice.replyUnsupported"));
+        return;
+      }
+      if (!text.trim()) return;
+      void liveVoice.sendText(text).then(
+        () => updateDraft(channelId, (draft) => (draft.text === text ? { ...draft, text: "" } : draft)),
+        () => setLiveVoiceError(t("composer.liveVoice.error")),
+      );
+      return;
+    }
     const expanded = expandComposerMentions(text);
     // A request that opens with a member is addressed to that member, the way a reader writes it.
     // A mention later in the text is what it reads as: a reference the owner of the work can see.
@@ -1023,6 +1107,31 @@ export function ChannelConversation(props: ChannelConversationProps) {
                       <Plus aria-hidden="true" />
                     </Button>
                     <div class="composer-primary-actions">
+                      <Show when={props.platform === "win32" && liveVoice.available()}>
+                        <Show when={page().channel.members.length !== 1}>
+                          <span class="channel-live-voice-requirement">
+                            {t("channel.composer.liveVoice.oneAgentRequired")}
+                          </span>
+                        </Show>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          class="dictation-button"
+                          aria-label={
+                            liveVoiceOwnsChannel() ? t("composer.liveVoice.stop") : t("composer.liveVoice.start")
+                          }
+                          aria-pressed={liveVoiceOwnsChannel() ? "true" : "false"}
+                          disabled={!liveVoiceTarget() || (liveVoiceBusy() && !liveVoiceOwnsChannel())}
+                          title={
+                            page().channel.members.length !== 1
+                              ? t("channel.composer.liveVoice.oneAgentRequired")
+                              : undefined
+                          }
+                          onClick={toggleChannelLiveVoice}
+                        >
+                          <Mic aria-hidden="true" />
+                        </Button>
+                      </Show>
                       {/* As in the agent chat, an empty composer offers stop while work runs. */}
                       <Show
                         when={activeRuns().length > 0 && !composer().text.trim() && !composer().attachments.length}
@@ -1054,6 +1163,13 @@ export function ChannelConversation(props: ChannelConversationProps) {
                       </Show>
                     </div>
                   </div>
+                  <Show when={liveVoiceError()}>
+                    {(message) => (
+                      <p class="channel-live-voice-error" role="alert">
+                        {message()}
+                      </p>
+                    )}
+                  </Show>
                 </form>
               </div>
             </Show>

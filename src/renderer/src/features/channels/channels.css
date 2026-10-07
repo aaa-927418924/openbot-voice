@@ -34,6 +34,21 @@
   color: var(--openbot-text-primary);
 }
 
+.channel-live-voice-requirement,
+.channel-live-voice-error {
+  margin: 0;
+  font-size: var(--openbot-text-sm);
+  line-height: var(--openbot-leading-sm);
+}
+
+.channel-live-voice-requirement {
+  color: var(--openbot-text-muted);
+}
+
+.channel-live-voice-error {
+  color: var(--openbot-danger-text);
+}
+
 /* The editor stacks the same fields the agent panel stacks, so it adds no spacing of its own: the
    shared field carries its own bottom margin, and a gap here would add to it and set the whole
    channel form further apart than the agent form. */

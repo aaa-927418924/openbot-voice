@@ -21,6 +21,9 @@ export const messages = {
   "channel.composer.attach": "Anexar arquivos",
   "channel.composer.send": "Enviar mensagem",
   "channel.composer.stop": "Parar trabalho",
+  "channel.composer.liveVoice.oneAgentRequired": "A voz ao vivo requer exatamente um agente neste canal.",
+  "channel.composer.liveVoice.replyUnsupported":
+    "Respostas não são compatíveis com a voz ao vivo. Cancele a resposta para enviar texto.",
   "channel.panel.label": "Painel do canal",
   "channel.panel.close": "Fechar painel do canal",
   "channel.settings.title": "Configurações do canal",

@@ -32,4 +32,14 @@ describe("live voice composer routing", () => {
   it("returns to normal conversation delivery after the host confirms closure", () => {
     expect(routesComposerToLiveVoice(origin, target, { phase: "idle", hostSessionActive: false })).toBe(false);
   });
+
+  it("routes direct chats for the exact agent thread and channels only for the origin channel", () => {
+    const channelOrigin = { ...origin, channelId: "channel-a" };
+    const channelTarget = { ...target, channelId: "channel-a" };
+    const active = { phase: "live" as const, hostSessionActive: true };
+    expect(routesComposerToLiveVoice(channelOrigin, channelTarget, active)).toBe(true);
+    expect(routesComposerToLiveVoice(channelOrigin, { ...channelTarget, channelId: "channel-b" }, active)).toBe(false);
+    expect(routesComposerToLiveVoice(channelOrigin, target, active)).toBe(true);
+    expect(routesComposerToLiveVoice(origin, channelTarget, active)).toBe(false);
+  });
 });

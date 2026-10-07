@@ -20,6 +20,9 @@ export const messages = defineMessages("channel", {
   "channel.composer.attach": "Attach files",
   "channel.composer.send": "Send message",
   "channel.composer.stop": "Stop work",
+  "channel.composer.liveVoice.oneAgentRequired": "Live voice requires exactly one agent in this channel.",
+  "channel.composer.liveVoice.replyUnsupported":
+    "Replies are not supported in Live voice. Cancel the reply to send text.",
   "channel.panel.label": "Channel panel",
   "channel.panel.close": "Close channel panel",
   "channel.settings.title": "Channel settings",

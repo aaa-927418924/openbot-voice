@@ -8,6 +8,8 @@ export interface LiveVoiceOrigin {
   agentId: string;
   threadId: string;
   serverId: string;
+  /** Present only when the call started from a single-agent channel composer. */
+  channelId?: string;
   agent: Pick<AgentProfile, "id" | "name" | "provider" | "avatarSeed" | "avatarHue" | "avatarUrl">;
 }
 

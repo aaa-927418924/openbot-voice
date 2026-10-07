@@ -21,6 +21,10 @@ export const messages = {
   "channel.composer.attach": "ファイルを添付",
   "channel.composer.send": "メッセージを送信",
   "channel.composer.stop": "作業を停止",
+  "channel.composer.liveVoice.oneAgentRequired":
+    "Live音声を使うには、このチャンネルのエージェントを1人にしてください。",
+  "channel.composer.liveVoice.replyUnsupported":
+    "Live音声では返信できません。返信をキャンセルしてテキストを送信してください。",
   "channel.panel.label": "チャンネルパネル",
   "channel.panel.close": "チャンネルパネルを閉じる",
   "channel.settings.title": "チャンネル設定",
