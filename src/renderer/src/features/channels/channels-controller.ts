@@ -290,28 +290,29 @@ export function createChannelsController(env: ChannelsEnvironment) {
         });
     }
   }
-  createEffect(env.scopeKey, (scope) => {
-    // Read once for this scope; a later capability change does not reset the open channel.
-    const channelsSupported = untrack(supported);
-    const selected = channelsSupported ? env.readSelection(scope) : null;
-    refreshId += 1;
-    readThrough.clear();
-    failedCommand = null;
-    pendingCommands = 0;
-    flush(() =>
-      setState((state) => {
-        Object.assign(state, {
-          channels: [],
-          selectedId: selected,
-          page: null,
-          pending: false,
-          error: null,
-          editing: null,
-        });
-      }),
-    );
-    if (channelsSupported) void untrack(() => refresh(selected));
-  });
+  createEffect(
+    () => ({ scope: env.scopeKey(), channelsSupported: supported() }),
+    ({ scope, channelsSupported }) => {
+      const selected = channelsSupported ? env.readSelection(scope) : null;
+      refreshId += 1;
+      readThrough.clear();
+      failedCommand = null;
+      pendingCommands = 0;
+      flush(() =>
+        setState((state) => {
+          Object.assign(state, {
+            channels: [],
+            selectedId: selected,
+            page: null,
+            pending: false,
+            error: null,
+            editing: null,
+          });
+        }),
+      );
+      if (channelsSupported) void untrack(() => refresh(selected));
+    },
+  );
   onSettled(() => {
     const focus = () => {
       void refresh();
