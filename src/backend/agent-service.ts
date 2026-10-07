@@ -206,6 +206,14 @@ interface LiveVoiceSession {
   readonly adapter: CodexLiveVoiceAdapter;
   readonly client: AgentClient;
   readonly releaseLease: () => void;
+  readonly pendingTextEchoes: LiveVoiceTextEcho[];
+  textSequence: number;
+}
+
+interface LiveVoiceTextEcho {
+  readonly text: string;
+  readonly itemId: string;
+  echoedItem?: CodexTranscriptSegment;
 }
 
 export interface AgentServiceOptions {
@@ -1116,7 +1124,20 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             status: "error",
             message: sourceText("error.liveVoice.unavailable"),
           });
-        if (event.type === "item") this.#persistLiveVoiceTranscript(agent.id, event.item);
+        if (event.type === "item") {
+          if (event.item.role === "user") {
+            const submitted = session.pendingTextEchoes.find(
+              (candidate) => candidate.text === event.item.text && !candidate.echoedItem,
+            );
+            if (submitted) {
+              submitted.echoedItem = event.item;
+              // app-server exposes no append request id on transcript items, so only correlate
+              // an echo while its appendText request is still in flight.
+              return;
+            }
+          }
+          this.#persistLiveVoiceTranscript(agent.id, event.item);
+        }
       },
     });
     session = {
@@ -1127,6 +1148,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       adapter,
       client,
       releaseLease,
+      pendingTextEchoes: [],
+      textSequence: 0,
     };
     this.#liveVoiceSessions.set(agent.id, session);
     this.emit("liveVoice", {
@@ -1221,7 +1244,27 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     );
     if (account.account?.type !== "chatgpt")
       throw new LiveVoiceRefusedError(sourceText("error.liveVoice.accountRequired"));
-    yield* session.adapter.appendText(session.providerThreadId, input.text);
+    const submission: LiveVoiceTextEcho = {
+      text: input.text,
+      itemId: `typed-${session.sessionId}-${++session.textSequence}`,
+    };
+    session.pendingTextEchoes.push(submission);
+    try {
+      yield* session.adapter.appendText(session.providerThreadId, input.text);
+      this.#persistLiveVoiceTranscript(agent.id, {
+        id: submission.itemId,
+        realtimeSessionId: session.sessionId,
+        type: "transcriptSegment",
+        role: "user",
+        text: input.text,
+      });
+    } catch (error) {
+      // A transcript item is evidence the provider accepted the text even if its RPC response failed.
+      if (submission.echoedItem) this.#persistLiveVoiceTranscript(agent.id, submission.echoedItem);
+      throw error;
+    } finally {
+      removeLiveVoiceTextEcho(session, submission);
+    }
   }).bind(this);
 
   getAnalytics(input: AgentAnalyticsInput) {
@@ -3127,6 +3170,11 @@ function lifecycleStep<A>(operation: string, run: () => A): Effect.Effect<A, Age
 
 function liveVoiceConversationMessageId(providerItemId: string): string {
   return `livevoice-${createHash("sha256").update(providerItemId).digest("hex").slice(0, 48)}`;
+}
+
+function removeLiveVoiceTextEcho(session: LiveVoiceSession, submission: LiveVoiceTextEcho): void {
+  const index = session.pendingTextEchoes.indexOf(submission);
+  if (index >= 0) session.pendingTextEchoes.splice(index, 1);
 }
 
 /** These tasks already run; stopping the service joins them without starting new work. */

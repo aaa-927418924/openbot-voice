@@ -40,7 +40,8 @@ import {
 } from "./agent-service-test-harness";
 import { runCauseEffect } from "./effect-boundary";
 import { loginShellPath, type McpToolRuntimes, NO_MCP_TOOL_RUNTIMES } from "./mcp-provider-shapes";
-import type { DynamicToolCallParams } from "./protocol";
+import type { DynamicToolCallParams, ResponseDecoder } from "./protocol";
+import type { ProviderClientOperationError } from "./provider-client-effects";
 import { NO_PROVIDER_CREDENTIALS } from "./provider-drivers";
 import { SidebarLayoutStore } from "./sidebar-layout-store";
 
@@ -60,6 +61,63 @@ async function launchEnvironment(pairs: Record<string, string> = {}): Promise<Re
   return { ...(path ? { PATH: path } : {}), ...pairs };
 }
 
+class FakeLiveVoiceClient extends FakeAgentClient {
+  readonly #providerEcho: boolean;
+  #itemSequence = 0;
+  readonly #realtimeSessionId = "realtime-session";
+  realtimeThreadId: string | undefined;
+
+  constructor(providerEcho: boolean) {
+    super("codex");
+    this.#providerEcho = providerEcho;
+  }
+
+  override request<T>(
+    method: string,
+    params: unknown,
+    decoder: ResponseDecoder<T>,
+  ): Effect.Effect<T, ProviderClientOperationError> {
+    if (
+      method !== "thread/realtime/start" &&
+      method !== "thread/realtime/stop" &&
+      method !== "thread/realtime/appendText"
+    )
+      return super.request(method, params, decoder);
+    return Effect.sync(() => {
+      const threadId = paramsRecord(params)?.threadId;
+      if (typeof threadId !== "string") throw new Error("Live voice request has no thread id.");
+      if (method === "thread/realtime/start") {
+        this.realtimeThreadId = threadId;
+        this.emit(
+          "notification",
+          notification("thread/realtime/started", { threadId, realtimeSessionId: this.#realtimeSessionId }),
+        );
+        this.emit("notification", notification("thread/realtime/sdp", { threadId, sdp: "answer-sdp" }));
+      } else if (method === "thread/realtime/stop") {
+        this.emit("notification", notification("thread/realtime/closed", { threadId }));
+      } else if (this.#providerEcho) {
+        const text = paramsRecord(params)?.text;
+        if (typeof text !== "string") throw new Error("Live voice text request has no text.");
+        this.#itemSequence += 1;
+        this.emit(
+          "notification",
+          notification("thread/realtime/item/completed", {
+            threadId,
+            item: {
+              id: `typed-item-${this.#itemSequence}`,
+              realtimeSessionId: this.#realtimeSessionId,
+              type: "transcriptSegment",
+              role: "user",
+              text,
+            },
+          }),
+        );
+      }
+      return decoder({});
+    });
+  }
+}
+
 beforeEach(async () => {
   ({ root, logPath } = await startAgentTestFixture());
 });
@@ -70,6 +128,89 @@ afterEach(async () => {
 });
 
 describe.sequential("AgentService: providers", () => {
+  it.each([true, false])(
+    "persists repeated composer text once and keeps a later identical spoken item with provider echo %s",
+    async (providerEcho) => {
+      const liveClient = new FakeLiveVoiceClient(providerEcho);
+      const { service: agentService, store } = await startService(root, {
+        preferredProvider: "codex",
+        client: () => liveClient,
+      });
+      service = agentService;
+      await runCauseEffect(service.sendMessage({ agentId: "chief", text: "Start the normal Codex thread." }));
+      await waitForQueue(service, "chief", (queue) =>
+        queue.deliveries.every((delivery) => delivery.status === "completed"),
+      );
+
+      const agent = service.listAgents().find((candidate) => candidate.id === "chief");
+      if (!agent?.threadId) throw new Error("The Codex thread was not created.");
+      const started = await runCauseEffect(
+        service.startLiveVoice({
+          agentId: agent.id,
+          threadId: agent.threadId,
+          clientSessionId: randomUUID(),
+          sdpOffer: "offer-sdp",
+        }),
+      );
+      const events: AgentEvent[] = [];
+      service.on("event", (event) => events.push(event));
+      const text = "Open https://example.test/docs?q=live&source=chat";
+      const conversationCountBefore = events.filter((event) => event.type === "conversation").length;
+      const turnStartsBefore = liveClient.requests.filter((request) => request.method === "turn/start").length;
+
+      for (let index = 0; index < 2; index += 1)
+        await runCauseEffect(
+          service.sendLiveVoiceText({
+            agentId: agent.id,
+            threadId: agent.threadId,
+            sessionId: started.sessionId,
+            text,
+          }),
+        );
+
+      // Once appendText has returned, the same words in a later provider transcript are speech,
+      // not a delayed echo that may be discarded by text-only matching.
+      liveClient.emit(
+        "notification",
+        notification("thread/realtime/item/completed", {
+          threadId: liveClient.realtimeThreadId,
+          item: {
+            id: "later-spoken-item",
+            realtimeSessionId: "realtime-session",
+            type: "transcriptSegment",
+            role: "user",
+            text,
+          },
+        }),
+      );
+
+      const liveRows = (await runCauseEffect(service.readConversation(agent.id))).messages.filter(
+        (message) => message.author === "user" && message.text === text,
+      );
+      const storedRows = store.database
+        .readConversation(agent.id, agent.threadId)
+        .messages.filter((message) => message.author === "user" && message.text === text);
+      const newConversationEvents = events
+        .filter((event) => event.type === "conversation")
+        .slice(conversationCountBefore);
+      expect(liveRows).toHaveLength(3);
+      expect(storedRows).toHaveLength(3);
+      expect(new Set(liveRows.map((message) => message.id)).size).toBe(3);
+      expect(newConversationEvents).toHaveLength(3);
+      for (const event of newConversationEvents) {
+        assert(event.type === "conversation");
+        expect(
+          event.snapshot.messages.filter((message) => message.author === "user" && message.text === text),
+        ).toHaveLength(newConversationEvents.indexOf(event) + 1);
+      }
+      expect(liveClient.requests.filter((request) => request.method === "turn/start")).toHaveLength(turnStartsBefore);
+
+      await runCauseEffect(
+        service.stopLiveVoice({ agentId: agent.id, threadId: agent.threadId, sessionId: started.sessionId }),
+      );
+    },
+  );
+
   it("runs a channel turn in a separate session and returns to the unchanged normal conversation", async () => {
     const { service: agentService, store } = await startService(root, {
       provider: "codex",
