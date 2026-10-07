@@ -1,4 +1,5 @@
 import type { HostRestartEvent } from "@openbot/contracts/team-protocol/host-update-v1";
+import type { LiveVoiceWireEvent } from "@openbot/contracts/team-protocol/live-voice-v1";
 import { optionalTeamEvent } from "@openbot/contracts/team-protocol/optional-events";
 import { decodeTeamProtocolV6BaseCurrentEvent } from "@openbot/contracts/team-protocol/v6-base-adapter";
 import { Effect, Exit, Result, Scope } from "effect";
@@ -112,6 +113,7 @@ export interface RemoteEventStreamOptions {
   onDirectMessage: (serverId: string, event: DirectMessageRealtimeEvent) => void;
   onDirectTyping: (serverId: string, event: DirectTypingRealtimeEvent) => void;
   onHostRestart: (serverId: string, event: HostRestartEvent) => void;
+  onLiveVoice: (serverId: string, event: LiveVoiceWireEvent) => void;
   onOffline: (serverId: string) => void;
   onChanged: () => void;
 }
@@ -129,6 +131,7 @@ export class RemoteEventStream {
   readonly #onDirectMessage: RemoteEventStreamOptions["onDirectMessage"];
   readonly #onDirectTyping: RemoteEventStreamOptions["onDirectTyping"];
   readonly #onHostRestart: RemoteEventStreamOptions["onHostRestart"];
+  readonly #onLiveVoice: RemoteEventStreamOptions["onLiveVoice"];
   readonly #onOffline: RemoteEventStreamOptions["onOffline"];
   readonly #onChanged: RemoteEventStreamOptions["onChanged"];
   readonly #controllers = new Map<string, AbortController>();
@@ -156,6 +159,7 @@ export class RemoteEventStream {
     this.#onDirectMessage = options.onDirectMessage;
     this.#onDirectTyping = options.onDirectTyping;
     this.#onHostRestart = options.onHostRestart;
+    this.#onLiveVoice = options.onLiveVoice;
     this.#onOffline = options.onOffline;
     this.#onChanged = options.onChanged;
   }
@@ -535,6 +539,10 @@ export class RemoteEventStream {
               this.#onDirectTyping(serverId, event);
             } else if (event.type === "host-restart") {
               this.#onHostRestart(serverId, event);
+            } else if (event.type === "live-voice") {
+              // Not an agent event: it names a session this client may own, so it goes to the
+              // renderer over the Live voice channel rather than into the agent event stream.
+              this.#onLiveVoice(serverId, event);
             } else {
               if (!agentEventsReady) {
                 if (bufferedAgentEvents.length >= REMOTE_EVENT_INITIAL_BUFFER_LIMIT) {

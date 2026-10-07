@@ -25,7 +25,8 @@ class TestPeer extends EventTarget {
   onconnectionstatechange: (() => void) | null = null;
 }
 
-const target = { agentId: "agent-1", threadId: "thread-1" };
+const target = { agentId: "agent-1", threadId: "thread-1", serverId: "local" };
+const stopPayload = { agentId: target.agentId, threadId: target.threadId };
 const tracks = [{ stop: vi.fn() }];
 const stream = {
   getTracks: () => tracks,
@@ -81,7 +82,7 @@ describe("Live voice media lifecycle", () => {
 
     await controller.stop();
     expect(tracks[0]?.stop).toHaveBeenCalledOnce();
-    expect(api.stop).toHaveBeenCalledWith({ ...target, sessionId: request.clientSessionId });
+    expect(api.stop).toHaveBeenCalledWith({ ...stopPayload, sessionId: request.clientSessionId }, target.serverId);
     expect(states.at(-1)).toMatchObject({ phase: "stopping", hostSessionActive: true });
 
     startDeferred.resolve({ sessionId: request.clientSessionId, sdpAnswer: "v=0\r\n" });
@@ -89,7 +90,7 @@ describe("Live voice media lifecycle", () => {
     await controller.start(target);
     expect(api.start).toHaveBeenCalledOnce();
 
-    emitEvent?.({ ...target, sessionId: request.clientSessionId, status: "closed" });
+    emitEvent?.({ ...stopPayload, sessionId: request.clientSessionId, status: "closed" });
     expect(states.at(-1)).toMatchObject({ phase: "idle", hostSessionActive: false });
   });
 
@@ -109,7 +110,7 @@ describe("Live voice media lifecycle", () => {
 
     await controller.stop();
     await vi.waitFor(() => expect(states.at(-1)).toMatchObject({ phase: "stopping", hostSessionActive: true }));
-    emitEvent?.({ ...target, sessionId: request.clientSessionId, status: "closed" });
+    emitEvent?.({ ...stopPayload, sessionId: request.clientSessionId, status: "closed" });
     expect(states.at(-1)).toMatchObject({ phase: "idle", hostSessionActive: false });
   });
 
@@ -121,7 +122,7 @@ describe("Live voice media lifecycle", () => {
     const request = vi.mocked(api.start).mock.calls[0]?.[0];
     if (!request) throw new Error("The host start request was not created.");
 
-    emitEvent?.({ ...target, sessionId: request.clientSessionId, status: "closed" });
+    emitEvent?.({ ...stopPayload, sessionId: request.clientSessionId, status: "closed" });
     rejectStart?.(new Error("Codex account is required."));
     await starting;
     expect(states.at(-1)).toMatchObject({ phase: "error", hostSessionActive: false });

@@ -439,14 +439,14 @@ explicit action, because `autoInstallOnAppQuit` stays off so shutdown preparatio
 stage the user waits on is bounded by a timeout and recorded in `logs/update/update.log`, so a failed
 check, download, or restart reports an actionable error and can be retried in place.
 
-The Whisper executable is part of the macOS and Windows applications. Linux ships no Whisper binary
-and no remote desktop runtime, so voice prompts and remote desktop report themselves as unavailable
-there. The `ggml-medium-q5_0.bin` model is not part of an application or update artifact. OpenBot downloads the pinned model on first voice use, checks its size
-and SHA-256, and keeps the verified file in the user data directory for later offline use.
+Local Whisper dictation is disabled. No Whisper executable, Whisper license resource, or model is
+prepared or packaged for any platform. On Windows, the composer microphone starts Live Voice only
+when the selected Codex host advertises support. Linux ships no remote desktop runtime, so remote
+desktop reports itself as unavailable there.
 
 The release workflow stops if the macOS update ZIP, the Windows NSIS installer, or the Linux AppImage
 is larger than 700 MiB, or if the DMG is larger than 750 MiB. It also stops if update metadata has a wrong size or SHA-512, if
-the Whisper model is present, or if the application contains a second native Claude runtime.
+any Whisper resource is present, or if the application contains a second native Claude runtime.
 
 If a release is bad, publish a newer patch version. Do not replace an already published version with
 different binaries.

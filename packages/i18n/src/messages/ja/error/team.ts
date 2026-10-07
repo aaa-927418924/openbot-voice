@@ -65,6 +65,7 @@ export const messages = {
   "error.team.workspaceDirectoryUnsupported": "この接続ではフォルダを表示できません。",
   "error.team.agentImportUnsupported": "この接続ではエージェントをインポートできません。",
   "error.team.liveActivityUnsupported": "このホストはスマートフォンのライブアクティビティを更新できません。",
+  "error.team.liveVoiceUnsupported": "この接続では Live 音声会話を利用できません。",
   "error.team.agentUpdateTargetRequired": "更新するエージェントを指定してください。",
   "error.team.queueEditUnsupported": "このクライアントはキューの編集に対応していません。",
   "error.team.skillsUnsupported": "この接続ではスキルを利用できません。",

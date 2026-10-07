@@ -401,10 +401,13 @@ function untypedRequest<Channel extends string>(channel: Channel): RequestEndpoi
 }
 
 export const IPC_ENDPOINTS = {
+  // Server-scoped: a Live voice session belongs to the server its agent lives on, and stop and
+  // send-text must reach that same one even after the window has moved to another server. The
+  // renderer therefore names it on every call rather than leaving it to the selected server.
   liveVoice: {
-    start: request<LiveVoiceStartInput, LiveVoiceStartResult>()("live-voice:start"),
-    stop: request<LiveVoiceStopInput, void>()("live-voice:stop"),
-    sendText: request<LiveVoiceSendTextInput, void>()("live-voice:send-text"),
+    start: scopedRequest<LiveVoiceStartInput, LiveVoiceStartResult, "required">()("live-voice:start"),
+    stop: scopedRequest<LiveVoiceStopInput, void, "required">()("live-voice:stop"),
+    sendText: scopedRequest<LiveVoiceSendTextInput, void, "required">()("live-voice:send-text"),
     event: event<LiveVoiceEvent>()("live-voice:event"),
   },
   app: {

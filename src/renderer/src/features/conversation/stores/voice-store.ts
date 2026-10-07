@@ -7,7 +7,7 @@ import { EMPTY_DRAFT } from "../composer-draft";
 import { composerDraftKey } from "../conversation-keys";
 import { conversationRuntime } from "../conversation-runtime";
 import type { ComposerDraft, ConversationProps, ConversationTarget } from "../conversation-types";
-import { voiceCaptureError, voiceTranscriptionError } from "../voice-status";
+import { voiceTranscriptionError } from "../voice-status";
 
 interface VoiceSubmitHooks {
   saveEdit: (
@@ -63,60 +63,19 @@ export interface VoiceStoreDeps {
 export function createVoiceStore(deps: VoiceStoreDeps) {
   const { resources } = deps;
 
+  /**
+   * Dictation is not part of this build: no Whisper binary ships with it, and the composer's
+   * microphone starts a Live voice session instead. The function stays because the queue and the
+   * draft actions still reach for it, and it answers with the reason rather than starting a phase
+   * the missing channel would only fail later - so the conversation never claims to be preparing.
+   */
   async function startVoiceRecording(): Promise<void> {
     const agentId = deps.props.agent?.id;
-    const serverId = deps.props.server?.id ?? "local";
     if (!agentId || deps.voicePhase() !== "idle") return;
-    const target = { agentId, serverId };
-    deps.clearConversationError(target);
-    resources.voiceSubmitRequest = undefined;
-    deps.setComposerError(null);
-    const generation = ++resources.voiceRequestGeneration;
-    deps.setVoicePhase("preparing");
-    deps.setVoiceModelProgress(0);
-    try {
-      const modelStatus = await conversationRuntime(deps.props).voice.prepareModel();
-      if (resources.voiceDisposed || resources.voiceRequestGeneration !== generation) return;
-      if (modelStatus.phase !== "ready") {
-        deps.setVoicePhase("idle");
-        deps.setVoiceModelProgress(null);
-        deps.setConversationError(
-          target,
-          currentText().errorMessage(modelStatus.message, currentText().t("composer.voice.prepareFailed")),
-        );
-        return;
-      }
-      if (!deps.viewIsMounted()) {
-        deps.setVoicePhase("idle");
-        deps.setVoiceModelProgress(null);
-        return;
-      }
-      deps.setVoicePhase("requesting");
-      deps.setVoiceModelProgress(null);
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-      if (resources.voiceDisposed || !deps.viewIsMounted() || resources.voiceRequestGeneration !== generation) {
-        for (const track of stream.getTracks()) track.stop();
-        if (!resources.voiceDisposed && resources.voiceRequestGeneration === generation) deps.setVoicePhase("idle");
-        return;
-      }
-      const recorder = new MediaRecorder(stream);
-      resources.voiceStream = stream;
-      resources.voiceRecorder = recorder;
-      resources.voiceAgentId = agentId;
-      resources.voiceServerId = serverId;
-      resources.voiceChunks = [];
-      recorder.addEventListener("dataavailable", (event) => {
-        if (event.data.size > 0) resources.voiceChunks.push(event.data);
-      });
-      recorder.addEventListener("stop", () => void finishVoiceRecording(recorder.mimeType));
-      recorder.start();
-      startVoiceElapsedTimer();
-      deps.setVoicePhase("recording");
-      resources.voiceRecordingTimer = setTimeout(stopVoiceRecording, VOICE_AUDIO_LIMITS.maximumSeconds * 1_000);
-    } catch (error) {
-      if (resources.voiceRequestGeneration === generation) deps.setVoicePhase("idle");
-      deps.setConversationError(target, voiceCaptureError(error));
-    }
+    deps.setConversationError(
+      { agentId, serverId: deps.props.server?.id ?? "local" },
+      currentText().t("error.voice.runtimeUnavailable"),
+    );
   }
 
   const removeVoiceModelListener = conversationRuntime(deps.props).voice.onModelStatus((status) => {

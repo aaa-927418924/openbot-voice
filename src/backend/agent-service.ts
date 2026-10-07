@@ -92,6 +92,7 @@ import {
   workspaceAccessEnforced,
 } from "@openbot/contracts/ipc";
 import { ContextResetBusyError } from "@openbot/contracts/team-protocol/context-reset-v1";
+import { LiveVoiceRefusedError } from "@openbot/contracts/team-protocol/live-voice-v1";
 import type { QueueEditRequest } from "@openbot/contracts/team-protocol/queue-edit-v1";
 import { sourceText } from "@openbot/i18n/source";
 import { createOpenBotLogger } from "@openbot/logging";
@@ -1054,22 +1055,36 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
   }
 
+  /**
+   * `live-voice-v1`: a session's lifecycle as it happens, for the client that started it. It is a
+   * method rather than `on("liveVoice", ...)` because a Team API listener takes a different event
+   * type from an agent event, and one method taking both would force every stub to implement both.
+   */
+  onLiveVoice(listener: (event: LiveVoiceEvent) => void): void {
+    this.on("liveVoice", listener);
+  }
+
+  offLiveVoice(listener: (event: LiveVoiceEvent) => void): void {
+    this.off("liveVoice", listener);
+  }
+
   readonly startLiveVoice = Effect.fn("AgentService.startLiveVoice")(function* (
     this: AgentService,
     input: LiveVoiceStartInput,
   ) {
     const agent = this.#store.list().find((candidate) => candidate.id === input.agentId);
     if (!agent || agent.threadId !== input.threadId || agent.provider !== "codex")
-      throw new Error(sourceText("error.liveVoice.unavailable"));
-    if (!this.#providers.hasCodexChatGptAccount()) throw new Error(sourceText("error.liveVoice.accountRequired"));
+      throw new LiveVoiceRefusedError(sourceText("error.liveVoice.unavailable"));
+    if (!this.#providers.hasCodexChatGptAccount())
+      throw new LiveVoiceRefusedError(sourceText("error.liveVoice.accountRequired"));
     if (this.#liveVoiceSessions.size > 0 || this.#usedLiveVoiceSessionIds.has(input.clientSessionId))
-      throw new Error(sourceText("error.liveVoice.busy"));
+      throw new LiveVoiceRefusedError(sourceText("error.liveVoice.busy"));
     const providerSession = this.#store.database.activeProviderSession(agent.threadId, "codex");
     const client = this.#providers.clientForAgent(agent);
     if (!providerSession || !client?.running || client.provider !== "codex")
-      throw new Error(sourceText("error.liveVoice.unavailable"));
+      throw new LiveVoiceRefusedError(sourceText("error.liveVoice.unavailable"));
     const releaseLease = this.#drain.acquireVoiceLease(agent.id);
-    if (!releaseLease) throw new Error(sourceText("error.liveVoice.busy"));
+    if (!releaseLease) throw new LiveVoiceRefusedError(sourceText("error.liveVoice.busy"));
     this.#usedLiveVoiceSessionIds.add(input.clientSessionId);
     if (this.#usedLiveVoiceSessionIds.size > 4096) {
       const oldest = this.#usedLiveVoiceSessionIds.values().next();
@@ -1124,9 +1139,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       // Re-read the official account mode without refreshing credentials. API-key auth is not a
       // supported subscription path for Codex Live.
       const account = yield* client.request("account/read", { refreshToken: false }, decodeAccountReadResult, 5_000);
-      if (account.account?.type !== "chatgpt") throw new Error(sourceText("error.liveVoice.accountRequired"));
+      if (account.account?.type !== "chatgpt")
+        throw new LiveVoiceRefusedError(sourceText("error.liveVoice.accountRequired"));
       const answer = yield* adapter.start(session.providerThreadId, input.sdpOffer);
-      if (this.#liveVoiceSessions.get(agent.id) !== session) throw new Error(sourceText("error.liveVoice.unavailable"));
+      if (this.#liveVoiceSessions.get(agent.id) !== session)
+        throw new LiveVoiceRefusedError(sourceText("error.liveVoice.unavailable"));
       this.emit("liveVoice", {
         agentId: session.agentId,
         threadId: session.threadId,
@@ -1161,7 +1178,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   ) {
     const session = this.#liveVoiceSessions.get(input.agentId);
     if (!session || session.threadId !== input.threadId || session.sessionId !== input.sessionId)
-      throw new Error(sourceText("error.liveVoice.unavailable"));
+      throw new LiveVoiceRefusedError(sourceText("error.liveVoice.unavailable"));
     yield* session.adapter.stop(session.providerThreadId).pipe(
       Effect.tap(() =>
         Effect.sync(() => {
@@ -1195,14 +1212,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       !session.client.running ||
       !this.#providers.hasCodexChatGptAccount()
     )
-      throw new Error(sourceText("error.liveVoice.unavailable"));
+      throw new LiveVoiceRefusedError(sourceText("error.liveVoice.unavailable"));
     const account = yield* session.client.request(
       "account/read",
       { refreshToken: false },
       decodeAccountReadResult,
       5_000,
     );
-    if (account.account?.type !== "chatgpt") throw new Error(sourceText("error.liveVoice.accountRequired"));
+    if (account.account?.type !== "chatgpt")
+      throw new LiveVoiceRefusedError(sourceText("error.liveVoice.accountRequired"));
     yield* session.adapter.appendText(session.providerThreadId, input.text);
   }).bind(this);
 

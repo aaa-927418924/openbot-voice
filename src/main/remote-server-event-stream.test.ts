@@ -89,7 +89,9 @@ describe("remote event connections", () => {
       servers: [storedHttpsServer("server-1"), storedHttpsServer("server-2")],
     });
     const agentEvent = vi.fn();
+    const liveVoiceEvent = vi.fn();
     fixture.manager.on("agent", agentEvent);
+    fixture.manager.on("liveVoice", liveVoiceEvent);
 
     void runCauseEffect(fixture.manager.startEventConnections());
     await vi.waitFor(() => expect(sockets).toHaveLength(2));
@@ -120,6 +122,17 @@ describe("remote event connections", () => {
       sockets[2]?.emit(event);
       await vi.waitFor(() => expect(agentEvent).toHaveBeenCalledWith("server-1", event));
     }
+
+    const liveVoice = {
+      type: "live-voice",
+      agentId: "research",
+      threadId: "thread-research",
+      sessionId: "live-session-1",
+      status: "closed",
+    } as const;
+    sockets[2]?.emit(liveVoice);
+    await vi.waitFor(() => expect(liveVoiceEvent).toHaveBeenCalledWith("server-1", liveVoice));
+    expect(agentEvent).not.toHaveBeenCalledWith("server-1", liveVoice);
 
     void runCauseEffect(fixture.manager.refreshRuntimeSnapshots());
     expect(sockets).toHaveLength(3);

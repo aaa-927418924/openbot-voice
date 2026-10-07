@@ -12,6 +12,7 @@ import { HOST_ADMIN_CODECS } from "./host-admin-v1";
 import { HOST_UPDATE_CODECS } from "./host-update-v1";
 import { HOSTED_SITES_CODECS } from "./hosted-sites-v1";
 import { LIVE_ACTIVITY_PUSH_CODECS } from "./live-activity-push-v1";
+import { LIVE_VOICE_CODECS } from "./live-voice-v1";
 import { PROVIDERS_ADMIN_CODECS } from "./providers-v1";
 import { PROVIDERS_RUNTIMES_V2_CODECS } from "./providers-v2";
 import { PROVIDERS_SIGN_IN_V3_CODECS } from "./providers-v3";
@@ -38,6 +39,7 @@ const CODECS: ReadonlyMap<string, OptionalRouteCodec> = new Map([
   ...AGENT_IMPORT_CODECS,
   ...AGENT_PUBLISH_CODECS,
   ...LIVE_ACTIVITY_PUSH_CODECS,
+  ...LIVE_VOICE_CODECS,
   ...HOSTED_SITES_CODECS,
   ...WORKSPACE_DIRECTORY_CODECS,
 ]);

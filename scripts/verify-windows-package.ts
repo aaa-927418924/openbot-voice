@@ -1,5 +1,4 @@
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync } from "node:fs";
 import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -24,8 +23,6 @@ const appPathArgument = process.argv.slice(2).find((argument) => !argument.start
 const appPath = resolve(appPathArgument ?? "dist/win-unpacked");
 const executablePath = resolve(appPath, "OpenBot.exe");
 const resourcesPath = resolve(appPath, "resources");
-const whisperExecutablePath = resolve(resourcesPath, "whisper/bin/whisper-cli.exe");
-const whisperModelPath = resolve(resourcesPath, "whisper/model/ggml-medium-q5_0.bin");
 
 await Promise.all([
   access(executablePath),
@@ -34,9 +31,6 @@ await Promise.all([
   access(resolve(resourcesPath, "app.asar")),
   access(resolve(resourcesPath, "licenses/Electron-LICENSE")),
   access(resolve(resourcesPath, "licenses/LICENSES.chromium.html")),
-  access(resolve(resourcesPath, "licenses/OpenAI-Whisper-LICENSE")),
-  access(resolve(resourcesPath, "licenses/whisper.cpp-LICENSE")),
-  access(whisperExecutablePath),
   access(resolve(resourcesPath, "remote-desktop-runtime/licenses/Sunshine-GPL-3.0.txt")),
   access(resolve(resourcesPath, "remote-desktop-runtime/licenses/moonlight-web-stream-GPL-3.0.txt")),
   access(resolve(resourcesPath, "remote-desktop-runtime/source-manifest.json")),
@@ -55,11 +49,20 @@ await Promise.all([
 ]);
 // Only this platform's driver ships, so a shared `extraResources` entry is a loud failure.
 await Promise.all(["darwin", "linux"].map((name) => assertAbsent(resolve(resourcesPath, "cua-driver", name))));
+// The corresponding runtime is prepared in the same checkout for Linux packaging, but only the
+// Windows binaries belong in this target.
+await Promise.all(
+  ["darwin", "linux"].map((name) => assertAbsent(resolve(resourcesPath, "remote-desktop-runtime", name))),
+);
+await assertAbsent(resolve(resourcesPath, "whisper"));
+await Promise.all(
+  ["OpenAI-Whisper-LICENSE", "whisper.cpp-LICENSE"].map((name) =>
+    assertAbsent(resolve(resourcesPath, "licenses", name)),
+  ),
+);
 await Promise.all(["codex", "claude", "grok"].map((name) => assertAbsent(resolve(resourcesPath, name))));
 await assertAbsent(resolve(resourcesPath, "cloudflared"));
 await assertAbsent(resolve(resourcesPath, "app.asar.unpacked/node_modules/@anthropic-ai/claude-agent-sdk-win32-x64"));
-
-if (existsSync(whisperModelPath)) throw new Error("The on-demand Whisper model must not be in the application.");
 
 const packageJson = JSON.parse(await readFile("package.json", "utf8"));
 if (!isDynamicRecord(packageJson)) throw new Error("package.json is not a JSON object.");
@@ -104,7 +107,6 @@ if (updateMetadata !== null && !updateMetadata.includes("provider: github")) {
 
 const ownExecutables = [
   executablePath,
-  whisperExecutablePath,
   ...["sunshine.exe", "web-server.exe", "streamer.exe"].map((name) =>
     resolve(resourcesPath, "remote-desktop-runtime/win32/x64", name),
   ),

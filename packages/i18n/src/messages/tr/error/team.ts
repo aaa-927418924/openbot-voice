@@ -65,6 +65,7 @@ export const messages = {
   "error.team.workspaceDirectoryUnsupported": "Klasörleri gösterme bu bağlantı tarafından desteklenmiyor.",
   "error.team.agentImportUnsupported": "Ajan içe aktarma bu bağlantı tarafından desteklenmiyor.",
   "error.team.liveActivityUnsupported": "Bu ana makine bir telefonun Canlı Etkinliğini güncelleyemez.",
+  "error.team.liveVoiceUnsupported": "Canlı sesli sohbetler bu bağlantı tarafından desteklenmiyor.",
   "error.team.agentUpdateTargetRequired": "Güncellenecek bir ajan gereklidir.",
   "error.team.queueEditUnsupported": "Bu istemci kuyruk düzenlemeyi desteklemiyor.",
   "error.team.skillsUnsupported": "Beceriler bu bağlantı tarafından desteklenmiyor.",

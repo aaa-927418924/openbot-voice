@@ -60,6 +60,12 @@ export function createAgents(overrides: Partial<TeamApiAgents> = {}, events = ne
     off: (event, listener) => {
       events.off(event, listener);
     },
+    onLiveVoice: (listener) => {
+      events.on("liveVoice", listener);
+    },
+    offLiveVoice: (listener) => {
+      events.off("liveVoice", listener);
+    },
     preferredProvider: () => "codex",
     newAgentProvider: () => "codex",
     getStatus: unimplemented,
@@ -138,6 +144,9 @@ export function createAgents(overrides: Partial<TeamApiAgents> = {}, events = ne
     respondToApproval: unimplemented,
     respondToBrowserSecret: unimplemented,
     respondToBrowserTakeover: unimplemented,
+    startLiveVoice: unimplemented,
+    stopLiveVoice: unimplemented,
+    sendLiveVoiceText: unimplemented,
     ...overrides,
   };
 }

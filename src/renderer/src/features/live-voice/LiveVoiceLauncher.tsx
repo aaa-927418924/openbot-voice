@@ -3,44 +3,18 @@ import { AgentAvatar } from "@openbot/ui/features/agents/AgentAvatar";
 import { useText } from "@openbot/ui/text";
 import { createMemo, For, Show } from "solid-js";
 import { usePlatform } from "../../platform";
-import { useAgents } from "../agents/agents-context";
-import { useServers } from "../servers/servers-context";
 import { useLiveVoice } from "./live-voice-context";
 import "./live-voice.css";
 
-/** App-global launcher; the provider and media owner outlive server-scoped pages. */
+/**
+ * The app-global Live voice panel; the provider and media owner outlive server-scoped pages, so this
+ * stays above them. Starting a session belongs to the composer, where the microphone button always
+ * was, and all that is left here is the panel itself.
+ */
 export function LiveVoiceLauncher() {
   const { t, errorMessage } = useText();
   const live = useLiveVoice();
   const platform = usePlatform();
-  const { activeAgent } = useAgents();
-  const { activeServer } = useServers();
-  const startTarget = createMemo(() => {
-    const agent = activeAgent();
-    const server = activeServer();
-    if (
-      !live.available() ||
-      platform.appInfo()?.platform !== "win32" ||
-      server?.kind !== "local" ||
-      server.id !== "local" ||
-      agent?.provider !== "codex" ||
-      !agent.threadId
-    )
-      return undefined;
-    return {
-      agentId: agent.id,
-      threadId: agent.threadId,
-      serverId: server.id,
-      agent: {
-        id: agent.id,
-        name: agent.name,
-        provider: agent.provider,
-        avatarSeed: agent.avatarSeed,
-        avatarHue: agent.avatarHue,
-        avatarUrl: agent.avatarUrl,
-      },
-    };
-  });
   const active = () => live.state().hostSessionActive || live.state().phase === "connecting";
   const setStatus = createMemo(() => {
     const state = live.state();
@@ -116,31 +90,6 @@ export function LiveVoiceLauncher() {
             {setStatus()}
           </span>
         </Show>
-        <Button
-          variant="secondary"
-          type="button"
-          class="live-voice-launcher"
-          aria-label={
-            live.state().audioBlocked
-              ? t("composer.liveVoice.audioBlocked")
-              : active()
-                ? t("composer.liveVoice.active")
-                : t("composer.liveVoice.start")
-          }
-          aria-pressed={active() ? "true" : "false"}
-          disabled={!active() && !startTarget()}
-          onClick={() => {
-            if (active()) {
-              void live.resumeAudio();
-              return;
-            }
-            const target = startTarget();
-            if (target) live.start(target);
-          }}
-        >
-          <Mic aria-hidden="true" />
-          <span>{t("composer.liveVoice.launcher")}</span>
-        </Button>
       </div>
     </Show>
   );

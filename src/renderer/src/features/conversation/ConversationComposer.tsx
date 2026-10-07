@@ -4,6 +4,7 @@ import {
   TEAM_EML_ATTACHMENTS_CAPABILITY,
   TEAM_MEDIA_ATTACHMENTS_CAPABILITY,
 } from "@openbot/contracts/team-protocol/current";
+import { LIVE_VOICE_CAPABILITY } from "@openbot/contracts/team-protocol/live-voice-v1";
 import {
   ArrowUp,
   Button,
@@ -23,13 +24,14 @@ import { AwaitingReplies } from "@openbot/ui/features/conversation/AwaitingRepli
 import { ComposerEditor } from "@openbot/ui/features/conversation/ComposerEditor";
 import { ComposerErrorBanner } from "@openbot/ui/features/conversation/ComposerErrorBanner";
 import { ComposerSignInNotice, ComposerUsageLimitNotice } from "@openbot/ui/features/conversation/ComposerNotice";
-import { CloseIcon, MoreIcon, StopIcon } from "@openbot/ui/features/conversation/ConversationIcons";
+import { CloseIcon, StopIcon } from "@openbot/ui/features/conversation/ConversationIcons";
 import { RichMessageText } from "@openbot/ui/features/conversation/RichMessageText";
 import { useText } from "@openbot/ui/text";
 import { createEffect, createMemo, createSignal, For, Loading, lazy, onCleanup, Show } from "solid-js";
 import { deviceSendShortcut, sendShortcutAriaKey, sendShortcutHintKey } from "../../send-shortcut-preference";
+import { type LiveVoiceOrigin, useLiveVoice } from "../live-voice/live-voice-context";
+import { serverSupportsCapability } from "../servers/server-capabilities";
 import { useConversationViewScope } from "./conversation-scope";
-import { formatVoiceDuration, voiceButtonLabel, voiceSupported } from "./voice-status";
 
 /** @internal Stable HMR boundary for conversation composer. */
 export function ConversationComposer() {
@@ -65,16 +67,12 @@ export function ConversationComposer() {
     setAttachmentPickerElement,
     setShowComposerActions,
     showComposerActions,
-    startVoiceRecording,
-    stopVoiceRecording,
     submitComposer,
     submitting,
     unreferencedDraftAttachments,
     updateCurrentDraft,
     updateTeamTyping,
-    voiceElapsedSeconds,
     voicePhase,
-    voiceModelProgress,
   } = useConversationViewScope();
   const { t, format } = useText();
   const messageLabel = () =>
@@ -90,7 +88,78 @@ export function ConversationComposer() {
   const queueVisible = () => queuePanelVisible() && !pickerOpen();
   const awaitingVisible = () => awaitingReplies().length > 0 && !pickerOpen();
   const slotOpen = () => queueVisible() || awaitingVisible();
-  const voiceAvailable = () => !props.runtime && voiceSupported(props.platform);
+  /**
+   * The Live voice control now sits where the microphone button for dictation used to be. It shows on
+   * the platform that can carry a session, when this window has a Live voice channel at all, and it
+   * is live only when there is something to use: a codex agent with a thread, on the local host or on
+   * a remote one that advertised the route. Outside that it stays where the user expects a microphone
+   * and simply does nothing, which says more than a control that comes and goes.
+   */
+  const live = useLiveVoice();
+  const liveAvailable = () => !props.runtime && props.platform === "win32" && live.available();
+  const liveSession = () => live.state().hostSessionActive || live.state().phase === "connecting";
+  const liveTarget = createMemo<LiveVoiceOrigin | undefined>(() => {
+    const agent = props.agent;
+    const server = props.server;
+    if (!liveAvailable() || !server || agent?.provider !== "codex" || !agent.threadId) return undefined;
+    const usable =
+      server.kind === "local" ? server.id === "local" : serverSupportsCapability(server, LIVE_VOICE_CAPABILITY);
+    if (!usable) return undefined;
+    return {
+      agentId: agent.id,
+      threadId: agent.threadId,
+      serverId: server.id,
+      agent: {
+        id: agent.id,
+        name: agent.name,
+        provider: agent.provider,
+        avatarSeed: agent.avatarSeed,
+        avatarHue: agent.avatarHue,
+        avatarUrl: agent.avatarUrl,
+      },
+    };
+  });
+  const onLiveVoice = () => {
+    if (liveSession()) {
+      // The browser refusing to play is the one thing the button can fix on its own; otherwise the
+      // press means what a microphone button always means - the conversation is over. The panel keeps
+      // its own Stop for the case where a hand is already on it.
+      if (live.state().audioBlocked) void live.resumeAudio();
+      else void live.stop();
+      return;
+    }
+    const target = liveTarget();
+    if (target) void live.start(target);
+  };
+  /**
+   * The Live voice dock hangs over the same bottom-right corner the composer occupies, and it lives at
+   * the shell rather than here, so it cannot read this element's box. The composer publishes how much
+   * of the window it takes as a root custom property, which is what keeps the panel off the send
+   * arrow instead of a fixed corner guess that a taller draft would break.
+   */
+  let composerWrap: HTMLDivElement | undefined;
+  createEffect(
+    () => composerWrap,
+    (element) => {
+      if (!element) return;
+      const publish = () => {
+        const { top } = element.getBoundingClientRect();
+        document.documentElement.style.setProperty(
+          "--live-voice-dock-bottom",
+          `${Math.max(0, Math.round(window.innerHeight - top))}px`,
+        );
+      };
+      publish();
+      window.addEventListener("resize", publish);
+      const observer = typeof ResizeObserver === "function" ? new ResizeObserver(publish) : undefined;
+      observer?.observe(element);
+      onCleanup(() => {
+        window.removeEventListener("resize", publish);
+        observer?.disconnect();
+        document.documentElement.style.removeProperty("--live-voice-dock-bottom");
+      });
+    },
+  );
   /**
    * The provider status is the only source of truth for a signed-out provider, so the notice and the
    * model picker's "Sign in required" label can never disagree, and the notice is shown before the
@@ -150,7 +219,7 @@ export function ConversationComposer() {
   };
   return (
     <Show when={!props.approval && !props.browserTakeover}>
-      <div class="composer-wrap">
+      <div class="composer-wrap" ref={composerWrap}>
         <div
           class="agent-queue-slot"
           data-open={slotOpen() ? "true" : "false"}
@@ -411,57 +480,18 @@ export function ConversationComposer() {
                   </Button>
                 )}
               </Show>
-              <Show when={voiceAvailable()}>
-                <Show when={voicePhase() === "preparing"}>
-                  <span class="voice-model-progress" role="status">
-                    {t("composer.voice.progress", { progress: voiceModelProgress() ?? 0 })}
-                  </span>
-                </Show>
-                <Show
-                  when={voicePhase() === "recording"}
-                  fallback={
-                    <Button
-                      variant="ghost"
-                      type="button"
-                      class="dictation-button"
-                      aria-label={t(voiceButtonLabel(voicePhase()))}
-                      disabled={
-                        voicePhase() === "requesting" ||
-                        voicePhase() === "preparing" ||
-                        voicePhase() === "transcribing" ||
-                        (voicePhase() === "idle" && (!props.agent || !agentReady()))
-                      }
-                      onClick={() => void startVoiceRecording()}
-                    >
-                      <Show
-                        when={
-                          voicePhase() === "preparing" ||
-                          voicePhase() === "requesting" ||
-                          voicePhase() === "transcribing"
-                        }
-                        fallback={<Mic aria-hidden="true" />}
-                      >
-                        <LoaderCircle class="composer-spinner" aria-hidden="true" />
-                      </Show>
-                    </Button>
-                  }
+              <Show when={liveAvailable()}>
+                <Button
+                  variant="ghost"
+                  type="button"
+                  class="dictation-button"
+                  aria-label={liveSession() ? t("composer.liveVoice.stop") : t("composer.liveVoice.start")}
+                  aria-pressed={liveSession() ? "true" : "false"}
+                  disabled={!liveSession() && !liveTarget()}
+                  onClick={onLiveVoice}
                 >
-                  <fieldset class="voice-recording-status" aria-label={t("composer.voice.recording")}>
-                    <Button
-                      variant="ghost"
-                      type="button"
-                      class="voice-recording-stop"
-                      aria-label={t("composer.voice.stop")}
-                      onClick={stopVoiceRecording}
-                    >
-                      <StopIcon />
-                    </Button>
-                    <time class="voice-recording-duration" datetime={`PT${voiceElapsedSeconds()}S`}>
-                      {formatVoiceDuration(voiceElapsedSeconds())}
-                    </time>
-                    <MoreIcon />
-                  </fieldset>
-                </Show>
+                  <Mic aria-hidden="true" />
+                </Button>
               </Show>
               <Show
                 when={

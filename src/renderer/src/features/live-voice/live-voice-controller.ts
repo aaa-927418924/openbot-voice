@@ -17,6 +17,12 @@ export interface LiveVoiceState {
 export interface LiveVoiceTarget {
   agentId: string;
   threadId: string;
+  /**
+   * The machine running the agent: `\"local\"`, or a remote host. It is fixed when the session starts
+   * and named on every call, because stop and send-text have to reach the machine holding the
+   * microphone even after the window has moved to another server.
+   */
+  serverId: string;
 }
 
 type LiveVoiceApi = Pick<OpenBotDesktopApi["liveVoice"], "start" | "stop" | "onEvent" | "sendText">;
@@ -157,24 +163,29 @@ export function createLiveVoiceController(api: LiveVoiceApi | undefined, onState
     if (session.stopPending) return;
     session.stopPending = true;
     publish(session, error ? "error" : "stopping", { audioBlocked: false, microphoneBlocked });
-    void api.stop({ ...session.target, sessionId: session.id }).then(
-      () => {
-        if (active === session) {
+    void api
+      .stop(
+        { agentId: session.target.agentId, threadId: session.target.threadId, sessionId: session.id },
+        session.target.serverId,
+      )
+      .then(
+        () => {
+          if (active === session) {
+            session.stopPending = false;
+            session.error = session.startFailure;
+            publish(session, session.startFailure ? "error" : "stopping", {
+              audioBlocked: false,
+              microphoneBlocked,
+            });
+          }
+        },
+        (stopError: unknown) => {
+          if (active !== session) return;
           session.stopPending = false;
-          session.error = session.startFailure;
-          publish(session, session.startFailure ? "error" : "stopping", {
-            audioBlocked: false,
-            microphoneBlocked,
-          });
-        }
-      },
-      (stopError: unknown) => {
-        if (active !== session) return;
-        session.stopPending = false;
-        session.error = stopError instanceof Error ? stopError.message : session.error;
-        publish(session, "error", { audioBlocked: false, microphoneBlocked });
-      },
-    );
+          session.error = stopError instanceof Error ? stopError.message : session.error;
+          publish(session, "error", { audioBlocked: false, microphoneBlocked });
+        },
+      );
   }
 
   async function resumeAudio(): Promise<void> {
@@ -331,7 +342,15 @@ export function createLiveVoiceController(api: LiveVoiceApi | undefined, onState
       session.timer = window.setTimeout(() => {
         if (canContinue()) requestStop(session, "");
       }, START_TIMEOUT_MS);
-      const result = await api.start({ ...target, clientSessionId: session.id, sdpOffer });
+      const result = await api.start(
+        {
+          agentId: target.agentId,
+          threadId: target.threadId,
+          clientSessionId: session.id,
+          sdpOffer,
+        },
+        target.serverId,
+      );
       session.startResolved = true;
       if (!canContinue()) return;
       if (result.sessionId !== session.id) throw new Error("Live voice session identity changed.");
@@ -393,7 +412,10 @@ export function createLiveVoiceController(api: LiveVoiceApi | undefined, onState
       throw new Error("Live voice is not ready yet.");
     }
     if (text.length === 0) return;
-    await api.sendText({ ...session.target, sessionId: session.id, text });
+    await api.sendText(
+      { agentId: session.target.agentId, threadId: session.target.threadId, sessionId: session.id, text },
+      session.target.serverId,
+    );
   }
 
   function dispose(): void {
@@ -407,7 +429,12 @@ export function createLiveVoiceController(api: LiveVoiceApi | undefined, onState
       session.unsubscribe = undefined;
       active = undefined;
       if (api && session.startRequested)
-        void api.stop({ ...session.target, sessionId: session.id }).catch(() => undefined);
+        void api
+          .stop(
+            { agentId: session.target.agentId, threadId: session.target.threadId, sessionId: session.id },
+            session.target.serverId,
+          )
+          .catch(() => undefined);
     }
     audio = undefined;
   }

@@ -52,6 +52,7 @@ import { AGENT_IMPORT_ROUTES } from "@openbot/contracts/team-protocol/agent-impo
 import { decodeBrowserViewSessionResponse } from "@openbot/contracts/team-protocol/browser-view-v1";
 import { TEAM_MEMBER_LEAVE_CAPABILITY, type TeamCurrentCapability } from "@openbot/contracts/team-protocol/current";
 import type { HostRestartEvent } from "@openbot/contracts/team-protocol/host-update-v1";
+import type { LiveVoiceWireEvent } from "@openbot/contracts/team-protocol/live-voice-v1";
 import { decodeTeamProtocolV1CurrentHttpResponse } from "@openbot/contracts/team-protocol/v1-adapter";
 import { sourceText } from "@openbot/i18n/source";
 import { Deferred, Effect, Exit, Layer, Result, Scope, Semaphore } from "effect";
@@ -107,6 +108,7 @@ interface RemoteServerEvents {
   directoryInvalidated: [];
   changed: [servers: ServerSummary[]];
   agent: [serverId: string, event: AgentEvent, bufferedLive?: boolean];
+  liveVoice: [serverId: string, event: LiveVoiceWireEvent];
   presence: [serverId: string, snapshot: TeamPresenceSnapshot];
   directMessage: [serverId: string, event: DirectMessageRealtimeEvent];
   directTyping: [serverId: string, event: DirectTypingRealtimeEvent];
@@ -269,6 +271,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       onDirectMessage: (serverId, event) => this.emit("directMessage", serverId, event),
       onDirectTyping: (serverId, event) => this.emit("directTyping", serverId, event),
       onHostRestart: (serverId, event) => this.#applyHostRestart(serverId, event),
+      onLiveVoice: (serverId, event) => this.emit("liveVoice", serverId, event),
       onOffline: (serverId) => this.#presence.markOffline(serverId),
       onChanged: () => this.#emitChanged(),
     });
@@ -1627,7 +1630,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     yield* this.#store.replaceServers(servers);
   });
 
-  #handleWebRtcEvent(serverId: string, event: AgentEvent | TeamRealtimeEvent): void {
+  #handleWebRtcEvent(serverId: string, event: AgentEvent | TeamRealtimeEvent | LiveVoiceWireEvent): void {
     if (event.type === "team-identity") {
       this.#applyServerIdentity(serverId, event);
     } else if (event.type === "team-presence") {
@@ -1635,6 +1638,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     } else if (event.type === "team-direct-message") this.emit("directMessage", serverId, event);
     else if (event.type === "team-direct-typing") this.emit("directTyping", serverId, event);
     else if (event.type === "host-restart") this.#applyHostRestart(serverId, event);
+    else if (event.type === "live-voice") this.emit("liveVoice", serverId, event);
     else this.#background(this.#owned(this.#refresh.forward(serverId, event)));
   }
 

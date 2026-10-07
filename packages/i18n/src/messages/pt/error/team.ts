@@ -68,6 +68,7 @@ export const messages = {
   "error.team.agentImportUnsupported": "Esta conexão não oferece suporte à importação de agentes.",
   "error.team.liveActivityUnsupported":
     "Este computador anfitrião não pode atualizar a Atividade ao Vivo de um celular.",
+  "error.team.liveVoiceUnsupported": "Esta conexão não oferece suporte a conversas de voz ao vivo.",
   "error.team.agentUpdateTargetRequired": "É necessário informar um agente para atualizar.",
   "error.team.queueEditUnsupported": "Este cliente não oferece suporte à edição da fila.",
   "error.team.skillsUnsupported": "Esta conexão não oferece suporte a habilidades.",

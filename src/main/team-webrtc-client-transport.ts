@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import type { AgentEvent, TeamRealtimeEvent } from "@openbot/contracts/ipc";
 import { isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import { TEAM_CURRENT_CAPABILITIES } from "@openbot/contracts/team-protocol/current";
+import type { LiveVoiceWireEvent } from "@openbot/contracts/team-protocol/live-voice-v1";
 import { optionalTeamEvent } from "@openbot/contracts/team-protocol/optional-events";
 import { teamSideRouteCodec } from "@openbot/contracts/team-protocol/side-routes";
 import {
@@ -46,7 +47,7 @@ const MAXIMUM_TIMER_DELAY_MILLISECONDS = 2_147_483_647;
 interface TeamWebRtcClientTransportEvents {
   connected: [hostId: string];
   disconnected: [hostId: string];
-  event: [hostId: string, event: AgentEvent | TeamRealtimeEvent];
+  event: [hostId: string, event: AgentEvent | TeamRealtimeEvent | LiveVoiceWireEvent];
   path: [hostId: string, path: "p2p" | "relay"];
   error: [hostId: string, code: string, message: string];
   desktopData: [hostId: string, data: string | ArrayBuffer];

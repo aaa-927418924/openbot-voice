@@ -1,5 +1,4 @@
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
 import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -38,8 +37,6 @@ const resourcesPath = resolve(contentsPath, "Resources");
 const packagedIconPath = resolve(resourcesPath, "icon.icns");
 const sourceIconPath = resolve("build/icon-production.icns");
 const plistPath = resolve(contentsPath, "Info.plist");
-const whisperExecutablePath = resolve(resourcesPath, "whisper/bin/whisper-cli");
-const whisperModelPath = resolve(resourcesPath, "whisper/model/ggml-medium-q5_0.bin");
 const remoteRuntimePath = resolve(resourcesPath, "remote-desktop-runtime/darwin", architecture);
 const cuaDriverPath = resolve(resourcesPath, "cua-driver/darwin", architecture);
 // The database host is spawned by path as its own process, so it has to survive the asar unchanged.
@@ -55,9 +52,6 @@ await Promise.all([
   access(sourceIconPath),
   access(resolve(resourcesPath, "licenses/Electron-LICENSE")),
   access(resolve(resourcesPath, "licenses/LICENSES.chromium.html")),
-  access(resolve(resourcesPath, "licenses/OpenAI-Whisper-LICENSE")),
-  access(resolve(resourcesPath, "licenses/whisper.cpp-LICENSE")),
-  access(whisperExecutablePath),
   access(databaseHostPath),
   access(resolve(resourcesPath, "remote-desktop-runtime/licenses/Sunshine-GPL-3.0.txt")),
   access(resolve(resourcesPath, "remote-desktop-runtime/licenses/moonlight-web-stream-GPL-3.0.txt")),
@@ -78,6 +72,12 @@ await Promise.all([
 // Only this Mac's driver ships. A `from: build/cua-driver` that forgot the target would put the
 // Windows and Linux builds in every installer.
 await Promise.all(["win32", "linux"].map((name) => assertAbsent(resolve(resourcesPath, "cua-driver", name))));
+await assertAbsent(resolve(resourcesPath, "whisper"));
+await Promise.all(
+  ["OpenAI-Whisper-LICENSE", "whisper.cpp-LICENSE"].map((name) =>
+    assertAbsent(resolve(resourcesPath, "licenses", name)),
+  ),
+);
 // Each application carries one architecture's runtimes. The other one would only add size.
 const otherArchitecture = architecture === "arm64" ? "x64" : "arm64";
 await Promise.all(
@@ -107,12 +107,6 @@ if (!Array.isArray(plist.NSUserActivityTypes) || !plist.NSUserActivityTypes.incl
   throw new Error("The Universal Links activity type is missing.");
 }
 if (!plist.ElectronAsarIntegrity) throw new Error("ASAR integrity metadata is missing.");
-expectEqual(
-  plist.NSMicrophoneUsageDescription,
-  "OpenBot uses the microphone to transcribe voice prompts locally on this Mac.",
-  "microphone usage description",
-);
-
 const packageJson = JSON.parse(await readFile("package.json", "utf8"));
 if (!isDynamicRecord(packageJson)) throw new Error("package.json is not a JSON object.");
 expectEqual(plist.CFBundleShortVersionString, packageJson.version, "application version");
@@ -127,12 +121,6 @@ const executableArchitecture = run("file", [executablePath]);
 if (!executableArchitecture.includes(machOArchitecture)) {
   throw new Error(`Expected a ${machOArchitecture} executable: ${executableArchitecture}`);
 }
-const whisperArchitecture = run("file", [whisperExecutablePath]);
-if (!whisperArchitecture.includes(machOArchitecture)) {
-  throw new Error(`Expected a ${machOArchitecture} Whisper executable: ${whisperArchitecture}`);
-}
-if (existsSync(whisperModelPath)) throw new Error("The on-demand Whisper model must not be in the application.");
-
 for (const name of ["Sunshine.app", "web-server", "streamer"]) {
   run("codesign", ["--verify", "--strict", "--verbose=2", resolve(remoteRuntimePath, name)]);
 }

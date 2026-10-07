@@ -52,7 +52,9 @@ local access on the other side of it.
 
 ## Voice prompts or remote desktop are missing on Linux
 
-The Linux build has no Whisper transcription binary, so the microphone control is not drawn.
+Local Whisper dictation is disabled in every build. The Linux composer therefore has no microphone
+control; on Windows, the composer microphone starts Live Voice only when the selected Codex host
+advertises support.
 
 Remote desktop on Linux needs the x64 AppImage and an X11 session. Sunshine captures the X11 screen
 and sends mouse and keyboard input through the XTest extension. Under Wayland, or with no `DISPLAY`,

@@ -342,7 +342,6 @@ jobs:
         # error gets another attempt. Each attempt signs and notarizes again, about 6 minutes.
         shell: bash
         run: |
-          bun run voice:prepare-runtime
           bun run build
           log="$RUNNER_TEMP/electron-builder-mac.log"
           for attempt in 1 2 3; do

@@ -995,7 +995,13 @@ export function createRemoteTeamPeer(actions: ActionsRef) {
       if (decoded.status === "invalid")
         return yield* new RemotePeerError({ message: sourceText("error.remote.malformedEvent") });
       state.lastEventSequence = frame.sequence;
-      if (decoded.status === "known") yield* RemotePeerIO.use((io) => io.teamEvent(state.hostId, decoded.event));
+      // The peer's vocabulary is the frozen one plus the optional events that are part of it. A Live
+      // voice lifecycle belongs to the desktop client's own channel, which this browser and mobile
+      // transport has no Live voice UI for, so it is acknowledged and dropped rather than forwarded.
+      if (decoded.status === "known" && decoded.event.type !== "live-voice") {
+        const event = decoded.event;
+        yield* RemotePeerIO.use((io) => io.teamEvent(state.hostId, event));
+      }
       yield* sendEventAckEffect(state);
     })();
   }

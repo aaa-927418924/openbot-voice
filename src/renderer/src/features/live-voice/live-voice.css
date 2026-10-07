@@ -1,12 +1,9 @@
 .live-voice-dock {
   position: fixed;
   inset-inline-end: max(24px, env(safe-area-inset-right));
-  inset-block-end: max(24px, env(safe-area-inset-bottom));
+  /* The composer publishes this, so the panel rests on the composer instead of over it. */
+  inset-block-end: var(--live-voice-dock-bottom, max(24px, env(safe-area-inset-bottom)));
   z-index: calc(var(--openbot-layer-dropdown) - 1);
-}
-
-.live-voice-launcher {
-  box-shadow: var(--openbot-shadow-raised);
 }
 
 .live-voice-panel {
@@ -71,6 +68,21 @@
   width: 38px;
   height: 38px;
   flex: 0 0 auto;
+  padding: 0;
+  border-radius: var(--openbot-radius-pill);
+  background: var(--openbot-hover);
+  color: var(--openbot-text-secondary);
+}
+
+.live-voice-control svg {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+}
+
+.live-voice-control:hover:not(:disabled):not(.live-voice-muted) {
+  background: var(--openbot-border);
+  color: var(--openbot-text-primary);
 }
 
 .live-voice-muted {

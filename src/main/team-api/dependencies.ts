@@ -23,6 +23,7 @@ import type {
   CentralAuthUser,
   DirectMessageRealtimeEvent,
   DirectTypingRealtimeEvent,
+  LiveVoiceEvent,
   SidebarLayoutSnapshot,
   TeamPresenceSnapshot,
   UpdateHostIdentityInput,
@@ -112,11 +113,21 @@ type TeamApiAgentMethods = Pick<
   | "respondToApproval"
   | "respondToBrowserSecret"
   | "respondToBrowserTakeover"
+  | "startLiveVoice"
+  | "stopLiveVoice"
+  | "sendLiveVoiceText"
 >;
 
 export type TeamApiAgents = TeamApiAgentMethods & {
   on: (event: "event", listener: (event: AgentEvent) => void) => void;
   off: (event: "event", listener: (event: AgentEvent) => void) => void;
+  /**
+   * `live-voice-v1`: subscribes to a Live voice session's lifecycle. A method of its own rather than
+   * a second argument of `on`, because the two listeners take different event types and one
+   * overloaded method would make every stub implement the overload it does not use.
+   */
+  onLiveVoice: (listener: (event: LiveVoiceEvent) => void) => void;
+  offLiveVoice: (listener: (event: LiveVoiceEvent) => void) => void;
 };
 
 /**

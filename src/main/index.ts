@@ -446,7 +446,6 @@ function registerIpcHandlers({
   marketplaceAgents,
   agentTemplates,
   agentImport,
-  voice,
   dynamicIsland,
   cuaDriver,
   computerUsePermissionHelp,
@@ -486,8 +485,8 @@ function registerIpcHandlers({
       permissionHelp: computerUsePermissionHelp,
     }),
     ...providerIpcHandlers({ service, providerRuntimes, credentials: providerCredentials }),
-    ...voiceIpcHandlers({ voice }),
-    ...liveVoiceIpcHandlers({ service, getMainWindow }),
+    ...voiceIpcHandlers(),
+    ...liveVoiceIpcHandlers({ service, getMainWindow, remoteServers }),
     ...accountIpcHandlers({ centralAuth, host }),
     ...skillIpcHandlers({ skills, getMainWindow, translate: language.translate }),
     ...hostedSiteIpcHandlers({ hostedSites, remoteServers, getMainWindow, translate: language.translate }),
@@ -912,6 +911,18 @@ if (!hasSingleInstanceLock) {
       remoteServers.on("agent", (serverId, event, bufferedLive) => {
         forwardAgentEvent(serverId, event, bufferedLive);
       });
+      // A remote host runs the session this window started, so its lifecycle arrives as an optional
+      // team event rather than through the agent stream. The renderer matches it on the session id
+      // it holds, which is what keeps a host's own local session out of this window.
+      remoteServers.on("liveVoice", (_serverId, event) =>
+        forwardLiveVoiceEvent({
+          agentId: event.agentId,
+          threadId: event.threadId,
+          sessionId: event.sessionId,
+          status: event.status,
+          ...(event.message === undefined ? {} : { message: event.message }),
+        }),
+      );
       remoteServers.on("presence", forwardTeamPresence);
       remoteServers.on("directMessage", forwardDirectMessage);
       remoteServers.on("directTyping", forwardDirectTyping);

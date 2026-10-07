@@ -77,6 +77,7 @@
     "./team-protocol/context-reset-v1": "./src/team-protocol/context-reset-v1.ts",
     "./team-protocol/workspace-directory-v1": "./src/team-protocol/workspace-directory-v1.ts",
     "./team-protocol/live-activity-push-v1": "./src/team-protocol/live-activity-push-v1.ts",
+    "./team-protocol/live-voice-v1": "./src/team-protocol/live-voice-v1.ts",
     "./team-protocol/providers-v1": "./src/team-protocol/providers-v1.ts",
     "./team-protocol/providers-v2": "./src/team-protocol/providers-v2.ts",
     "./team-protocol/providers-v3": "./src/team-protocol/providers-v3.ts",

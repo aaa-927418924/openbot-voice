@@ -17,6 +17,7 @@ import {
   type DuplicateAgentResult,
   isAgentEvent,
   isTeamRealtimeEvent,
+  type LiveVoiceEvent,
   type SidebarLayoutSnapshot,
   type TeamMemberSummary,
   type TeamPresenceSnapshot,
@@ -35,6 +36,7 @@ import {
   HOSTED_SITES_CAPABILITY,
   isTeamCurrentCapability,
   LIVE_ACTIVITY_PUSH_CAPABILITY,
+  LIVE_VOICE_CAPABILITY,
   MCP_SERVERS_CAPABILITY,
   PROVIDERS_ADMIN_CAPABILITY,
   PROVIDERS_RUNTIMES_V2_CAPABILITY,
@@ -55,6 +57,7 @@ import {
   type HostRestartState,
 } from "@openbot/contracts/team-protocol/host-update-v1";
 import { teamHttpCodec } from "@openbot/contracts/team-protocol/http-codecs";
+import type { LiveVoiceWireEvent } from "@openbot/contracts/team-protocol/live-voice-v1";
 import { optionalTeamEvent } from "@openbot/contracts/team-protocol/optional-events";
 import { teamSideRouteCodec } from "@openbot/contracts/team-protocol/side-routes";
 import {
@@ -122,6 +125,7 @@ import { routeHostAdmin } from "./team-api/route-host-admin";
 import { routeHostUpdate } from "./team-api/route-host-update";
 import { routeHostedSites } from "./team-api/route-hosted-sites";
 import { routeLiveActivityPush } from "./team-api/route-live-activity-push";
+import { routeLiveVoice } from "./team-api/route-live-voice";
 import { routeMcpServers } from "./team-api/route-mcp";
 import { routeProviders } from "./team-api/route-providers";
 import { routeRemoteScreen } from "./team-api/route-remote-screen";
@@ -208,6 +212,7 @@ export class TeamApiServer {
   #heartbeat: ReturnType<typeof setInterval> | null = null;
   #lastClientUseAt: number | null = null;
   #agentListener: ((event: AgentEvent) => void) | null = null;
+  #liveVoiceListener: ((event: LiveVoiceEvent) => void) | null = null;
   #sidebarLayoutListener: ((layout: SidebarLayoutSnapshot) => void) | null = null;
   #localTypingAgentId: string | null = null;
   readonly #reportedUnrepresentableAgents = new Set<string>();
@@ -299,6 +304,8 @@ export class TeamApiServer {
     this.#port = port;
     this.#agentListener = (event) => this.#broadcastAgentEvent(event);
     this.#options.agents.on("event", this.#agentListener);
+    this.#liveVoiceListener = (event) => this.#broadcastAgentEvent(toLiveVoiceWireEvent(event));
+    this.#options.agents.onLiveVoice(this.#liveVoiceListener);
     this.#sidebarLayoutListener = (layout) => this.#broadcastAgentEvent({ type: "sidebar-layout-changed", layout });
     this.#options.sidebarLayout.on("changed", this.#sidebarLayoutListener);
     this.#heartbeat = setInterval(() => {
@@ -318,6 +325,8 @@ export class TeamApiServer {
     this.#heartbeat = null;
     if (this.#agentListener) this.#options.agents.off("event", this.#agentListener);
     this.#agentListener = null;
+    if (this.#liveVoiceListener) this.#options.agents.offLiveVoice(this.#liveVoiceListener);
+    this.#liveVoiceListener = null;
     if (this.#sidebarLayoutListener) this.#options.sidebarLayout.off("changed", this.#sidebarLayoutListener);
     this.#sidebarLayoutListener = null;
     for (const [client, connection] of this.#eventClients) {
@@ -673,6 +682,7 @@ export class TeamApiServer {
       if ((await routeHostAdmin(context, this.#options.admin)) === "handled") return;
       if ((await routeHostUpdate(context, this.#options.admin)) === "handled") return;
       if ((await routeContextReset(context, this.#options.agents, hidden)) === "handled") return;
+      if ((await routeLiveVoice(context, this.#options.agents, hidden)) === "handled") return;
       if ((await routeWorkspaceDirectory(context, this.#options.agents, hidden)) === "handled") return;
       if ((await routeAgentImport(context, this.#options.agentImport, newAgentHidden)) === "handled") return;
       if (
@@ -807,7 +817,11 @@ export class TeamApiServer {
     return encodeTeamProtocolV1CurrentEvent(visible, options);
   }
 
-  #broadcastAgentEvent(event: AgentEvent): void {
+  /**
+   * One broadcast of everything a member may read. A Live voice lifecycle is not an agent event and
+   * goes out as the optional `live-voice` event, so a client without the capability never sees it.
+   */
+  #broadcastAgentEvent(event: AgentEvent | LiveVoiceWireEvent): void {
     const filteredConversationPayloads = new Map<string, string>();
 
     for (const [client, connection] of this.#eventClients) {
@@ -879,6 +893,10 @@ export class TeamApiServer {
         if (!filtered) continue;
         outgoing = filtered;
       } else {
+        // `optionalTeamEvent` above has already sent every event outside the frozen vocabulary, and
+        // a live-voice one is always outside it. The check is what leaves the base union here, so
+        // the encoder below is handed the vocabulary it can actually describe.
+        if (event.type === "live-voice") continue;
         const payload = encodeEvent(event, encodingOptions) ?? undefined;
         if (!payload) continue;
         outgoing = payload;
@@ -1438,13 +1456,14 @@ function eventProtocol(capabilities: ReadonlySet<string>): 1 | 4 | 5 | 6 {
   return capabilities.has(TEAM_LOCAL_PROVIDERS_CAPABILITY) ? 5 : capabilities.has("opencode") ? 4 : 1;
 }
 
-function eventCapability(event: AgentEvent): TeamCurrentCapability | null {
+function eventCapability(event: AgentEvent | LiveVoiceWireEvent): TeamCurrentCapability | null {
   if (
     event.type === "channels-changed" ||
     event.type === "channel-memories-changed" ||
     event.type === "channel-routines-changed"
   )
     return "channel-chats-v1";
+  if (event.type === "live-voice") return LIVE_VOICE_CAPABILITY;
   if (event.type === "skills-changed") return SKILLS_EVENTS_CAPABILITY;
   if (event.type === "turn-progress") return TEAM_AGENT_ACTIVITY_CAPABILITY;
   if (event.type === "runtime-snapshot") return "agent-runtime-snapshots";
@@ -1452,4 +1471,9 @@ function eventCapability(event: AgentEvent): TeamCurrentCapability | null {
   if (event.type === "browser-changed" || event.type === "browser-control-changed") return "browser-control";
   if (event.type === "conversation-page") return "conversation-pagination";
   return null;
+}
+
+/** The service's own view of a session as the frozen wire event a client holding the capability reads. */
+function toLiveVoiceWireEvent(event: LiveVoiceEvent): LiveVoiceWireEvent {
+  return { type: "live-voice", ...event };
 }
