@@ -1121,7 +1121,7 @@ export function ChannelConversation(props: ChannelConversationProps) {
                             liveVoiceOwnsChannel() ? t("composer.liveVoice.stop") : t("composer.liveVoice.start")
                           }
                           aria-pressed={liveVoiceOwnsChannel() ? "true" : "false"}
-                          disabled={!liveVoiceTarget() || (liveVoiceBusy() && !liveVoiceOwnsChannel())}
+                          disabled={!liveVoiceOwnsChannel() && (!liveVoiceTarget() || liveVoiceBusy())}
                           title={
                             page().channel.members.length !== 1
                               ? t("channel.composer.liveVoice.oneAgentRequired")
