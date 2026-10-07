@@ -1,15 +1,22 @@
 import { Effect } from "effect";
 import { CodexAppServerClient } from "../src/backend/app-server-client";
 import { resolveCodexCli } from "../src/backend/cli";
+import { CodexHome } from "../src/backend/codex-home";
 import { runCauseEffect } from "../src/backend/effect-boundary";
 import { decodeAccountReadResult, decodeRecordResponse } from "../src/backend/protocol";
 
 const strict = process.argv.includes("--strict");
+// The app's userData directory, so doctor checks the fork's dedicated Codex home instead of
+// the ambient ~/.codex. Omitted keeps the legacy behavior for CI (`test:codex`).
+const userDataFlag = process.argv.findIndex((argument) => argument === "--user-data");
+const userDataPath = userDataFlag === -1 ? process.env.OPENBOT_USER_DATA : process.argv[userDataFlag + 1];
+const codexHome = userDataPath ? new CodexHome({ userDataPath }).ensure() : undefined;
+if (!codexHome) process.stdout.write("No --user-data given: checking the ambient Codex home.\n");
 let client: CodexAppServerClient | null = null;
 
 try {
   const cli = await runCauseEffect(resolveCodexCli());
-  client = new CodexAppServerClient(cli.executable, 10_000);
+  client = new CodexAppServerClient(cli.executable, 10_000, codexHome);
   client.start();
   await runCauseEffect(
     client.request(
@@ -41,6 +48,7 @@ try {
         executable: cli.executable,
         cliVersion: cli.version,
         appServer: "ready",
+        codexHome: codexHome ?? null,
         auth,
       },
       null,

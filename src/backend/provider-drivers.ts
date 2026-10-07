@@ -183,6 +183,12 @@ export interface ProviderClientContext {
    */
   servesModel?(modelId: string): boolean;
   /**
+   * The dedicated Codex home directory (CODEX_HOME and CODEX_SQLITE_HOME), resolved from the
+   * app's userData. Optional for the same reason as `reportMcpDrops`: without it the client
+   * spawns with the inherited environment, exactly as every client did before.
+   */
+  readonly codexHome?: string;
+  /**
    * A folder OpenBot owns for files it gives a provider process, outside every root an agent can
    * write. Optional for the same reason as `reportMcpDrops`.
    */
@@ -243,7 +249,8 @@ export const BUILT_IN_PROVIDER_DRIVERS: readonly BuiltInProviderDriver[] = [
     signIn: { kind: "browser" },
     codeSignIn: { kind: "codex-device" },
     resolveCli: resolveCodexCli,
-    createClient: (cli, requestTimeoutMs) => new CodexAppServerClient(cli.executable, requestTimeoutMs),
+    createClient: (cli, requestTimeoutMs, context) =>
+      new CodexAppServerClient(cli.executable, requestTimeoutMs, context.codexHome),
     authState: (account) => ({ kind: "chatgpt", email: account?.email ?? null }),
     validateAccount: (account) => {
       if (account.type !== "chatgpt") {

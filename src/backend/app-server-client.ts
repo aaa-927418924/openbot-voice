@@ -4,6 +4,7 @@ import { isNumber, isString } from "@openbot/contracts/runtime-values";
 import { Effect } from "effect";
 import { type AgentProvider, RequestTimeoutError } from "./agent-client";
 import { cliSpawnTarget } from "./cli";
+import { codexProcessEnv } from "./codex-home";
 import { JsonLineDecoder, LineTooLongError } from "./jsonl";
 import {
   type AppServerNotification,
@@ -45,16 +46,18 @@ export class CodexAppServerClient extends EventEmitter<ClientEvents> {
   readonly provider: AgentProvider = "codex";
   readonly #executable: string;
   readonly #requestTimeoutMs: number;
+  readonly #codexHome: string | undefined;
   #decoder = new JsonLineDecoder();
   readonly #pending = new Map<RequestId, PendingRequest>();
   #process: ChildProcessWithoutNullStreams | null = null;
   #nextId = 1;
   #stopping = false;
 
-  constructor(executable: string, requestTimeoutMs = 30_000) {
+  constructor(executable: string, requestTimeoutMs = 30_000, codexHome?: string) {
     super();
     this.#executable = executable;
     this.#requestTimeoutMs = requestTimeoutMs;
+    this.#codexHome = codexHome;
   }
 
   get running(): boolean {
@@ -69,7 +72,7 @@ export class CodexAppServerClient extends EventEmitter<ClientEvents> {
     const target = cliSpawnTarget(this.#executable, ["app-server", "--listen", "stdio://"]);
     const child = spawn(target.command, target.args, {
       stdio: ["pipe", "pipe", "pipe"],
-      env: process.env,
+      env: codexProcessEnv(this.#codexHome),
       windowsVerbatimArguments: target.windowsVerbatimArguments,
       windowsHide: true,
     });

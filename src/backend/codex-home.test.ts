@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -26,7 +26,6 @@ describe("CodexHome", () => {
 
   it("creates the directory on ensure", async () => {
     const home = new CodexHome({ userDataPath: await temporaryRoot() });
-    const { mkdir } = await import("node:fs/promises");
     await expect(mkdir(home.ensure(), { recursive: true })).resolves.toBeUndefined();
   });
 

@@ -58,6 +58,7 @@ import { toMcpGatewayFailed } from "../backend/agent/mcp-gateway";
 import { AgentLifecycleFailed, AgentService } from "../backend/agent-service";
 import { AgentStore } from "../backend/agent-store";
 import { BrowserHost } from "../backend/browser-host";
+import { CodexHome } from "../backend/codex-home";
 import { runCauseEffect } from "../backend/effect-boundary";
 import { MailboxStore } from "../backend/mailbox-store";
 import { McpOAuth } from "../backend/mcp-oauth-provider";
@@ -1094,6 +1095,8 @@ export async function createApplicationServices({
       // service asks for one at each hand-off; only a test the user pressed may open a browser.
       mcpOAuth,
       providerStateDirectory: join(app.getPath("userData"), "provider-state"),
+      // The dedicated Codex state every Codex process uses, so the fork never touches ~/.codex.
+      codexHome: new CodexHome({ userDataPath: app.getPath("userData") }).path,
       // Paths only: `gh` and `git` read the token from the files the connection keeps current.
       agentEnvironment: (inherited) => githubConnector.agentEnvironment(inherited),
     },
