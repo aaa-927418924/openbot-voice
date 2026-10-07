@@ -1286,6 +1286,50 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "General" })).not.toBeInTheDocument());
   });
 
+  it("hides a server from the rail menu and shows it again from settings", async () => {
+    const remote = {
+      ...testServer("studio", false),
+      name: "Design studio",
+      kind: "remote" as const,
+      state: "online" as const,
+      remoteDesktopAvailable: true,
+      role: "admin" as const,
+    };
+    vi.mocked(window.openbot.servers.list).mockResolvedValue([testServer("local", true), remote]);
+    vi.mocked(window.openbot.servers.refreshIdentity).mockResolvedValue(remote);
+    vi.mocked(window.openbot.servers.getPresenceFor).mockResolvedValue({
+      serverId: remote.id,
+      members: [],
+      updatedAt: "2026-08-20T10:00:00.000Z",
+    });
+
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await fireEvent.contextMenu(screen.getByRole("button", { name: "Design studio server" }), {
+      clientX: 32,
+      clientY: 120,
+    });
+    await fireEvent.pointerUp(screen.getByRole("menuitem", { name: "Hide server" }), { button: 0 });
+
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Design studio server" })).not.toBeInTheDocument());
+    // Hiding is a display preference on this computer: the server is never left or selected away.
+    expect(JSON.parse(window.localStorage.getItem("openbot.hidden-server-ids") ?? "[]")).toEqual(["studio"]);
+    expect(window.openbot.servers.select).not.toHaveBeenCalled();
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Settings" }));
+    const dialog = await screen.findByRole("dialog", { name: "General" });
+    expect(within(dialog).getByText("Design studio")).toBeInTheDocument();
+    await fireEvent.click(within(dialog).getByRole("button", { name: "Show" }));
+    await waitFor(() =>
+      expect(JSON.parse(window.localStorage.getItem("openbot.hidden-server-ids") ?? "[]")).toEqual([]),
+    );
+    // The modal makes the workspace inert, so the rail only answers the accessibility tree again
+    // once the settings dialog is closed.
+    await fireEvent.click(within(dialog).getByRole("button", { name: "Close settings" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "General" })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Design studio server" })).toBeInTheDocument());
+  });
+
   it("keeps the local server name draft during server list updates", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });

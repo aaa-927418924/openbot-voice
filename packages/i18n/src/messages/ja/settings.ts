@@ -30,6 +30,12 @@ export const messages = {
   "settings.restoreWorkspace.description": "前回のセッションのワークスペースとタスクを開きます。",
   "settings.externalLinks.title": "外部リンクの開き方",
   "settings.externalLinks.description": "会話内のリンクをどこで開くかを選びます。",
+  "settings.hiddenServers.title": "非表示のサーバー",
+  "settings.hiddenServers.description":
+    "レールとメニューから隠したサーバーです。非表示にしてもサーバーから退出したり削除されたりすることはありません。",
+  "settings.hiddenServers.show": "表示",
+  "settings.hiddenServers.showAll": "すべて表示",
+  "settings.hiddenServers.empty": "非表示のサーバーはありません。",
   "settings.externalLinks.defaultBrowser": "既定のブラウザ",
   "settings.externalLinks.openbot": "OpenBot",
   "settings.sendShortcut.title": "送信キー",

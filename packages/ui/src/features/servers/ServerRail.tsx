@@ -264,6 +264,7 @@ export function ServerRail(props: ServerRailProps) {
               onSetNotificationLevel={props.onSetNotificationLevel}
               onOpenUsage={props.onOpenUsage}
               onOpenSchedule={props.onOpenSchedule}
+              onHideServer={props.onHideServer}
             />
           )}
         </For>
@@ -311,6 +312,7 @@ export function ServerRail(props: ServerRailProps) {
                     onSetNotificationLevel={props.onSetNotificationLevel}
                     onOpenUsage={props.onOpenUsage}
                     onOpenSchedule={props.onOpenSchedule}
+                    onHideServer={props.onHideServer}
                     onMove={(direction) => moveServer(server().id, direction)}
                   />
                 </li>
@@ -448,6 +450,7 @@ function ServerRailButton(
                 onOpenUsage={props.onOpenUsage}
                 onOpenSchedule={props.onOpenSchedule}
                 onOpenSettings={props.onOpenSettings}
+                onHideServer={props.onHideServer}
               />
             </ContextMenu.Content>
           </ContextMenu.Portal>

@@ -233,6 +233,7 @@ export function ServerMenu(props: ServerMenuProps) {
                           onOpenUsage={props.onOpenUsage}
                           onOpenSchedule={props.onOpenSchedule}
                           onOpenSettings={props.onOpenSettings}
+                          onHideServer={props.onHideServer}
                         />
                       </DropdownMenu.SubContent>
                     </DropdownMenu.Portal>
@@ -259,6 +260,7 @@ export function ServerMenu(props: ServerMenuProps) {
                       onOpenUsage={props.onOpenUsage}
                       onOpenSchedule={props.onOpenSchedule}
                       onOpenSettings={props.onOpenSettings}
+                      onHideServer={props.onHideServer}
                     />
                   </>
                 )}
@@ -332,6 +334,7 @@ export function ServerMenu(props: ServerMenuProps) {
                   onOpenUsage={props.onOpenUsage}
                   onOpenSchedule={props.onOpenSchedule}
                   onOpenSettings={props.onOpenSettings}
+                  onHideServer={props.onHideServer}
                 />
               )}
             </Show>
