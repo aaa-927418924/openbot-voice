@@ -71,10 +71,14 @@ export async function routeChannels(
     if (!channels || !capabilities.has(CHANNEL_HISTORY_DELETE_CAPABILITY))
       throw new HttpError(400, sourceText("error.team.channelHistoryUnsupported"));
     const body = await readJson(request);
-    if (deleteMessage) {
-      await runCauseEffect(channels.deleteChannelMessage(parseDeleteChannelMessage(body)));
-    } else {
-      await runCauseEffect(channels.clearChannelHistory(parseClearChannelHistory(body)));
+    try {
+      if (deleteMessage) {
+        await runCauseEffect(channels.deleteChannelMessage(parseDeleteChannelMessage(body)));
+      } else {
+        await runCauseEffect(channels.clearChannelHistory(parseClearChannelHistory(body)));
+      }
+    } catch (error) {
+      throw error instanceof Error ? channelHistoryMutationHttpError(error) : error;
     }
     return json(200, {});
   }
@@ -101,6 +105,18 @@ export async function routeChannels(
     200,
     await runCauseEffect(channels.command(input, { id: member.id, name: member.name ?? "Team member" })),
   );
+}
+
+/** Keep known history conflicts actionable without exposing unexpected backend failures. */
+function channelHistoryMutationHttpError(error: Error): Error {
+  const message = error.message;
+  const expected = [
+    sourceText("error.backend.channelArchived"),
+    sourceText("error.backend.channelBoundaryProtected"),
+    sourceText("error.backend.channelHistoryBusy"),
+    sourceText("error.agent.cannotDeletePending"),
+  ];
+  return expected.includes(message) ? new HttpError(409, message) : error;
 }
 
 async function routeChannelSettings(

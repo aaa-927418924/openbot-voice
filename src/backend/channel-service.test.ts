@@ -2388,6 +2388,52 @@ describe("channel transcript history mutations", () => {
     expect(service.store.messages("channel-1").map((message) => message.id)).toEqual(["channel-keep"]);
   });
 
+  it("deletes an unrelated row while channel work runs and protects its active source message", async () => {
+    const activeTask: ChannelTask = {
+      id: "active-task",
+      channelId: "channel-1",
+      parentTaskId: null,
+      rootTaskId: "active-task",
+      ownerAgentId: "agent-a",
+      requestMessageId: "active-request",
+      instruction: "Continue the active request.",
+      attachmentDraftIds: [],
+      expectedResult: "Finish the active request.",
+      sourceMessageIds: ["active-request"],
+      dependencies: [],
+      resources: [],
+      state: "running",
+      revision: 0,
+      assignmentCount: 1,
+      error: null,
+    };
+    const activeRequest = { ...transcriptMessage("active-request", "Keep the active request."), taskId: activeTask.id };
+    service.store.update(service.store.get("channel-1"), {
+      messages: [transcriptMessage("unrelated-history", "Remove this older row."), activeRequest],
+      tasks: [activeTask],
+    });
+
+    await runCauseEffect(
+      service.deleteChannelMessage({
+        channelId: "channel-1",
+        messageId: "unrelated-history",
+        operationId: operationId(),
+      }),
+    );
+
+    expect(service.store.message("channel-1", "unrelated-history")).toBeNull();
+    await expect(
+      runCauseEffect(
+        service.deleteChannelMessage({
+          channelId: "channel-1",
+          messageId: "active-request",
+          operationId: operationId(),
+        }),
+      ),
+    ).rejects.toThrow();
+    expect(service.store.message("channel-1", "active-request")).not.toBeNull();
+  });
+
   it("does not restore an individually deleted message from the owning agent thread", async () => {
     const threadId = service.store.context("channel-1", "agent-a").threadId;
     const snapshot = {

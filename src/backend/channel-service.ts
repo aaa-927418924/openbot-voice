@@ -213,10 +213,34 @@ export class ChannelService {
     this.#serialize(
       input.channelId,
       Effect.gen({ self: this }, function* () {
-        yield* this.assertHistoryMutationSafe(input.channelId);
-        const message = yield* channelSync(() => this.store.message(input.channelId, input.messageId));
+        const {
+          channel: channelRecord,
+          message,
+          tasks,
+          assignments,
+        } = yield* Effect.all({
+          channel: channelSync(() => this.store.get(input.channelId)),
+          message: channelSync(() => this.store.message(input.channelId, input.messageId)),
+          tasks: channelSync(() => this.store.tasks(input.channelId)),
+          assignments: channelSync(() => this.store.assignments(input.channelId)),
+        });
+        if (channelRecord.archived)
+          return yield* channelFailure(new Error(sourceText("error.backend.channelArchived")));
         if (message && parseLiveVoiceSessionMarker(message.message))
           return yield* channelFailure(new Error(sourceText("error.backend.channelBoundaryProtected")));
+        const activeTaskIds = new Set([
+          ...tasks.filter((task) => !terminal(task)).map((task) => task.id),
+          ...assignments.filter(activeAssignment).map((assignment) => assignment.taskId),
+        ]);
+        const messageIsUsedByActiveTask =
+          (message?.taskId !== null && message?.taskId !== undefined && activeTaskIds.has(message.taskId)) ||
+          tasks.some(
+            (task) =>
+              activeTaskIds.has(task.id) &&
+              (task.requestMessageId === input.messageId || task.sourceMessageIds.includes(input.messageId)),
+          );
+        if (messageIsUsedByActiveTask || this.hooks.liveVoiceActive?.(input.channelId))
+          return yield* channelFailure(new Error(sourceText("error.backend.channelHistoryBusy")));
         yield* this.mailbox
           .deleteChannelMessage(input.channelId, input.messageId)
           .pipe(Effect.mapError(channelFailure));

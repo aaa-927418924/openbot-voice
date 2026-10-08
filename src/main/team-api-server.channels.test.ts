@@ -1,8 +1,9 @@
-import { type ChannelMessage, decodeChannelPage } from "@openbot/contracts/ipc";
+import { type ChannelMessage, type ChannelTask, decodeChannelPage } from "@openbot/contracts/ipc";
 import {
   CLEAR_CHANNEL_HISTORY_ROUTE,
   DELETE_CHANNEL_MESSAGE_ROUTE,
 } from "@openbot/contracts/team-protocol/channel-history-delete-v1";
+import { sourceText } from "@openbot/i18n/source";
 import { Effect } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 import { stores } from "../backend/agent-service-test-harness";
@@ -122,7 +123,48 @@ describe("Team API channel access", () => {
     expect(deletedMessage.status).toBe(200);
     expect(channels.store.message("channel-1", "channel-history-row")).toBeNull();
 
-    channels.store.update(channels.store.get("channel-1"), { messages: [channelMessage] });
+    const activeTask: ChannelTask = {
+      id: "active-task",
+      channelId: "channel-1",
+      parentTaskId: null,
+      rootTaskId: "active-task",
+      ownerAgentId: "agent-1",
+      requestMessageId: "active-request",
+      instruction: "Continue the active request.",
+      attachmentDraftIds: [],
+      expectedResult: "Finish the active request.",
+      sourceMessageIds: ["active-request"],
+      dependencies: [],
+      resources: [],
+      state: "running",
+      revision: 0,
+      assignmentCount: 1,
+      error: null,
+    };
+    channels.store.update(channels.store.get("channel-1"), {
+      messages: [
+        {
+          ...channelMessage,
+          id: "active-request",
+          taskId: activeTask.id,
+          message: { ...channelMessage.message, id: "active-request" },
+        },
+      ],
+      tasks: [activeTask],
+    });
+    const blockedMessage = await fetch(`${base}${DELETE_CHANNEL_MESSAGE_ROUTE}`, {
+      method: "POST",
+      headers: historyHeaders,
+      body: JSON.stringify({ channelId: "channel-1", messageId: "active-request", operationId: "active-delete" }),
+    });
+    expect(blockedMessage.status).toBe(409);
+    expect(await blockedMessage.json()).toMatchObject({ error: sourceText("error.backend.channelHistoryBusy") });
+    expect(channels.store.message("channel-1", "active-request")).not.toBeNull();
+
+    channels.store.update(channels.store.get("channel-1"), {
+      messages: [channelMessage],
+      tasks: [{ ...activeTask, state: "completed" }],
+    });
     const clearedHistory = await fetch(`${base}${CLEAR_CHANNEL_HISTORY_ROUTE}`, {
       method: "POST",
       headers: historyHeaders,
