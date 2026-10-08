@@ -192,7 +192,7 @@ export function encodeTeamProtocolV6CurrentHttpRequest(
       const voiceField = codexLiveVoiceField(value);
       const baseValue = withoutCodexLiveVoice(value);
       const projected =
-        Object.keys(voiceField).length > 0 && isDynamicRecord(baseValue) && Object.keys(baseValue).length === 0
+        Object.keys(voiceField).length > 0 && isEmptyAgentUpdateBase(baseValue, path)
           ? {}
           : JSON.parse(encodeTeamProtocolV6BaseCurrentHttpRequest(method, path, baseValue, options));
       return JSON.stringify({ ...projected, ...voiceField });
@@ -238,8 +238,7 @@ export function decodeTeamProtocolV6CurrentHttpRequest(
       agentLiveVoiceUpdate &&
       isDynamicRecord(value) &&
       value.codexLiveVoice !== undefined &&
-      isDynamicRecord(baseValue) &&
-      Object.keys(baseValue).length === 0;
+      isEmptyAgentUpdateBase(baseValue, path);
     const decoded = voiceOnlyUpdate
       ? {}
       : options.preserveSemanticTags
@@ -389,6 +388,25 @@ const V6_REASONING_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 
 function isAgentUpdateRoute(method: string, path: string): boolean {
   return method === "PATCH" && /^\/v1\/agents\/[^/]+$/u.test(new URL(path, "http://openbot.invalid").pathname);
+}
+
+/**
+ * The agent update input carries `agentId`, and the Team route also carries it in the path.
+ * After removing the optional voice field, that path-only metadata must count as an empty base patch
+ * so the frozen base codec does not reject an otherwise valid voice-only update.
+ */
+function isEmptyAgentUpdateBase(value: unknown, path: string): boolean {
+  if (!isDynamicRecord(value)) return false;
+  const keys = Object.keys(value);
+  if (keys.length === 0) return true;
+  if (keys.length !== 1 || keys[0] !== "agentId" || !isString(value.agentId)) return false;
+  const match = new URL(path, "http://openbot.invalid").pathname.match(/^\/v1\/agents\/([^/]+)$/u);
+  if (!match?.[1]) return false;
+  try {
+    return value.agentId === decodeURIComponent(match[1]);
+  } catch {
+    return false;
+  }
 }
 
 function isAgentSummaryResponseRoute(method: string, path: string): boolean {

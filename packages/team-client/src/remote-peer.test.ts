@@ -11,7 +11,9 @@ import {
 } from "@openbot/contracts/team-protocol";
 import { CHANNEL_ROUTES } from "@openbot/contracts/team-protocol/channels-v1";
 import { STORAGE_ROUTES } from "@openbot/contracts/team-protocol/storage-v1";
+import { encodeTeamProtocolV6WebRtcHttpResponse } from "@openbot/contracts/team-protocol/v6-webrtc-adapter";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import agentSummaries from "../../contracts/src/team-protocol/fixtures/v6/host-http-response.json";
 import { createEd25519Identity, signEd25519 } from "./ed25519";
 import { runTeamEffect } from "./effect-boundary";
 import {
@@ -60,6 +62,49 @@ describe("browser remote peer recovery", () => {
     expect(onHostStreamData).toHaveBeenCalledOnce();
     await expect(network.runtime.sendHostStreamData("frame")).rejects.toThrow("offline");
   });
+
+  it("projects the public-web voice update body through the V6 WebRTC adapter", async () => {
+    const requests: unknown[] = [];
+    const agent = agentSummaries[0];
+    if (!agent) throw new Error("The V6 agent fixture is missing.");
+    const path = "/v1/agents/agent-one?source=web-settings";
+    const network = await setupNetwork({
+      onTeamRequest: (payload) => requests.push(payload),
+      responseBody: encodeTeamProtocolV6WebRtcHttpResponse(
+        "PATCH",
+        path,
+        200,
+        { ...agent, id: "agent-one", codexLiveVoice: "maple" },
+        { agentLiveVoiceSettings: true },
+      ),
+    });
+    await network.connect();
+
+    try {
+      const result = await network.runtime.execute({
+        id: "voice-setting",
+        type: "request",
+        method: "PATCH",
+        path,
+        body: { agentId: "agent-one", codexLiveVoice: "maple" },
+      });
+
+      expect(result).toMatchObject({ ok: true, status: 200 });
+      expect(requests).toHaveLength(1);
+      const request = requests[0];
+      if (!isDynamicRecord(request) || !isDynamicRecord(request.body))
+        throw new Error("The voice request was not sent.");
+      expect(request).toMatchObject({
+        method: "PATCH",
+        path,
+        body: { codexLiveVoice: "maple" },
+      });
+      expect(request.body).not.toHaveProperty("agentId");
+    } finally {
+      await network.runtime.dispose();
+    }
+  });
+
   it.each<{ path: string; method: string; body: TeamProtocolV2Json; response: TeamProtocolV2Json }>([
     {
       path: CHANNEL_ROUTES.list,
@@ -988,6 +1033,7 @@ async function setupNetwork(
     beforeBootstrap?: (hostId: string) => Promise<void>;
     beforeAnswer?: () => Promise<void>;
     beforeResponse?: () => Promise<void>;
+    onTeamRequest?: (payload: unknown) => void;
     responseBody?: TeamProtocolV2Json;
     responseFile?: TeamProtocolV2Json;
   } = {},
@@ -1106,6 +1152,7 @@ async function setupNetwork(
       } else if (frame.type === "auth-complete") {
         this.receive(JSON.stringify({ ...frame, type: "auth-confirmed" }));
       } else if (frame.type === "request") {
+        if (isDynamicRecord(frame.payload)) options.onTeamRequest?.(frame.payload);
         if (isDynamicRecord(frame.payload) && frame.payload.path === "/v1/agents/slow/conversation") {
           slowRequest.resolve();
           return;

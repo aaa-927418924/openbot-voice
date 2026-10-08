@@ -44,7 +44,7 @@ describe("Team API compatibility negotiation", () => {
     await Effect.runPromise(
       requestJson("https://team.example", path, (value) => value, {
         method: "PATCH",
-        body: { codexLiveVoice: "maple" },
+        body: { agentId: "agent-voice", codexLiveVoice: "maple" },
         protocol: 1,
         appVersion: "0.4.0",
         capabilities: TEAM_CURRENT_CAPABILITIES.filter(
@@ -58,6 +58,7 @@ describe("Team API compatibility negotiation", () => {
     expect(request?.headers.get(TEAM_PROTOCOL_VERSION_HEADER)).toBe("6");
     expect(request?.headers.get(TEAM_CAPABILITIES_HEADER)?.split(",")).toContain(AGENT_LIVE_VOICE_SETTINGS_CAPABILITY);
     expect(request?.body).toMatchObject({ codexLiveVoice: "maple" });
+    expect(request?.body).not.toHaveProperty("agentId");
   });
 
   it("sends a selected GPT Live voice only to hosts that advertise the setting", async () => {
@@ -79,12 +80,13 @@ describe("Team API compatibility negotiation", () => {
 
       const request = fixture.manager.request(serverId, path, (value) => value, {
         method: "PATCH",
-        body: { name: "Voice", codexLiveVoice: "maple" },
+        body: { agentId: "agent-voice", name: "Voice", codexLiveVoice: "maple" },
       });
 
       if (capabilities.length > 0) {
         await runCauseEffect(request);
         expect(stub.requests(path)[0]?.body).toMatchObject({ name: "Voice", codexLiveVoice: "maple" });
+        expect(stub.requests(path)[0]?.body).not.toHaveProperty("agentId");
         expect(stub.requests(path)[0]?.headers.get(TEAM_PROTOCOL_VERSION_HEADER)).toBe("6");
       } else {
         await expect(runCauseEffect(request)).rejects.toThrow("Live voice conversations are not supported");

@@ -64,10 +64,15 @@ describe("TeamApiServer agents", () => {
       [TEAM_PROTOCOL_VERSION_HEADER]: "6",
       [TEAM_CAPABILITIES_HEADER]: TEAM_CURRENT_CAPABILITIES.join(","),
     };
-    const path = `${base}/v1/agents/${agent.id}`;
-    const updated = await fetch(path, { method: "PATCH", headers, body: JSON.stringify({ codexLiveVoice: "maple" }) });
+    const path = `${base}/v1/agents/${encodeURIComponent(agent.id)}?source=web-settings`;
+    const updated = await fetch(path, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ agentId: agent.id, codexLiveVoice: "maple" }),
+    });
     expect(updated.status).toBe(200);
     expect(await updated.json()).toMatchObject({ codexLiveVoice: "maple" });
+    expect(store.list().find(({ id }) => id === agent.id)?.codexLiveVoice).toBe("maple");
 
     const oldClientHeaders = {
       ...headers,
@@ -80,7 +85,7 @@ describe("TeamApiServer agents", () => {
     const ignoredUpdate = await fetch(path, {
       method: "PATCH",
       headers: oldClientHeaders,
-      body: JSON.stringify({ codexLiveVoice: "cedar" }),
+      body: JSON.stringify({ agentId: agent.id, codexLiveVoice: "cedar" }),
     });
     expect(ignoredUpdate.status).toBe(400);
     expect(store.list()[0]?.codexLiveVoice).toBe("maple");

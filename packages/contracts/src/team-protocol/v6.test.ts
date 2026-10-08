@@ -17,6 +17,7 @@ import {
   createTeamProtocolV6Event,
   decodeTeamProtocolV6CurrentEvent,
   decodeTeamProtocolV6CurrentEventPayload,
+  decodeTeamProtocolV6WebRtcHttpRequest,
   decodeTeamProtocolV6WebRtcHttpResponse,
   encodeTeamProtocolV6CurrentEvent,
   encodeTeamProtocolV6WebRtcHttpRequest,
@@ -25,15 +26,33 @@ import {
 
 describe("Team protocol v6", () => {
   it("carries the optional Codex Live voice only for hosts that advertise the setting", () => {
-    const patch = { codexLiveVoice: "maple" };
-    const route = "/v1/agents/agent-cursor";
+    const patch = { agentId: "agent-cursor", codexLiveVoice: "maple" };
+    const route = "/v1/agents/agent-cursor?source=settings";
+    const voice = { codexLiveVoice: "maple" };
     const encodedRequest = JSON.parse(
       encodeTeamProtocolV6CurrentHttpRequest("PATCH", route, patch, { agentLiveVoiceSettings: true }),
     );
-    expect(encodedRequest).toMatchObject(patch);
+    expect(encodedRequest).toEqual(voice);
     expect(
       decodeTeamProtocolV6CurrentHttpRequest("PATCH", route, encodedRequest, { agentLiveVoiceSettings: true }),
-    ).toMatchObject(patch);
+    ).toEqual(voice);
+    expect(decodeTeamProtocolV6CurrentHttpRequest("PATCH", route, patch, { agentLiveVoiceSettings: true })).toEqual(
+      voice,
+    );
+    expect(encodeTeamProtocolV6WebRtcHttpRequest("PATCH", route, patch, { agentLiveVoiceSettings: true })).toEqual(
+      voice,
+    );
+    expect(decodeTeamProtocolV6WebRtcHttpRequest("PATCH", route, voice, { agentLiveVoiceSettings: true })).toEqual(
+      voice,
+    );
+    expect(() =>
+      encodeTeamProtocolV6CurrentHttpRequest(
+        "PATCH",
+        route,
+        { agentId: "different-agent", codexLiveVoice: "maple" },
+        { agentLiveVoiceSettings: true },
+      ),
+    ).toThrow();
     expect(
       JSON.parse(encodeTeamProtocolV6CurrentHttpRequest("PATCH", route, { name: "Explorer", ...patch })),
     ).not.toHaveProperty("codexLiveVoice");
