@@ -36,6 +36,7 @@ import {
   TEAM_PROTOCOL_VERSION_HEADER,
   teamProtocolUpdateDirection,
 } from "@openbot/contracts/team-protocol/v1";
+import { TEAM_PROTOCOL_V6 } from "@openbot/contracts/team-protocol/v6";
 import { sourceText } from "@openbot/i18n/source";
 import { Deferred, Effect, Result } from "effect";
 import { decodeRemoteDesktopCapabilities } from "./remote-device-decoding";
@@ -286,8 +287,13 @@ export class RemoteServerClient {
     capabilities?: readonly TeamCurrentCapability[];
     preserveSemanticTags?: boolean;
   } {
+    // GPT Live voice is an additive V6 field. A host advertising the setting must receive the V6
+    // envelope even if a stale compatibility record still names an older protocol.
+    const negotiatedProtocol = compatibility.capabilities.includes(AGENT_LIVE_VOICE_SETTINGS_CAPABILITY)
+      ? Math.max(TEAM_PROTOCOL_V6, compatibility.negotiatedProtocol ?? TEAM_PROTOCOL_V6)
+      : (compatibility.negotiatedProtocol ?? undefined);
     return {
-      protocol: compatibility.negotiatedProtocol ?? undefined,
+      protocol: negotiatedProtocol,
       appVersion: this.#appVersion ?? undefined,
       capabilities: this.#appVersion ? TEAM_CURRENT_CAPABILITIES : undefined,
       preserveSemanticTags: supportsTeamSemanticTags(compatibility.capabilities),

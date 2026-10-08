@@ -70,6 +70,11 @@ const MAXIMUM_BUFFERED_EVENTS = 2_000;
 /** A Moonlight session and a few browser views, which is more than a member watches at once. */
 const MAXIMUM_DESKTOP_STREAMS = 6;
 
+/** GPT Live voice is carried by the V6 adapters, so advertising its capability selects V6. */
+function usesTeamProtocolV6(capabilities: ReadonlySet<string>): boolean {
+  return capabilities.has(TEAM_CURSOR_CLINE_CAPABILITY) || capabilities.has(AGENT_LIVE_VOICE_SETTINGS_CAPABILITY);
+}
+
 export interface TeamWebRtcHostPeerOptions {
   bridge: TeamWebRtcBridge;
   store: TeamStore;
@@ -596,7 +601,7 @@ export class TeamWebRtcHostPeer {
                 JSON.stringify(
                   sideRoute
                     ? sideRoute.request(input.path, input.body)
-                    : (peerCapabilities.has(TEAM_CURSOR_CLINE_CAPABILITY)
+                    : (usesTeamProtocolV6(peerCapabilities)
                         ? decodeTeamProtocolV6WebRtcHttpRequest
                         : peerCapabilities.has(TEAM_LOCAL_PROVIDERS_CAPABILITY)
                           ? decodeTeamProtocolV5WebRtcHttpRequest
@@ -616,7 +621,7 @@ export class TeamWebRtcHostPeer {
           headers: {
             Authorization: `Bearer ${this.#localSessionToken}`,
             "Content-Type": uploaded?.mimeType ?? input.contentType ?? "application/json",
-            "OpenBot-Protocol-Version": peerCapabilities.has(TEAM_CURSOR_CLINE_CAPABILITY)
+            "OpenBot-Protocol-Version": usesTeamProtocolV6(peerCapabilities)
               ? "6"
               : peerCapabilities.has(TEAM_LOCAL_PROVIDERS_CAPABILITY)
                 ? "5"
@@ -671,7 +676,7 @@ export class TeamWebRtcHostPeer {
             status: response.status,
             body: sideRoute
               ? sideRoute.response(input.path, response.status, body)
-              : (peerCapabilities.has(TEAM_CURSOR_CLINE_CAPABILITY)
+              : (usesTeamProtocolV6(peerCapabilities)
                   ? encodeTeamProtocolV6WebRtcHttpResponse
                   : peerCapabilities.has(TEAM_LOCAL_PROVIDERS_CAPABILITY)
                     ? encodeTeamProtocolV5WebRtcHttpResponse
@@ -721,7 +726,7 @@ export class TeamWebRtcHostPeer {
                 sequence: this.#nextEventSequence,
                 payload: channel,
               })
-            : (this.#peerCapabilities.has(TEAM_CURSOR_CLINE_CAPABILITY)
+            : (usesTeamProtocolV6(this.#peerCapabilities)
                 ? createTeamProtocolV6Event
                 : this.#peerCapabilities.has(TEAM_LOCAL_PROVIDERS_CAPABILITY)
                   ? createTeamProtocolV5Event

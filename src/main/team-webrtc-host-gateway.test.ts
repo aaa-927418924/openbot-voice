@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import {
+  AGENT_LIVE_VOICE_SETTINGS_CAPABILITY,
   TEAM_AGENT_ACTIVITY_CAPABILITY,
   TEAM_MODEL_SCOPED_USAGE_CAPABILITY,
 } from "@openbot/contracts/team-protocol/current";
@@ -450,6 +451,24 @@ describe("TeamWebRtcHostGateway", () => {
       result: { status: 200, body: opencodeAgents },
     });
     expect(localRequests).toContainEqual({ path: "/v1/agents", protocol: "4" });
+    bridge.emit(
+      "data",
+      "peer-1",
+      "rpc",
+      encodeTeamProtocolV2Frame({
+        version: 2,
+        type: "request",
+        requestId: "live-voice-setting",
+        operation: "http.request",
+        payload: {
+          method: "PATCH",
+          path: "/v1/agents/research",
+          body: { codexLiveVoice: "maple" },
+          capabilities: [AGENT_LIVE_VOICE_SETTINGS_CAPABILITY],
+        },
+      }),
+    );
+    await vi.waitFor(() => expect(localRequests).toContainEqual({ path: "/v1/agents/research", protocol: "6" }));
     bridge.emit("incoming", "peer-1", {
       hostId: "host-1",
       connectionId: "connection-2",

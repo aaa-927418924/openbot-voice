@@ -11,7 +11,7 @@ import { remoteDecode } from "./remote-service-effects";
 
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import { AGENT_LIVE_VOICE_SETTINGS_CAPABILITY } from "@openbot/contracts/team-protocol/current";
-import { TEAM_CAPABILITIES_HEADER } from "@openbot/contracts/team-protocol/v1";
+import { TEAM_CAPABILITIES_HEADER, TEAM_PROTOCOL_VERSION_HEADER } from "@openbot/contracts/team-protocol/v1";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runCauseEffect } from "../backend/effect-boundary";
 import { decodeAgentModelOptions } from "./remote-agent-decoding";
@@ -38,7 +38,7 @@ describe("Team API compatibility negotiation", () => {
       const stub = stubTeamFetch({
         compatibility: {
           appVersion: "0.4.0",
-          protocol: { minimum: 6, maximum: 6 },
+          protocol: capabilities.length > 0 ? { minimum: 1, maximum: 1 } : { minimum: 6, maximum: 6 },
           capabilities,
         },
         routes: { [path]: () => new Response(null, { status: 204 }) },
@@ -58,6 +58,7 @@ describe("Team API compatibility negotiation", () => {
 
       if (capabilities.length > 0) {
         expect(stub.requests(path)[0]?.body).toMatchObject({ name: "Voice", codexLiveVoice: "maple" });
+        expect(stub.requests(path)[0]?.headers.get(TEAM_PROTOCOL_VERSION_HEADER)).toBe("6");
       } else {
         expect(stub.requests(path)[0]?.body).toMatchObject({ name: "Voice" });
         expect(stub.requests(path)[0]?.body).not.toHaveProperty("codexLiveVoice");
