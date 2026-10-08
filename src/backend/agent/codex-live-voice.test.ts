@@ -12,6 +12,7 @@ class FakeClient extends EventEmitter implements AgentClient {
   readonly running = true;
   start(): void {}
   requestCalls = 0;
+  readonly requests: Array<{ method: string; params: unknown }> = [];
   startFailure: ProviderClientOperationError | undefined;
   request<T>(
     method: string,
@@ -20,6 +21,7 @@ class FakeClient extends EventEmitter implements AgentClient {
     _timeoutMs?: number,
   ): Effect.Effect<T, ProviderClientOperationError> {
     this.requestCalls++;
+    this.requests.push({ method, params: structuredClone(params) });
     if (method === "thread/realtime/start" && this.startFailure) return Effect.fail(this.startFailure);
     return Effect.sync(() => {
       if (method === "thread/realtime/start") {
@@ -102,6 +104,34 @@ describe("CodexLiveVoiceAdapter", () => {
     await stopping;
     expect(adapter.isActive("thread-a")).toBe(false);
     expect(stopped).toBe(true);
+  });
+
+  it("flushes the transcript tail and hands unfinished requests to Codex after stop", async () => {
+    const client = new FakeClient();
+    const adapter = new CodexLiveVoiceAdapter({ client, onEvent: () => undefined });
+    await Effect.runPromise(adapter.start("thread-a", "offer-sdp"));
+
+    const startRequest = client.requests.find((request) => request.method === "thread/realtime/start");
+    expect(startRequest?.params).toMatchObject({
+      flushTranscriptTailOnSessionEnd: true,
+      realtimeEndInstructions: expect.stringContaining("transcript tail has been flushed"),
+    });
+    expect(startRequest?.params).toMatchObject({
+      realtimeEndInstructions: expect.stringContaining("Execute any unfinished request with the available Codex tools"),
+    });
+    expect(startRequest?.params).toMatchObject({
+      realtimeEndInstructions: expect.stringContaining("Do not repeat work that is already complete"),
+    });
+    expect(startRequest?.params).toMatchObject({
+      realtimeEndInstructions: expect.stringContaining("a detailed result in the normal text conversation"),
+    });
+
+    const stopping = Effect.runPromise(adapter.stop("thread-a"));
+    await vi.waitFor(() => expect(client.requests.map((request) => request.method)).toContain("thread/realtime/stop"));
+    client.emit("notification", { method: "thread/realtime/closed", params: { threadId: "thread-a" } });
+    await stopping;
+
+    expect(client.requests.map((request) => request.method)).toEqual(["thread/realtime/start", "thread/realtime/stop"]);
   });
 
   it("appends user text only to the active realtime thread and keeps URL text intact", async () => {
