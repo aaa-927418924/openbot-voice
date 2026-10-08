@@ -1191,7 +1191,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.#usedLiveVoiceSessionIds.has(input.clientSessionId)
     )
       throw new LiveVoiceRefusedError(sourceText("error.liveVoice.busy"));
-    const releaseLease = this.#drain.acquireVoiceLease(agent.id);
+    const executionThreadId = input.channelId
+      ? this.channels.store.context(input.channelId, agent.id).threadId
+      : undefined;
+    const voiceThreadId = executionThreadId ?? input.threadId;
+    const releaseLease = this.#drain.acquireVoiceLease(agent.id, voiceThreadId);
     if (!releaseLease) throw new LiveVoiceRefusedError(sourceText("error.liveVoice.busy"));
     const reservation: LiveVoiceStartReservation = {
       agentId: agent.id,
@@ -1250,10 +1254,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       // ensureThread starts an empty Bot thread and recovers a saved provider thread after restart.
       // Keep the explicit resume used by Live Voice for an already-loaded session as a readiness
       // barrier; ensureThread itself resumes sessions that are not loaded by this client.
-      const executionThreadId = input.channelId
-        ? this.channels.store.context(input.channelId, agent.id).threadId
-        : undefined;
-      const savedThreadId = executionThreadId ?? input.threadId;
+      const savedThreadId = voiceThreadId;
       const savedSession = this.#store.database.activeProviderSession(savedThreadId, "codex");
       const savedClient = savedSession ? this.#conversation.loadedClientFor(savedSession.externalSessionId) : undefined;
       const providerThreadId = yield* this.#threads.ensureThread(agent, client, executionThreadId);

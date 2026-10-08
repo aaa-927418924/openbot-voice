@@ -8,7 +8,7 @@ export interface LiveVoiceComposerTarget {
   channelId?: string;
 }
 
-/** Direct chats match the exact agent thread; channel composers also require the origin channel. */
+/** A Live Voice session owns exactly one direct chat or one channel composer. */
 export function routesComposerToLiveVoice(
   origin: LiveVoiceOrigin | undefined,
   target: LiveVoiceComposerTarget | undefined,
@@ -21,6 +21,6 @@ export function routesComposerToLiveVoice(
     target.agentId === origin.agentId &&
     target.serverId === origin.serverId &&
     target.threadId === origin.threadId &&
-    (target.channelId === undefined || target.channelId === origin.channelId)
+    target.channelId === origin.channelId
   );
 }

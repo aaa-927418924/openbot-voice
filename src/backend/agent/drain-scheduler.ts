@@ -100,7 +100,8 @@ export class DrainScheduler {
   readonly #channels: ChannelService | undefined;
   readonly #messaging: MessagingThreads | undefined;
   readonly #drainingAgents = new Set<string>();
-  readonly #voiceLeases = new Set<string>();
+  /** A Live Voice call holds only the conversation thread it started from. */
+  readonly #voiceLeases = new Map<string, string>();
   /**
    * The model each agent's running turn was started with, by turn id. The agent record can be moved
    * to another model while that turn runs, but the CLI keeps the session it opened, so this is the
@@ -140,7 +141,7 @@ export class DrainScheduler {
       // A start whose `turn/start` timed out stays "starting" with no turn ID, and its turn can still run.
       isRunning: (agentId) =>
         this.#drainingAgents.has(agentId) ||
-        this.#voiceLeases.has(agentId) ||
+        this.#voiceLeaseBlocksNextDelivery(agentId) ||
         Boolean(this.#conversation.workingSnapshot(agentId)?.activeTurnId) ||
         this.#mailbox.startingDeliveryForAgent(agentId) !== null ||
         !this.#compaction.mayDrain(agentId),
@@ -153,7 +154,7 @@ export class DrainScheduler {
   /** The clauses of this agent's own state. `#heldByMachine` adds the memory and the turn slots. */
   mayDrain(agentId: string): boolean {
     return (
-      !this.#voiceLeases.has(agentId) &&
+      !this.#voiceLeaseBlocksNextDelivery(agentId) &&
       !this.#conversation.workingSnapshot(agentId)?.activeTurnId &&
       (this.#channels?.mayDrain(agentId) ?? true) &&
       this.#profileSave.mayDrain(agentId) &&
@@ -170,7 +171,7 @@ export class DrainScheduler {
   }
 
   /** Claims an idle agent before the caller's first await and holds queue turns until release. */
-  acquireVoiceLease(agentId: string): (() => void) | null {
+  acquireVoiceLease(agentId: string, threadId: string): (() => void) | null {
     if (
       this.#voiceLeases.has(agentId) ||
       this.#drainingAgents.has(agentId) ||
@@ -182,12 +183,12 @@ export class DrainScheduler {
       !this.#slots.mayStart(agentId)
     )
       return null;
-    this.#voiceLeases.add(agentId);
+    this.#voiceLeases.set(agentId, threadId);
     let released = false;
     return () => {
       if (released) return;
       released = true;
-      this.#voiceLeases.delete(agentId);
+      if (this.#voiceLeases.get(agentId) === threadId) this.#voiceLeases.delete(agentId);
       this.scheduleDrain(agentId);
     };
   }
@@ -292,6 +293,27 @@ export class DrainScheduler {
     );
   }
 
+  /** Whether the next queued delivery belongs to the conversation currently on a Live Voice call. */
+  #voiceLeaseBlocksNextDelivery(agentId: string): boolean {
+    const context = this.#mailbox.nextQueued(agentId);
+    return context ? this.#voiceLeaseBlocksDelivery(agentId, context.delivery.id) : false;
+  }
+
+  #voiceLeaseBlocksDelivery(agentId: string, deliveryId: string): boolean {
+    const voiceThreadId = this.#voiceLeases.get(agentId);
+    return voiceThreadId !== undefined && this.#threadIdForDelivery(agentId, deliveryId) === voiceThreadId;
+  }
+
+  #threadIdForDelivery(agentId: string, deliveryId: string): string | null {
+    const assignment = this.#channels?.store.assignmentForDelivery(deliveryId);
+    if (assignment) return this.#channels?.store.context(assignment.channelId, assignment.agentId).threadId ?? null;
+    return (
+      this.#messaging?.threadForDelivery(deliveryId) ??
+      this.#store.list().find((agent) => agent.id === agentId)?.threadId ??
+      null
+    );
+  }
+
   drainAgent(agentId: string) {
     return this.#drainAgent(agentId);
   }
@@ -300,7 +322,7 @@ export class DrainScheduler {
     if (
       this.#hooks.isStopping() ||
       this.#drainingAgents.has(agentId) ||
-      this.#voiceLeases.has(agentId) ||
+      this.#voiceLeaseBlocksNextDelivery(agentId) ||
       !this.mayDrain(agentId) ||
       !this.#providers.isReady() ||
       // Before the try, so the delivery is not rescheduled in a loop while the CLI is replaced.
@@ -318,10 +340,7 @@ export class DrainScheduler {
       const context = this.#mailbox.nextQueued(agentId);
       if (!context) return;
       const agent = this.#store.list().find((candidate) => candidate.id === agentId);
-      const assignment = this.#channels?.store.assignmentForDelivery(context.delivery.id);
-      const publicThreadId = assignment
-        ? this.#channels?.store.context(assignment.channelId, assignment.agentId).threadId
-        : (this.#messaging?.threadForDelivery(context.delivery.id) ?? agent?.threadId);
+      const publicThreadId = this.#threadIdForDelivery(agentId, context.delivery.id) ?? agent?.threadId;
       const session =
         agent && publicThreadId ? this.#store.database.activeProviderSession(publicThreadId, agent.provider) : null;
       if (session && this.#compaction.reserve(agentId, session.externalSessionId)) {

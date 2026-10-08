@@ -372,6 +372,101 @@ describe.sequential("AgentService: providers", () => {
     ).toBe(false);
   });
 
+  it("keeps direct and channel deliveries separate while Live voice owns either one", async () => {
+    const liveClient = new FakeLiveVoiceClient(false);
+    const { service: agentService } = await startService(root, {
+      preferredProvider: "codex",
+      client: () => liveClient,
+    });
+    service = agentService;
+    await runCauseEffect(agentService.sendMessage({ agentId: "chief", text: "Prepare the direct conversation." }));
+    await waitForQueue(agentService, "chief", (queue) =>
+      queue.deliveries.every((delivery) => delivery.status === "completed"),
+    );
+    const agent = agentService.listAgents().find((candidate) => candidate.id === "chief");
+    if (!agent?.threadId) throw new Error("The direct conversation thread was not created.");
+    const channelId = "channel-live-voice-isolation";
+    const actor = { id: "member-1", name: "Alex" };
+    await runCauseEffect(
+      agentService.channels.command(
+        {
+          type: "save",
+          channelId,
+          operationId: "create-live-voice-isolation-channel",
+          draft: {
+            name: "Voice isolation",
+            title: "",
+            instructions: "",
+            members: [{ agentId: agent.id }],
+            leadAgentId: agent.id,
+          },
+        },
+        actor,
+      ),
+    );
+
+    const directCall = await runCauseEffect(
+      agentService.startLiveVoice({
+        agentId: agent.id,
+        threadId: agent.threadId,
+        clientSessionId: randomUUID(),
+        sdpOffer: "direct-offer",
+      }),
+    );
+    await runCauseEffect(
+      agentService.channels.command(
+        {
+          type: "send",
+          channelId,
+          operationId: "send-to-channel-during-direct-call",
+          text: "Reply in the channel during a direct call.",
+          recipientAgentId: agent.id,
+          replyToMessageId: null,
+          attachmentDraftIds: [],
+        },
+        actor,
+      ),
+    );
+    await waitFor(() => agentService.channels.store.tasks(channelId).some((task) => task.state === "completed"));
+    expect(
+      agentService.channels.store
+        .messages(channelId)
+        .filter((entry) => entry.author.kind === "agent")
+        .map((entry) => entry.message.text),
+    ).toContain("CODEX_DONE");
+    await runCauseEffect(
+      agentService.stopLiveVoice({ agentId: agent.id, threadId: agent.threadId, sessionId: directCall.sessionId }),
+    );
+
+    const channelCall = await runCauseEffect(
+      agentService.startLiveVoice(
+        {
+          agentId: agent.id,
+          threadId: agent.threadId,
+          clientSessionId: randomUUID(),
+          sdpOffer: "channel-offer",
+          channelId,
+        },
+        actor,
+      ),
+    );
+    const beforeDirectMessage = (await runCauseEffect(agentService.readConversation(agent.id))).messages.length;
+    await runCauseEffect(
+      agentService.sendMessage({ agentId: agent.id, text: "Reply in direct chat during a channel call." }),
+    );
+    await waitForQueue(agentService, agent.id, (queue) =>
+      queue.deliveries.some(
+        (delivery) => delivery.status === "completed" && delivery.text.includes("Reply in direct chat"),
+      ),
+    );
+    const directMessages = (await runCauseEffect(agentService.readConversation(agent.id))).messages;
+    expect(directMessages.length).toBeGreaterThan(beforeDirectMessage);
+    expect(directMessages.map((message) => message.text)).toContain("CODEX_DONE");
+    await runCauseEffect(
+      agentService.stopLiveVoice({ agentId: agent.id, threadId: agent.threadId, sessionId: channelCall.sessionId }),
+    );
+  });
+
   it("routes channel Live voice Thinking and task results into the channel execution thread", async () => {
     const liveClient = new FakeLiveVoiceClient(false);
     const { service: agentService, store } = await startService(root, {
