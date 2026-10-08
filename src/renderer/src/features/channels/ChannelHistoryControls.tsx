@@ -1,4 +1,4 @@
-import { ConfirmDialog, IconButton, Trash2 } from "@openbot/ui";
+import { Button, ConfirmDialog, Trash2 } from "@openbot/ui";
 import { useText } from "@openbot/ui/text";
 import { createSignal, Show } from "solid-js";
 
@@ -15,14 +15,10 @@ export function ChannelHistoryControls(props: {
   return (
     <>
       <Show when={props.supported && !props.archived}>
-        <IconButton
-          variant="ghost"
-          label={t("channel.history.clear")}
-          disabled={props.pending}
-          onClick={() => setConfirmOpen(true)}
-        >
+        <Button variant="ghost" size="sm" disabled={props.pending} onClick={() => setConfirmOpen(true)}>
           <Trash2 aria-hidden="true" />
-        </IconButton>
+          <span>{t("channel.history.clear")}</span>
+        </Button>
       </Show>
       <ConfirmDialog
         open={confirmOpen()}
