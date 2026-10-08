@@ -50,6 +50,32 @@ describe("toAgentProfile", () => {
 });
 
 describe("toAgentMessage", () => {
+  it("hides persisted realtime handoff envelopes while preserving user text", () => {
+    const internalHandoff = `<realtime_delegation>
+  <source>transcript_tail_flush</source>
+  <input>The user just ended their realtime session. Here is the remaining handoff/transcript tail.</input>
+  <transcript_delta>assistant: こんにちは
+user: こんにちは</transcript_delta>
+</realtime_delegation>`;
+    const assistantMessage = {
+      id: "handoff",
+      author: "assistant",
+      text: internalHandoff,
+      createdAt: "2026-10-08T10:00:00.000Z",
+      status: "completed",
+    } satisfies ConversationMessage;
+    const userMessage = {
+      ...assistantMessage,
+      id: "user-text",
+      author: "user",
+    } satisfies ConversationMessage;
+
+    expect(toAgentMessages([assistantMessage, userMessage], "chief").map((message) => message.id)).toEqual([
+      "user-text",
+    ]);
+    expect(toAgentMessage(assistantMessage).body).toBe("");
+  });
+
   it("removes internal citation markers from completed and streaming agent text", () => {
     const message = {
       id: "forecast",

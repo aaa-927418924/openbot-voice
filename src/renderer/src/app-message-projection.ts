@@ -10,7 +10,7 @@ import {
   skillConversationEvent,
 } from "@openbot/contracts/ipc";
 import { parseLiveVoiceSessionMarker } from "@openbot/contracts/ipc-live-voice";
-import { cleanAgentMessageText } from "@openbot/team-client/agent-message-text";
+import { cleanAgentMessageText, isInternalRealtimeDelegationMessage } from "@openbot/team-client/agent-message-text";
 import type {
   AgentDeliveryMarkerStatus,
   AgentMessage,
@@ -132,6 +132,7 @@ export function toAgentMessages(messages: ConversationMessage[], ownerAgentId?: 
   const result: AgentMessage[] = [];
   const thinkingByTurn = new Map<string, AgentMessage>();
   for (const message of messages) {
+    if (message.author === "assistant" && isInternalRealtimeDelegationMessage(message.text)) continue;
     if ((message.delivery?.status === "queued" || message.delivery?.status === "cancelled") && !message.routine) {
       continue;
     }

@@ -84,6 +84,38 @@ const chief = agent("agent-chief", "Chief");
 const member = { kind: "member" as const, id: "local", name: "Norbert" };
 
 describe("channelTimelineEntries", () => {
+  it("hides persisted realtime handoff envelopes from agents but keeps matching member text", () => {
+    const internalHandoff = `<realtime_delegation>
+  <source>transcript_tail_flush</source>
+  <input>The user just ended their realtime session.</input>
+  <transcript_delta>assistant: Hello
+user: Hello</transcript_delta>
+</realtime_delegation>`;
+    const entries = channelTimelineEntries(
+      page([
+        message({
+          id: "handoff",
+          sequence: 1,
+          author: { kind: "agent", id: chief.id, name: "Chief" },
+          createdAt: new Date(2026, 8, 9, 12, 0),
+          text: internalHandoff,
+        }),
+        message({
+          id: "member-text",
+          sequence: 2,
+          author: member,
+          createdAt: new Date(2026, 8, 9, 12, 1),
+          text: internalHandoff,
+        }),
+      ]),
+      [chief],
+      (id) => id === "local",
+      options,
+    );
+
+    expect(entries.map((entry) => entry.id)).toEqual(["member-text"]);
+  });
+
   it("puts the reader's own message on the right and every other author on the left", () => {
     const entries = channelTimelineEntries(
       page([

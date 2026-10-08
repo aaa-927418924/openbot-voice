@@ -11,6 +11,7 @@
 import type { ChannelMessage, ChannelPage } from "@openbot/contracts/ipc";
 import { channelRoutingConversationEvent } from "@openbot/contracts/ipc";
 import { parseLiveVoiceSessionMarker } from "@openbot/contracts/ipc-live-voice";
+import { isInternalRealtimeDelegationMessage } from "@openbot/team-client/agent-message-text";
 import type { AgentMessage, AgentProfile, ChatActionMarkerModel } from "@openbot/ui/data";
 import type { ChatMessageAuthor } from "@openbot/ui/features/conversation/ChatMessageRow";
 import { type DayMarkerOptions, dayMarkerLabel } from "@openbot/ui/features/conversation/chat-day-markers";
@@ -33,6 +34,7 @@ export interface ChannelTimelineEntry {
 
 /** A row with no text, no attachment and no question has nothing to draw. */
 function hasContent(entry: ChannelMessage): boolean {
+  if (entry.message.author === "assistant" && isInternalRealtimeDelegationMessage(entry.message.text)) return false;
   return Boolean(
     entry.message.text.trim() ||
       entry.message.attachments?.length ||
