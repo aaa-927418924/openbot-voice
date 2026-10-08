@@ -53,7 +53,7 @@ import {
   decodeQueueSnapshot,
   decodeSidebarLayoutSnapshot,
 } from "../remote-agent-decoding";
-import { decodeVoid } from "../remote-host-decoding";
+import { acceptEmpty, decodeVoid } from "../remote-host-decoding";
 import type { RemoteServerManager } from "../remote-server-manager";
 import type { SkillMarketplaceService } from "../skill-marketplace-service";
 import {
@@ -379,7 +379,7 @@ export function agentIpcHandlers({
           if (!remoteServers.supportsCapability(serverId, CONVERSATION_HISTORY_DELETE_CAPABILITY))
             throw new Error(sourceText("error.team.conversationHistoryUnsupported"));
           await runCauseEffect(
-            remoteServers.request(serverId, DELETE_CONVERSATION_MESSAGE_ROUTE, decodeVoid, {
+            remoteServers.request(serverId, DELETE_CONVERSATION_MESSAGE_ROUTE, acceptEmpty, {
               method: "POST",
               body: parsed,
             }),
@@ -487,7 +487,7 @@ export function agentIpcHandlers({
           if (!remoteServers.supportsCapability(serverId, CONVERSATION_HISTORY_DELETE_CAPABILITY))
             throw new Error(sourceText("error.team.conversationHistoryUnsupported"));
           await runCauseEffect(
-            remoteServers.request(serverId, CLEAR_CONVERSATION_HISTORY_ROUTE, decodeVoid, {
+            remoteServers.request(serverId, CLEAR_CONVERSATION_HISTORY_ROUTE, acceptEmpty, {
               method: "POST",
               body: { agentId },
             }),
