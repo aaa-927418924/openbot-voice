@@ -693,6 +693,106 @@ describe.sequential("AgentService: providers", () => {
     expect(markers[1]?.itemType).toMatch(/^live-voice-session-end:\d+$/u);
   });
 
+  it("keeps delegated work running after Live Voice ends and drains queued work afterward", async () => {
+    const liveClient = new FakeLiveVoiceClient(false);
+    const { service: agentService } = await startService(root, {
+      preferredProvider: "codex",
+      client: () => liveClient,
+    });
+    service = agentService;
+    await runCauseEffect(agentService.sendMessage({ agentId: "chief", text: "Create the Codex thread." }));
+    await waitForQueue(agentService, "chief", (queue) =>
+      queue.deliveries.every((delivery) => delivery.status === "completed"),
+    );
+
+    const agent = agentService.listAgents().find((candidate) => candidate.id === "chief");
+    if (!agent?.threadId) throw new Error("The Codex thread was not created.");
+    const started = await runCauseEffect(
+      agentService.startLiveVoice({
+        agentId: agent.id,
+        threadId: agent.threadId,
+        clientSessionId: randomUUID(),
+        sdpOffer: "offer-sdp",
+      }),
+    );
+    const providerThreadId = liveClient.realtimeThreadId;
+    if (!providerThreadId) throw new Error("The provider thread was not created.");
+
+    const events: AgentEvent[] = [];
+    agentService.on("event", (event) => events.push(event));
+    const turnId = "live-voice-delegated-turn";
+    liveClient.emit("notification", notification("turn/started", { threadId: providerThreadId, turn: { id: turnId } }));
+    await waitFor(() => events.some((event) => event.type === "turn-started" && event.turnId === turnId));
+    const turnStartsBeforeStop = liveClient.requests.filter((request) => request.method === "turn/start").length;
+    const turnInterruptsBeforeStop = liveClient.requests.filter(
+      (request) => request.method === "turn/interrupt",
+    ).length;
+
+    const transcript = "The call transcript stays in the conversation after close.";
+    liveClient.emit(
+      "notification",
+      notification("thread/realtime/item/completed", {
+        threadId: providerThreadId,
+        item: {
+          id: "live-voice-close-transcript",
+          realtimeSessionId: "realtime-session",
+          type: "transcriptSegment",
+          role: "user",
+          text: transcript,
+        },
+      }),
+    );
+    await runCauseEffect(agentService.sendMessage({ agentId: agent.id, text: "Run this queued follow-up next." }));
+    const queued = agentService.listQueue(agent.id).deliveries.find((delivery) => delivery.status === "queued");
+    if (!queued) throw new Error("The follow-up was not queued while delegated work was active.");
+
+    await runCauseEffect(
+      agentService.stopLiveVoice({ agentId: agent.id, threadId: agent.threadId, sessionId: started.sessionId }),
+    );
+
+    const afterStop = await runCauseEffect(agentService.readConversation(agent.id));
+    expect(afterStop.activeTurnId).toBe(turnId);
+    expect(afterStop.messages.some((message) => message.text === transcript)).toBe(true);
+    expect(afterStop.messages.some((message) => message.itemType?.startsWith("live-voice-session-end:"))).toBe(true);
+    expect(liveClient.requests.filter((request) => request.method === "turn/start")).toHaveLength(turnStartsBeforeStop);
+    expect(liveClient.requests.filter((request) => request.method === "turn/interrupt")).toHaveLength(
+      turnInterruptsBeforeStop,
+    );
+    expect(agentService.listQueue(agent.id).deliveries.find((delivery) => delivery.id === queued.id)?.status).toBe(
+      "queued",
+    );
+
+    liveClient.emit(
+      "notification",
+      notification("item/completed", {
+        threadId: providerThreadId,
+        turnId,
+        item: {
+          id: "live-voice-delegated-result",
+          type: "agentMessage",
+          text: "The delegated work finished after Live Voice closed.",
+        },
+      }),
+    );
+    liveClient.emit(
+      "notification",
+      notification("turn/completed", { threadId: providerThreadId, turn: { id: turnId, status: "completed" } }),
+    );
+    await waitForQueue(agentService, agent.id, (queue) =>
+      queue.deliveries.every((delivery) => delivery.status === "completed"),
+    );
+
+    const completed = await runCauseEffect(agentService.readConversation(agent.id));
+    expect(completed.activeTurnId).toBeNull();
+    expect(completed.messages.some((message) => message.text === transcript)).toBe(true);
+    expect(
+      completed.messages.some((message) => message.text === "The delegated work finished after Live Voice closed."),
+    ).toBe(true);
+    expect(agentService.listQueue(agent.id).deliveries.find((delivery) => delivery.id === queued.id)?.status).toBe(
+      "completed",
+    );
+  });
+
   it("does not persist buffered Live voice transcripts when startup closes before the answer", async () => {
     const liveClient = new FakeLiveVoiceClient(false);
     liveClient.earlyTranscriptText = "This transcript arrived before failed startup.";

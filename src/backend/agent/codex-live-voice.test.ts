@@ -112,24 +112,24 @@ describe("CodexLiveVoiceAdapter", () => {
     expect(stopped).toBe(true);
   });
 
-  it("flushes the transcript tail and hands unfinished requests to Codex after stop", async () => {
+  it("does not dispatch a transcript-tail task when Live Voice stops", async () => {
     const client = new FakeClient();
     const adapter = new CodexLiveVoiceAdapter({ client, onEvent: () => undefined });
     await Effect.runPromise(adapter.start("thread-a", "offer-sdp", "maple"));
 
     const startRequest = client.requests.find((request) => request.method === "thread/realtime/start");
     expect(startRequest?.params).toMatchObject({
-      flushTranscriptTailOnSessionEnd: true,
-      realtimeEndInstructions: expect.stringContaining("transcript tail has been flushed"),
+      flushTranscriptTailOnSessionEnd: false,
+      realtimeEndInstructions: expect.stringContaining("Continue any delegated work already running"),
     });
     expect(startRequest?.params).toMatchObject({
-      realtimeEndInstructions: expect.stringContaining("Execute any unfinished request with the available Codex tools"),
+      realtimeEndInstructions: expect.stringContaining("Do not re-review or repeat completed work"),
     });
     expect(startRequest?.params).toMatchObject({
-      realtimeEndInstructions: expect.stringContaining("Do not repeat work that is already complete"),
+      realtimeEndInstructions: expect.stringContaining("closing recap just because the session ended"),
     });
-    expect(startRequest?.params).toMatchObject({
-      realtimeEndInstructions: expect.stringContaining("a detailed result in the normal text conversation"),
+    expect(startRequest?.params).not.toMatchObject({
+      realtimeEndInstructions: expect.stringContaining("transcript tail"),
     });
 
     const stopping = Effect.runPromise(adapter.stop("thread-a"));

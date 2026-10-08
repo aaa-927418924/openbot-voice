@@ -21,7 +21,7 @@ const LIVE_VOICE_START_INSTRUCTIONS =
   "Treat each concrete request in this thread's Live Voice conversation, including composer text and exact URLs, as user intent. When Live Voice hands off a request, do the requested research or task with available Codex tools using the complete message and URLs. Return progress and the result through this same conversation. Do not only acknowledge the request, claim supplied text or a URL is missing, or start an independent ordinary turn for input already in this conversation.";
 
 const LIVE_VOICE_END_INSTRUCTIONS =
-  "After the Live Voice session ends and its transcript tail has been flushed, review the call for concrete user requests, including exact composer text and spoken requests. Execute any unfinished request with the available Codex tools, using the supplied text and URLs. Do not repeat work that is already complete. Post progress and a detailed result in the normal text conversation.";
+  "When Live Voice ends, return to normal text responses. Continue any delegated work already running in this conversation and report its result here when it finishes. Do not re-review or repeat completed work, or produce a closing recap just because the session ended.";
 
 export interface CodexRealtimeAnswer {
   readonly threadId: string;
@@ -172,7 +172,7 @@ export class CodexLiveVoiceAdapter {
           initialItems: LIVE_VOICE_INITIAL_ITEMS,
           realtimeStartInstructions: LIVE_VOICE_START_INSTRUCTIONS,
           realtimeEndInstructions: LIVE_VOICE_END_INSTRUCTIONS,
-          flushTranscriptTailOnSessionEnd: true,
+          flushTranscriptTailOnSessionEnd: false,
           transport: { type: "webrtc", sdp: offer },
         },
         decodeRecordResponse,
