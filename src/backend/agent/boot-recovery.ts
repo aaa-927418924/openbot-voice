@@ -1,7 +1,7 @@
 import { Effect, Schema } from "effect";
 import type { AgentProvider } from "../agent-client";
 import type { AgentStore } from "../agent-store";
-import { mergeProviderHistory, snapshotFromThread } from "../conversation-snapshots";
+import { mergeConversationSnapshots, mergeProviderHistory, snapshotFromThread } from "../conversation-snapshots";
 import { causeHelpers } from "../effect-boundary";
 import type { MailboxStore } from "../mailbox-store";
 import { decodeThreadResponse, type ThreadResponse } from "../protocol";
@@ -276,10 +276,15 @@ export class BootRecovery {
             );
             imported.threadId = publicThreadId;
             const current = this.#store.database.readConversation(agent.id, publicThreadId);
-            const merged = mergeProviderHistory(current, imported, session.provider);
+            const providerMerged = mergeProviderHistory(current, imported, session.provider);
+            // A streamed delta is buffered before it reaches SQLite. If another imported turn
+            // changes this snapshot first, persistConversation replaces the whole projection and
+            // would save the older, empty copy of that live message. Merge the active in-memory
+            // turn last so recovery keeps its newest text and turn state.
+            const live = this.#conversation.ensureSnapshot(agent.id, publicThreadId);
+            const merged = live?.activeTurnId ? mergeConversationSnapshots(providerMerged, live) : providerMerged;
             this.#mailboxSync.syncMailboxMessages(merged);
             if (conversationContentSignature(merged) === conversationContentSignature(current)) {
-              const live = this.#conversation.ensureSnapshot(agent.id, publicThreadId);
               if (!live?.activeTurnId) this.#conversation.setSnapshot(agent.id, current);
               return;
             }
@@ -287,7 +292,6 @@ export class BootRecovery {
               provider: session.provider,
               externalSessionId: session.externalSessionId,
             });
-            const live = this.#conversation.ensureSnapshot(agent.id, publicThreadId);
             if (!live?.activeTurnId) {
               this.#conversation.setSnapshot(agent.id, persisted);
               if (this.#conversation.isExecutionThread(publicThreadId))

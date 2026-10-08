@@ -1,4 +1,11 @@
-import { type AgentEvent, type BrowserTab, isAgentEvent, routineRunConversationEvent } from "@openbot/contracts/ipc";
+import {
+  type AgentEvent,
+  type BrowserTab,
+  isAgentEvent,
+  isConversationSnapshot,
+  routineRunConversationEvent,
+} from "@openbot/contracts/ipc";
+import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { Effect } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentRemovalFailed } from "./agent/agent-removal";
@@ -474,6 +481,152 @@ describe.sequential("AgentService: restart", () => {
         .get(),
     ).toMatchObject({ count: 0 });
     expect((await store.database.readConversation("chief", before.threadId)).revision).toBe(before.revision);
+  });
+
+  it("preserves live streaming text when provider history is backfilled during a turn", async () => {
+    const first = stores(root);
+    service = createTestService({
+      store: first.store,
+      mailbox: first.mailbox,
+      preferredProvider: "codex",
+      clientFactory: (provider) => new FakeAgentClient(provider),
+    });
+    await runCauseEffect(service.initialize());
+    await runCauseEffect(service.sendMessage({ agentId: "chief", text: "Seed provider history." }));
+    await waitForQueue(service, "chief", (queue) => queue.deliveries[0]?.status === "completed");
+    const threadId = (await runCauseEffect(service.readConversation("chief"))).threadId;
+    const session = first.store.activeProviderSession("chief");
+    if (!threadId || !session) throw new Error("The Codex provider session was not created.");
+    await runCauseEffect(service.stop());
+    service = null;
+    first.store.database.close();
+
+    const restored = stores(root);
+    // Model the 100 ms window in which a streamed delta is visible in memory but not yet in SQLite.
+    vi.spyOn(restored.store.database, "persistStreamingMessage").mockImplementationOnce(
+      ({ snapshot }) => snapshot.revision,
+    );
+    let startProviderRead!: () => void;
+    let releaseProviderRead!: () => void;
+    const providerReadStarted = new Promise<void>((resolve) => {
+      startProviderRead = resolve;
+    });
+    const providerReadGate = new Promise<void>((resolve) => {
+      releaseProviderRead = resolve;
+    });
+    let restartClient: FakeAgentClient | undefined;
+    const restartedService = createTestService({
+      store: restored.store,
+      mailbox: restored.mailbox,
+      preferredProvider: "codex",
+      clientFactory: (provider) => {
+        const client = new FakeAgentClient(provider, undefined, false, true, {}, async (method) => {
+          if (provider === "codex" && method === "thread/read") {
+            startProviderRead();
+            await providerReadGate;
+          }
+        });
+        if (provider === "codex") {
+          restartClient = client;
+          client.threadRead = (params) => {
+            const externalThreadId = getString(params, "threadId");
+            return {
+              thread: {
+                id: externalThreadId,
+                turns: [
+                  {
+                    id: "provider-only-turn",
+                    status: "completed",
+                    startedAt: 1785585600,
+                    items: [{ id: "provider-only-answer", type: "agentMessage", text: "Recovered provider reply." }],
+                  },
+                ],
+              },
+            };
+          };
+        }
+        return client;
+      },
+    });
+    service = restartedService;
+    await runCauseEffect(restartedService.initialize());
+    const events: AgentEvent[] = [];
+    restartedService.on("event", (event) => events.push(event));
+    try {
+      await providerReadStarted;
+      if (!restartClient) throw new Error("The restarted Codex client was not created.");
+      await runCauseEffect(restartedService.sendMessage({ agentId: "chief", text: "Continue during recovery." }));
+      await waitForQueue(restartedService, "chief", (queue) => queue.deliveries.at(-1)?.status === "running");
+      await waitFor(() => events.some((event) => event.type === "turn-started" && event.agentId === "chief"));
+      const turnStarted = events.find((event) => event.type === "turn-started" && event.agentId === "chief");
+      if (turnStarted?.type !== "turn-started") throw new Error("The live turn did not start.");
+      const externalThreadId = session.externalSessionId;
+      const turnId = turnStarted.turnId;
+      restartClient.emit(
+        "notification",
+        notification("item/started", {
+          threadId: externalThreadId,
+          turnId,
+          item: { id: "live-message-during-history-read", type: "agentMessage", text: "" },
+        }),
+      );
+      restartClient.emit(
+        "notification",
+        notification("item/agentMessage/delta", {
+          threadId: externalThreadId,
+          turnId,
+          itemId: "live-message-during-history-read",
+          delta: "Keep this streamed text while provider history is read.",
+        }),
+      );
+      await waitFor(async () =>
+        (await runCauseEffect(restartedService.readConversation("chief"))).messages.some(
+          (message) => message.id === "live-message-during-history-read" && message.text.length > 0,
+        ),
+      );
+      expect(
+        restored.store.database
+          .readConversation("chief", threadId)
+          .messages.find((message) => message.id === "live-message-during-history-read")?.text,
+      ).toBe("");
+    } finally {
+      releaseProviderRead();
+    }
+
+    const backfilledSnapshot = () => {
+      const rows = restored.store.database.connection
+        .prepare(
+          "SELECT payload_json FROM orchestration_events WHERE aggregate_id = ? AND event_type = 'provider-history.backfilled'",
+        )
+        .all(threadId);
+      for (const row of rows) {
+        if (!isDynamicRecord(row) || !isString(row.payload_json))
+          throw new Error("The provider history event payload is malformed.");
+        const payload = JSON.parse(row.payload_json);
+        if (!isDynamicRecord(payload) || !isConversationSnapshot(payload.snapshot))
+          throw new Error("The provider history snapshot is malformed.");
+        if (payload.snapshot.messages.some((message) => message.id === "provider-only-answer")) return payload.snapshot;
+      }
+      return undefined;
+    };
+    await waitFor(() => backfilledSnapshot() !== undefined);
+    expect(backfilledSnapshot()?.messages).toContainEqual(
+      expect.objectContaining({
+        id: "live-message-during-history-read",
+        text: "Keep this streamed text while provider history is read.",
+        status: "streaming",
+      }),
+    );
+    expect(restored.store.database.readConversation("chief", threadId).messages).toContainEqual(
+      expect.objectContaining({ id: "provider-only-answer", text: "Recovered provider reply." }),
+    );
+    expect(restored.store.database.readConversation("chief", threadId).messages).toContainEqual(
+      expect.objectContaining({
+        id: "live-message-during-history-read",
+        text: "Keep this streamed text while provider history is read.",
+        status: "streaming",
+      }),
+    );
   });
 
   it("keeps the member who wrote a message after a restart", async () => {
