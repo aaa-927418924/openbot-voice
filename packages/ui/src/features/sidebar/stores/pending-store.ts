@@ -9,6 +9,19 @@ import { createMemo, createStore } from "solid-js";
 import { currentText } from "../../../text";
 import type { SidebarProps } from "../sidebar-types";
 
+type SidebarPendingProps = Pick<
+  SidebarProps,
+  | "agents"
+  | "channels"
+  | "layout"
+  | "onClearAgentHistory"
+  | "onClearChannelHistory"
+  | "onDeleteAgent"
+  | "onDeleteChannel"
+  | "onExpand"
+  | "onMutateLayout"
+>;
+
 /**
  * The one delete confirmation the sidebar can have open: an agent, channel or custom section, never both.
  * The attempt's progress and the reason it failed live inside the record rather than beside it, so
@@ -20,7 +33,7 @@ interface SidebarPendingDelete {
   /** The agent, channel or section, whichever `kind` names. */
   id: string;
   /** Which confirmation is on screen. Each dialog renders from one arm. */
-  kind: "agent" | "channel" | "section" | "history";
+  kind: "agent" | "channel" | "section" | "history" | "channel-history";
 }
 
 /** What the section editor is editing: a section about to exist, or the one being renamed. */
@@ -46,7 +59,7 @@ interface SidebarPending {
 
 export function createSidebarPendingStore(deps: {
   customSectionById: () => Map<string, SidebarSection>;
-  props: SidebarProps;
+  props: SidebarPendingProps;
 }) {
   const { customSectionById, props } = deps;
 
@@ -68,6 +81,12 @@ export function createSidebarPendingStore(deps: {
     const deletion = pending.deletion;
     return deletion?.kind === "channel" ? props.channels?.find((channel) => channel.id === deletion.id) : undefined;
   });
+  const channelHistoryDeleteTarget = createMemo<ChannelSummary | undefined>(() => {
+    const deletion = pending.deletion;
+    return deletion?.kind === "channel-history"
+      ? props.channels?.find((channel) => channel.id === deletion.id)
+      : undefined;
+  });
   const sectionDeleteTarget = createMemo(() => {
     const deletion = pending.deletion;
     return deletion?.kind === "section"
@@ -84,6 +103,12 @@ export function createSidebarPendingStore(deps: {
   function openClearHistory(id: string): void {
     setPending((state) => {
       state.deletion = { deleting: false, error: null, id, kind: "history" };
+    });
+  }
+
+  function openClearChannelHistory(id: string): void {
+    setPending((state) => {
+      state.deletion = { deleting: false, error: null, id, kind: "channel-history" };
     });
   }
 
@@ -133,6 +158,18 @@ export function createSidebarPendingStore(deps: {
     beginDelete();
     try {
       await props.onClearAgentHistory(deletion.id);
+      closeDelete();
+    } catch (error) {
+      failDelete(error);
+    }
+  }
+
+  async function confirmClearChannelHistory() {
+    const deletion = pending.deletion;
+    if (deletion?.kind !== "channel-history" || deletion.deleting || !props.onClearChannelHistory) return;
+    beginDelete();
+    try {
+      await props.onClearChannelHistory(deletion.id);
       closeDelete();
     } catch (error) {
       failDelete(error);
@@ -272,10 +309,13 @@ export function createSidebarPendingStore(deps: {
     deleteTargetIsHistory,
     deleteTarget,
     channelDeleteTarget,
+    channelHistoryDeleteTarget,
     deleting,
     openDelete,
     openClearHistory,
+    openClearChannelHistory,
     confirmClearHistory,
+    confirmClearChannelHistory,
     pending,
     releaseSectionNameInput,
     saveSectionEditor,

@@ -10,7 +10,7 @@ import type { SidebarPinnedItem } from "./sidebar-pins";
 import { useSidebarScope } from "./sidebar-scope";
 
 export function SidebarChannelContextMenu(menuProps: { channel: ChannelSummary; pinned: boolean }) {
-  const { openDelete, props } = useSidebarScope();
+  const { openClearChannelHistory, openDelete, props } = useSidebarScope();
   const { t } = useText();
   const ref = (): SidebarPinnedItem => ({ kind: "channel", id: menuProps.channel.id });
   return (
@@ -36,8 +36,19 @@ export function SidebarChannelContextMenu(menuProps: { channel: ChannelSummary; 
           <EditIcon />
           <span>{t("sidebar.channelMenu.edit")}</span>
         </ContextMenu.Item>
-        <Show when={props.onDeleteChannel}>
+        <Show when={props.onClearChannelHistory || props.onDeleteChannel}>
           <ContextMenu.Separator />
+        </Show>
+        <Show when={props.onClearChannelHistory}>
+          <ContextMenu.Item
+            class="ui-action-menu-danger agent-context-danger"
+            onSelect={() => openClearChannelHistory(menuProps.channel.id)}
+          >
+            <DeleteIcon />
+            <span>{t("channel.history.clear")}</span>
+          </ContextMenu.Item>
+        </Show>
+        <Show when={props.onDeleteChannel}>
           <ContextMenu.Item
             class="ui-action-menu-danger agent-context-danger"
             onSelect={() => openDelete("channel", menuProps.channel.id)}

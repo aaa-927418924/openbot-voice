@@ -43,6 +43,23 @@ async function openChannelMenuItem(item: string) {
   await fireEvent.pointerUp(await screen.findByRole("menuitem", { name: item }), { button: 0 });
 }
 
+it("clears channel history from the channel sidebar context menu", async () => {
+  const chat = await openSavedChannel();
+  expect(within(chat).queryByRole("button", { name: "Clear channel history" })).not.toBeInTheDocument();
+
+  const clearChannelHistory = vi.spyOn(window.openbot.agent, "clearChannelHistory");
+  await openChannelMenuItem("Clear channel history");
+
+  const confirmation = await screen.findByRole("alertdialog", { name: "Clear chat history for Project room?" });
+  expect(confirmation).toHaveTextContent("Channel settings and tasks will remain.");
+  expect(clearChannelHistory).not.toHaveBeenCalled();
+  await fireEvent.click(within(confirmation).getByRole("button", { name: "Clear history" }));
+
+  await waitFor(() =>
+    expect(clearChannelHistory).toHaveBeenCalledWith(expect.objectContaining({ channelId: "channel-test" })),
+  );
+});
+
 it("restores the selected channel after restart and clears it when returning to an agent", async () => {
   let unmount: (() => void) | undefined;
   await openSavedChannel((dispose) => {

@@ -12,11 +12,13 @@ export function SidebarDialogs() {
     closeDelete,
     confirmDelete,
     confirmClearHistory,
+    confirmClearChannelHistory,
     confirmSectionDelete,
     deleteError,
     deleteTargetIsHistory,
     deleteTarget,
     channelDeleteTarget,
+    channelHistoryDeleteTarget,
     deleting,
     props,
     sectionDeleteTarget,
@@ -65,6 +67,22 @@ export function SidebarDialogs() {
             title={t("sidebar.delete.title", { name: channel().name })}
             description={t("sidebar.delete.channelDescription")}
             onConfirm={confirmDelete}
+          />
+        )}
+      </Show>
+
+      <Show when={channelHistoryDeleteTarget()}>
+        {(channel) => (
+          <ConfirmDialog
+            {...shared}
+            open
+            pending={deleting()}
+            error={deleteError()}
+            media={<ChannelAvatar members={channel().members} agents={props.agents} layout="cluster" />}
+            title={t("channel.history.clearTitle", { name: channel().name })}
+            description={t("channel.history.clearDescription")}
+            confirmLabel={t("channel.history.clearConfirm")}
+            onConfirm={confirmClearChannelHistory}
           />
         )}
       </Show>

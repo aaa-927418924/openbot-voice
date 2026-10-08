@@ -34,6 +34,7 @@ export interface SidebarProps {
   hasUnread?: boolean;
   onEditChannel?: (channelId: string) => void;
   onDeleteChannel?: ((channelId: string) => Promise<void>) | undefined;
+  onClearChannelHistory?: ((channelId: string) => Promise<void>) | undefined;
   serverName: string;
   onOpenServerSettings?: (trigger: HTMLElement) => void;
   /** The desktop server menu. Without it, the server name opens the server settings. */

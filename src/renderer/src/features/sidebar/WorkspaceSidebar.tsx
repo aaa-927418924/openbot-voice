@@ -1,3 +1,4 @@
+import { CHANNEL_HISTORY_DELETE_CAPABILITY } from "@openbot/contracts/team-protocol/channel-history-delete-v1";
 import { computeAgentAvatarMoods } from "@openbot/ui/features/agents/agent-avatar-mood";
 import { IOS_TESTFLIGHT_URL } from "@openbot/ui/features/mobile-app/ios-testflight";
 import { Sidebar } from "@openbot/ui/features/sidebar/Sidebar";
@@ -38,7 +39,7 @@ const MOBILE_APP_DISMISSED_STORAGE_KEY = "openbot:ios-beta-card-dismissed";
  * answers disagree for a frame.
  */
 export function WorkspaceSidebar(props: { peopleEnabled: boolean }) {
-  const { t } = useText();
+  const { t, sourceText } = useText();
   const layout = useLayout();
   const platform = usePlatform();
   const channels = useChannels();
@@ -76,6 +77,11 @@ export function WorkspaceSidebar(props: { peopleEnabled: boolean }) {
     await loadLatestAgentMessages(agentId);
     const agent = agentList().find((candidate) => candidate.id === agentId);
     if (agent) updateStored(agent, { ...agent, preview: t("app.agent.noMessages") });
+  }
+
+  async function clearChannelHistory(channelId: string): Promise<void> {
+    if (await channels.clearChannelHistory(channelId)) return;
+    throw new Error(sourceText(channels.state.error ?? "") || t("channel.error.action"));
   }
 
   /* Channels reach the sidebar as data, not as a list of their own: they sit in the layout's
@@ -131,6 +137,11 @@ export function WorkspaceSidebar(props: { peopleEnabled: boolean }) {
       onSelectChannel={(id) => void channels.open(id)}
       onEditChannel={(id) => void channels.editChannel(id)}
       onDeleteChannel={channels.deletionSupported() ? channels.remove : undefined}
+      onClearChannelHistory={
+        activeServer()?.kind === "local" || activeServerSupportsCapability(CHANNEL_HISTORY_DELETE_CAPABILITY)
+          ? clearChannelHistory
+          : undefined
+      }
       showingArchivedChannels={channels.state.archived}
       onToggleArchivedChannels={channels.supported() ? channels.toggleArchived : undefined}
       onCreateChannel={channels.supported() ? channels.create : undefined}

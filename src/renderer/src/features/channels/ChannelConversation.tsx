@@ -86,7 +86,6 @@ import { useLiveVoice } from "../live-voice/live-voice-context";
 import { routesComposerToLiveVoice } from "../live-voice/live-voice-routing";
 import { serverSupportsCapability } from "../servers/server-capabilities";
 import { ChannelEditor } from "./ChannelEditor";
-import { ChannelHistoryControls } from "./ChannelHistoryControls";
 import { channelLiveVoiceTarget } from "./channel-live-voice";
 import { channelTimelineEntries, firstUnreadChannelMessageId } from "./channel-timeline";
 import { useChannels } from "./channels-context";
@@ -239,11 +238,6 @@ export function ChannelConversation(props: ChannelConversationProps) {
   );
   const clearSent = (channelId: string, text: string) =>
     updateDraft(channelId, (draft) => (draft.text === text ? EMPTY_DRAFT : draft));
-  const clearChannelHistory = async (): Promise<boolean> => {
-    const channelId = channels.state.page?.channel.id;
-    if (!channelId) return false;
-    return channels.clearChannelHistory(channelId);
-  };
   let messageList: HTMLElement | undefined;
   let virtualRoot: HTMLElement | undefined;
   let unreadMessagesDivider: HTMLElement | undefined;
@@ -744,14 +738,6 @@ export function ChannelConversation(props: ChannelConversationProps) {
                   </span>
                 </Button>
               </div>
-              <ChannelHistoryControls
-                channelName={page().channel.name}
-                supported={historyMutationSupported()}
-                archived={page().channel.archived}
-                pending={channels.state.pending}
-                error={channels.state.error ? sourceText(channels.state.error) : undefined}
-                onClear={clearChannelHistory}
-              />
             </header>
             <section
               class="conversation-scroll"
