@@ -240,6 +240,30 @@ export class CodexLiveVoiceAdapter {
     );
   }).bind(this);
 
+  readonly injectUserText = Effect.fn("CodexLiveVoiceAdapter.injectUserText")(function* (
+    this: CodexLiveVoiceAdapter,
+    threadId: string,
+    text: string,
+  ) {
+    const session = this.#sessions.get(threadId);
+    if (!session || session.stopped || !this.#client.running) throw new Error("Codex Live is unavailable.");
+    yield* this.#client.request(
+      "thread/inject_items",
+      {
+        threadId,
+        items: [
+          {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text }],
+          },
+        ],
+      },
+      decodeRecordResponse,
+      START_TIMEOUT_MS,
+    );
+  }).bind(this);
+
   readonly dispose = Effect.fn("CodexLiveVoiceAdapter.dispose")(function* (this: CodexLiveVoiceAdapter) {
     for (const threadId of [...this.#sessions.keys()]) yield* this.stop(threadId).pipe(Effect.ignore);
   }, Effect.uninterruptible).bind(this);

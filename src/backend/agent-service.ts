@@ -1422,9 +1422,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       text: input.text,
       itemId: `typed-${session.sessionId}-${++session.textSequence}`,
     };
-    session.pendingTextEchoes.push(submission);
-    try {
-      yield* session.adapter.appendText(session.providerThreadId, input.text);
+    let contextAccepted = false;
+    const persistSubmission = () =>
       this.#persistLiveVoiceTranscript(
         agent.id,
         {
@@ -1436,13 +1435,26 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         },
         session.channel,
       );
-    } catch (error) {
-      // A transcript item is evidence the provider accepted the text even if its RPC response failed.
-      if (submission.echoedItem) this.#persistLiveVoiceTranscript(agent.id, submission.echoedItem, session.channel);
-      throw error;
-    } finally {
-      removeLiveVoiceTextEcho(session, submission);
-    }
+    const submitText = Effect.gen(function* () {
+      // Keep the exact composer text in the backing Codex thread first. The native API adds it to
+      // the active turn when one exists, or persists it for the next native handoff without a turn.
+      yield* session.adapter.injectUserText(session.providerThreadId, input.text);
+      contextAccepted = true;
+      // Correlate only an echo of the realtime append, not speech received while context is injected.
+      session.pendingTextEchoes.push(submission);
+      yield* session.adapter.appendText(session.providerThreadId, input.text);
+    }).pipe(
+      Effect.tapError(() =>
+        Effect.sync(() => {
+          // The worker already accepted the text. Preserve the canonical typed row as the failure
+          // fallback if Live append then fails.
+          if (contextAccepted) persistSubmission();
+        }),
+      ),
+      Effect.ensuring(Effect.sync(() => removeLiveVoiceTextEcho(session, submission))),
+    );
+    yield* submitText;
+    persistSubmission();
   }).bind(this);
 
   getAnalytics(input: AgentAnalyticsInput) {

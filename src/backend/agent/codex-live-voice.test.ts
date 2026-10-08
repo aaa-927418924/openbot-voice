@@ -47,8 +47,13 @@ class FakeClient extends EventEmitter implements AgentClient {
           method: "thread/realtime/sdp",
           params: { threadId: "thread-a", sdp: "answer-sdp" },
         });
+      } else if (method === "thread/inject_items") {
+        expect(params).toMatchObject({
+          threadId: "thread-a",
+          items: [{ type: "message", role: "user", content: [{ type: "input_text" }] }],
+        });
       } else if (method === "thread/realtime/appendText") {
-        expect(params).toEqual({ threadId: "thread-a", text: "https://example.test/query", role: "user" });
+        expect(params).toMatchObject({ threadId: "thread-a", role: "user" });
       }
       return decoder({});
     });
@@ -135,16 +140,27 @@ describe("CodexLiveVoiceAdapter", () => {
     expect(client.requests.map((request) => request.method)).toEqual(["thread/realtime/start", "thread/realtime/stop"]);
   });
 
-  it("appends user text only to the active realtime thread and keeps URL text intact", async () => {
+  it("injects the exact user text into the backing thread before appending it to Live Voice", async () => {
     const client = new FakeClient();
     const adapter = new CodexLiveVoiceAdapter({ client, onEvent: () => undefined });
+    const text = "Summarize https://example.test/記事?q=live%20voice&lang=ja#要点";
     await Effect.runPromise(adapter.start("thread-a", "offer-sdp", "maple"));
 
-    await expect(
-      Effect.runPromise(adapter.appendText("thread-a", "https://example.test/query")),
-    ).resolves.toBeUndefined();
+    await expect(Effect.runPromise(adapter.injectUserText("thread-a", text))).resolves.toBeUndefined();
+    await expect(Effect.runPromise(adapter.appendText("thread-a", text))).resolves.toBeUndefined();
+    await expect(Effect.runPromise(adapter.injectUserText("thread-b", "ignored"))).rejects.toThrow();
     await expect(Effect.runPromise(adapter.appendText("thread-b", "ignored"))).rejects.toThrow();
-    expect(client.requestCalls).toBe(2);
+    expect(client.requests.slice(1)).toEqual([
+      {
+        method: "thread/inject_items",
+        params: {
+          threadId: "thread-a",
+          items: [{ type: "message", role: "user", content: [{ type: "input_text", text }] }],
+        },
+      },
+      { method: "thread/realtime/appendText", params: { threadId: "thread-a", text, role: "user" } },
+    ]);
+    expect(client.requestCalls).toBe(3);
 
     client.emit("notification", { method: "thread/realtime/closed", params: { threadId: "thread-a" } });
     await Effect.runPromise(adapter.stop("thread-a"));
