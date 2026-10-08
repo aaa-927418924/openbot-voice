@@ -109,6 +109,48 @@ describe("OpenBot connected desktop shell", () => {
     );
   });
 
+  it("clears the open direct chat and its sidebar preview as soon as history is cleared", async () => {
+    let cleared = false;
+    const previousMessage = {
+      id: "previous-direct-message",
+      author: "user" as const,
+      source: "user" as const,
+      text: "Previous direct message",
+      createdAt: "2026-08-25T12:00:00.000Z",
+      status: "completed" as const,
+    };
+    vi.mocked(window.openbot.agent.listAgents).mockResolvedValue([
+      { ...AGENTS[0], preview: "Previous direct message" },
+      AGENTS[1],
+    ]);
+    vi.mocked(window.openbot.agent.readConversationPage).mockImplementation(async (input) =>
+      testConversationPage(input.agentId, input.agentId === "chief" && !cleared ? [previousMessage] : [], {
+        revision: cleared ? 2 : 1,
+      }),
+    );
+    vi.mocked(window.openbot.agent.clearConversationHistory).mockImplementation(async () => {
+      cleared = true;
+    });
+
+    render(() => <App />);
+    expect(await screen.findByText("Previous direct message")).toBeInTheDocument();
+    const chiefRow = screen.getByRole("button", { name: /Chief, Chief of staff/ });
+    expect(chiefRow).toHaveAccessibleName(/Previous direct message/);
+
+    await fireEvent.contextMenu(chiefRow, { clientX: 120, clientY: 90 });
+    await fireEvent.pointerUp(screen.getByRole("menuitem", { name: "Clear chat history" }), { button: 0 });
+    await fireEvent.click(await screen.findByRole("button", { name: "Clear history" }));
+
+    await waitFor(() => expect(screen.queryByText("Previous direct message")).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: /Chief, Chief of staff.*No messages yet/ })).toBeInTheDocument();
+    expect(window.openbot.agent.clearConversationHistory).toHaveBeenCalledWith("chief", "local");
+    expect(window.openbot.agent.readConversationPage).toHaveBeenCalledWith({
+      agentId: "chief",
+      anchor: { type: "latest" },
+      limit: 50,
+    });
+  });
+
   it("restores the selected agent after the app remounts", async () => {
     const view = render(() => <App />);
     await fireEvent.click(await screen.findByRole("button", { name: /Sales Outbound, Outbound specialist/ }));

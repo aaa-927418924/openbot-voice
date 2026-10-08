@@ -2308,6 +2308,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         return { result: threadId, snapshot };
       });
     });
+    yield* this.#store
+      .updatePreview(agentId, "")
+      .pipe(
+        Effect.mapError(
+          (failure) => new AgentLifecycleFailed({ operation: "clear conversation preview", cause: failure.cause }),
+        ),
+      );
+    this.#emit({ type: "agents-changed", agents: this.listAgents() });
     yield* this.#threads.endThreadContext(clearedThreadId);
   }, Effect.uninterruptible).bind(this);
 

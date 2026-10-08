@@ -212,10 +212,24 @@ describe.sequential("AgentService: providers", () => {
     const providerSession = store.database.listProviderSessions(before.threadId)[0];
     if (!providerSession) throw new Error("The provider session was not created.");
 
+    let resolveRosterChanged: (event: Extract<AgentEvent, { type: "agents-changed" }>) => void = () => {};
+    const rosterChanged = new Promise<Extract<AgentEvent, { type: "agents-changed" }>>((resolve) => {
+      resolveRosterChanged = resolve;
+    });
+    const onAgentsChanged = (event: AgentEvent) => {
+      if (event.type !== "agents-changed" || !event.agents.some((agent) => agent.id === before.id && !agent.preview))
+        return;
+      service?.off("event", onAgentsChanged);
+      resolveRosterChanged(event);
+    };
+    service.on("event", onAgentsChanged);
+
     await runCauseEffect(service.clearConversationHistory(before.id));
 
     const after = service.listAgents().find((candidate) => candidate.id === before.id);
     expect(after).toMatchObject({ id: before.id, threadId: before.threadId, name: before.name });
+    expect(after?.preview).toBe("");
+    expect((await rosterChanged).agents.find((agent) => agent.id === before.id)?.preview).toBe("");
     expect((await runCauseEffect(service.readConversation(before.id))).messages).toEqual([]);
     expect(store.database.readConversation(before.id, before.threadId).messages).toEqual([]);
     expect(

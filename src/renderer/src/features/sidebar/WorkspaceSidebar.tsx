@@ -5,6 +5,7 @@ import { SidebarMobileAppCard } from "@openbot/ui/features/sidebar/SidebarMobile
 import { computeSidebarAgentStates } from "@openbot/ui/features/sidebar/sidebar-agent-states";
 import { useText } from "@openbot/ui/text";
 import { createMemo, createSignal, Show } from "solid-js";
+import { updateStored } from "../../app-stored-values";
 import { writeClipboardText } from "../../clipboard";
 import { useLayout } from "../../layout";
 import { DirectConversation } from "../../lazy-views";
@@ -48,7 +49,7 @@ export function WorkspaceSidebar(props: { peopleEnabled: boolean }) {
   const { agentList, activeAgent, agentSetupDraft, duplicatingAgentIds, openBotSetup } = useAgents();
   const { editAgent, duplicateAgent, deleteAgent } = useAgentActions();
   const { activeTurns, queues, failedTurns, usageLimits, pendingPrompts, pendingApprovals } = useTurns();
-  const { unreadReplies, recentReplies, markAllAgentMessagesRead } = useConversation();
+  const { unreadReplies, recentReplies, markAllAgentMessagesRead, loadLatestAgentMessages } = useConversation();
   const { directPeople } = usePresence();
   const { activeDirectMember, activeDirectMemberId, directThreads } = useDirectMessages();
   const { selectAgent, selectDirectMember } = useNavigation();
@@ -67,6 +68,15 @@ export function WorkspaceSidebar(props: { peopleEnabled: boolean }) {
   const [mobileAppDismissed, setMobileAppDismissed] = createSignal(
     window.localStorage.getItem(MOBILE_APP_DISMISSED_STORAGE_KEY) === "true",
   );
+
+  async function clearAgentHistory(agentId: string): Promise<void> {
+    await window.openbot.agent.clearConversationHistory(agentId, activeServer()?.id ?? "local");
+    // The host's event stream can arrive later than the successful IPC reply, especially for a
+    // remote server. Read the authoritative empty page so the open direct chat updates at once.
+    await loadLatestAgentMessages(agentId);
+    const agent = agentList().find((candidate) => candidate.id === agentId);
+    if (agent) updateStored(agent, { ...agent, preview: t("app.agent.noMessages") });
+  }
 
   /* Channels reach the sidebar as data, not as a list of their own: they sit in the layout's
    * sections beside the agents, so the sidebar has to be able to order and group them. */
@@ -179,9 +189,7 @@ export function WorkspaceSidebar(props: { peopleEnabled: boolean }) {
       onDuplicateAgent={duplicateAgent}
       onDeleteAgent={deleteAgent}
       onClearAgentHistory={
-        activeServerSupportsCapability("conversation-history-delete-v1")
-          ? (agentId) => window.openbot.agent.clearConversationHistory(agentId, activeServer()?.id ?? "local")
-          : undefined
+        activeServerSupportsCapability("conversation-history-delete-v1") ? clearAgentHistory : undefined
       }
       compact={layout.leftPanelCompact()}
       onExpand={layout.expandSidebar}
