@@ -313,8 +313,10 @@ export function ChannelConversation(props: ChannelConversationProps) {
   const timelineRows = createMemo(() =>
     timeline().map((entry) => ({ id: entry.id, countable: countableTimelineMessage(entry.message) })),
   );
+  const tallyIdentity = () =>
+    `${props.server?.id ?? "local"}:${props.server?.connectionSequence ?? 0}:${channels.state.page?.channel.id ?? ""}`;
   const clearNewMessages = () => {
-    newMessages = anchorNewMessages(untrack(timelineRows));
+    newMessages = anchorNewMessages(untrack(timelineRows), tallyIdentity());
     setNewMessageCount(0);
   };
   /**
@@ -465,21 +467,22 @@ export function ChannelConversation(props: ChannelConversationProps) {
       const rows = timelineRows();
       return {
         id: channels.state.page?.channel.id,
+        identity: tallyIdentity(),
         revision: channels.state.page?.channel.revision,
         length: rows.length,
         latestId: rows.at(-1)?.id,
       };
     },
-    ({ id }) => {
+    ({ id, identity }) => {
       const rows = untrack(timelineRows);
       if (id !== scrolledChannel) {
         scrolledChannel = id;
         stickToLatest = true;
-        newMessages = anchorNewMessages(rows);
+        newMessages = anchorNewMessages(rows, identity);
         setNewMessageCount(0);
       } else {
         // The sticky flag has to be read here: the frame below has already moved the view.
-        newMessages = tallyNewMessages(newMessages, rows, stickToLatest);
+        newMessages = tallyNewMessages(newMessages, rows, stickToLatest, identity);
         setNewMessageCount(newMessages.count);
       }
       if (scrollFrame !== undefined) cancelAnimationFrame(scrollFrame);

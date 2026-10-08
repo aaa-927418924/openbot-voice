@@ -21,6 +21,18 @@ function message(overrides: Partial<AgentMessage>): AgentMessage {
 }
 
 describe("tallyNewMessages", () => {
+  it("reanchors the new message count when the host connection restarts", () => {
+    const restoredMessages = rows("read-1", "read-2", "read-3");
+    const beforeRestart = { count: 5, anchorId: "previous-anchor", identity: "remote-1:4:chief" };
+
+    const afterRestart = tallyNewMessages(beforeRestart, restoredMessages, false, "remote-1:5:chief");
+
+    expect(afterRestart).toEqual({ count: 0, anchorId: "read-3", identity: "remote-1:5:chief" });
+    expect(
+      tallyNewMessages(afterRestart, rows("read-1", "read-2", "read-3", "new-1"), false, "remote-1:5:chief"),
+    ).toEqual({ count: 1, anchorId: "new-1", identity: "remote-1:5:chief" });
+  });
+
   it("counts a message that arrives below the reader", () => {
     const anchored = tallyNewMessages(empty, rows("a"), false);
     expect(tallyNewMessages(anchored, rows("a", "b"), false)).toEqual({ count: 1, anchorId: "b" });

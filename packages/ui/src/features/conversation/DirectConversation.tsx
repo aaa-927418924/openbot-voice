@@ -30,6 +30,8 @@ import { isSendShortcutKey, type SendShortcut, sendShortcutAriaKey, sendShortcut
 interface DirectConversationProps {
   member: TeamPresenceMember;
   currentMemberId: string;
+  /** Changes when the host reconnects, so restored history is not counted as new. */
+  scopeIdentity?: string;
   snapshot: DirectConversationSnapshot | undefined;
   loading: boolean;
   loadError: string | null;
@@ -78,8 +80,9 @@ export function DirectConversation(props: DirectConversationProps) {
         countable: message.senderMemberId !== props.currentMemberId,
       })) ?? [],
   );
+  const tallyIdentity = () => `${props.scopeIdentity ?? "local"}:${props.snapshot?.threadId ?? ""}`;
   const clearNewMessages = (): void => {
-    newMessages = anchorNewMessages(timelineRows());
+    newMessages = anchorNewMessages(timelineRows(), tallyIdentity());
     setNewMessageCount(0);
   };
   const messageVirtualizer = createChatVirtualizer<HTMLDivElement, HTMLDivElement>({
@@ -124,23 +127,24 @@ export function DirectConversation(props: DirectConversationProps) {
       const rows = timelineRows();
       return {
         threadId: props.snapshot?.threadId,
+        identity: tallyIdentity(),
         revision: props.snapshot?.revision ?? -1,
         messageCount: rows.length,
         unreadCount: props.snapshot?.readState?.unreadCount ?? 0,
         latestMessageId: rows.at(-1)?.id,
       };
     },
-    ({ threadId, unreadCount }) => {
+    ({ threadId, identity, unreadCount }) => {
       currentUnreadCount = unreadCount;
       const rows = timelineRows();
       if (threadId !== lastThreadId) {
         lastThreadId = threadId;
         stickToLatest = true;
-        newMessages = anchorNewMessages(rows);
+        newMessages = anchorNewMessages(rows, identity);
         setNewMessageCount(0);
       } else {
         // The sticky flag has to be read here: the frame below has already moved the view.
-        newMessages = tallyNewMessages(newMessages, rows, stickToLatest);
+        newMessages = tallyNewMessages(newMessages, rows, stickToLatest, identity);
         setNewMessageCount(newMessages.count);
       }
       requestAnimationFrame(() => {

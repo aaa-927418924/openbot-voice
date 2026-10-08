@@ -92,8 +92,12 @@ export function createScrollStore(deps: ScrollStoreDeps) {
   );
 
   function clearNewMessages(): void {
-    newMessages = anchorNewMessages(timelineRows());
+    newMessages = anchorNewMessages(timelineRows(), tallyIdentity());
     setNewMessageCount(0);
+  }
+
+  function tallyIdentity(): string {
+    return `${deps.props.server?.id ?? "local"}:${deps.props.server?.connectionSequence ?? 0}:${deps.props.agent?.id ?? ""}`;
   }
 
   /*
@@ -105,7 +109,7 @@ export function createScrollStore(deps: ScrollStoreDeps) {
     () => {
       const rows = timelineRows();
       return {
-        identity: `${deps.props.server?.id ?? "local"}:${deps.props.agent?.id ?? ""}`,
+        identity: tallyIdentity(),
         rows,
         length: rows.length,
         lastId: rows.at(-1)?.id,
@@ -114,11 +118,11 @@ export function createScrollStore(deps: ScrollStoreDeps) {
     ({ identity, rows }) => {
       if (identity !== talliedConversationIdentity) {
         talliedConversationIdentity = identity;
-        newMessages = anchorNewMessages(rows);
+        newMessages = anchorNewMessages(rows, identity);
         setNewMessageCount(0);
         return;
       }
-      newMessages = tallyNewMessages(newMessages, rows, deps.sticky.getStickToLatest());
+      newMessages = tallyNewMessages(newMessages, rows, deps.sticky.getStickToLatest(), identity);
       setNewMessageCount(newMessages.count);
     },
   );

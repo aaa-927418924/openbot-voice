@@ -18,7 +18,7 @@ import { useDirectMessages } from "./direct-messages-context";
  */
 export function WorkspaceDirectConversation(props: { member: TeamPresenceMember }) {
   const platform = usePlatform();
-  const { activeServerSupportsCapability } = useServers();
+  const { activeServer, activeServerSupportsCapability } = useServers();
   const { currentTeamMember } = usePresence();
   const {
     directConversations,
@@ -49,6 +49,7 @@ export function WorkspaceDirectConversation(props: { member: TeamPresenceMember 
       <DirectConversation
         member={props.member}
         currentMemberId={currentTeamMember()?.id ?? ""}
+        scopeIdentity={`${activeServer()?.id ?? "local"}:${activeServer()?.connectionSequence ?? 0}`}
         snapshot={directConversations()[props.member.id]}
         loading={directConversationLoading()}
         loadError={directConversationError()}
