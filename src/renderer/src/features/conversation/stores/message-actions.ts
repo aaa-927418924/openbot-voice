@@ -4,7 +4,7 @@ import {
   removeAttachmentReferences,
 } from "@openbot/contracts/attachment-references";
 import { expandChatTagReferences } from "@openbot/contracts/chat-tag-references";
-import type { InstalledSkill, MessageReaction } from "@openbot/contracts/ipc";
+import type { DeleteConversationMessageInput, InstalledSkill, MessageReaction } from "@openbot/contracts/ipc";
 import type { AgentMessage } from "@openbot/ui/data";
 import { currentText } from "@openbot/ui/text";
 import { desktopAnalytics } from "../../../analytics";
@@ -18,6 +18,7 @@ const { t, errorMessage } = currentText();
 
 export interface MessageActionsDeps {
   props: ConversationProps;
+  deleteConversationMessage: (input: DeleteConversationMessageInput, serverId: string) => Promise<void>;
   installedSkills: () => InstalledSkill[];
   currentDraft: () => ComposerDraft;
   updateCurrentDraft: (patch: Partial<ComposerDraft>) => void;
@@ -35,6 +36,8 @@ export interface MessageActionsDeps {
 }
 
 export function createMessageActions(deps: MessageActionsDeps) {
+  const deletingMessages = new Set<string>();
+
   function replyToMessage(message: AgentMessage) {
     deps.updateCurrentDraft({ replyToMessageId: message.id });
     deps.setOpenReactionMessageId(null);
@@ -98,14 +101,17 @@ export function createMessageActions(deps: MessageActionsDeps) {
     const agentId = deps.props.agent?.id;
     if (!agentId || !deps.props.deleteMessagesSupported || message.streaming) return;
     const target = { agentId, serverId: deps.props.server?.id ?? "local" };
+    const operationKey = `${target.serverId}\0${agentId}\0${message.id}`;
+    if (deletingMessages.has(operationKey)) return;
+    deletingMessages.add(operationKey);
     try {
-      await conversationRuntime(deps.props).agent.deleteConversationMessage(
-        { agentId, messageId: message.id },
-        target.serverId,
-      );
+      await deps.deleteConversationMessage({ agentId, messageId: message.id }, target.serverId);
+      deps.props.onMessageDeleted?.(agentId, message.id, target.serverId);
       deps.setOpenMoreMessageId(null);
     } catch (error) {
       deps.setComposerError(errorMessage(error, t("chat.actions.deleteFailed")), target);
+    } finally {
+      deletingMessages.delete(operationKey);
     }
   }
 

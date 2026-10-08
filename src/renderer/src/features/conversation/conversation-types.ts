@@ -89,6 +89,7 @@ export interface ConversationProps {
   onSignInProvider?: (provider: AgentProviderId) => void | Promise<void>;
   agent: AgentProfile | undefined;
   deleteMessagesSupported?: boolean;
+  onMessageDeleted?: (agentId: string, messageId: string, serverId: string) => void;
   agents: AgentProfile[];
   availableRoutineIds?: readonly string[];
   /** The agent's routines, for the chat card of a routine the agent created or changed. */

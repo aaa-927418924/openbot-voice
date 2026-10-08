@@ -88,6 +88,7 @@ export function WorkspaceConversation(props: { account: () => CentralAuthUser })
     activeMessages,
     conversations,
     sendMessage,
+    removeConversationMessage,
     markAgentMessagesRead,
     loadOlderAgentMessages,
     loadLatestAgentMessages,
@@ -298,6 +299,7 @@ export function WorkspaceConversation(props: { account: () => CentralAuthUser })
       onUpdateAgent={updateConversationAgent}
       onSetAgentAvatar={setAgentAvatar}
       onSendMessage={sendMessage}
+      onMessageDeleted={removeConversationMessage}
       onMarkRead={() => markAgentMessagesRead()}
       onLoadOlder={() => void loadOlderAgentMessages()}
       onLoadLatest={() => (activeAgent() ? loadLatestAgentMessages(activeAgent()?.id ?? "") : Promise.resolve())}

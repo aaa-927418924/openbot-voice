@@ -1,6 +1,6 @@
 import { continuesSenderRun } from "./chat-grouping";
 import { agentConversationKey, agentMessageKey, composerDraftKey } from "./conversation-keys";
-import { mergeConversationPage, windowedSnapshotMessages } from "./conversation-merge";
+import { mergeConversationPage, replaceLatestConversationPage, windowedSnapshotMessages } from "./conversation-merge";
 
 const message = (id: string) => ({ id });
 const ids = (messages: readonly { id: string }[]) => messages.map((entry) => entry.id);
@@ -39,6 +39,22 @@ describe("mergeConversationPage", () => {
     const merged = mergeConversationPage([{ id: "a", text: "a" }, stale], [fresh], "latest");
 
     expect(merged.at(-1)).toBe(fresh);
+  });
+});
+
+describe("replaceLatestConversationPage", () => {
+  it("removes deleted messages from the old latest page and preserves older pages", () => {
+    const loaded = [message("older"), message("a"), message("b"), message("c")];
+    const refreshed = [message("b"), message("c"), message("d")];
+
+    expect(ids(replaceLatestConversationPage(loaded, ["a", "b", "c"], refreshed))).toEqual(["older", "b", "c", "d"]);
+  });
+
+  it("moves an older message into the refreshed page without duplicating it", () => {
+    const loaded = [message("older"), message("a"), message("b")];
+    const refreshed = [message("older"), message("b"), message("c")];
+
+    expect(ids(replaceLatestConversationPage(loaded, ["a", "b"], refreshed))).toEqual(["older", "b", "c"]);
   });
 });
 

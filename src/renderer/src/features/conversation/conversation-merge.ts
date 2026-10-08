@@ -39,6 +39,22 @@ export function mergeConversationPage<Message extends { id: string }>(
 }
 
 /**
+ * Replaces the previously loaded latest page with its refreshed copy while keeping any older pages
+ * the user loaded above it. A plain `latest` merge is append-only: it preserves a removed message
+ * that is absent from the refreshed page, so a remote deletion appears to succeed only after reload.
+ */
+export function replaceLatestConversationPage<Message extends { id: string }>(
+  loaded: readonly Message[],
+  previousLatestPageIds: readonly string[],
+  page: readonly Message[],
+): Message[] {
+  const previousLatestIds = new Set(previousLatestPageIds);
+  const refreshedPageIds = new Set(page.map((message) => message.id));
+  const retained = loaded.filter((message) => !previousLatestIds.has(message.id) || refreshedPageIds.has(message.id));
+  return mergeConversationPage(retained, page, "latest");
+}
+
+/**
  * The part of a refreshed snapshot a conversation may show without losing its
  * window.
  *

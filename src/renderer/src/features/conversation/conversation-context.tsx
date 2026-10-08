@@ -38,7 +38,7 @@ import {
   messagePromptRequestKey,
   promptRequestKey,
 } from "./conversation-keys";
-import { mergeConversationPage, windowedSnapshotMessages } from "./conversation-merge";
+import { mergeConversationPage, replaceLatestConversationPage, windowedSnapshotMessages } from "./conversation-merge";
 import { conversationPort } from "./conversation-port";
 import {
   decideAgentAutoRead,
@@ -70,6 +70,7 @@ interface ConversationState {
   loaded?: boolean;
   revision?: number;
   page?: ConversationPageInfo;
+  latestPageMessageIds?: string[];
   windowMode?: "latest" | "around";
   references?: Record<string, AgentMessage>;
   olderLoading?: boolean;
@@ -226,6 +227,16 @@ const Conversation = createSimpleContext({
       pendingConversationSnapshots.delete(agentId);
       conversationPageRequests.delete(agentId);
       agentChatsRetriedOnOpen.delete(agentId);
+    }
+
+    function removeConversationMessage(agentId: string, messageId: string, serverId: string): void {
+      if (serverId !== activeServerId()) return;
+      updateConversation(agentId, (conversation) => {
+        conversation.messages = conversation.messages.filter((message) => message.id !== messageId);
+        if (conversation.latestPageMessageIds)
+          conversation.latestPageMessageIds = conversation.latestPageMessageIds.filter((id) => id !== messageId);
+      });
+      rawAgentMessageBodies.delete(agentMessageKey(agentId, messageId));
     }
 
     function applyRuntimeMessages(messages: AgentRuntimeSnapshot["latestMessages"]): void {
@@ -520,6 +531,8 @@ const Conversation = createSimpleContext({
           if (!agentMessagesEqual(existing, mapped)) updateStored(existing, mapped);
           return existing;
         });
+        if (windowMode === "latest")
+          conversation.latestPageMessageIds = next.slice(-LATEST_PAGE_SIZE).map((message) => message.id);
         if (previous.length === next.length && previous.every((message, index) => message === next[index])) {
           return;
         }
@@ -588,6 +601,7 @@ const Conversation = createSimpleContext({
         else rawAgentMessageBodies.delete(key);
       }
       const mapped = toAgentMessages(page.messages, page.agentId);
+      let removedMessageIds: string[] = [];
       updateConversation(page.agentId, (conversation) => {
         const currentMessages = conversation.messages;
         const currentById = new Map(currentMessages.map((message) => [message.id, message]));
@@ -597,7 +611,18 @@ const Conversation = createSimpleContext({
           if (!agentMessagesEqual(stored, message)) updateStored(stored, { ...message, animate: stored.animate });
           return stored;
         });
-        conversation.messages = mergeConversationPage(currentMessages, pageMessages, merge);
+        const replacesLatest = merge === "latest" && conversation.windowMode !== "around";
+        const nextMessages = replacesLatest
+          ? replaceLatestConversationPage(currentMessages, conversation.latestPageMessageIds ?? [], pageMessages)
+          : mergeConversationPage(currentMessages, pageMessages, merge);
+        const nextIds = new Set(nextMessages.map((message) => message.id));
+        removedMessageIds = currentMessages.filter((message) => !nextIds.has(message.id)).map((message) => message.id);
+        conversation.messages = nextMessages;
+        if (merge === "replace") {
+          conversation.latestPageMessageIds = windowMode === "around" ? [] : pageMessages.map((message) => message.id);
+        } else if (replacesLatest) {
+          conversation.latestPageMessageIds = pageMessages.map((message) => message.id);
+        }
         conversation.references = {
           ...(merge === "replace" ? {} : conversation.references),
           ...Object.fromEntries(
@@ -609,6 +634,7 @@ const Conversation = createSimpleContext({
         conversation.revision = page.revision;
         conversation.loaded = true;
       });
+      for (const messageId of removedMessageIds) rawAgentMessageBodies.delete(agentMessageKey(page.agentId, messageId));
       setActiveTurns((current) => ({
         ...current,
         [page.agentId]: completedTurnByAgent.get(page.agentId) === page.activeTurnId ? null : page.activeTurnId,
@@ -922,6 +948,7 @@ const Conversation = createSimpleContext({
       agentChatsToRetryRead,
       initializeConversation,
       removeConversation,
+      removeConversationMessage,
       applyRuntimeMessages,
       requestConversationRead,
       clearRecentReplies,

@@ -535,6 +535,8 @@ export function createConversationViewScope(props: ConversationProps) {
   );
   const messageActions = createMessageActions({
     props,
+    deleteConversationMessage: (input, serverId) =>
+      conversationRuntime(props).agent.deleteConversationMessage(input, serverId),
     installedSkills,
     currentDraft,
     updateCurrentDraft,
