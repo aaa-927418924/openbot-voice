@@ -341,7 +341,7 @@ describe.sequential("AgentService: providers", () => {
         },
       }),
     );
-    const typed = "Keep typed Live voice text in the Bot chat.";
+    const typed = "Keep typed Live voice text in the channel.";
     await runCauseEffect(
       service.sendLiveVoiceText({
         agentId: agent.id,
@@ -352,15 +352,13 @@ describe.sequential("AgentService: providers", () => {
     );
 
     expect(service.channels.store.messages("channel-live-voice").map((entry) => entry.message.text)).toContain(spoken);
-    expect(service.channels.store.messages("channel-live-voice").map((entry) => entry.message.text)).not.toContain(
-      typed,
-    );
+    expect(service.channels.store.messages("channel-live-voice").map((entry) => entry.message.text)).toContain(typed);
     expect(
       (await runCauseEffect(service.readConversation(agent.id))).messages.map((message) => message.text),
     ).not.toContain(spoken);
     expect(
       (await runCauseEffect(service.readConversation(agent.id))).messages.map((message) => message.text),
-    ).toContain(typed);
+    ).not.toContain(typed);
     await runCauseEffect(
       service.stopLiveVoice({ agentId: agent.id, threadId: agent.threadId, sessionId: started.sessionId }),
     );

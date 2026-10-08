@@ -1424,16 +1424,20 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     session.pendingTextEchoes.push(submission);
     try {
       yield* session.adapter.appendText(session.providerThreadId, input.text);
-      this.#persistLiveVoiceTranscript(agent.id, {
-        id: submission.itemId,
-        realtimeSessionId: session.sessionId,
-        type: "transcriptSegment",
-        role: "user",
-        text: input.text,
-      });
+      this.#persistLiveVoiceTranscript(
+        agent.id,
+        {
+          id: submission.itemId,
+          realtimeSessionId: session.sessionId,
+          type: "transcriptSegment",
+          role: "user",
+          text: input.text,
+        },
+        session.channel,
+      );
     } catch (error) {
       // A transcript item is evidence the provider accepted the text even if its RPC response failed.
-      if (submission.echoedItem) this.#persistLiveVoiceTranscript(agent.id, submission.echoedItem);
+      if (submission.echoedItem) this.#persistLiveVoiceTranscript(agent.id, submission.echoedItem, session.channel);
       throw error;
     } finally {
       removeLiveVoiceTextEcho(session, submission);
