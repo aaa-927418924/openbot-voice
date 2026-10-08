@@ -196,6 +196,8 @@ export const messages = {
   "chat.actions.replyUser": "Responder à mensagem do usuário",
   "chat.actions.reply": "Responder à mensagem de {name}",
   "chat.actions.more": "Mais ações da mensagem",
+  "chat.actions.deleteMessage": "Excluir mensagem",
+  "chat.actions.deleteFailed": "Não foi possível excluir esta mensagem.",
   "chat.selection.label": "Ações para o texto selecionado",
   "chat.selection.sendFailed": "Não foi possível enviar",
   "chat.selection.close": "Fechar ações do texto selecionado",

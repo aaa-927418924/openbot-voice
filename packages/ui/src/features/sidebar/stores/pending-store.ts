@@ -20,7 +20,7 @@ interface SidebarPendingDelete {
   /** The agent, channel or section, whichever `kind` names. */
   id: string;
   /** Which confirmation is on screen. Each dialog renders from one arm. */
-  kind: "agent" | "channel" | "section";
+  kind: "agent" | "channel" | "section" | "history";
 }
 
 /** What the section editor is editing: a section about to exist, or the one being renamed. */
@@ -55,11 +55,14 @@ export function createSidebarPendingStore(deps: {
   // the one. That is also why a section delete no longer needs its own pair of flags.
   const deleting = () => pending.deletion?.deleting === true;
   const deleteError = () => pending.deletion?.error ?? null;
+  const deleteTargetIsHistory = () => pending.deletion?.kind === "history";
   let sectionNameInput: HTMLInputElement | undefined;
 
   const deleteTarget = createMemo(() => {
     const deletion = pending.deletion;
-    return deletion?.kind === "agent" ? props.agents.find((agent) => agent.id === deletion.id) : undefined;
+    return deletion?.kind === "agent" || deletion?.kind === "history"
+      ? props.agents.find((agent) => agent.id === deletion.id)
+      : undefined;
   });
   const channelDeleteTarget = createMemo<ChannelSummary | undefined>(() => {
     const deletion = pending.deletion;
@@ -75,6 +78,12 @@ export function createSidebarPendingStore(deps: {
   function openDelete(kind: SidebarPendingDelete["kind"], id: string): void {
     setPending((state) => {
       state.deletion = { deleting: false, error: null, id, kind };
+    });
+  }
+
+  function openClearHistory(id: string): void {
+    setPending((state) => {
+      state.deletion = { deleting: false, error: null, id, kind: "history" };
     });
   }
 
@@ -112,6 +121,18 @@ export function createSidebarPendingStore(deps: {
     beginDelete();
     try {
       await onDelete(deletion.id);
+      closeDelete();
+    } catch (error) {
+      failDelete(error);
+    }
+  }
+
+  async function confirmClearHistory() {
+    const deletion = pending.deletion;
+    if (deletion?.kind !== "history" || deletion.deleting || !props.onClearAgentHistory) return;
+    beginDelete();
+    try {
+      await props.onClearAgentHistory(deletion.id);
       closeDelete();
     } catch (error) {
       failDelete(error);
@@ -248,10 +269,13 @@ export function createSidebarPendingStore(deps: {
     confirmDelete,
     confirmSectionDelete,
     deleteError,
+    deleteTargetIsHistory,
     deleteTarget,
     channelDeleteTarget,
     deleting,
     openDelete,
+    openClearHistory,
+    confirmClearHistory,
     pending,
     releaseSectionNameInput,
     saveSectionEditor,

@@ -68,6 +68,14 @@ export function ReplyIcon() {
   );
 }
 
+export function TrashIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 20 20" class="ui-glyph-20">
+      <path d="M4.5 6.5h11M8 6.5V4.75h4V6.5M6.25 6.5l.75 9h6l.75-9M8.5 9v4M11.5 9v4" />
+    </svg>
+  );
+}
+
 export function MoreIcon() {
   return (
     <svg aria-hidden="true" viewBox="0 0 20 20" class="ui-glyph-20 conversation-more-icon">
@@ -83,14 +91,6 @@ export function QueueIcon() {
     <svg aria-hidden="true" viewBox="0 0 20 20" class="ui-glyph-20">
       <path d="M4.5 4.5v8.25a2 2 0 0 0 2 2h8.75" />
       <path d="m12.25 11.75 3 3-3 3" />
-    </svg>
-  );
-}
-
-export function TrashIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 20 20" class="ui-glyph-20">
-      <path d="M4.5 6.5h11M8 6.5V4.75h4V6.5M6.25 6.5l.75 9h6l.75-9M8.5 9v4M11.5 9v4" />
     </svg>
   );
 }

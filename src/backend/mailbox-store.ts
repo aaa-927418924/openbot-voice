@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { rewriteAttachmentReferences } from "@openbot/contracts/attachment-references";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
+  AgentProviderId,
   AgentRuntimeWorkItem,
   AttachmentDataInput,
   AttachmentSummary,
@@ -25,6 +26,7 @@ import {
   AGENT_RUNTIME_ATTENTION_LIMIT,
   AGENT_RUNTIME_TEXT_LIMIT,
   AGENT_RUNTIME_WORKING_ITEMS_LIMIT,
+  isAgentProvider,
   isConversationMessageSender,
   isMessageReaction,
   QUEUE_STEER_FALLBACKS,
@@ -124,6 +126,14 @@ interface StoredState {
   pausedAgentIds: string[];
   idempotency: Record<string, string>;
   reactions: StoredReaction[];
+  /** Per-agent message tombstones keep deleted provider history from returning after a restart. */
+  hiddenConversationMessages?: Array<{ agentId: string; messageId: string }>;
+  /** Provider sessions cleared by the user must not be backfilled after a restart. */
+  hiddenProviderHistorySessions?: Array<{
+    agentId: string;
+    provider: AgentProviderId;
+    externalSessionId: string;
+  }>;
 }
 
 interface StoredReaction {
@@ -177,6 +187,8 @@ const EMPTY_STATE: StoredState = {
   pausedAgentIds: [],
   idempotency: {},
   reactions: [],
+  hiddenConversationMessages: [],
+  hiddenProviderHistorySessions: [],
 };
 
 export class MailboxStore {
@@ -683,8 +695,15 @@ export class MailboxStore {
       if (message.messagingReturn && message.sender.kind === "agent" && message.sender.agentId === agentId) continue;
       const deliveries = deliveriesByMessage.get(message.id) ?? [];
       if (message.sender.kind === "agent" && message.sender.agentId === agentId) {
+        const outboxId = `outbox-${message.id}`;
+        if (
+          this.#state.hiddenConversationMessages?.some(
+            (hidden) => hidden.agentId === agentId && hidden.messageId === outboxId,
+          )
+        )
+          continue;
         messages.push({
-          id: `outbox-${message.id}`,
+          id: outboxId,
           turnId: this.#sourceTurnId(message.id),
           author: "system",
           source: "system",
@@ -775,6 +794,176 @@ export class MailboxStore {
       }
     }
     return messages;
+  }
+
+  deleteConversationMessage = Effect.fn("MailboxStore.deleteConversationMessage")(function* (
+    this: MailboxStore,
+    agentId: string,
+    messageId: string,
+  ): Effect.fn.Return<void, StoredStateFailure> {
+    try {
+      const delivery = this.#state.deliveries.find(
+        (item) => item.recipientAgentId === agentId && item.id === messageId,
+      );
+      if (!delivery) {
+        const outboxId = messageId.startsWith("outbox-") ? messageId : undefined;
+        const source = outboxId
+          ? this.#state.messages.find(
+              (message) =>
+                `outbox-${message.id}` === outboxId &&
+                message.sender.kind === "agent" &&
+                message.sender.agentId === agentId,
+            )
+          : undefined;
+        if (outboxId && !source) return;
+        const hiddenMessageId = outboxId ?? messageId;
+        const previous = structuredClone(this.#state);
+        this.#hideConversationMessage(agentId, hiddenMessageId);
+        this.#state.reactions = this.#state.reactions.filter(
+          (reaction) => reaction.agentId !== agentId || reaction.messageId !== messageId,
+        );
+        try {
+          this.#persist(
+            "mailbox.conversation-message-hidden",
+            `mailbox:conversation-message-hide:${agentId}:${messageId}`,
+          );
+        } catch (error) {
+          this.#state = previous;
+          throw error;
+        }
+        return;
+      }
+      if (delivery.status === "queued" || delivery.status === "starting" || delivery.status === "running")
+        throw new Error(sourceText("error.agent.cannotDeletePending"));
+      const previous = structuredClone(this.#state);
+      const sourceMessage = this.#requireMessage(delivery.messageId);
+      if (sourceMessage.channelId || sourceMessage.messaging) return;
+      this.#hideConversationMessage(agentId, messageId);
+      this.#state.deliveries = this.#state.deliveries.filter((item) => item.id !== delivery.id);
+      this.#state.reactions = this.#state.reactions.filter(
+        (reaction) => reaction.agentId !== agentId || reaction.messageId !== messageId,
+      );
+      const removedTransferRoots: string[] = [];
+      if (!this.#state.deliveries.some((item) => item.messageId === sourceMessage.id)) {
+        this.#state.messages = this.#state.messages.filter((item) => item.id !== sourceMessage.id);
+        this.#state.idempotency = Object.fromEntries(
+          Object.entries(this.#state.idempotency).filter(([, id]) => id !== sourceMessage.id),
+        );
+        removedTransferRoots.push(this.#files.transferRoot(sourceMessage.id));
+        for (const attachment of sourceMessage.attachments) {
+          const root = this.#files.transferRootForPath(attachment.path);
+          if (root) removedTransferRoots.push(root);
+        }
+      }
+      try {
+        this.#persist(
+          "mailbox.conversation-message-deleted",
+          `mailbox:conversation-message-delete:${agentId}:${messageId}`,
+          removedTransferRoots,
+        );
+      } catch (error) {
+        this.#state = previous;
+        throw error;
+      }
+      yield* this.#drainFileDeletionOutboxEffect();
+    } catch (cause) {
+      return yield* new StoredStateFailure({ cause });
+    }
+  }, Effect.uninterruptible).bind(this);
+
+  clearConversationHistory = Effect.fn("MailboxStore.clearConversationHistory")(function* (
+    this: MailboxStore,
+    agentId: string,
+    options: {
+      messageIds?: readonly string[];
+      providerSessions?: readonly { provider: AgentProviderId; externalSessionId: string }[];
+    } = {},
+  ): Effect.fn.Return<void, StoredStateFailure> {
+    try {
+      const previous = structuredClone(this.#state);
+      const visibleMessageIds = new Set(this.conversationMessages(agentId).map((message) => message.id));
+      for (const messageId of options.messageIds ?? []) visibleMessageIds.add(messageId);
+      const removedDeliveryIds = new Set(
+        this.#state.deliveries
+          .filter((item) => item.recipientAgentId === agentId && visibleMessageIds.has(item.id))
+          .map((item) => item.id),
+      );
+      const removedSourceIds = new Set(
+        this.#state.deliveries.filter((item) => removedDeliveryIds.has(item.id)).map((item) => item.messageId),
+      );
+      for (const messageId of visibleMessageIds) this.#hideConversationMessage(agentId, messageId);
+      this.#state.hiddenProviderHistorySessions ??= [];
+      for (const session of options.providerSessions ?? []) {
+        if (
+          !this.#state.hiddenProviderHistorySessions.some(
+            (hidden) =>
+              hidden.agentId === agentId &&
+              hidden.provider === session.provider &&
+              hidden.externalSessionId === session.externalSessionId,
+          )
+        )
+          this.#state.hiddenProviderHistorySessions.push({ agentId, ...session });
+      }
+      this.#state.deliveries = this.#state.deliveries.filter((item) => !removedDeliveryIds.has(item.id));
+      this.#state.reactions = this.#state.reactions.filter(
+        (reaction) => reaction.agentId !== agentId || !visibleMessageIds.has(reaction.messageId),
+      );
+      const stillDelivered = new Set(this.#state.deliveries.map((item) => item.messageId));
+      const removedMessages = this.#state.messages.filter(
+        (message) => removedSourceIds.has(message.id) && !stillDelivered.has(message.id),
+      );
+      this.#state.messages = this.#state.messages.filter((message) => !removedMessages.includes(message));
+      const removedIds = new Set(removedMessages.map((message) => message.id));
+      this.#state.idempotency = Object.fromEntries(
+        Object.entries(this.#state.idempotency).filter(([, id]) => !removedIds.has(id)),
+      );
+      const removedTransferRoots = new Set<string>();
+      for (const message of removedMessages) {
+        removedTransferRoots.add(this.#files.transferRoot(message.id));
+        for (const attachment of message.attachments) {
+          const root = this.#files.transferRootForPath(attachment.path);
+          if (root) removedTransferRoots.add(root);
+        }
+      }
+      try {
+        this.#persist("mailbox.conversation-history-cleared", `mailbox:conversation-history-clear:${agentId}`, [
+          ...removedTransferRoots,
+        ]);
+      } catch (error) {
+        this.#state = previous;
+        throw error;
+      }
+      yield* this.#drainFileDeletionOutboxEffect();
+    } catch (cause) {
+      return yield* new StoredStateFailure({ cause });
+    }
+  }, Effect.uninterruptible).bind(this);
+
+  isConversationMessageHidden(agentId: string, messageId: string): boolean {
+    return (
+      this.#state.hiddenConversationMessages?.some(
+        (hidden) => hidden.agentId === agentId && hidden.messageId === messageId,
+      ) ?? false
+    );
+  }
+
+  isProviderHistorySessionHidden(agentId: string, provider: AgentProviderId, externalSessionId: string): boolean {
+    return (
+      this.#state.hiddenProviderHistorySessions?.some(
+        (hidden) =>
+          hidden.agentId === agentId && hidden.provider === provider && hidden.externalSessionId === externalSessionId,
+      ) ?? false
+    );
+  }
+
+  #hideConversationMessage(agentId: string, messageId: string): void {
+    this.#state.hiddenConversationMessages ??= [];
+    if (
+      !this.#state.hiddenConversationMessages.some(
+        (hidden) => hidden.agentId === agentId && hidden.messageId === messageId,
+      )
+    )
+      this.#state.hiddenConversationMessages.push({ agentId, messageId });
   }
 
   reactionFor(
@@ -2111,6 +2300,8 @@ function normalizeStoredState(value: StoredState): StoredState {
       ...reaction,
       actor: reaction.actor ?? { kind: "user" },
     })),
+    hiddenConversationMessages: value.hiddenConversationMessages ?? [],
+    hiddenProviderHistorySessions: value.hiddenProviderHistorySessions ?? [],
   };
 }
 
@@ -2214,7 +2405,21 @@ function isStoredState(value: unknown): value is StoredState {
     isRecord(value.idempotency) &&
     Object.values(value.idempotency).every((item) => isString(item)) &&
     Array.isArray(value.reactions) &&
-    value.reactions.every(isStoredReaction)
+    value.reactions.every(isStoredReaction) &&
+    (value.hiddenConversationMessages === undefined ||
+      (Array.isArray(value.hiddenConversationMessages) &&
+        value.hiddenConversationMessages.every(
+          (item) => isRecord(item) && isString(item.agentId) && isString(item.messageId),
+        ))) &&
+    (value.hiddenProviderHistorySessions === undefined ||
+      (Array.isArray(value.hiddenProviderHistorySessions) &&
+        value.hiddenProviderHistorySessions.every(
+          (item) =>
+            isRecord(item) &&
+            isString(item.agentId) &&
+            isAgentProvider(item.provider) &&
+            isString(item.externalSessionId),
+        )))
   );
 }
 

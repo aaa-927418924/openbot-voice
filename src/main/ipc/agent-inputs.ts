@@ -12,6 +12,7 @@ import {
   type DeleteAgentMemoryInput,
   type DeleteChannelMemoryInput,
   type DeleteChannelRoutineInput,
+  type DeleteConversationMessageInput,
   type DeleteRoutineInput,
   type DownloadAttachmentsInput,
   type EditQueuedMessageInput,
@@ -484,6 +485,14 @@ export function parseMessageReaction(value: unknown): SetMessageReactionInput {
     agentId: requireString(value.agentId, "agentId"),
     messageId: requireString(value.messageId, "messageId"),
     emoji,
+  };
+}
+
+export function parseDeleteConversationMessage(value: unknown): DeleteConversationMessageInput {
+  if (!isObject(value)) throw new Error("Invalid conversation message deletion request.");
+  return {
+    agentId: requireString(value.agentId, "agentId", INPUT_LIMITS.identifier),
+    messageId: requireString(value.messageId, "messageId", INPUT_LIMITS.identifier),
   };
 }
 

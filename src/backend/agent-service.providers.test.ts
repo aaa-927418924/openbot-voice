@@ -140,6 +140,76 @@ afterEach(async () => {
 });
 
 describe.sequential("AgentService: providers", () => {
+  it("deletes one saved message while retaining replies and clearing its stored reaction", async () => {
+    const { service: agentService, store } = await startService(root, { provider: "codex", output: "DONE" });
+    service = agentService;
+    await runCauseEffect(service.sendMessage({ agentId: "chief", text: "Remove this message." }));
+    await waitForQueue(service, "chief", (queue) =>
+      queue.deliveries.every((delivery) => delivery.status === "completed"),
+    );
+    const agent = service.listAgents().find((candidate) => candidate.id === "chief");
+    if (!agent?.threadId) throw new Error("The conversation thread was not created.");
+    const first = (await runCauseEffect(service.readConversation(agent.id))).messages.find(
+      (message) => message.author === "user" && message.text === "Remove this message.",
+    );
+    if (!first) throw new Error("The message was not persisted.");
+    await runCauseEffect(service.setMessageReaction({ agentId: agent.id, messageId: first.id, emoji: "👍" }));
+    const persistedBeforeDelete = store.database.readConversation(agent.id, agent.threadId);
+    const attachmentMessage = persistedBeforeDelete.messages.find((message) => message.id === first.id);
+    if (!attachmentMessage) throw new Error("The message projection was not persisted.");
+    attachmentMessage.attachments = [
+      {
+        id: "delete-file",
+        name: "delete-me.txt",
+        size: 10,
+        kind: "file",
+        mimeType: "text/plain",
+        previewKind: "text",
+        previewUrl: null,
+      },
+    ];
+    store.database.persistConversation(persistedBeforeDelete, "test.message-attachment");
+    await runCauseEffect(
+      service.sendMessage({ agentId: agent.id, text: "Keep this reply.", replyToMessageId: first.id }),
+    );
+    await waitForQueue(service, agent.id, (queue) =>
+      queue.deliveries.every((delivery) => delivery.status === "completed"),
+    );
+
+    await runCauseEffect(service.deleteConversationMessage({ agentId: agent.id, messageId: first.id }));
+
+    const stored = store.database.readConversation(agent.id, agent.threadId);
+    expect(stored.messages.some((message) => message.id === first.id)).toBe(false);
+    expect(stored.messages.some((message) => message.replyToMessageId === first.id)).toBe(true);
+    expect(
+      (await runCauseEffect(service.readConversation(agent.id))).messages.some((message) => message.id === first.id),
+    ).toBe(false);
+    expect(store.database.searchConversationFiles("delete-me.txt").results).toEqual([]);
+  });
+
+  it("clears all chat history without changing the agent thread identity", async () => {
+    const { service: agentService, store, mailbox } = await startService(root, { provider: "codex", output: "DONE" });
+    service = agentService;
+    await runCauseEffect(service.sendMessage({ agentId: "chief", text: "Clear this history." }));
+    await waitForQueue(service, "chief", (queue) =>
+      queue.deliveries.every((delivery) => delivery.status === "completed"),
+    );
+    const before = service.listAgents().find((candidate) => candidate.id === "chief");
+    if (!before?.threadId) throw new Error("The conversation thread was not created.");
+    const providerSession = store.database.listProviderSessions(before.threadId)[0];
+    if (!providerSession) throw new Error("The provider session was not created.");
+
+    await runCauseEffect(service.clearConversationHistory(before.id));
+
+    const after = service.listAgents().find((candidate) => candidate.id === before.id);
+    expect(after).toMatchObject({ id: before.id, threadId: before.threadId, name: before.name });
+    expect((await runCauseEffect(service.readConversation(before.id))).messages).toEqual([]);
+    expect(store.database.readConversation(before.id, before.threadId).messages).toEqual([]);
+    expect(
+      mailbox.isProviderHistorySessionHidden("chief", providerSession.provider, providerSession.externalSessionId),
+    ).toBe(true);
+  });
+
   it("persists Live voice transcripts from a channel only in that channel", async () => {
     const liveClient = new FakeLiveVoiceClient(false);
     const { service: agentService } = await startService(root, {

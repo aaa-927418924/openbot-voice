@@ -11,8 +11,10 @@ export function SidebarDialogs() {
   const {
     closeDelete,
     confirmDelete,
+    confirmClearHistory,
     confirmSectionDelete,
     deleteError,
+    deleteTargetIsHistory,
     deleteTarget,
     channelDeleteTarget,
     deleting,
@@ -40,9 +42,14 @@ export function SidebarDialogs() {
             pending={deleting()}
             error={deleteError()}
             media={<AgentAvatar agent={agent()} style={{ width: "44px", height: "44px" }} />}
-            title={t("sidebar.delete.title", { name: agent().name })}
-            description={t("sidebar.delete.agentDescription")}
-            onConfirm={confirmDelete}
+            title={t(deleteTargetIsHistory() ? "sidebar.clearHistory.title" : "sidebar.delete.title", {
+              name: agent().name,
+            })}
+            description={t(
+              deleteTargetIsHistory() ? "sidebar.clearHistory.description" : "sidebar.delete.agentDescription",
+            )}
+            confirmLabel={deleteTargetIsHistory() ? t("sidebar.clearHistory.confirm") : shared.confirmLabel}
+            onConfirm={deleteTargetIsHistory() ? confirmClearHistory : confirmDelete}
           />
         )}
       </Show>

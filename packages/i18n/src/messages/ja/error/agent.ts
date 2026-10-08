@@ -88,4 +88,7 @@ export const messages = {
     "このサーバーはメモリが不足しています。メッセージはキューで待機し、メモリが空くと開始します。より大きいプランにすると、サーバーのメモリが増えます。",
   "error.agent.workspaceOnlyToolMissing":
     "「ワークスペースのみ」には {tool} が必要ですが、OpenBot は見つけられませんでした。インストールするか、エージェントの設定で「フルアクセス」を選んでください。",
+  "error.agent.messageNotFound": "メッセージはすでに存在しません。",
+  "error.agent.cannotDeleteStreaming": "メッセージの生成が終わってから削除してください。",
+  "error.agent.cannotDeletePending": "メッセージの処理が終わってから削除してください。",
 } as const satisfies PartialTranslation<typeof source>;

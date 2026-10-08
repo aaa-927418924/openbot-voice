@@ -47,6 +47,11 @@ export const messages = defineMessages("sidebar", {
   "sidebar.agentMenu.duplicate": "Duplicate agent",
   "sidebar.agentMenu.duplicating": "Duplicating…",
   "sidebar.agentMenu.delete": "Delete agent",
+  "sidebar.agentMenu.clearHistory": "Clear chat history",
+  "sidebar.clearHistory.title": "Clear chat history for {name}?",
+  "sidebar.clearHistory.description":
+    "This permanently removes all messages in this chat. The agent and its workspace will remain.",
+  "sidebar.clearHistory.confirm": "Clear history",
   "sidebar.channelMenu.label": "Channel actions",
   "sidebar.channelMenu.edit": "Edit channel",
   "sidebar.channelMenu.delete": "Delete channel",

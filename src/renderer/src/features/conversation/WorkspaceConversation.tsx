@@ -235,6 +235,7 @@ export function WorkspaceConversation(props: { account: () => CentralAuthUser })
       onConnectProvider={localProviderDownloads() ? connectProvider : undefined}
       onSignInProvider={activeServer()?.kind === "local" ? connectProvider : undefined}
       agent={conversationAgent()}
+      deleteMessagesSupported={activeServerSupportsCapability("conversation-history-delete-v1")}
       agents={agentList()}
       availableRoutineIds={activeRoutineIds()}
       routines={activeRoutines()}

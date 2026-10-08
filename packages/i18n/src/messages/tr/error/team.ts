@@ -100,4 +100,5 @@ export const messages = {
   "error.team.agentSettingsUnsupported": "Ajan ayarları bu bağlantı tarafından desteklenmiyor.",
   "error.team.adminRequired": "Yönetici erişimi gereklidir.",
   "error.team.requestTooLarge": "İstek gövdesi çok büyük.",
+  "error.team.conversationHistoryUnsupported": "Bu bağlantıda sohbet geçmişi değişiklikleri desteklenmiyor.",
 } as const satisfies PartialTranslation<typeof source>;

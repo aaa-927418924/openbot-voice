@@ -82,4 +82,7 @@ export const messages = {
     "Bu sunucunun belleği azaldı. Mesajınız kuyrukta bekler ve bellek boşaldığında başlar. Daha büyük bir plan sunucuya daha fazla bellek sağlar.",
   "error.agent.workspaceOnlyToolMissing":
     "Yalnızca çalışma alanı OpenBot'un bulamadığı {tool} aracına ihtiyaç duyar. Aracı yükleyin veya ajan ayarlarından Tam erişim'i seçin.",
+  "error.agent.messageNotFound": "Mesaj artık mevcut değil.",
+  "error.agent.cannotDeleteStreaming": "Silmeden önce mesajın tamamlanmasını bekleyin.",
+  "error.agent.cannotDeletePending": "Bu mesajı silmeden önce işlemin tamamlanmasını bekleyin.",
 } as const satisfies PartialTranslation<typeof source>;

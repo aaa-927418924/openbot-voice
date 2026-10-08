@@ -205,6 +205,8 @@ export const messages = {
   "chat.actions.replyUser": "Kullanıcı mesajına yanıt ver",
   "chat.actions.reply": "{name} mesajına yanıt ver",
   "chat.actions.more": "Daha fazla mesaj işlemi",
+  "chat.actions.deleteMessage": "Mesajı sil",
+  "chat.actions.deleteFailed": "Bu mesaj silinemedi.",
   "chat.selection.label": "Seçilen metin için işlemler",
   "chat.selection.sendFailed": "Gönderilemedi",
   "chat.selection.close": "Seçilen metin işlemlerini kapat",

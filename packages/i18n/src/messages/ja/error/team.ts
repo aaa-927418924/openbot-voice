@@ -99,4 +99,5 @@ export const messages = {
   "error.team.agentSettingsUnsupported": "この接続ではエージェントの設定を利用できません。",
   "error.team.adminRequired": "管理者のアクセス権が必要です。",
   "error.team.requestTooLarge": "リクエストの本文が大きすぎます。",
+  "error.team.conversationHistoryUnsupported": "この接続では会話履歴を変更できません。",
 } as const satisfies PartialTranslation<typeof source>;

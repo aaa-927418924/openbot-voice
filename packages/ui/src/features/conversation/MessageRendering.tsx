@@ -10,7 +10,7 @@ import { AttachmentCards, AttachmentDownloadAll } from "./AttachmentCards";
 import { CodeBlock } from "./CodeBlock";
 import { CodePreview } from "./CodePreview";
 import { ComparisonTable } from "./ComparisonTable";
-import { CheckIcon, CopyIcon, MoreIcon, PlusIcon, ReactionIcon, ReplyIcon } from "./ConversationIcons";
+import { CheckIcon, CopyIcon, MoreIcon, PlusIcon, ReactionIcon, ReplyIcon, TrashIcon } from "./ConversationIcons";
 import { createSmoothHeightResize } from "./createSmoothHeightResize";
 import { DataTable, type MessageContentBlock, messageContentBlocks, reuseUnchangedBlocks } from "./DataTable";
 import { messageFileReferences } from "./FileReference";
@@ -556,6 +556,7 @@ export function MessageActions(props: {
   onExpandEmoji: () => void;
   onReact: (emoji: MessageReaction | null) => void;
   onReply?: () => void;
+  onDelete?: () => void;
   onCopy: () => void;
 }) {
   const { t } = useText();
@@ -643,6 +644,17 @@ export function MessageActions(props: {
           onClick={props.onReply}
         >
           <ReplyIcon />
+        </Button>
+      </Show>
+      <Show when={props.onDelete && !props.message.streaming}>
+        <Button
+          variant="ghost"
+          type="button"
+          class="message-action-button"
+          aria-label={t("chat.actions.deleteMessage")}
+          onClick={props.onDelete}
+        >
+          <TrashIcon />
         </Button>
       </Show>
       <div class="message-action-popover-anchor">

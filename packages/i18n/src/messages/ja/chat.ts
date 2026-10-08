@@ -189,6 +189,8 @@ export const messages = {
   "chat.actions.replyUser": "ユーザーのメッセージに返信",
   "chat.actions.reply": "{name} のメッセージに返信",
   "chat.actions.more": "その他のメッセージ操作",
+  "chat.actions.deleteMessage": "メッセージを削除",
+  "chat.actions.deleteFailed": "メッセージを削除できなかった",
   "chat.selection.label": "選択したテキストの操作",
   "chat.selection.sendFailed": "送信できませんでした",
   "chat.selection.close": "選択したテキストの操作を閉じる",

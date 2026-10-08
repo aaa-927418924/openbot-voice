@@ -105,4 +105,6 @@ export const messages = {
   "error.team.agentSettingsUnsupported": "Les réglages des agents ne sont pas pris en charge par cette connexion.",
   "error.team.adminRequired": "Un accès administrateur est requis.",
   "error.team.requestTooLarge": "Le corps de la requête est trop volumineux.",
+  "error.team.conversationHistoryUnsupported":
+    "Cette connexion ne prend pas en charge la modification de l’historique.",
 } as const satisfies PartialTranslation<typeof source>;

@@ -94,6 +94,21 @@ export function createMessageActions(deps: MessageActionsDeps) {
     }
   }
 
+  async function deleteMessage(message: AgentMessage) {
+    const agentId = deps.props.agent?.id;
+    if (!agentId || !deps.props.deleteMessagesSupported || message.streaming) return;
+    const target = { agentId, serverId: deps.props.server?.id ?? "local" };
+    try {
+      await conversationRuntime(deps.props).agent.deleteConversationMessage(
+        { agentId, messageId: message.id },
+        target.serverId,
+      );
+      deps.setOpenMoreMessageId(null);
+    } catch (error) {
+      deps.setComposerError(errorMessage(error, t("chat.actions.deleteFailed")), target);
+    }
+  }
+
   function removeAttachment(id: string) {
     // A pending Save keeps its attachment IDs for retry. Do not change or discard them,
     // but only in the edited conversation: the pending state survives agent/server switches.
@@ -122,6 +137,7 @@ export function createMessageActions(deps: MessageActionsDeps) {
     replyToMessage,
     reactToMessage,
     copyMessage,
+    deleteMessage,
     removeAttachment,
     draftAttachmentIds,
   };

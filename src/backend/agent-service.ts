@@ -36,6 +36,7 @@ import type {
   DeleteAgentMemoryInput,
   DeleteChannelMemoryInput,
   DeleteChannelRoutineInput,
+  DeleteConversationMessageInput,
   DeleteRoutineInput,
   DeleteSharedTableInput,
   DraftAttachment,
@@ -2119,7 +2120,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const activeTurn =
         this.#conversation.workingSnapshot(agentId)?.activeTurnId ??
         (agent.threadId ? this.#store.database.readActiveTurnId(agentId, agent.threadId) : null);
-      if (activeTurn || this.#mailbox.hasUnfinishedDelivery(agentId) || this.#threads.providerContextBusy(agent)) {
+      if (
+        activeTurn ||
+        this.#liveVoiceSessions.has(agentId) ||
+        this.#mailbox.hasUnfinishedDelivery(agentId) ||
+        this.#threads.providerContextBusy(agent)
+      ) {
         throw new ContextResetBusyError(sourceText("error.agent.waitBeforeClearContext"));
       }
       const database = this.#store.database;
@@ -2149,6 +2155,97 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return threadId;
     });
     yield* this.#threads.endThreadContext(threadId);
+  }, Effect.uninterruptible).bind(this);
+
+  readonly deleteConversationMessage = Effect.fn("AgentService.deleteConversationMessage")(function* (
+    this: AgentService,
+    input: DeleteConversationMessageInput,
+  ) {
+    yield* lifecycleStep("find conversation agent", () => this.#conversation.requireKnownAgent(input.agentId));
+    const existing = yield* this.readConversation(input.agentId);
+    yield* lifecycleStep("validate conversation message deletion", () => {
+      const message = existing.messages.find((candidate) => candidate.id === input.messageId);
+      if (!message) throw new Error(sourceText("error.agent.messageNotFound"));
+      if (message.status === "streaming") throw new Error(sourceText("error.agent.cannotDeleteStreaming"));
+    });
+    yield* this.#mailbox
+      .deleteConversationMessage(input.agentId, input.messageId)
+      .pipe(
+        Effect.mapError(
+          (failure) =>
+            new AgentLifecycleFailed({ operation: "delete mailbox conversation message", cause: failure.cause }),
+        ),
+      );
+    yield* lifecycleStep("delete conversation message", () => {
+      const database = this.#store.database;
+      this.#conversation.withConversationTransaction(input.agentId, ({ threadId, snapshot }) => {
+        const messageIndex = snapshot.messages.findIndex((message) => message.id === input.messageId);
+        if (messageIndex < 0) throw new Error(sourceText("error.agent.messageNotFound"));
+        const message = snapshot.messages[messageIndex];
+        if (!message) throw new Error(sourceText("error.agent.messageNotFound"));
+        if (message.status === "streaming") throw new Error(sourceText("error.agent.cannotDeleteStreaming"));
+        snapshot.messages.splice(messageIndex, 1);
+        snapshot.revision = database.persistConversation(
+          snapshot,
+          "thread.message-deleted",
+          { messageId: input.messageId },
+          `conversation-message-delete:${threadId}:${input.messageId}`,
+        ).revision;
+        return { result: undefined, snapshot };
+      });
+    });
+  }).bind(this);
+
+  readonly clearConversationHistory = Effect.fn("AgentService.clearConversationHistory")(function* (
+    this: AgentService,
+    agentId: string,
+  ) {
+    yield* lifecycleStep("clear conversation history", () => {
+      const agent = this.#conversation.requireKnownAgent(agentId);
+      const activeTurn =
+        this.#conversation.workingSnapshot(agentId)?.activeTurnId ??
+        (agent.threadId ? this.#store.database.readActiveTurnId(agentId, agent.threadId) : null);
+      if (
+        activeTurn ||
+        this.#liveVoiceSessions.has(agentId) ||
+        this.#mailbox.hasUnfinishedDelivery(agentId) ||
+        this.#threads.providerContextBusy(agent)
+      ) {
+        throw new ContextResetBusyError(sourceText("error.agent.waitBeforeClearContext"));
+      }
+    });
+    const current = yield* this.readConversation(agentId);
+    const providerSessions = current.threadId
+      ? this.#store.database.listProviderSessions(current.threadId).map((session) => ({
+          provider: session.provider,
+          externalSessionId: session.externalSessionId,
+        }))
+      : [];
+    yield* this.#mailbox
+      .clearConversationHistory(agentId, {
+        messageIds: current.messages.map((message) => message.id),
+        providerSessions,
+      })
+      .pipe(
+        Effect.mapError(
+          (failure) =>
+            new AgentLifecycleFailed({ operation: "clear mailbox conversation history", cause: failure.cause }),
+        ),
+      );
+    const clearedThreadId = yield* lifecycleStep("persist cleared conversation history", () => {
+      return this.#conversation.withConversationTransaction(agentId, ({ threadId, snapshot }) => {
+        snapshot.messages = [];
+        snapshot.activeTurnId = null;
+        snapshot.revision = this.#store.database.persistConversation(
+          snapshot,
+          "thread.history-cleared",
+          { agentId },
+          `conversation-history-clear:${threadId}`,
+        ).revision;
+        return { result: threadId, snapshot };
+      });
+    });
+    yield* this.#threads.endThreadContext(clearedThreadId);
   }, Effect.uninterruptible).bind(this);
 
   resolveAvatar(agentId: string): { path: string; mimeType: AvatarImageInput["mimeType"]; version: string } | null {

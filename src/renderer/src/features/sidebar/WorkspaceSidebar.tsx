@@ -178,6 +178,11 @@ export function WorkspaceSidebar(props: { peopleEnabled: boolean }) {
       duplicatingAgentIds={duplicatingAgentIds()}
       onDuplicateAgent={duplicateAgent}
       onDeleteAgent={deleteAgent}
+      onClearAgentHistory={
+        activeServerSupportsCapability("conversation-history-delete-v1")
+          ? (agentId) => window.openbot.agent.clearConversationHistory(agentId, activeServer()?.id ?? "local")
+          : undefined
+      }
       compact={layout.leftPanelCompact()}
       onExpand={layout.expandSidebar}
       footer={

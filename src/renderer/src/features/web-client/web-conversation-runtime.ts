@@ -94,6 +94,7 @@ export function createWebConversationRuntime(
   return {
     agent: {
       discardDraftAttachment: (id) => remote.discard(id),
+      deleteConversationMessage: unavailable,
       downloadAttachments: unavailable,
       editQueuedMessage: async (input, serverId) => {
         // The edit belongs to the host that queued the message. This client talks only to the connected one.

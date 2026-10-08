@@ -4,7 +4,7 @@ import type { AgentStore } from "../agent-store";
 import { mergeProviderHistory, snapshotFromThread } from "../conversation-snapshots";
 import { causeHelpers } from "../effect-boundary";
 import type { MailboxStore } from "../mailbox-store";
-import { decodeThreadResponse } from "../protocol";
+import { decodeThreadResponse, type ThreadResponse } from "../protocol";
 import type { ConversationRuntime } from "./conversation-runtime";
 import { conversationContentSignature } from "./delivery-content";
 import { markIncompleteImageGeneration } from "./image-generation";
@@ -12,6 +12,23 @@ import type { MailboxSync } from "./mailbox-sync";
 import type { ProviderRuntime } from "./provider-runtime";
 import { providerForAgent } from "./thread-items";
 import type { ThreadLifecycle } from "./thread-lifecycle";
+
+export function filterHiddenProviderHistoryMessages(
+  thread: ThreadResponse["thread"],
+  isHidden: (messageId: string) => boolean,
+): ThreadResponse["thread"] {
+  return {
+    ...thread,
+    turns: thread.turns?.map((turn) => ({
+      ...turn,
+      items: turn.items?.filter((item) => {
+        if (item.id && isHidden(item.id)) return false;
+        if (item.type === "userMessage" && item.clientId && isHidden(item.clientId)) return false;
+        return true;
+      }),
+    })),
+  };
+}
 
 export interface BootRecoveryHooks {
   executionThreads?(): Array<{ id: string; threadId: string }>;
@@ -229,6 +246,8 @@ export class BootRecovery {
       // Inactive sessions still own history after an upgrade or provider switch.
       const active = this.#store.database.activeProviderSession(publicThreadId, agent.provider);
       for (const session of this.#store.database.listProviderSessions(publicThreadId)) {
+        if (this.#mailbox.isProviderHistorySessionHidden(agent.id, session.provider, session.externalSessionId))
+          continue;
         const client = this.#providers.clientFor(session.provider);
         if (!client) continue;
         yield* Effect.gen({ self: this }, function* () {
@@ -243,11 +262,17 @@ export class BootRecovery {
             .request("thread/read", { ...params, includeTurns: true }, decodeThreadResponse)
             .pipe(toBootRecoveryFailed);
           yield* recoveryStep(() => {
+            const filteredThread = filterHiddenProviderHistoryMessages(response.thread, (messageId) =>
+              this.#mailbox.isConversationMessageHidden(agent.id, messageId),
+            );
             const imported = snapshotFromThread(
               agent.id,
-              response.thread,
+              filteredThread,
               (deliveryId) => this.#mailbox.getDelivery(deliveryId),
               (messageId) => this.#mailbox.deliveryForMessage(messageId, agent.id),
+            );
+            imported.messages = imported.messages.filter(
+              (message) => !this.#mailbox.isConversationMessageHidden(agent.id, message.id),
             );
             imported.threadId = publicThreadId;
             const current = this.#store.database.readConversation(agent.id, publicThreadId);

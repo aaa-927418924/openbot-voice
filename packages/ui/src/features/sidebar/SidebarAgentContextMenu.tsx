@@ -13,7 +13,7 @@ import type { SidebarPinnedItem } from "./sidebar-pins";
 import { useSidebarScope } from "./sidebar-scope";
 
 export function SidebarAgentContextMenu(menuProps: { agent: AgentProfile; pinned: boolean }) {
-  const { openDelete, props } = useSidebarScope();
+  const { openClearHistory, openDelete, props } = useSidebarScope();
   const { t } = useText();
   const ref = (): SidebarPinnedItem => ({ kind: "agent", id: menuProps.agent.id });
   return (
@@ -46,8 +46,19 @@ export function SidebarAgentContextMenu(menuProps: { agent: AgentProfile; pinned
             </span>
           </ContextMenu.Item>
         </Show>
-        <Show when={props.deleteSupported !== false}>
+        <Show when={props.onClearAgentHistory || props.deleteSupported !== false}>
           <ContextMenu.Separator />
+        </Show>
+        <Show when={props.onClearAgentHistory}>
+          <ContextMenu.Item
+            class="ui-action-menu-danger agent-context-danger"
+            onSelect={() => openClearHistory(menuProps.agent.id)}
+          >
+            <DeleteIcon />
+            <span>{t("sidebar.agentMenu.clearHistory")}</span>
+          </ContextMenu.Item>
+        </Show>
+        <Show when={props.deleteSupported !== false}>
           <ContextMenu.Item
             class="ui-action-menu-danger agent-context-danger"
             onSelect={() => openDelete("agent", menuProps.agent.id)}

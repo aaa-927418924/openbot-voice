@@ -85,6 +85,7 @@ export function ConversationTimeline() {
     editingDeliveryId,
     editPendingSend,
     copyMessage,
+    deleteMessage,
     expandedEmojiMessageId,
     installedSkills,
     scrollFades,
@@ -654,6 +655,14 @@ export function ConversationTimeline() {
                                     const currentMessage = message();
                                     if (currentMessage) replyToMessage(currentMessage);
                                   }}
+                                  onDelete={
+                                    props.deleteMessagesSupported
+                                      ? () => {
+                                          const currentMessage = message();
+                                          if (currentMessage) void deleteMessage(currentMessage);
+                                        }
+                                      : undefined
+                                  }
                                   onCopy={() => {
                                     const currentMessage = message();
                                     if (currentMessage) void copyMessage(currentMessage);

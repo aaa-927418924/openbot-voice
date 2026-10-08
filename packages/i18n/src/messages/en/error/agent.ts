@@ -89,4 +89,7 @@ export const messages = defineMessages("error.agent", {
     "This server is low on memory. Your message waits in the queue and starts when memory is free. A larger plan gives the server more memory.",
   "error.agent.workspaceOnlyToolMissing":
     "Workspace only needs {tool}, which OpenBot did not find. Install it, or choose Full access in the agent settings.",
+  "error.agent.messageNotFound": "The message no longer exists.",
+  "error.agent.cannotDeleteStreaming": "Wait for the message to finish before deleting it.",
+  "error.agent.cannotDeletePending": "Wait for this message to finish before deleting it.",
 });

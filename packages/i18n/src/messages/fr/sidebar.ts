@@ -48,6 +48,11 @@ export const messages = {
   "sidebar.agentMenu.duplicate": "Dupliquer l’agent",
   "sidebar.agentMenu.duplicating": "Duplication…",
   "sidebar.agentMenu.delete": "Supprimer l’agent",
+  "sidebar.agentMenu.clearHistory": "Effacer l’historique du chat",
+  "sidebar.clearHistory.title": "Effacer l’historique de {name} ?",
+  "sidebar.clearHistory.description":
+    "Tous les messages de ce chat seront supprimés. L’agent et son espace de travail resteront.",
+  "sidebar.clearHistory.confirm": "Effacer l’historique",
   "sidebar.channelMenu.label": "Actions du canal",
   "sidebar.channelMenu.edit": "Modifier le canal",
   "sidebar.channelMenu.delete": "Supprimer le canal",

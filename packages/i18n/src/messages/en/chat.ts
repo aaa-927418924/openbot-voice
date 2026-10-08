@@ -195,6 +195,8 @@ export const messages = defineMessages("chat", {
   "chat.actions.replyUser": "Reply to User message",
   "chat.actions.reply": "Reply to {name} message",
   "chat.actions.more": "More message actions",
+  "chat.actions.deleteMessage": "Delete message",
+  "chat.actions.deleteFailed": "Couldn’t delete this message.",
   "chat.selection.label": "Actions for selected text",
   "chat.selection.sendFailed": "Couldn’t send",
   "chat.selection.close": "Close selected text actions",

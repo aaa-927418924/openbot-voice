@@ -103,4 +103,6 @@ export const messages = {
   "error.team.agentSettingsUnsupported": "Esta conexão não oferece suporte às configurações de agentes.",
   "error.team.adminRequired": "É necessário acesso de administrador.",
   "error.team.requestTooLarge": "O corpo da solicitação é muito grande.",
+  "error.team.conversationHistoryUnsupported":
+    "Esta conexão não oferece suporte à alteração do histórico de conversas.",
 } as const satisfies PartialTranslation<typeof source>;

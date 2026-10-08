@@ -95,6 +95,11 @@ export interface SearchConversationMessagesInput {
   limit?: number;
 }
 
+export interface DeleteConversationMessageInput {
+  agentId: string;
+  messageId: string;
+}
+
 export interface ConversationSearchResult {
   agentId: string;
   message: ConversationMessage;

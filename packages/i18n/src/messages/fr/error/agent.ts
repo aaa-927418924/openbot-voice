@@ -91,4 +91,7 @@ export const messages = {
     "Ce serveur manque de mémoire. Votre message attend dans la file et démarre quand la mémoire est libre. Une offre plus grande donne plus de mémoire au serveur.",
   "error.agent.workspaceOnlyToolMissing":
     "« Espace de travail uniquement » nécessite {tool}, qu’OpenBot n’a pas trouvé. Installez-le, ou choisissez « Accès complet » dans les réglages de l’agent.",
+  "error.agent.messageNotFound": "Le message n’existe plus.",
+  "error.agent.cannotDeleteStreaming": "Attendez la fin du message avant de le supprimer.",
+  "error.agent.cannotDeletePending": "Attendez la fin du traitement avant de supprimer ce message.",
 } as const satisfies PartialTranslation<typeof source>;

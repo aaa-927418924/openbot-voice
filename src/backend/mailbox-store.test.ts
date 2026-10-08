@@ -1212,6 +1212,88 @@ describe("MailboxStore", () => {
     await expect(runCauseEffect(store.resolveAttachment(generated.id))).resolves.toBeNull();
   });
 
+  it("clears only direct conversation deliveries and keeps channel work", async () => {
+    const direct = await runCauseEffect(
+      store.enqueue({ sender: { kind: "user" }, recipientAgentIds: ["chief"], text: "Direct chat" }),
+    );
+    const channel = await runCauseEffect(
+      store.enqueue({
+        channelId: "channel-1",
+        sender: { kind: "user" },
+        recipientAgentIds: ["chief"],
+        text: "Channel history",
+      }),
+    );
+    const directId = required(direct.deliveries[0]).id;
+    const channelId = required(channel.deliveries[0]).id;
+    for (const [id, turnId] of [
+      [directId, "direct-turn"],
+      [channelId, "channel-turn"],
+    ] as const) {
+      await runCauseEffect(store.markStarting(id));
+      await runCauseEffect(store.markRunning(id, turnId));
+      await runCauseEffect(store.markTerminal(id, "completed"));
+    }
+
+    await runCauseEffect(
+      store.clearConversationHistory("chief", {
+        messageIds: ["provider-assistant-item"],
+        providerSessions: [{ provider: "codex", externalSessionId: "old-codex-session" }],
+      }),
+    );
+
+    expect(store.conversationMessages("chief")).toEqual([]);
+    expect(store.getDelivery(directId)).toBeNull();
+    expect(store.getDelivery(channelId)?.delivery.text).toBe("Channel history");
+    expect(store.isConversationMessageHidden("chief", directId)).toBe(true);
+    expect(store.isConversationMessageHidden("chief", "provider-assistant-item")).toBe(true);
+    expect(store.isProviderHistorySessionHidden("chief", "codex", "old-codex-session")).toBe(true);
+
+    const restored = new MailboxStore(
+      join(root, "user-data"),
+      join(root, "Shared"),
+      new OpenBotDatabase(join(root, "user-data")),
+    );
+    await runCauseEffect(restored.initialize());
+    expect(restored.isConversationMessageHidden("chief", "provider-assistant-item")).toBe(true);
+    expect(restored.isProviderHistorySessionHidden("chief", "codex", "old-codex-session")).toBe(true);
+  });
+
+  it("hides an agent outbox message without removing its recipient's copy", async () => {
+    const receipt = await runCauseEffect(
+      store.enqueue({
+        sender: { kind: "agent", agentId: "chief" },
+        recipientAgentIds: ["partner"],
+        text: "Keep this for the recipient.",
+      }),
+    );
+    const outboxId = `outbox-${receipt.messageId}`;
+    await runCauseEffect(store.setReaction("chief", outboxId, { kind: "user" }, "👍"));
+
+    await runCauseEffect(store.deleteConversationMessage("chief", outboxId));
+
+    expect(store.conversationMessages("chief")).toEqual([]);
+    expect(store.conversationMessages("partner").map((message) => message.text)).toContain(
+      "Keep this for the recipient.",
+    );
+    expect(store.reactionsFor("chief").has(outboxId)).toBe(false);
+  });
+
+  it("allows deletion of a failed conversation message", async () => {
+    const receipt = await runCauseEffect(
+      store.enqueue({ sender: { kind: "user" }, recipientAgentIds: ["chief"], text: "This turn failed." }),
+    );
+    const deliveryId = required(receipt.deliveries[0]).id;
+    await runCauseEffect(store.markStarting(deliveryId));
+    await runCauseEffect(store.markRunning(deliveryId, "failed-turn"));
+    await runCauseEffect(store.markTerminal(deliveryId, "failed", "Provider failed."));
+
+    await runCauseEffect(store.deleteConversationMessage("chief", deliveryId));
+
+    expect(store.conversationMessages("chief").map((message) => message.text)).not.toContain("This turn failed.");
+    expect(store.isConversationMessageHidden("chief", deliveryId)).toBe(true);
+  });
+
   it("cleans unrecoverable attachment drafts when a new app session starts", async () => {
     const source = join(root, "abandoned.txt");
     await writeFile(source, "abandoned");

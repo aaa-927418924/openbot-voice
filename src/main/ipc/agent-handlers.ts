@@ -28,6 +28,11 @@ import { isDynamicRecord } from "@openbot/contracts/runtime-values";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import { CHANNEL_ROUTES } from "@openbot/contracts/team-protocol/channels-v1";
 import { CONTEXT_RESET_CAPABILITY, CONTEXT_RESET_ROUTES } from "@openbot/contracts/team-protocol/context-reset-v1";
+import {
+  CLEAR_CONVERSATION_HISTORY_ROUTE,
+  CONVERSATION_HISTORY_DELETE_CAPABILITY,
+  DELETE_CONVERSATION_MESSAGE_ROUTE,
+} from "@openbot/contracts/team-protocol/conversation-history-delete-v1";
 import { sourceText } from "@openbot/i18n/source";
 import { createOpenBotLogger } from "@openbot/logging";
 import { duplicateAgentIntoLayout } from "../../backend/agent/duplication-gate";
@@ -59,6 +64,7 @@ import {
   parseCancelQueuedMessage,
   parseChannelId,
   parseCreateAgent,
+  parseDeleteConversationMessage,
   parseInterrupt,
   parseMarkConversationRead,
   parseMessageReaction,
@@ -367,6 +373,19 @@ export function agentIpcHandlers({
             }),
           ),
       }),
+      deleteConversationMessage: scopedHandler(parseDeleteConversationMessage, {
+        local: (parsed) => runCauseEffect(service.deleteConversationMessage(parsed)),
+        remote: async (parsed, serverId) => {
+          if (!remoteServers.supportsCapability(serverId, CONVERSATION_HISTORY_DELETE_CAPABILITY))
+            throw new Error(sourceText("error.team.conversationHistoryUnsupported"));
+          await runCauseEffect(
+            remoteServers.request(serverId, DELETE_CONVERSATION_MESSAGE_ROUTE, decodeVoid, {
+              method: "POST",
+              body: parsed,
+            }),
+          );
+        },
+      }),
       listQueue: scopedHandler(parseAgentId, {
         local: (agentId) => service.listQueue(agentId),
         remote: (agentId, serverId) =>
@@ -456,6 +475,19 @@ export function agentIpcHandlers({
           // The context-reset-v1 codec has already checked the empty reply.
           await runCauseEffect(
             remoteServers.request(serverId, CONTEXT_RESET_ROUTES.clear, () => undefined, {
+              method: "POST",
+              body: { agentId },
+            }),
+          );
+        },
+      }),
+      clearConversationHistory: scopedHandler(parseAgentId, {
+        local: (agentId) => runCauseEffect(service.clearConversationHistory(agentId)),
+        remote: async (agentId, serverId) => {
+          if (!remoteServers.supportsCapability(serverId, CONVERSATION_HISTORY_DELETE_CAPABILITY))
+            throw new Error(sourceText("error.team.conversationHistoryUnsupported"));
+          await runCauseEffect(
+            remoteServers.request(serverId, CLEAR_CONVERSATION_HISTORY_ROUTE, decodeVoid, {
               method: "POST",
               body: { agentId },
             }),

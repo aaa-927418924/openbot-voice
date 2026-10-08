@@ -393,6 +393,8 @@ const agentGroup = bridgeGroup(IPC_ENDPOINTS.agent, {
   updateAgent: decodeAgent,
   setAvatar: decodeAgent,
   deleteAgent: decodeVoid,
+  deleteConversationMessage: decodeVoid,
+  clearConversationHistory: decodeVoid,
   readConversation: decodeConversation,
   readConversationPage: decodeConversationPageFromMain,
   searchConversationMessages: decodeConversationSearchPageFromMain,

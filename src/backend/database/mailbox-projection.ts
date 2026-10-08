@@ -65,6 +65,12 @@ export interface MailboxProjectionState {
   pausedAgentIds: string[];
   idempotency: Record<string, string>;
   reactions: MailboxProjectionReaction[];
+  hiddenConversationMessages?: Array<{ agentId: string; messageId: string }>;
+  hiddenProviderHistorySessions?: Array<{
+    agentId: string;
+    provider: string;
+    externalSessionId: string;
+  }>;
 }
 
 /** The queue-state row that holds the idempotency keys. */
@@ -221,7 +227,16 @@ export class MailboxProjection {
           WHERE projection_queue_state.paused IS NOT excluded.paused
             OR projection_queue_state.metadata_json IS NOT excluded.metadata_json
         `);
-        queueUpsert.run(MAILBOX_METADATA_ROW, 0, JSON.stringify({ idempotency: value.idempotency }), sequence);
+        queueUpsert.run(
+          MAILBOX_METADATA_ROW,
+          0,
+          JSON.stringify({
+            idempotency: value.idempotency,
+            hiddenConversationMessages: value.hiddenConversationMessages ?? [],
+            hiddenProviderHistorySessions: value.hiddenProviderHistorySessions ?? [],
+          }),
+          sequence,
+        );
         for (const agentId of value.pausedAgentIds) queueUpsert.run(agentId, 1, "{}", sequence);
         const reactionUpsert = db.prepare(`
           INSERT INTO projection_reactions
@@ -338,6 +353,8 @@ export class MailboxProjection {
       pausedAgentIds,
       idempotency: metadata.idempotency ?? {},
       reactions,
+      hiddenConversationMessages: metadata.hiddenConversationMessages,
+      hiddenProviderHistorySessions: metadata.hiddenProviderHistorySessions,
     };
   }
 }
@@ -423,17 +440,30 @@ function deleteRowsNotIn(
   }
 }
 
-function parseMailboxMetadata(value: string): { idempotency?: Record<string, string> } {
+function parseMailboxMetadata(value: string): {
+  idempotency?: Record<string, string>;
+  hiddenConversationMessages?: unknown[];
+  hiddenProviderHistorySessions?: unknown[];
+} {
   const parsed = JSON.parse(value);
   if (!isDynamicRecord(parsed)) throw new Error("Invalid mailbox metadata.");
   const idempotency = parsed.idempotency;
-  if (idempotency === undefined) return {};
-  if (!isDynamicRecord(idempotency)) throw new Error("Invalid mailbox idempotency metadata.");
-  const entries = Object.entries(idempotency);
+  const hiddenConversationMessages = parsed.hiddenConversationMessages;
+  const hiddenProviderHistorySessions = parsed.hiddenProviderHistorySessions;
+  if (idempotency !== undefined && !isDynamicRecord(idempotency))
+    throw new Error("Invalid mailbox idempotency metadata.");
+  if (hiddenConversationMessages !== undefined && !Array.isArray(hiddenConversationMessages))
+    throw new Error("Invalid hidden conversation message metadata.");
+  if (hiddenProviderHistorySessions !== undefined && !Array.isArray(hiddenProviderHistorySessions))
+    throw new Error("Invalid hidden provider history metadata.");
   const values: Record<string, string> = {};
-  for (const [key, entry] of entries) {
+  for (const [key, entry] of Object.entries(idempotency ?? {})) {
     if (!isString(entry)) throw new Error("Invalid mailbox idempotency entry.");
     values[key] = entry;
   }
-  return { idempotency: values };
+  return {
+    idempotency: values,
+    ...(hiddenConversationMessages ? { hiddenConversationMessages } : {}),
+    ...(hiddenProviderHistorySessions ? { hiddenProviderHistorySessions } : {}),
+  };
 }

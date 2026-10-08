@@ -1598,6 +1598,16 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
           });
         });
       },
+      deleteConversationMessage: async (input) => {
+        updateSnapshot(input.agentId, (snapshot) => {
+          snapshot.messages = snapshot.messages.filter((message) => message.id !== input.messageId);
+        });
+      },
+      clearConversationHistory: async (agentId: string) => {
+        updateSnapshot(agentId, (snapshot) => {
+          snapshot.messages = [];
+        });
+      },
       respondToPrompt: async (_input: RespondToPromptInput) => undefined,
       respondToApproval: async () => undefined,
       respondToBrowserSecret: async (input) => {

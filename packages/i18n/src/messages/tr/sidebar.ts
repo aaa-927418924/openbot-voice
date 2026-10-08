@@ -48,6 +48,11 @@ export const messages = {
   "sidebar.agentMenu.duplicate": "Ajanı çoğalt",
   "sidebar.agentMenu.duplicating": "Çoğaltılıyor…",
   "sidebar.agentMenu.delete": "Ajanı sil",
+  "sidebar.agentMenu.clearHistory": "Sohbet geçmişini temizle",
+  "sidebar.clearHistory.title": "{name} için sohbet geçmişi temizlensin mi?",
+  "sidebar.clearHistory.description":
+    "Bu sohbetteki tüm mesajlar kalıcı olarak silinir. Aracı ve çalışma alanı korunur.",
+  "sidebar.clearHistory.confirm": "Geçmişi temizle",
   "sidebar.channelMenu.label": "Kanal işlemleri",
   "sidebar.channelMenu.edit": "Kanalı düzenle",
   "sidebar.channelMenu.delete": "Kanalı sil",

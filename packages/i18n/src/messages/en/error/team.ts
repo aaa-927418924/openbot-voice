@@ -99,4 +99,5 @@ export const messages = defineMessages("error.team", {
   "error.team.agentSettingsUnsupported": "Agent settings are not supported by this connection.",
   "error.team.adminRequired": "Administrator access is required.",
   "error.team.requestTooLarge": "Request body is too large.",
+  "error.team.conversationHistoryUnsupported": "Conversation history changes are not supported by this connection.",
 });

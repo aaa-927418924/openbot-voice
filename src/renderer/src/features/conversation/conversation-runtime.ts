@@ -8,6 +8,7 @@ export interface ConversationRuntime {
   agent: Pick<
     OpenBotDesktopApi["agent"],
     | "discardDraftAttachment"
+    | "deleteConversationMessage"
     | "downloadAttachments"
     | "editQueuedMessage"
     | "listInstalledSkills"
