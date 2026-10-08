@@ -52,12 +52,12 @@ describe("Team API compatibility negotiation", () => {
       await runCauseEffect(
         fixture.manager.request(serverId, path, (value) => value, {
           method: "PATCH",
-          body: { name: "Voice", codexLiveVoice: "coral" },
+          body: { name: "Voice", codexLiveVoice: "maple" },
         }),
       );
 
       if (capabilities.length > 0) {
-        expect(stub.requests(path)[0]?.body).toMatchObject({ name: "Voice", codexLiveVoice: "coral" });
+        expect(stub.requests(path)[0]?.body).toMatchObject({ name: "Voice", codexLiveVoice: "maple" });
       } else {
         expect(stub.requests(path)[0]?.body).toMatchObject({ name: "Voice" });
         expect(stub.requests(path)[0]?.body).not.toHaveProperty("codexLiveVoice");

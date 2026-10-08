@@ -271,7 +271,7 @@ describe.sequential("AgentService: providers", () => {
     await waitForQueue(service, "chief", (queue) =>
       queue.deliveries.every((delivery) => delivery.status === "completed"),
     );
-    await runCauseEffect(store.updateAgent({ agentId: "chief", codexLiveVoice: "coral" }));
+    await runCauseEffect(store.updateAgent({ agentId: "chief", codexLiveVoice: "maple" }));
     const agent = service.listAgents().find((candidate) => candidate.id === "chief");
     if (!agent?.threadId) throw new Error("The Codex thread was not created.");
     await runCauseEffect(
@@ -306,7 +306,7 @@ describe.sequential("AgentService: providers", () => {
     );
     expect(liveClient.liveRequests.find((request) => request.method === "thread/realtime/start")?.params).toMatchObject(
       {
-        voice: "coral",
+        voice: "maple",
       },
     );
     const initialChannelBoundaries = service.channels.store

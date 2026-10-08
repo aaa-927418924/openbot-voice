@@ -1,11 +1,33 @@
 import { describe, expect, it } from "vitest";
 import {
+  CODEX_LIVE_VOICES,
+  DEFAULT_CODEX_LIVE_VOICE,
+  isCodexLiveVoice,
   LIVE_VOICE_SESSION_END_ITEM_TYPE,
   LIVE_VOICE_SESSION_START_ITEM_TYPE,
   parseLiveVoiceSessionMarker,
 } from "./ipc-live-voice";
 
 const sessionHash = "a".repeat(48);
+
+describe("Codex Live voices", () => {
+  it("matches the voices accepted by app-server realtime v3", () => {
+    expect(CODEX_LIVE_VOICES).toEqual([
+      "juniper",
+      "maple",
+      "spruce",
+      "ember",
+      "vale",
+      "breeze",
+      "arbor",
+      "sol",
+      "cove",
+    ]);
+    expect(DEFAULT_CODEX_LIVE_VOICE).toBe("juniper");
+    expect(CODEX_LIVE_VOICES.every(isCodexLiveVoice)).toBe(true);
+    expect(isCodexLiveVoice("marin")).toBe(false);
+  });
+});
 
 describe("parseLiveVoiceSessionMarker", () => {
   it("reads start and end records from existing message fields", () => {

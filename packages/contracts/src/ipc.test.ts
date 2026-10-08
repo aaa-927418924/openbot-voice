@@ -757,7 +757,7 @@ describe("renderer-to-main boundary guards", () => {
     expect(isAgentSummary({ ...agent, provider: "gemini" })).toBe(false);
     expect(isAgentSummary({ ...agent, avatarSeed: "Not A Seed!" })).toBe(false);
     expect(isAgentSummary({ ...agent, avatarHue: 7 })).toBe(false);
-    expect(isAgentSummary({ ...agent, codexLiveVoice: "coral" })).toBe(true);
+    expect(isAgentSummary({ ...agent, codexLiveVoice: "maple" })).toBe(true);
     expect(isAgentSummary({ ...agent, codexLiveVoice: "unknown" })).toBe(false);
   });
 

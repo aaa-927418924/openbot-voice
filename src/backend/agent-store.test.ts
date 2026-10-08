@@ -69,12 +69,12 @@ describe("AgentStore", () => {
 
     await runCauseEffect(store.initialize());
     const agent = await runCauseEffect(store.getOrCreate("chief"));
-    const updated = await runCauseEffect(store.updateAgent({ agentId: agent.id, codexLiveVoice: "coral" }));
-    expect(updated.codexLiveVoice).toBe("coral");
+    const updated = await runCauseEffect(store.updateAgent({ agentId: agent.id, codexLiveVoice: "maple" }));
+    expect(updated.codexLiveVoice).toBe("maple");
 
     const reopened = new AgentStore(userData, home);
     await runCauseEffect(reopened.initialize());
-    expect(reopened.list().find((candidate) => candidate.id === agent.id)?.codexLiveVoice).toBe("coral");
+    expect(reopened.list().find((candidate) => candidate.id === agent.id)?.codexLiveVoice).toBe("maple");
   });
 
   it("moves a workspace left behind in the pre-rename directory without overwriting the new one", async () => {
@@ -513,15 +513,15 @@ describe("AgentStore", () => {
 
     // Values a released build stored and a later one cannot read: a model id the provider CLI renamed
     // under a running install, an effort and a hue from a release the user has since left, a marketplace
-    // source written as SQL `null`, and an access mode a newer release added. Every one of them used to stop the app from starting.
+    // source written as SQL `null`, an access mode a newer release added, and a Live voice v3 no longer accepts.
     store.database.connection
       .prepare(
         `UPDATE projection_agents SET agent_json = json_set(agent_json,
            '$.model', ?, '$.reasoningEffort', ?, '$.avatarSeed', ?, '$.avatarHue', ?,
-           '$.marketplaceSource', json('null'), '$.access', ?)
+           '$.marketplaceSource', json('null'), '$.access', ?, '$.codexLiveVoice', ?)
          WHERE agent_id = ?`,
       )
-      .run("claude fable 5.1 (1m)", "ultra", "Chief Seed", 7, "root", "chief");
+      .run("claude fable 5.1 (1m)", "ultra", "Chief Seed", 7, "root", "marin", "chief");
 
     const repaired = new AgentStore(userData, home);
     await runCauseEffect(repaired.initialize());
@@ -543,6 +543,7 @@ describe("AgentStore", () => {
       avatarHue: null,
     });
     expect(repaired.list().find((agent) => agent.id === "chief")?.marketplaceSource).toBeUndefined();
+    expect(repaired.list().find((agent) => agent.id === "chief")?.codexLiveVoice).toBeUndefined();
 
     // Written back at once, so the next launch reads a profile it accepts instead of repairing again.
     expect(repaired.database.listAgents().find((agent) => agent.id === "chief")).toMatchObject({
@@ -552,6 +553,7 @@ describe("AgentStore", () => {
       avatarSeed: "chief",
       avatarHue: null,
     });
+    expect(repaired.database.listAgents().find((agent) => agent.id === "chief")?.codexLiveVoice).toBeUndefined();
   });
 
   it("refuses to start on a stored profile field no default can stand in for", async () => {

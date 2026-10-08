@@ -3,21 +3,20 @@ import { isDynamicRecord, isOneOf, isString } from "./runtime-values";
 
 export const LIVE_VOICE_SDP_LIMIT = 256_000;
 
-/** Codex's built-in v2 realtime voices; v3 sessions accept the same configured voice field. */
+/** Codex app-server v3 realtime voices. */
 export const CODEX_LIVE_VOICES = [
-  "alloy",
-  "ash",
-  "ballad",
-  "coral",
-  "echo",
-  "sage",
-  "shimmer",
-  "verse",
-  "marin",
-  "cedar",
+  "juniper",
+  "maple",
+  "spruce",
+  "ember",
+  "vale",
+  "breeze",
+  "arbor",
+  "sol",
+  "cove",
 ] as const;
 export type CodexLiveVoice = (typeof CODEX_LIVE_VOICES)[number];
-export const DEFAULT_CODEX_LIVE_VOICE: CodexLiveVoice = "marin";
+export const DEFAULT_CODEX_LIVE_VOICE: CodexLiveVoice = "juniper";
 
 export function isCodexLiveVoice(value: unknown): value is CodexLiveVoice {
   return isOneOf(CODEX_LIVE_VOICES, value);

@@ -25,7 +25,7 @@ import {
 
 describe("Team protocol v6", () => {
   it("carries the optional Codex Live voice only for hosts that advertise the setting", () => {
-    const patch = { codexLiveVoice: "coral" };
+    const patch = { codexLiveVoice: "maple" };
     const route = "/v1/agents/agent-cursor";
     const encodedRequest = JSON.parse(
       encodeTeamProtocolV6CurrentHttpRequest("PATCH", route, patch, { agentLiveVoiceSettings: true }),
@@ -39,15 +39,15 @@ describe("Team protocol v6", () => {
     ).not.toHaveProperty("codexLiveVoice");
     expect(TEAM_CURRENT_CAPABILITIES).toContain(AGENT_LIVE_VOICE_SETTINGS_CAPABILITY);
 
-    const agent = { ...response[0], codexLiveVoice: "coral" };
+    const agent = { ...response[0], codexLiveVoice: "maple" };
     const encodedResponse = JSON.parse(
       encodeTeamProtocolV6CurrentHttpResponse("GET", "/v1/agents", 200, [agent], {
         agentLiveVoiceSettings: true,
       }),
     );
-    expect(encodedResponse[0].codexLiveVoice).toBe("coral");
+    expect(encodedResponse[0].codexLiveVoice).toBe("maple");
     expect(decodeTeamProtocolV6CurrentHttpResponse("GET", "/v1/agents", 200, encodedResponse)).toMatchObject([
-      { codexLiveVoice: "coral" },
+      { codexLiveVoice: "maple" },
     ]);
     expect(
       JSON.parse(encodeTeamProtocolV6CurrentHttpResponse("GET", "/v1/agents", 200, [agent]))[0],
@@ -60,10 +60,10 @@ describe("Team protocol v6", () => {
         agentLiveVoiceSettings: true,
       },
     );
-    expect(frame.payload).toMatchObject({ type: "bots-changed", bots: [{ codexLiveVoice: "coral" }] });
+    expect(frame.payload).toMatchObject({ type: "bots-changed", bots: [{ codexLiveVoice: "maple" }] });
     expect(decodeTeamProtocolV6CurrentEvent(frame)).toMatchObject({
       status: "known",
-      event: { type: "agents-changed", agents: [{ codexLiveVoice: "coral" }] },
+      event: { type: "agents-changed", agents: [{ codexLiveVoice: "maple" }] },
     });
 
     const encodedEvent = encodeTeamProtocolV6CurrentEvent(
@@ -74,11 +74,11 @@ describe("Team protocol v6", () => {
     );
     expect(encodedEvent && JSON.parse(encodedEvent)).toMatchObject({
       type: "bots-changed",
-      bots: [{ codexLiveVoice: "coral" }],
+      bots: [{ codexLiveVoice: "maple" }],
     });
     expect(encodedEvent && decodeTeamProtocolV6CurrentEventPayload(JSON.parse(encodedEvent))).toMatchObject({
       kind: "known",
-      event: { type: "agents-changed", agents: [{ codexLiveVoice: "coral" }] },
+      event: { type: "agents-changed", agents: [{ codexLiveVoice: "maple" }] },
     });
   });
 

@@ -45,9 +45,9 @@ describe("AgentSettingsPanel", () => {
       pointerType: "mouse",
       button: 0,
     });
-    await fireEvent.click(await screen.findByRole("option", { name: "Coral" }));
+    await fireEvent.click(await screen.findByRole("option", { name: "Maple" }));
 
-    await waitFor(() => expect(onUpdateAgent).toHaveBeenCalledWith(firstAgent.id, { codexLiveVoice: "coral" }));
+    await waitFor(() => expect(onUpdateAgent).toHaveBeenCalledWith(firstAgent.id, { codexLiveVoice: "maple" }));
   });
 
   it("saves through callbacks without a desktop preload", async () => {

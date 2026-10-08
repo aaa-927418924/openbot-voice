@@ -65,9 +65,9 @@ describe("TeamApiServer agents", () => {
       [TEAM_CAPABILITIES_HEADER]: TEAM_CURRENT_CAPABILITIES.join(","),
     };
     const path = `${base}/v1/agents/${agent.id}`;
-    const updated = await fetch(path, { method: "PATCH", headers, body: JSON.stringify({ codexLiveVoice: "coral" }) });
+    const updated = await fetch(path, { method: "PATCH", headers, body: JSON.stringify({ codexLiveVoice: "maple" }) });
     expect(updated.status).toBe(200);
-    expect(await updated.json()).toMatchObject({ codexLiveVoice: "coral" });
+    expect(await updated.json()).toMatchObject({ codexLiveVoice: "maple" });
 
     const oldClientHeaders = {
       ...headers,
@@ -83,7 +83,7 @@ describe("TeamApiServer agents", () => {
       body: JSON.stringify({ codexLiveVoice: "cedar" }),
     });
     expect(ignoredUpdate.status).toBe(400);
-    expect(store.list()[0]?.codexLiveVoice).toBe("coral");
+    expect(store.list()[0]?.codexLiveVoice).toBe("maple");
   });
 
   it("requires authentication, capability and valid input for a queue edit", async () => {

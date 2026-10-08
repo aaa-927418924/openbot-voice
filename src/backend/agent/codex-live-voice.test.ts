@@ -29,7 +29,7 @@ class FakeClient extends EventEmitter implements AgentClient {
           outputModality: "audio",
           model: "gpt-live-1-codex",
           version: "v3",
-          voice: "coral",
+          voice: "maple",
           initialItems: [
             {
               role: "developer",
@@ -67,7 +67,7 @@ describe("CodexLiveVoiceAdapter", () => {
     const events: CodexRealtimeEvent[] = [];
     const adapter = new CodexLiveVoiceAdapter({ client, onEvent: (event) => events.push(event) });
 
-    await expect(Effect.runPromise(adapter.start("thread-a", "offer-sdp", "coral"))).resolves.toEqual({
+    await expect(Effect.runPromise(adapter.start("thread-a", "offer-sdp", "maple"))).resolves.toEqual({
       threadId: "thread-a",
       sdp: "answer-sdp",
     });
@@ -90,7 +90,7 @@ describe("CodexLiveVoiceAdapter", () => {
   it("keeps the provider thread active until the official closed notification arrives", async () => {
     const client = new FakeClient();
     const adapter = new CodexLiveVoiceAdapter({ client, onEvent: () => undefined });
-    await Effect.runPromise(adapter.start("thread-a", "offer-sdp", "coral"));
+    await Effect.runPromise(adapter.start("thread-a", "offer-sdp", "maple"));
 
     let stopped = false;
     const stopping = Effect.runPromise(adapter.stop("thread-a")).then(() => {
@@ -110,7 +110,7 @@ describe("CodexLiveVoiceAdapter", () => {
   it("flushes the transcript tail and hands unfinished requests to Codex after stop", async () => {
     const client = new FakeClient();
     const adapter = new CodexLiveVoiceAdapter({ client, onEvent: () => undefined });
-    await Effect.runPromise(adapter.start("thread-a", "offer-sdp", "coral"));
+    await Effect.runPromise(adapter.start("thread-a", "offer-sdp", "maple"));
 
     const startRequest = client.requests.find((request) => request.method === "thread/realtime/start");
     expect(startRequest?.params).toMatchObject({
@@ -138,7 +138,7 @@ describe("CodexLiveVoiceAdapter", () => {
   it("appends user text only to the active realtime thread and keeps URL text intact", async () => {
     const client = new FakeClient();
     const adapter = new CodexLiveVoiceAdapter({ client, onEvent: () => undefined });
-    await Effect.runPromise(adapter.start("thread-a", "offer-sdp", "coral"));
+    await Effect.runPromise(adapter.start("thread-a", "offer-sdp", "maple"));
 
     await expect(
       Effect.runPromise(adapter.appendText("thread-a", "https://example.test/query")),
@@ -156,14 +156,14 @@ describe("CodexLiveVoiceAdapter", () => {
     const adapter = new CodexLiveVoiceAdapter({ client, onEvent: (event) => events.push(event) });
     client.startFailure = new ProviderClientOperationError({ cause: new AppServerError("unsupported method", -32601) });
 
-    await expect(Effect.runPromise(adapter.start("thread-a", "offer-sdp", "coral"))).rejects.toMatchObject({
+    await expect(Effect.runPromise(adapter.start("thread-a", "offer-sdp", "maple"))).rejects.toMatchObject({
       cause: expect.objectContaining({ message: "unsupported method", code: -32601 }),
     });
     expect(adapter.isActive("thread-a")).toBe(false);
     expect(events.filter((event) => event.type === "closed")).toHaveLength(1);
 
     client.startFailure = undefined;
-    await expect(Effect.runPromise(adapter.start("thread-a", "offer-sdp", "coral"))).resolves.toMatchObject({
+    await expect(Effect.runPromise(adapter.start("thread-a", "offer-sdp", "maple"))).resolves.toMatchObject({
       sdp: "answer-sdp",
     });
     client.emit("notification", { method: "thread/realtime/closed", params: { threadId: "thread-a" } });
@@ -177,7 +177,7 @@ describe("CodexLiveVoiceAdapter", () => {
       cause: new RequestTimeoutError("Codex", "thread/realtime/start"),
     });
 
-    await expect(Effect.runPromise(adapter.start("thread-a", "offer-sdp", "coral"))).rejects.toMatchObject({
+    await expect(Effect.runPromise(adapter.start("thread-a", "offer-sdp", "maple"))).rejects.toMatchObject({
       cause: expect.objectContaining({ method: "thread/realtime/start" }),
     });
     expect(adapter.isActive("thread-a")).toBe(true);
