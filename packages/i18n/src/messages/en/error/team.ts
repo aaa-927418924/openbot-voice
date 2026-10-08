@@ -54,6 +54,7 @@ export const messages = defineMessages("error.team", {
   "error.team.providerNotManaged": "OpenBot does not manage this provider's CLI.",
   "error.team.channelsUnsupported": "Channel chats are not supported by this connection.",
   "error.team.channelDeleteUnsupported": "Channel deletion is not supported by this connection.",
+  "error.team.channelHistoryUnsupported": "Channel history changes are not supported by this connection.",
   "error.team.membersCannotDeleteChannels": "Members cannot delete channels.",
   "error.team.membersCannotArchiveChannels": "Members cannot archive channels.",
   "error.team.sharedDataUnsupported": "Shared data is not supported by this connection.",

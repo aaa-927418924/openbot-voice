@@ -62,6 +62,9 @@ export interface ChannelHistorySummary {
   text: string;
 }
 
+const CHANNEL_MESSAGE_DELETED_ITEM_TYPE = "channel-message-deleted";
+const CHANNEL_HISTORY_CLEARED_ITEM_TYPE = "channel-history-cleared";
+
 interface ChannelChange {
   channel: Channel;
   messages: ChannelMessage[];
@@ -126,6 +129,8 @@ export class ChannelStore {
             (SELECT m.message_json FROM projection_channel_messages AS m
               WHERE m.channel_id = c.channel_id
                 AND COALESCE(json_extract(m.message_json, '$.message.itemType'), '') != 'plan'
+                AND COALESCE(json_extract(m.message_json, '$.message.itemType'), '') NOT LIKE 'live-voice-session-end:%'
+                AND COALESCE(json_extract(m.message_json, '$.message.itemType'), '') NOT IN ('live-voice-session-start', 'channel-message-deleted', 'channel-history-cleared')
               ORDER BY m.sequence DESC, m.message_id DESC LIMIT 1) AS latest_json,
             (SELECT COUNT(*) FROM projection_channel_messages AS m
               WHERE m.channel_id = c.channel_id
@@ -135,6 +140,8 @@ export class ChannelStore {
                 AND json_extract(m.message_json, '$.author.id') IS NOT ?
                 AND json_extract(m.message_json, '$.author.id') IS NOT ?
                 AND COALESCE(json_extract(m.message_json, '$.message.itemType'), '') != 'plan'
+                AND COALESCE(json_extract(m.message_json, '$.message.itemType'), '') NOT LIKE 'live-voice-session-end:%'
+                AND COALESCE(json_extract(m.message_json, '$.message.itemType'), '') NOT IN ('live-voice-session-start', 'channel-message-deleted', 'channel-history-cleared')
                 AND COALESCE(json_extract(m.message_json, '$.message.itemType'), '') NOT LIKE ?) AS unread,
             (SELECT COUNT(*) FROM projection_channel_tasks AS t
               WHERE t.channel_id = c.channel_id
@@ -180,7 +187,10 @@ export class ChannelStore {
     const rows = databaseRows(
       this.database.connection
         .prepare(
-          "SELECT message_json FROM projection_channel_messages WHERE channel_id = ? AND sequence < ? ORDER BY sequence DESC, message_id DESC LIMIT ?",
+          `SELECT message_json FROM projection_channel_messages
+            WHERE channel_id = ? AND sequence < ?
+              AND COALESCE(json_extract(message_json, '$.message.itemType'), '') NOT IN ('${CHANNEL_MESSAGE_DELETED_ITEM_TYPE}', '${CHANNEL_HISTORY_CLEARED_ITEM_TYPE}')
+            ORDER BY sequence DESC, message_id DESC LIMIT ?`,
         )
         .all(channelId, before, limit ?? -1),
     );
@@ -201,6 +211,7 @@ export class ChannelStore {
     if (!row) return null;
     const value = JSON.parse(requiredStringColumn(row, "message_json"));
     if (!isChannelMessage(value)) throw new Error("Invalid stored channel message.");
+    if (isHiddenChannelMessage(value)) return null;
     return value;
   }
 
@@ -317,8 +328,9 @@ export class ChannelStore {
         .prepare(
           `SELECT COUNT(*) AS older_count,
              (SELECT json_extract(message_json, '$.message.createdAt') FROM projection_channel_messages
-              WHERE channel_id = ? ORDER BY sequence LIMIT 1) AS oldest_at
-           FROM projection_channel_messages WHERE channel_id = ? AND sequence < ?`,
+              WHERE channel_id = ? AND COALESCE(json_extract(message_json, '$.message.itemType'), '') NOT IN ('${CHANNEL_MESSAGE_DELETED_ITEM_TYPE}', '${CHANNEL_HISTORY_CLEARED_ITEM_TYPE}') ORDER BY sequence LIMIT 1) AS oldest_at
+           FROM projection_channel_messages WHERE channel_id = ? AND sequence < ?
+             AND COALESCE(json_extract(message_json, '$.message.itemType'), '') NOT IN ('${CHANNEL_MESSAGE_DELETED_ITEM_TYPE}', '${CHANNEL_HISTORY_CLEARED_ITEM_TYPE}')`,
         )
         .get(channelId, channelId, before),
     );
@@ -391,6 +403,134 @@ export class ChannelStore {
     return this.commit(operationId, { channel, messages: [], tasks: [], assignments: [], ...changes });
   }
 
+  deleteMessage(channelId: string, messageId: string, operationId: string): Channel {
+    const channel = this.get(channelId);
+    const message = this.message(channelId, messageId);
+    if (!message) return channel;
+    const row = databaseRow(
+      this.database.connection
+        .prepare("SELECT sequence FROM projection_channel_messages WHERE channel_id = ? AND message_id = ?")
+        .get(channelId, messageId),
+    );
+    if (!row) return channel;
+    const sequence = requiredNumberColumn(row, "sequence");
+    const next = { ...channel, revision: channel.revision + 1 };
+    const eventTime = new Date().toISOString();
+    const commandId = `channel-history-delete:${operationId}`;
+    return this.database.dispatch(
+      commandId,
+      [
+        {
+          aggregateType: "channel",
+          aggregateId: channelId,
+          eventType: "channel.changed",
+          payload: { channel: next, messages: [], tasks: [], assignments: [] },
+        },
+        {
+          aggregateType: "channel",
+          aggregateId: channelId,
+          eventType: "channel.message-deleted",
+          occurredAt: eventTime,
+          payload: { messageId, sequence },
+        },
+      ],
+      (db) => {
+        scrubChannelMessageEvents(db, channelId, new Set([messageId]));
+        deleteChannelSummaries(db, channelId);
+        this.project(db, { channel: next, messages: [], tasks: [], assignments: [] });
+        this.#projectTombstone(db, channelId, messageId, sequence, eventTime, CHANNEL_MESSAGE_DELETED_ITEM_TYPE);
+        return next;
+      },
+    );
+  }
+
+  clearHistory(channelId: string, operationId: string): Channel {
+    const channel = this.get(channelId);
+    const db = this.database.connection;
+    const previousContexts = this.contextRecords(channelId);
+    const nextContexts = previousContexts.map(({ agentId }) => ({
+      agentId,
+      threadId: `openbot-thread-${randomUUID()}`,
+    }));
+    const latest = databaseRow(
+      db
+        .prepare("SELECT COALESCE(MAX(sequence), 0) AS sequence FROM projection_channel_messages WHERE channel_id = ?")
+        .get(channelId),
+    );
+    const throughSequence = latest ? requiredNumberColumn(latest, "sequence") : 0;
+    const markerId = throughSequence > 0 ? `channel-history-cleared-${randomUUID()}` : null;
+    const next = { ...channel, revision: channel.revision + 1 };
+    const eventTime = new Date().toISOString();
+    return this.database.dispatch(
+      `channel-history-clear:${operationId}`,
+      [
+        {
+          aggregateType: "channel",
+          aggregateId: channelId,
+          eventType: "channel.changed",
+          payload: { channel: next, messages: [], tasks: [], assignments: [] },
+        },
+        {
+          aggregateType: "channel",
+          aggregateId: channelId,
+          eventType: "channel.history-cleared",
+          occurredAt: eventTime,
+          payload: {
+            throughSequence,
+            markerId,
+            contexts: nextContexts,
+            removedThreadIds: previousContexts.map((context) => context.threadId),
+          },
+        },
+      ],
+      (transaction, sequences) => {
+        scrubChannelMessageEvents(transaction, channelId);
+        deleteChannelSummaries(transaction, channelId);
+        deleteChannelContextEvents(transaction, channelId);
+        deleteChannelExecutionThreads(
+          transaction,
+          channelId,
+          previousContexts.map((context) => context.threadId),
+        );
+        this.project(transaction, { channel: next, messages: [], tasks: [], assignments: [] });
+        transaction.prepare("DELETE FROM projection_channel_messages WHERE channel_id = ?").run(channelId);
+        if (markerId && throughSequence > 0)
+          this.#projectTombstone(
+            transaction,
+            channelId,
+            markerId,
+            throughSequence,
+            eventTime,
+            CHANNEL_HISTORY_CLEARED_ITEM_TYPE,
+          );
+        projectChannelContexts(transaction, channelId, next.name, nextContexts, eventTime, sequences[1] ?? 0);
+        return next;
+      },
+    );
+  }
+
+  #projectTombstone(
+    db: DatabaseSync,
+    channelId: string,
+    messageId: string,
+    sequence: number,
+    createdAt: string,
+    itemType: typeof CHANNEL_MESSAGE_DELETED_ITEM_TYPE | typeof CHANNEL_HISTORY_CLEARED_ITEM_TYPE,
+  ): void {
+    const tombstone: ChannelMessage = {
+      id: messageId,
+      channelId,
+      sequence,
+      author: { kind: "coordinator", id: "channel-history", name: "" },
+      taskId: null,
+      superseded: false,
+      message: { id: messageId, author: "system", text: "", createdAt, status: "completed", itemType },
+    };
+    db.prepare(
+      "INSERT INTO projection_channel_messages VALUES (?, ?, ?, ?) ON CONFLICT(channel_id, message_id) DO UPDATE SET sequence = excluded.sequence, message_json = excluded.message_json",
+    ).run(channelId, messageId, sequence, JSON.stringify(tombstone));
+  }
+
   context(channelId: string, agentId: string): ChannelContext {
     const row = databaseRow(
       this.database.connection
@@ -447,6 +587,17 @@ export class ChannelStore {
         .prepare("SELECT thread_id FROM projection_channel_contexts WHERE channel_id = ? ORDER BY agent_id")
         .all(channelId),
     ).map((row) => requiredStringColumn(row, "thread_id"));
+  }
+
+  contextRecords(channelId: string): Array<{ agentId: string; threadId: string }> {
+    return databaseRows(
+      this.database.connection
+        .prepare("SELECT agent_id, thread_id FROM projection_channel_contexts WHERE channel_id = ? ORDER BY agent_id")
+        .all(channelId),
+    ).map((row) => ({
+      agentId: requiredStringColumn(row, "agent_id"),
+      threadId: requiredStringColumn(row, "thread_id"),
+    }));
   }
 
   /**
@@ -662,6 +813,51 @@ export class ChannelStore {
             });
             break;
           }
+          case "channel.message-deleted": {
+            if (!isString(value.messageId) || !Number.isSafeInteger(value.sequence) || Number(value.sequence) < 1)
+              throw new Error("Invalid channel message deletion event.");
+            this.#projectTombstone(
+              db,
+              channelId,
+              value.messageId,
+              Number(value.sequence),
+              requiredStringColumn(event, "occurred_at"),
+              CHANNEL_MESSAGE_DELETED_ITEM_TYPE,
+            );
+            break;
+          }
+          case "channel.history-cleared": {
+            const contexts = decodeChannelContexts(value.contexts);
+            if (
+              !Number.isSafeInteger(value.throughSequence) ||
+              Number(value.throughSequence) < 0 ||
+              !(value.markerId === null || isString(value.markerId)) ||
+              !Array.isArray(value.removedThreadIds) ||
+              !value.removedThreadIds.every(isString) ||
+              contexts === null
+            )
+              throw new Error("Invalid channel history clear event.");
+            deleteChannelExecutionThreads(db, channelId, value.removedThreadIds);
+            db.prepare("DELETE FROM projection_channel_messages WHERE channel_id = ?").run(channelId);
+            if (typeof value.markerId === "string" && Number(value.throughSequence) > 0)
+              this.#projectTombstone(
+                db,
+                channelId,
+                value.markerId,
+                Number(value.throughSequence),
+                requiredStringColumn(event, "occurred_at"),
+                CHANNEL_HISTORY_CLEARED_ITEM_TYPE,
+              );
+            projectChannelContexts(
+              db,
+              channelId,
+              this.get(channelId).name,
+              contexts,
+              requiredStringColumn(event, "occurred_at"),
+              requiredNumberColumn(event, "sequence"),
+            );
+            break;
+          }
           case "channel.context-created": {
             if (!isString(value.agentId) || !isString(value.threadId))
               throw new Error("Invalid channel context event.");
@@ -734,6 +930,61 @@ export class ChannelStore {
   }
 }
 
+function deleteChannelContextEvents(db: DatabaseSync, channelId: string): void {
+  const commandIds = databaseRows(
+    db
+      .prepare(
+        "SELECT DISTINCT command_id FROM orchestration_events WHERE aggregate_type = 'channel' AND aggregate_id = ? AND event_type IN ('channel.context-created', 'channel.context-accepted')",
+      )
+      .all(channelId),
+  ).map((row) => requiredStringColumn(row, "command_id"));
+  if (!commandIds.length) return;
+  const placeholders = commandIds.map(() => "?").join(", ");
+  db.prepare(`DELETE FROM orchestration_command_receipts WHERE command_id IN (${placeholders})`).run(...commandIds);
+  db.prepare(
+    `DELETE FROM orchestration_events WHERE aggregate_type = 'channel' AND aggregate_id = ? AND event_type IN ('channel.context-created', 'channel.context-accepted') AND command_id IN (${placeholders})`,
+  ).run(channelId, ...commandIds);
+}
+
+function deleteChannelExecutionThreads(db: DatabaseSync, channelId: string, threadIds: readonly string[]): void {
+  db.prepare("DELETE FROM projection_channel_contexts WHERE channel_id = ?").run(channelId);
+  if (!threadIds.length) return;
+  deleteAggregateHistory(db, "thread", threadIds);
+  const deleteAttachments = db.prepare(
+    "DELETE FROM projection_attachments WHERE owner_kind = 'thread-message' AND owner_id LIKE ?",
+  );
+  const deleteThread = db.prepare("DELETE FROM projection_threads WHERE thread_id = ?");
+  for (const threadId of threadIds) {
+    deleteAttachments.run(`${threadId}:%`);
+    deleteThread.run(threadId);
+  }
+}
+
+function projectChannelContexts(
+  db: DatabaseSync,
+  channelId: string,
+  channelName: string,
+  contexts: Array<{ agentId: string; threadId: string }>,
+  timestamp: string,
+  sequence: number,
+): void {
+  db.prepare("DELETE FROM projection_channel_contexts WHERE channel_id = ?").run(channelId);
+  const createThread = db.prepare("INSERT OR IGNORE INTO projection_threads VALUES (?, ?, ?, NULL, ?, ?, ?)");
+  const createContext = db.prepare(
+    "INSERT INTO projection_channel_contexts(channel_id, agent_id, thread_id, session_id, through_sequence, summary_version) VALUES (?, ?, ?, NULL, 0, 0)",
+  );
+  const agentIds = new Set<string>();
+  const threadIds = new Set<string>();
+  for (const context of contexts) {
+    if (agentIds.has(context.agentId) || threadIds.has(context.threadId))
+      throw new Error("Invalid duplicate channel execution context.");
+    agentIds.add(context.agentId);
+    threadIds.add(context.threadId);
+    createThread.run(context.threadId, context.agentId, channelName, timestamp, timestamp, sequence);
+    createContext.run(channelId, context.agentId, context.threadId);
+  }
+}
+
 /**
  * Every routine this channel ever owned, not only the ones it owns now.
  *
@@ -776,6 +1027,63 @@ function previewText(entry: ChannelMessage): string {
   if (entry.message.questionPrompt) return "Asked a question";
   if (entry.message.attachments?.length) return "Sent an attachment";
   return "Sent a message";
+}
+
+function isHiddenChannelMessage(message: ChannelMessage): boolean {
+  return (
+    message.message.itemType === CHANNEL_MESSAGE_DELETED_ITEM_TYPE ||
+    message.message.itemType === CHANNEL_HISTORY_CLEARED_ITEM_TYPE
+  );
+}
+
+function decodeChannelContexts(value: unknown): Array<{ agentId: string; threadId: string }> | null {
+  if (!Array.isArray(value)) return null;
+  const contexts = value.filter(
+    (context): context is { agentId: string; threadId: string } =>
+      isDynamicRecord(context) && isString(context.agentId) && isString(context.threadId),
+  );
+  return contexts.length === value.length ? contexts : null;
+}
+
+/** Erases transcript deltas from the event log so a projection rebuild cannot restore them. */
+function scrubChannelMessageEvents(db: DatabaseSync, channelId: string, deletedIds?: ReadonlySet<string>): void {
+  const rows = databaseRows(
+    db
+      .prepare(
+        "SELECT event_id, payload_json FROM orchestration_events WHERE aggregate_type = 'channel' AND aggregate_id = ? AND event_type = 'channel.changed'",
+      )
+      .all(channelId),
+  );
+  const update = db.prepare("UPDATE orchestration_events SET payload_json = ? WHERE event_id = ?");
+  for (const row of rows) {
+    const value = JSON.parse(requiredStringColumn(row, "payload_json"));
+    if (!isDynamicRecord(value) || !Array.isArray(value.messages)) continue;
+    const messages = value.messages.filter((message) => {
+      if (!isChannelMessage(message)) return true;
+      return deletedIds ? !deletedIds.has(message.id) : false;
+    });
+    if (messages.length !== value.messages.length)
+      update.run(JSON.stringify({ ...value, messages }), requiredStringColumn(row, "event_id"));
+  }
+}
+
+/** Summaries are derived from the transcript and must not carry text that has just been removed. */
+function deleteChannelSummaries(db: DatabaseSync, channelId: string): void {
+  const commandIds = databaseRows(
+    db
+      .prepare(
+        "SELECT DISTINCT command_id FROM orchestration_events WHERE aggregate_type = 'channel' AND aggregate_id = ? AND event_type = 'channel.summarized'",
+      )
+      .all(channelId),
+  ).map((row) => requiredStringColumn(row, "command_id"));
+  if (commandIds.length) {
+    const placeholders = commandIds.map(() => "?").join(", ");
+    db.prepare(`DELETE FROM orchestration_command_receipts WHERE command_id IN (${placeholders})`).run(...commandIds);
+    db.prepare(
+      `DELETE FROM orchestration_events WHERE aggregate_type = 'channel' AND aggregate_id = ? AND event_type = 'channel.summarized' AND command_id IN (${placeholders})`,
+    ).run(channelId, ...commandIds);
+  }
+  db.prepare("DELETE FROM projection_channel_summaries WHERE channel_id = ?").run(channelId);
 }
 
 function decodeAssignment(value: unknown): ChannelAssignment {

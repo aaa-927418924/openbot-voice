@@ -10,9 +10,11 @@ import type {
   ChannelRoutineRun,
   ChannelSummary,
   ChannelTask,
+  ClearChannelHistoryInput,
   CreateChannelMemoryInput,
   CreateChannelRoutineInput,
   DeleteChannelMemoryInput,
+  DeleteChannelMessageInput,
   DeleteChannelRoutineInput,
   ListChannelRoutineRunsInput,
   RoutineSchedule,
@@ -158,6 +160,22 @@ export function createMockChannels(emit: (event: AgentEvent) => void, agentName:
       receipts.set(input.operationId, structuredClone(channel));
       changed(channel.id, channel.revision);
       return structuredClone(channel);
+    },
+    deleteChannelMessage: async (input: DeleteChannelMessageInput): Promise<void> => {
+      const channel = requireChannel(input.channelId);
+      const list = messages.get(channel.id) ?? [];
+      messages.set(
+        channel.id,
+        list.filter((message) => message.id !== input.messageId),
+      );
+      channel.revision += 1;
+      changed(channel.id, channel.revision);
+    },
+    clearChannelHistory: async (input: ClearChannelHistoryInput): Promise<void> => {
+      const channel = requireChannel(input.channelId);
+      messages.set(channel.id, []);
+      channel.revision += 1;
+      changed(channel.id, channel.revision);
     },
     deleteChannel: async (channelId: string): Promise<void> => {
       requireChannel(channelId);

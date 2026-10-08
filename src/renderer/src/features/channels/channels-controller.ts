@@ -186,10 +186,11 @@ export function createChannelsController(env: ChannelsEnvironment) {
     );
     await refreshAfter();
   }
-  async function perform(action: () => Promise<void>): Promise<boolean> {
+  async function perform(action: () => Promise<void>, afterAction?: () => void): Promise<boolean> {
     const account = env.scopeKey();
     try {
       await action();
+      afterAction?.();
       if (!disposed && account === env.scopeKey()) await refreshAfter();
       return !disposed && account === env.scopeKey();
     } catch (error) {
@@ -199,6 +200,35 @@ export function createChannelsController(env: ChannelsEnvironment) {
         });
       return false;
     }
+  }
+  /**
+   * History mutations must reconcile the already-loaded older window as well as the newest page.
+   * Otherwise a refresh can merge deleted rows back from the reader's in-memory transcript.
+   */
+  async function deleteChannelMessage(channelId: string, messageId: string): Promise<boolean> {
+    return perform(
+      () => env.port().agent.deleteChannelMessage({ channelId, messageId, operationId: crypto.randomUUID() }),
+      () => {
+        if (state.page?.channel.id === channelId)
+          setState((state) => {
+            if (state.page?.channel.id === channelId)
+              state.page.messages = state.page.messages.filter((message) => message.id !== messageId);
+          });
+      },
+    );
+  }
+  async function clearChannelHistory(channelId: string): Promise<boolean> {
+    return perform(
+      () => env.port().agent.clearChannelHistory({ channelId, operationId: crypto.randomUUID() }),
+      () => {
+        // Drop the local page before the post-write refresh. It may contain a loaded older window,
+        // which must never be joined back onto a new message sent immediately after the clear.
+        if (state.page?.channel.id === channelId)
+          setState((state) => {
+            if (state.page?.channel.id === channelId) state.page.messages = [];
+          });
+      },
+    );
   }
   /**
    * `onAccepted` runs after the service accepts the command and the channel refreshes. When the
@@ -379,6 +409,8 @@ export function createChannelsController(env: ChannelsEnvironment) {
     },
     command,
     perform,
+    deleteChannelMessage,
+    clearChannelHistory,
     loadOlder,
     close: () => {
       env.writeSelection(null);

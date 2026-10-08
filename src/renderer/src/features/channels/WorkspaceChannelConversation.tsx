@@ -1,10 +1,12 @@
 import type { BrowserTakeoverRequest } from "@openbot/contracts/ipc";
+import { CHANNEL_HISTORY_DELETE_CAPABILITY } from "@openbot/contracts/team-protocol/channel-history-delete-v1";
 import { createMemo } from "solid-js";
 import { useNavigation } from "../../navigation";
 import { usePlatform } from "../../platform";
 import { useTurns } from "../../turns";
 import { useAuth } from "../account/account-context";
 import { useBrowserTabs } from "../browser/browser-context";
+import { serverSupportsCapability } from "../servers/server-capabilities";
 import { useServers } from "../servers/servers-context";
 import { isReaderAuthor } from "../team/reader-identity";
 import { usePresence } from "../team/team-context";
@@ -41,6 +43,9 @@ export function WorkspaceChannelConversation() {
       browserTabs={browserTabs()}
       onSelectAgent={selectAgent}
       server={activeServer()}
+      historyMutationSupported={
+        activeServer()?.kind === "local" || serverSupportsCapability(activeServer(), CHANNEL_HISTORY_DELETE_CAPABILITY)
+      }
       localHost={activeServer()?.kind === "local"}
     />
   );

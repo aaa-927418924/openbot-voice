@@ -384,6 +384,8 @@ const agentGroup = bridgeGroup(IPC_ENDPOINTS.agent, {
   readChannel: decodeChannelPage,
   channelCommand: decodeChannel,
   deleteChannel: decodeVoid,
+  deleteChannelMessage: decodeVoid,
+  clearChannelHistory: decodeVoid,
   getSidebarLayout: decodeSidebarLayout,
   mutateSidebarLayout: decodeSidebarLayout,
   generateProfile: decodeAgentProfileDraft,

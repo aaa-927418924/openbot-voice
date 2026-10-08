@@ -70,6 +70,8 @@ export const messages = defineMessages("error.backend", {
   "error.backend.channelHistoryLeadRequired": "Choose a channel lead to prepare the shared history.",
   "error.backend.channelHistoryArriving": "A shared message is still arriving. Resume when it is complete.",
   "error.backend.channelHistoryInvalid": "The history summary is invalid. Resume to try again.",
+  "error.backend.channelHistoryBusy": "Finish or stop channel work and Live Voice before changing its history.",
+  "error.backend.channelBoundaryProtected": "Live Voice session markers cannot be deleted.",
   "error.backend.channelContextTooLong":
     "This assignment exceeds the shared context limit. Send a shorter request or reassign it.",
   "error.backend.draftAttachmentLimit": "Keep at most {limit} draft attachments.",

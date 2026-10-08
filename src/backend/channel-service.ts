@@ -13,14 +13,17 @@ import {
   type ChannelMessage,
   type ChannelRoutingConversationEventAction,
   type ChannelTask,
+  type ClearChannelHistoryInput,
   type ConversationMessage,
   type ConversationSnapshot,
   type CreateChannelMemoryInput,
   channelRoutingConversationEventItemType,
   type DeleteChannelMemoryInput,
+  type DeleteChannelMessageInput,
   type QueueHold,
   type UpdateChannelMemoryInput,
 } from "@openbot/contracts/ipc";
+import { parseLiveVoiceSessionMarker } from "@openbot/contracts/ipc-live-voice";
 import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { sourceText } from "@openbot/i18n/source";
 import { Deferred, Effect, Exit, Fiber, Result, Schema, Scope } from "effect";
@@ -52,6 +55,8 @@ export interface ChannelHooks {
   loadedSnapshot?(threadId: string): ConversationSnapshot | undefined;
   /** Removes live provider state for an execution thread before its durable rows are deleted. */
   forgetThread?(threadId: string): Effect.Effect<void, ChannelOperationError>;
+  /** Whether a Live Voice session still owns this channel's transcript. */
+  liveVoiceActive?(channelId: string): boolean;
   steer?(
     agentId: string,
     threadId: string,
@@ -173,6 +178,89 @@ export class ChannelService {
     );
     this.publish(channel.id);
   }
+
+  /** Persists a Live Voice boundary in this channel without starting agent work. */
+  appendLiveVoiceBoundary(input: {
+    channelId: string;
+    agent: Pick<AgentSummary, "id" | "name">;
+    actor: { id: string; name: string };
+    message: ConversationMessage;
+  }): void {
+    if (!parseLiveVoiceSessionMarker(input.message)) return;
+    const channel = this.store.get(input.channelId);
+    if (channel.archived) return;
+    this.store.update(
+      channel,
+      {
+        messages: [
+          {
+            id: input.message.id,
+            channelId: channel.id,
+            sequence: 0,
+            author: { kind: "agent", id: input.agent.id, name: input.agent.name },
+            taskId: null,
+            superseded: false,
+            message: input.message,
+          },
+        ],
+      },
+      `live-voice-channel-boundary:${channel.id}:${input.message.id}`,
+    );
+    this.publish(channel.id);
+  }
+
+  readonly deleteChannelMessage = Effect.fn("ChannelService.deleteChannelMessage")((input: DeleteChannelMessageInput) =>
+    this.#serialize(
+      input.channelId,
+      Effect.gen({ self: this }, function* () {
+        yield* this.assertHistoryMutationSafe(input.channelId);
+        const message = yield* channelSync(() => this.store.message(input.channelId, input.messageId));
+        if (message && parseLiveVoiceSessionMarker(message.message))
+          return yield* channelFailure(new Error(sourceText("error.backend.channelBoundaryProtected")));
+        yield* this.mailbox
+          .deleteChannelMessage(input.channelId, input.messageId)
+          .pipe(Effect.mapError(channelFailure));
+        const channel = yield* channelSync(() =>
+          this.store.deleteMessage(input.channelId, input.messageId, input.operationId),
+        );
+        this.publish(input.channelId);
+        return channel;
+      }),
+    ),
+  );
+
+  readonly clearChannelHistory = Effect.fn("ChannelService.clearChannelHistory")((input: ClearChannelHistoryInput) =>
+    this.#serialize(
+      input.channelId,
+      Effect.gen({ self: this }, function* () {
+        yield* this.assertHistoryMutationSafe(input.channelId);
+        const threadIds = yield* channelSync(() => this.store.contextThreads(input.channelId));
+        yield* this.mailbox.deleteChannelData(input.channelId, threadIds).pipe(Effect.mapError(channelFailure));
+        for (const threadId of threadIds) yield* this.hooks.forgetThread?.(threadId) ?? Effect.void;
+        const channel = yield* channelSync(() => this.store.clearHistory(input.channelId, input.operationId));
+        this.publish(input.channelId);
+        return channel;
+      }),
+    ),
+  );
+
+  private readonly assertHistoryMutationSafe = Effect.fn("ChannelService.assertHistoryMutationSafe")(function* (
+    this: ChannelService,
+    channelId: string,
+  ): Effect.fn.Return<void, ChannelOperationError> {
+    const channel = yield* channelSync(() => this.store.get(channelId));
+    if (channel.archived) return yield* channelFailure(new Error(sourceText("error.backend.channelArchived")));
+    const [tasks, assignments] = yield* Effect.all([
+      channelSync(() => this.store.tasks(channelId)),
+      channelSync(() => this.store.assignments(channelId)),
+    ]);
+    if (
+      tasks.some((task) => !terminal(task)) ||
+      assignments.some(activeAssignment) ||
+      this.hooks.liveVoiceActive?.(channelId)
+    )
+      return yield* channelFailure(new Error(sourceText("error.backend.channelHistoryBusy")));
+  });
 
   readonly #serialize = Effect.fn("ChannelService.serialize")(
     <A extends Channel | void>(channelId: string, operation: Effect.Effect<A, ChannelOperationError>) =>
@@ -691,7 +779,12 @@ export class ChannelService {
                   channelSync(() => this.store.messages(channelId, undefined, ROUTING_RECENT_MESSAGES + 1)),
                 ),
               )
-                .filter((item) => item.id !== task?.requestMessageId && item.sequence > summary.throughSequence)
+                .filter(
+                  (item) =>
+                    item.id !== task?.requestMessageId &&
+                    item.sequence > summary.throughSequence &&
+                    !parseLiveVoiceSessionMarker(item.message),
+                )
                 .slice(-ROUTING_RECENT_MESSAGES)
                 .map((item) => ({
                   id: item.id,

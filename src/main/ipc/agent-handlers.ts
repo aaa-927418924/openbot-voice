@@ -20,12 +20,19 @@ import {
   parseBrowserSecretResponse,
   parseChannelCommand,
   parseChannelRead,
+  parseClearChannelHistory,
+  parseDeleteChannelMessage,
   parseGenerateAgentProfile,
   parseHostAnalyticsInput,
   parseSaveAgentProfile,
 } from "@openbot/contracts/ipc";
 import { isDynamicRecord } from "@openbot/contracts/runtime-values";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
+import {
+  CHANNEL_HISTORY_DELETE_CAPABILITY,
+  CLEAR_CHANNEL_HISTORY_ROUTE,
+  DELETE_CHANNEL_MESSAGE_ROUTE,
+} from "@openbot/contracts/team-protocol/channel-history-delete-v1";
 import { CHANNEL_ROUTES } from "@openbot/contracts/team-protocol/channels-v1";
 import { CONTEXT_RESET_CAPABILITY, CONTEXT_RESET_ROUTES } from "@openbot/contracts/team-protocol/context-reset-v1";
 import {
@@ -210,6 +217,36 @@ export function agentIpcHandlers({
           runCauseEffect(
             remoteServers.request(serverId, CHANNEL_ROUTES.command, decodeChannel, { method: "POST", body: input }),
           ),
+      }),
+      deleteChannelMessage: scopedHandler(parseDeleteChannelMessage, {
+        local: async (input) => {
+          await runCauseEffect(service.channels.deleteChannelMessage(input));
+        },
+        remote: async (input, serverId) => {
+          if (!remoteServers.supportsCapability(serverId, CHANNEL_HISTORY_DELETE_CAPABILITY))
+            throw new Error(sourceText("error.team.channelHistoryUnsupported"));
+          await runCauseEffect(
+            remoteServers.request(serverId, DELETE_CHANNEL_MESSAGE_ROUTE, acceptEmpty, {
+              method: "POST",
+              body: input,
+            }),
+          );
+        },
+      }),
+      clearChannelHistory: scopedHandler(parseClearChannelHistory, {
+        local: async (input) => {
+          await runCauseEffect(service.channels.clearChannelHistory(input));
+        },
+        remote: async (input, serverId) => {
+          if (!remoteServers.supportsCapability(serverId, CHANNEL_HISTORY_DELETE_CAPABILITY))
+            throw new Error(sourceText("error.team.channelHistoryUnsupported"));
+          await runCauseEffect(
+            remoteServers.request(serverId, CLEAR_CHANNEL_HISTORY_ROUTE, acceptEmpty, {
+              method: "POST",
+              body: input,
+            }),
+          );
+        },
       }),
       deleteChannel: scopedHandler(parseChannelId, {
         local: (channelId) => runCauseEffect(service.deleteChannel(channelId)),

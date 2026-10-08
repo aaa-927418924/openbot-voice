@@ -14,6 +14,11 @@ export const messages = {
   "channel.conversation.loadOlder": "以前のメッセージを読み込む",
   "channel.conversation.noMembers": "作業を始めるには、チャンネル設定でエージェントを追加してください。",
   "channel.conversation.archivedNotice": "削除済みのチャンネルです。プレビューのみです。",
+  "channel.history.clear": "チャンネル履歴を削除",
+  "channel.history.clearTitle": "{name} の会話履歴を削除しますか？",
+  "channel.history.clearDescription":
+    "このチャンネルのすべてのメッセージを完全に削除します。チャンネル設定とタスクは残ります。",
+  "channel.history.clearConfirm": "履歴を削除",
   "channel.composer.cancelReply": "返信をキャンセル",
   "channel.composer.removeAttachment": "{name} を削除",
   "channel.composer.label": "チャンネルへのメッセージ",

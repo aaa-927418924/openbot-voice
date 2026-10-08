@@ -1,4 +1,8 @@
-import { decodeChannelPage } from "@openbot/contracts/ipc";
+import { type ChannelMessage, decodeChannelPage } from "@openbot/contracts/ipc";
+import {
+  CLEAR_CHANNEL_HISTORY_ROUTE,
+  DELETE_CHANNEL_MESSAGE_ROUTE,
+} from "@openbot/contracts/team-protocol/channel-history-delete-v1";
 import { Effect } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 import { stores } from "../backend/agent-service-test-harness";
@@ -78,6 +82,56 @@ describe("Team API channel access", () => {
     const page = decodeChannelPage(await read.json());
     expect(page.messages[0]?.author.id).not.toBe("impostor");
     expect(page.messages[0]?.author.kind).toBe("member");
+    channels.store.update(channels.store.get("channel-1"), {
+      tasks: channels.store.tasks("channel-1").map((task) => ({ ...task, state: "completed" })),
+      assignments: channels.store.assignments("channel-1").map((assignment) => ({
+        ...assignment,
+        state: "completed",
+        deliveryId: null,
+        turnId: null,
+      })),
+    });
+    const channelMessage: ChannelMessage = {
+      id: "channel-history-row",
+      channelId: "channel-1",
+      sequence: 0,
+      author: { kind: "member", id: "member-1", name: "Team member" },
+      taskId: null,
+      superseded: false,
+      message: {
+        id: "channel-history-row",
+        author: "user",
+        text: "Only channel history is removed.",
+        createdAt: new Date().toISOString(),
+        status: "completed",
+      },
+    };
+    channels.store.update(channels.store.get("channel-1"), { messages: [channelMessage] });
+    const historyHeaders = { ...headers, "OpenBot-Capabilities": "channel-chats-v1,channel-history-delete-v1" };
+    const legacyHistoryRoute = await fetch(`${base}${DELETE_CHANNEL_MESSAGE_ROUTE}`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ channelId: "channel-1", messageId: "channel-history-row", operationId: "old-client" }),
+    });
+    expect(legacyHistoryRoute.status).toBe(400);
+    const deletedMessage = await fetch(`${base}${DELETE_CHANNEL_MESSAGE_ROUTE}`, {
+      method: "POST",
+      headers: historyHeaders,
+      body: JSON.stringify({ channelId: "channel-1", messageId: "channel-history-row", operationId: "delete-row" }),
+    });
+    expect(deletedMessage.status).toBe(200);
+    expect(channels.store.message("channel-1", "channel-history-row")).toBeNull();
+
+    channels.store.update(channels.store.get("channel-1"), { messages: [channelMessage] });
+    const clearedHistory = await fetch(`${base}${CLEAR_CHANNEL_HISTORY_ROUTE}`, {
+      method: "POST",
+      headers: historyHeaders,
+      body: JSON.stringify({ channelId: "channel-1", operationId: "clear-history" }),
+    });
+    expect(clearedHistory.status).toBe(200);
+    expect(channels.store.messages("channel-1")).toEqual([]);
+    expect(channels.store.exists("channel-1")).toBe(true);
+
     const deleteBody = JSON.stringify({ channelId: "channel-1" });
     const withoutDeleteCapability = await fetch(`${base}/v1/channels/delete`, {
       method: "POST",

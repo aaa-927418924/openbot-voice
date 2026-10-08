@@ -55,6 +55,7 @@ export const messages = {
   "error.team.providerNotManaged": "OpenBot はこのプロバイダーの CLI を管理していません。",
   "error.team.channelsUnsupported": "この接続ではチャンネルのチャットを利用できません。",
   "error.team.channelDeleteUnsupported": "この接続ではチャンネルを削除できません。",
+  "error.team.channelHistoryUnsupported": "この接続ではチャンネル履歴を変更できません。",
   "error.team.membersCannotDeleteChannels": "メンバーはチャンネルを削除できません。",
   "error.team.membersCannotArchiveChannels": "メンバーはチャンネルをアーカイブできません。",
   "error.team.sharedDataUnsupported": "この接続では共有データを利用できません。",

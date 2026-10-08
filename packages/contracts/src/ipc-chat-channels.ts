@@ -145,6 +145,17 @@ export interface ChannelReadInput {
   beforeSequence?: number;
 }
 
+export interface DeleteChannelMessageInput {
+  channelId: string;
+  messageId: string;
+  operationId: string;
+}
+
+export interface ClearChannelHistoryInput {
+  channelId: string;
+  operationId: string;
+}
+
 /**
  * A channel used to hold one `purpose`. It now holds a `title` and `instructions`, the way an agent
  * does, and the guards below are strict about both - so every row written before the rename has to
@@ -310,6 +321,25 @@ export function parseChannelRead(value: unknown): ChannelReadInput {
     throw new Error("Provide a valid channel and message cursor.");
   }
   return { channelId: value.channelId, beforeSequence: value.beforeSequence };
+}
+
+export function parseDeleteChannelMessage(value: unknown): DeleteChannelMessageInput {
+  if (
+    !isDynamicRecord(value) ||
+    !isIdentifier(value.channelId) ||
+    !isIdentifier(value.messageId) ||
+    !isIdentifier(value.operationId)
+  ) {
+    throw new Error("Provide a valid channel message to delete.");
+  }
+  return { channelId: value.channelId, messageId: value.messageId, operationId: value.operationId };
+}
+
+export function parseClearChannelHistory(value: unknown): ClearChannelHistoryInput {
+  if (!isDynamicRecord(value) || !isIdentifier(value.channelId) || !isIdentifier(value.operationId)) {
+    throw new Error("Provide a valid channel history to clear.");
+  }
+  return { channelId: value.channelId, operationId: value.operationId };
 }
 
 export function parseChannelCommand(value: unknown): ChannelCommand {

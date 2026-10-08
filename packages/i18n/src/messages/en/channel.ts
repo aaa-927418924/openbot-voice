@@ -13,6 +13,11 @@ export const messages = defineMessages("channel", {
   "channel.conversation.loadOlder": "Load earlier messages",
   "channel.conversation.noMembers": "Add agents in channel settings to start work.",
   "channel.conversation.archivedNotice": "Deleted channel. Preview only.",
+  "channel.history.clear": "Clear channel history",
+  "channel.history.clearTitle": "Clear chat history for {name}?",
+  "channel.history.clearDescription":
+    "This permanently removes every message in this channel. Channel settings and tasks will remain.",
+  "channel.history.clearConfirm": "Clear history",
   "channel.composer.cancelReply": "Cancel reply",
   "channel.composer.removeAttachment": "Remove {name}",
   "channel.composer.label": "Message to channel",

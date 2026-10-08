@@ -54,6 +54,8 @@ export function createWebChannelsPort(
       listChannels: channels?.listChannels ?? unavailable,
       readChannel: channels?.readChannel ?? unavailable,
       channelCommand: channels?.channelCommand ?? unavailable,
+      deleteChannelMessage: channels?.deleteChannelMessage ?? unavailable,
+      clearChannelHistory: channels?.clearChannelHistory ?? unavailable,
       listChannelMemories: channels?.listChannelMemories ?? unavailable,
       createChannelMemory: channels?.createChannelMemory ?? unavailable,
       updateChannelMemory: channels?.updateChannelMemory ?? unavailable,

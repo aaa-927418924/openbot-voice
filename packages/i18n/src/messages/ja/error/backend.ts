@@ -74,6 +74,8 @@ export const messages = {
   "error.backend.channelHistoryLeadRequired": "共有履歴を準備するには、チャンネルリードを選択してください。",
   "error.backend.channelHistoryArriving": "共有メッセージをまだ受信中です。完了してから再開してください。",
   "error.backend.channelHistoryInvalid": "履歴の要約が無効です。再開してもう一度お試しください。",
+  "error.backend.channelHistoryBusy": "チャンネルの作業とLive音声を終了してから履歴を変更してください。",
+  "error.backend.channelBoundaryProtected": "Live音声の区切りマーカーは削除できません。",
   "error.backend.channelContextTooLong":
     "この割り当ては共有コンテキストの上限を超えています。短い依頼を送信するか、割り当て直してください。",
   "error.backend.draftAttachmentLimit": "下書きの添付ファイルは {limit} 個までにしてください。",

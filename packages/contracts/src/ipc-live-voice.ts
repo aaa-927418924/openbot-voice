@@ -104,3 +104,42 @@ export function isLiveVoiceEvent(value: unknown): value is LiveVoiceEvent {
 function isUuid(value: unknown): value is string {
   return isString(value) && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
+
+export const LIVE_VOICE_SESSION_START_ITEM_TYPE = "live-voice-session-start";
+export const LIVE_VOICE_SESSION_END_ITEM_TYPE = "live-voice-session-end";
+
+export interface LiveVoiceSessionMarker {
+  sessionKey: string;
+  action: "started" | "ended";
+  durationMs?: number;
+}
+
+/**
+ * Read a Live Voice boundary from existing ConversationMessage fields. The id keeps only a stable
+ * hash of the session id; the end duration is an itemType suffix, so protocol adapters do
+ * not need a new field.
+ */
+export function parseLiveVoiceSessionMarker(value: unknown): LiveVoiceSessionMarker | undefined {
+  if (
+    !isDynamicRecord(value) ||
+    !isString(value.id) ||
+    !isString(value.itemType) ||
+    value.author !== "system" ||
+    value.text !== ""
+  )
+    return undefined;
+  const match = /^livevoice-([a-f0-9]{48})-(start|end)$/u.exec(value.id);
+  if (!match) return undefined;
+  const sessionKey = match[1];
+  const phase = match[2];
+  if (!sessionKey || !phase) return undefined;
+
+  if (phase === "start") {
+    return value.itemType === LIVE_VOICE_SESSION_START_ITEM_TYPE ? { sessionKey, action: "started" } : undefined;
+  }
+
+  const durationMatch = /^live-voice-session-end:(0|[1-9]\d*)$/u.exec(value.itemType);
+  const durationMs = Number(durationMatch?.[1]);
+  if (!durationMatch || !Number.isSafeInteger(durationMs)) return undefined;
+  return { sessionKey, action: "ended", durationMs };
+}

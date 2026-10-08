@@ -1261,6 +1261,60 @@ export class MailboxStore {
 
   /** Removes messages, deliveries, reactions and attachments that belong to a channel. */
 
+  deleteChannelMessage = Effect.fn("MailboxStore.deleteChannelMessage")(function* (
+    this: MailboxStore,
+    channelId: string,
+    messageId: string,
+  ): Effect.fn.Return<void, StoredStateFailure> {
+    try {
+      const source = this.#state.messages.find(
+        (message) => message.channelId === channelId && message.id === messageId,
+      );
+      if (!source) return;
+      const deliveries = this.#state.deliveries.filter((delivery) => delivery.messageId === source.id);
+      if (
+        deliveries.some(
+          (delivery) => delivery.status === "queued" || delivery.status === "starting" || delivery.status === "running",
+        )
+      )
+        throw new Error(sourceText("error.agent.cannotDeletePending"));
+
+      const previous = structuredClone(this.#state);
+      const deliveryIds = new Set(deliveries.map((delivery) => delivery.id));
+      const remainingMessages = this.#state.messages.filter((message) => message.id !== source.id);
+      this.#state.messages = remainingMessages;
+      this.#state.deliveries = this.#state.deliveries.filter((delivery) => !deliveryIds.has(delivery.id));
+      this.#state.reactions = this.#state.reactions.filter((reaction) => reaction.messageId !== messageId);
+      this.#state.idempotency = Object.fromEntries(
+        Object.entries(this.#state.idempotency).filter(([, storedMessageId]) => storedMessageId !== source.id),
+      );
+
+      const removedTransferRoots = new Set<string>([this.#files.transferRoot(source.id)]);
+      for (const attachment of source.attachments) {
+        const stillReferenced = remainingMessages.some((message) =>
+          message.attachments.some((candidate) => candidate.path === attachment.path),
+        );
+        if (stillReferenced) continue;
+        const root = this.#files.transferRootForPath(attachment.path);
+        if (root) removedTransferRoots.add(root);
+      }
+      try {
+        this.#persist(
+          "mailbox.channel-message-deleted",
+          `mailbox:channel-message-delete:${channelId}:${messageId}`,
+          [...removedTransferRoots],
+          true,
+        );
+      } catch (error) {
+        this.#state = previous;
+        throw error;
+      }
+      yield* this.#drainFileDeletionOutboxEffect();
+    } catch (cause) {
+      return yield* new StoredStateFailure({ cause });
+    }
+  }, Effect.uninterruptible).bind(this);
+
   deleteChannelData = Effect.fn("MailboxStore.deleteChannelData")(function* (
     this: MailboxStore,
     channelId: string,

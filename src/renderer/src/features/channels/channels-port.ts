@@ -12,6 +12,8 @@ export interface ChannelsPort {
   agent: Pick<
     OpenBotDesktopApi["agent"],
     | "channelCommand"
+    | "deleteChannelMessage"
+    | "clearChannelHistory"
     | "chooseAttachments"
     | "listChannels"
     | "openAttachment"

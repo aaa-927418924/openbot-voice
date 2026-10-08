@@ -35,6 +35,10 @@ import {
 } from "@openbot/contracts/ipc";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import { AGENT_IMPORT_ROUTES, AGENT_IMPORT_UPLOAD_BYTES } from "@openbot/contracts/team-protocol/agent-import-v1";
+import {
+  CLEAR_CHANNEL_HISTORY_ROUTE,
+  DELETE_CHANNEL_MESSAGE_ROUTE,
+} from "@openbot/contracts/team-protocol/channel-history-delete-v1";
 import { CHANNEL_ROUTES } from "@openbot/contracts/team-protocol/channels-v1";
 import { CONTEXT_RESET_ROUTES } from "@openbot/contracts/team-protocol/context-reset-v1";
 import { decodeTeamProtocolV2Json, type TeamProtocolV2Json } from "@openbot/contracts/team-protocol/v2";
@@ -228,6 +232,8 @@ export type TeamChannelsApi = Pick<
   | "listChannels"
   | "readChannel"
   | "channelCommand"
+  | "deleteChannelMessage"
+  | "clearChannelHistory"
   | "listChannelMemories"
   | "createChannelMemory"
   | "updateChannelMemory"
@@ -249,6 +255,8 @@ export function teamChannelsApi(request: TeamApiRequest): TeamChannelsApi {
     listChannels: () => request("GET", CHANNEL_ROUTES.list, decodeChannelSummaries),
     readChannel: (input) => post(CHANNEL_ROUTES.read, decodeChannelPage, input),
     channelCommand: (command) => post(CHANNEL_ROUTES.command, decodeChannel, command),
+    deleteChannelMessage: (input) => post(DELETE_CHANNEL_MESSAGE_ROUTE, ignoreResponse, input),
+    clearChannelHistory: (input) => post(CLEAR_CHANNEL_HISTORY_ROUTE, ignoreResponse, input),
     listChannelMemories: (channelId) => post(CHANNEL_ROUTES.memories, decodeChannelMemories, { channelId }),
     createChannelMemory: (input) => post(CHANNEL_ROUTES.memoryCreate, decodeChannelMemory, input),
     updateChannelMemory: (input) => post(CHANNEL_ROUTES.memoryUpdate, decodeChannelMemory, input),

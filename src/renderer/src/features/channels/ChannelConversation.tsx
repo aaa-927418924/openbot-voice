@@ -9,6 +9,7 @@ import {
   type FilePreview,
   type ServerSummary,
 } from "@openbot/contracts/ipc";
+import { CHANNEL_HISTORY_DELETE_CAPABILITY } from "@openbot/contracts/team-protocol/channel-history-delete-v1";
 import { LIVE_VOICE_CHANNEL_TRANSCRIPTS_CAPABILITY } from "@openbot/contracts/team-protocol/live-voice-channel-v1";
 import { LIVE_VOICE_CAPABILITY } from "@openbot/contracts/team-protocol/live-voice-v1";
 import { ArrowUp, Button, Mic, Plus, X } from "@openbot/ui";
@@ -85,6 +86,7 @@ import { useLiveVoice } from "../live-voice/live-voice-context";
 import { routesComposerToLiveVoice } from "../live-voice/live-voice-routing";
 import { serverSupportsCapability } from "../servers/server-capabilities";
 import { ChannelEditor } from "./ChannelEditor";
+import { ChannelHistoryControls } from "./ChannelHistoryControls";
 import { channelLiveVoiceTarget } from "./channel-live-voice";
 import { channelTimelineEntries, firstUnreadChannelMessageId } from "./channel-timeline";
 import { useChannels } from "./channels-context";
@@ -106,6 +108,8 @@ export interface ChannelConversationProps {
   localHost?: boolean;
   /** The selected server gates Live voice for remote runtimes. */
   server?: ServerSummary | undefined;
+  /** Deletes use a capability that was added after the released Team v1 channel routes. */
+  historyMutationSupported?: boolean;
 }
 
 export function ChannelConversation(props: ChannelConversationProps) {
@@ -192,6 +196,10 @@ export function ChannelConversation(props: ChannelConversationProps) {
     return (selectedId ? conversation.channelDrafts()[selectedId] : undefined) ?? EMPTY_DRAFT;
   });
   const [liveVoiceError, setLiveVoiceError] = createSignal<string | null>(null);
+  const historyMutationSupported = () =>
+    props.historyMutationSupported ??
+    (props.server?.kind === "local" ||
+      (props.server ? serverSupportsCapability(props.server, CHANNEL_HISTORY_DELETE_CAPABILITY) : false));
   const updateDraft = (channelId: string, update: (draft: ComposerDraft) => ComposerDraft) =>
     conversation.setChannelDrafts((current) => ({
       ...current,
@@ -231,6 +239,11 @@ export function ChannelConversation(props: ChannelConversationProps) {
   );
   const clearSent = (channelId: string, text: string) =>
     updateDraft(channelId, (draft) => (draft.text === text ? EMPTY_DRAFT : draft));
+  const clearChannelHistory = async (): Promise<boolean> => {
+    const channelId = channels.state.page?.channel.id;
+    if (!channelId) return false;
+    return channels.clearChannelHistory(channelId);
+  };
   let messageList: HTMLElement | undefined;
   let virtualRoot: HTMLElement | undefined;
   let unreadMessagesDivider: HTMLElement | undefined;
@@ -731,6 +744,14 @@ export function ChannelConversation(props: ChannelConversationProps) {
                   </span>
                 </Button>
               </div>
+              <ChannelHistoryControls
+                channelName={page().channel.name}
+                supported={historyMutationSupported()}
+                archived={page().channel.archived}
+                pending={channels.state.pending}
+                error={channels.state.error ? sourceText(channels.state.error) : undefined}
+                onClear={clearChannelHistory}
+              />
             </header>
             <section
               class="conversation-scroll"
@@ -897,6 +918,12 @@ export function ChannelConversation(props: ChannelConversationProps) {
                                     page().channel.archived
                                       ? undefined
                                       : () => updateComposer({ replyToMessageId: initialEntry.id })
+                                  }
+                                  onDelete={
+                                    historyMutationSupported() && !page().channel.archived
+                                      ? () =>
+                                          void channels.deleteChannelMessage(page().channel.id, initialEntry.source.id)
+                                      : undefined
                                   }
                                   onCopy={() => void copyChannelMessage(entry()?.message ?? initialEntry.message)}
                                 />

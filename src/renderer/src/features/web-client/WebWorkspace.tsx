@@ -12,6 +12,7 @@ import {
   type ServerSummary,
 } from "@openbot/contracts/ipc";
 import { AGENT_IMPORT_CAPABILITY } from "@openbot/contracts/team-protocol/agent-import-v1";
+import { CHANNEL_HISTORY_DELETE_CAPABILITY } from "@openbot/contracts/team-protocol/channel-history-delete-v1";
 import { CONTEXT_RESET_CAPABILITY } from "@openbot/contracts/team-protocol/context-reset-v1";
 import { HOST_UPDATE_CAPABILITY } from "@openbot/contracts/team-protocol/host-update-v1";
 import { HOSTED_SITES_CAPABILITY } from "@openbot/contracts/team-protocol/hosted-sites-v1";
@@ -1301,6 +1302,7 @@ function WebWorkspaceFrame(props: WebWorkspaceProps) {
               pendingApprovals={channelApprovals()}
               pendingTakeovers={channelTakeovers()}
               browserTabs={workspace.state.browserTabs}
+              historyMutationSupported={workspace.state.capabilities.includes(CHANNEL_HISTORY_DELETE_CAPABILITY)}
               onSelectAgent={(id) => {
                 setMobilePane("conversation");
                 void select(id);

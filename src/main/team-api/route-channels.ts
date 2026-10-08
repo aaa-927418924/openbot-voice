@@ -3,8 +3,15 @@ import {
   CHANNEL_DELETE_CAPABILITY,
   parseChannelCommand,
   parseChannelRead,
+  parseClearChannelHistory,
+  parseDeleteChannelMessage,
 } from "@openbot/contracts/ipc";
 import type { DynamicRecord } from "@openbot/contracts/runtime-values";
+import {
+  CHANNEL_HISTORY_DELETE_CAPABILITY,
+  CLEAR_CHANNEL_HISTORY_ROUTE,
+  DELETE_CHANNEL_MESSAGE_ROUTE,
+} from "@openbot/contracts/team-protocol/channel-history-delete-v1";
 import { CHANNEL_ROUTES, channelRequest, isChannelSettingsRoute } from "@openbot/contracts/team-protocol/channels-v1";
 import { sourceText } from "@openbot/i18n/source";
 import type { ChannelService } from "../../backend/channel-service";
@@ -54,10 +61,23 @@ export async function routeChannels(
   const read = method === "POST" && url.pathname === CHANNEL_ROUTES.read;
   const command = method === "POST" && url.pathname === CHANNEL_ROUTES.command;
   const remove = method === "POST" && url.pathname === CHANNEL_ROUTES.delete;
+  const deleteMessage = method === "POST" && url.pathname === DELETE_CHANNEL_MESSAGE_ROUTE;
+  const clearHistory = method === "POST" && url.pathname === CLEAR_CHANNEL_HISTORY_ROUTE;
   // Every settings route is a POST that names its channel in the body, so one test covers all
   // eleven of them and an unknown method on a known path stays a 404 rather than a 400.
   const settings = method === "POST" && isChannelSettingsRoute(url.pathname);
-  if (!list && !read && !command && !remove && !settings) return "unmatched";
+  if (!list && !read && !command && !remove && !deleteMessage && !clearHistory && !settings) return "unmatched";
+  if (deleteMessage || clearHistory) {
+    if (!channels || !capabilities.has(CHANNEL_HISTORY_DELETE_CAPABILITY))
+      throw new HttpError(400, sourceText("error.team.channelHistoryUnsupported"));
+    const body = await readJson(request);
+    if (deleteMessage) {
+      await runCauseEffect(channels.deleteChannelMessage(parseDeleteChannelMessage(body)));
+    } else {
+      await runCauseEffect(channels.clearChannelHistory(parseClearChannelHistory(body)));
+    }
+    return json(200, {});
+  }
   if (!channels || !capabilities.has(CHANNEL_CHATS_CAPABILITY))
     throw new HttpError(400, sourceText("error.team.channelsUnsupported"));
   if (list) return json(200, channels.store.list(member.id));

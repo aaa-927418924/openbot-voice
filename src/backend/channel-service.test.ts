@@ -2320,6 +2320,177 @@ describe("shared channel coordination", () => {
   });
 });
 
+describe("channel transcript history mutations", () => {
+  function transcriptMessage(id: string, text: string): ChannelMessage {
+    return {
+      id,
+      channelId: "channel-1",
+      sequence: 0,
+      author: { kind: "member", ...actor },
+      taskId: null,
+      superseded: false,
+      message: { id, author: "user", text, createdAt: new Date().toISOString(), status: "completed" },
+    };
+  }
+
+  async function addDirectMessage(agentId: string, text: string) {
+    const threadId = await runChannel(data.store.ensureThreadId(agentId));
+    const message = {
+      id: `direct-${agentId}`,
+      author: "user" as const,
+      text,
+      createdAt: new Date().toISOString(),
+      status: "completed" as const,
+    };
+    data.store.database.appendConversationMessage({
+      agentId,
+      threadId,
+      activeTurnId: null,
+      message,
+      eventType: "user-message-created",
+    });
+    return { threadId, message };
+  }
+
+  it("deletes only the selected channel transcript row and rebuilds without it", async () => {
+    const direct = await addDirectMessage("agent-a", "Direct Bot history stays here.");
+    service.store.update(service.store.get("channel-1"), {
+      messages: [
+        transcriptMessage("channel-delete-me", "Remove this channel row."),
+        transcriptMessage("channel-keep", "Keep this row."),
+      ],
+    });
+    const channel = service.store.get("channel-1");
+
+    await runCauseEffect(
+      service.deleteChannelMessage({
+        channelId: "channel-1",
+        messageId: "channel-delete-me",
+        operationId: operationId(),
+      }),
+    );
+
+    expect(service.store.message("channel-1", "channel-delete-me")).toBeNull();
+    expect(service.store.messages("channel-1").map((message) => message.id)).toEqual(["channel-keep"]);
+    expect(service.store.list(actor.id)[0]?.lastMessage?.text).toBe("Keep this row.");
+    expect(service.store.get("channel-1")).toMatchObject({
+      id: channel.id,
+      name: channel.name,
+      title: channel.title,
+      instructions: channel.instructions,
+      members: channel.members,
+    });
+    expect(
+      data.store.database.readConversation("agent-a", direct.threadId).messages.map((message) => message.text),
+    ).toContain(direct.message.text);
+
+    service.store.rebuild("channel-1");
+    expect(service.store.messages("channel-1").map((message) => message.id)).toEqual(["channel-keep"]);
+  });
+
+  it("clears the channel transcript and execution contexts but keeps channel settings, tasks, and direct chats", async () => {
+    const direct = await addDirectMessage("agent-a", "Direct history survives a channel clear.");
+    const task: ChannelTask = {
+      id: "completed-task",
+      channelId: "channel-1",
+      parentTaskId: null,
+      rootTaskId: "completed-task",
+      requestMessageId: "channel-old",
+      sourceMessageIds: [],
+      instruction: "Already completed work.",
+      expectedResult: "Done.",
+      ownerAgentId: "agent-a",
+      state: "completed",
+      error: null,
+      dependencies: [],
+      resources: [],
+      attachmentDraftIds: [],
+      assignmentCount: 1,
+      revision: 1,
+    };
+    service.store.update(service.store.get("channel-1"), {
+      messages: [transcriptMessage("channel-old", "Old channel history.")],
+      tasks: [task],
+    });
+    const oldContexts = ["agent-a", "agent-b"].map((agentId) => {
+      const context = service.store.context("channel-1", agentId);
+      service.store.acceptContext("channel-1", agentId, `provider-${agentId}`, 1, 4);
+      return { agentId, threadId: context.threadId };
+    });
+    service.store.saveSummary("channel-1", { version: 4, throughSequence: 1, text: "Old summary text." });
+    const before = service.store.get("channel-1");
+    const forgotten: string[] = [];
+    service.hooks.forgetThread = (threadId) => Effect.sync(() => forgotten.push(threadId));
+
+    await runCauseEffect(service.clearChannelHistory({ channelId: "channel-1", operationId: operationId() }));
+
+    expect(service.store.messages("channel-1")).toEqual([]);
+    expect(service.store.tasks("channel-1")).toEqual([task]);
+    expect(service.store.get("channel-1")).toMatchObject({
+      id: before.id,
+      name: before.name,
+      title: before.title,
+      instructions: before.instructions,
+      members: before.members,
+      leadAgentId: before.leadAgentId,
+    });
+    expect(service.store.summary("channel-1")).toEqual({ version: 0, throughSequence: 0, text: "" });
+    expect(forgotten.sort()).toEqual(oldContexts.map((context) => context.threadId).sort());
+    for (const previous of oldContexts) {
+      const current = service.store.context("channel-1", previous.agentId);
+      expect(current.threadId).not.toBe(previous.threadId);
+      expect(current).toMatchObject({ sessionId: null, throughSequence: 0, summaryVersion: 0 });
+    }
+    expect(
+      data.store.database.readConversation("agent-a", direct.threadId).messages.map((message) => message.text),
+    ).toContain(direct.message.text);
+
+    service.store.rebuild("channel-1");
+    expect(service.store.messages("channel-1")).toEqual([]);
+    expect(service.store.tasks("channel-1")).toEqual([task]);
+    expect(service.store.context("channel-1", "agent-a")).toMatchObject({
+      sessionId: null,
+      throughSequence: 0,
+      summaryVersion: 0,
+    });
+  });
+
+  it("refuses to clear while channel work or Live Voice owns the transcript", async () => {
+    service.store.update(service.store.get("channel-1"), {
+      messages: [transcriptMessage("protected-message", "Keep this history.")],
+      tasks: [
+        {
+          id: "queued-task",
+          channelId: "channel-1",
+          parentTaskId: null,
+          rootTaskId: "queued-task",
+          requestMessageId: "protected-message",
+          sourceMessageIds: [],
+          instruction: "Waiting work.",
+          expectedResult: "Done.",
+          ownerAgentId: "agent-a",
+          state: "queued",
+          error: null,
+          dependencies: [],
+          resources: [],
+          attachmentDraftIds: [],
+          assignmentCount: 0,
+          revision: 1,
+        },
+      ],
+    });
+    const clear = () =>
+      runCauseEffect(service.clearChannelHistory({ channelId: "channel-1", operationId: operationId() }));
+    await expect(clear()).rejects.toThrow("Finish or stop channel work");
+    expect(service.store.messages("channel-1")).toHaveLength(1);
+
+    service.store.update(service.store.get("channel-1"), { tasks: [] });
+    service.hooks.liveVoiceActive = () => true;
+    await expect(clear()).rejects.toThrow("Finish or stop channel work");
+    expect(service.store.messages("channel-1")).toHaveLength(1);
+  });
+});
+
 function agent(agentId: string) {
   return data.store.list().find((entry) => entry.id === agentId);
 }
