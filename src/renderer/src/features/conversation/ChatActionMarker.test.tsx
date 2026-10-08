@@ -36,6 +36,31 @@ describe("ChatActionMarker routine history", () => {
   });
 });
 
+describe("ChatActionMarker Live voice history", () => {
+  it("labels session start and end, including the duration", () => {
+    const timestamp = "2026-09-01T08:01:05.000Z";
+    const { container } = render(() => (
+      <>
+        <ChatActionMarker
+          marker={{ kind: "live-voice-session", action: "started", timestamp: "2026-09-01T08:00:00.000Z" }}
+          agents={[]}
+          onSelectAgent={vi.fn()}
+        />
+        <ChatActionMarker
+          marker={{ kind: "live-voice-session", action: "ended", durationMs: 65_000, timestamp }}
+          agents={[]}
+          onSelectAgent={vi.fn()}
+        />
+      </>
+    ));
+
+    expect(container).toHaveTextContent("Live voice started");
+    expect(container).toHaveTextContent("Live voice ended");
+    expect(container).toHaveTextContent("1 minute");
+    expect(container).toHaveTextContent("5 seconds");
+  });
+});
+
 function completedMarker(): Extract<ChatActionMarkerModel, { kind: "routine-run" }> {
   return {
     kind: "routine-run",

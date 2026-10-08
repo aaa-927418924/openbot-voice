@@ -12,6 +12,7 @@ import {
   ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX,
   SKILL_EVENT_ITEM_TYPE_PREFIX,
 } from "@openbot/contracts/ipc";
+import { LIVE_VOICE_SESSION_START_ITEM_TYPE } from "@openbot/contracts/ipc-live-voice";
 import { isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import { sourceText } from "@openbot/i18n/source";
 import type { OpenBotDatabase } from "./openbot-database";
@@ -206,6 +207,8 @@ export class ConversationReadStore {
       AND COALESCE(item_type, '') NOT LIKE '${ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX}%'
       AND COALESCE(item_type, '') NOT LIKE '${HOSTED_SITE_EVENT_ITEM_TYPE_PREFIX}%'
       AND COALESCE(item_type, '') NOT LIKE '${MARKETPLACE_SUGGESTION_ITEM_TYPE_PREFIX}%'
+      AND COALESCE(item_type, '') != '${LIVE_VOICE_SESSION_START_ITEM_TYPE}'
+      AND COALESCE(item_type, '') NOT LIKE 'live-voice-session-end:%'
       AND COALESCE(item_type, '') != '${CONTEXT_RESET_ITEM_TYPE}'`;
     const countRow = this.database.connection
       .prepare(
@@ -315,6 +318,8 @@ function stateFromSnapshot(snapshot: ConversationSnapshot, throughMessageId: str
         !message.itemType?.startsWith(ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX) &&
         !message.itemType?.startsWith(HOSTED_SITE_EVENT_ITEM_TYPE_PREFIX) &&
         !message.itemType?.startsWith(MARKETPLACE_SUGGESTION_ITEM_TYPE_PREFIX) &&
+        message.itemType !== LIVE_VOICE_SESSION_START_ITEM_TYPE &&
+        !message.itemType?.startsWith("live-voice-session-end:") &&
         message.itemType !== CONTEXT_RESET_ITEM_TYPE,
     );
   return {

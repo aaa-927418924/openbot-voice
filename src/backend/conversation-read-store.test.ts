@@ -89,6 +89,81 @@ describe("ConversationReadStore", () => {
     reopenedDatabase.close();
   });
 
+  it("does not count Live voice session boundaries as unread replies", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-conversation-read-live-voice-"));
+    roots.push(root);
+    const database = new OpenBotDatabase(root);
+    await runCauseEffect(database.initialize());
+    database.connection
+      .prepare(
+        `INSERT INTO projection_threads (
+          thread_id, agent_id, title, active_turn_id, created_at, updated_at, last_event_sequence
+        ) VALUES (?, ?, ?, NULL, ?, ?, ?)`,
+      )
+      .run("thread-chief", "chief", "Chief", "2026-08-19T09:00:00.000Z", "2026-08-19T09:00:00.000Z", 1);
+    const reads = new ConversationReadStore(database);
+    const messages: ConversationSnapshot["messages"] = [
+      {
+        id: "seen-reply",
+        author: "assistant",
+        text: "Already read.",
+        createdAt: "2026-08-19T09:01:00.000Z",
+        status: "completed",
+      },
+      {
+        id: "livevoice-start",
+        author: "system",
+        source: "system",
+        text: "",
+        createdAt: "2026-08-19T09:02:00.000Z",
+        status: "completed",
+        itemType: "live-voice-session-start",
+      },
+      {
+        id: "livevoice-end",
+        author: "system",
+        source: "system",
+        text: "",
+        createdAt: "2026-08-19T09:03:00.000Z",
+        status: "completed",
+        itemType: "live-voice-session-end:65000",
+      },
+      {
+        id: "unread-reply",
+        author: "assistant",
+        text: "New reply.",
+        createdAt: "2026-08-19T09:04:00.000Z",
+        status: "completed",
+      },
+    ];
+    const insert = database.connection.prepare(
+      `INSERT INTO projection_thread_messages (
+        thread_id, message_id, turn_id, author, status, item_type, created_at,
+        ordinal, message_json, last_event_sequence
+      ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    messages.forEach((entry, ordinal) => {
+      insert.run(
+        "thread-chief",
+        entry.id,
+        entry.author,
+        entry.status,
+        entry.itemType ?? null,
+        entry.createdAt,
+        ordinal,
+        JSON.stringify(entry),
+        ordinal + 1,
+      );
+    });
+    reads.markRead("member-a", snapshot(messages), "seen-reply");
+
+    expect(reads.readStateForThread("member-a", "thread-chief")).toMatchObject({
+      unreadCount: 1,
+      firstUnreadMessageId: "unread-reply",
+    });
+    database.close();
+  });
+
   it("rebases a filtered marker cursor to the preceding supported message", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-conversation-read-filter-"));
     roots.push(root);

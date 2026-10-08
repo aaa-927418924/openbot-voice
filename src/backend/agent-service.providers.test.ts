@@ -70,6 +70,8 @@ class FakeLiveVoiceClient extends FakeAgentClient {
   readonly liveRequests: Array<{ method: string; params: unknown }> = [];
   realtimeThreadId: string | undefined;
   failNextThreadStart = false;
+  earlyTranscriptText: string | undefined;
+  closeRealtimeStartAfterEarlyTranscript = false;
 
   constructor(providerEcho: boolean, requestHook?: (method: string, provider: AgentProvider) => Promise<void>) {
     super("codex", "CODEX_DONE", true, true, {}, requestHook);
@@ -113,7 +115,28 @@ class FakeLiveVoiceClient extends FakeAgentClient {
           "notification",
           notification("thread/realtime/started", { threadId, realtimeSessionId: this.#realtimeSessionId }),
         );
-        this.emit("notification", notification("thread/realtime/sdp", { threadId, sdp: "answer-sdp" }));
+        if (this.earlyTranscriptText) {
+          this.emit(
+            "notification",
+            notification("thread/realtime/item/completed", {
+              threadId,
+              item: {
+                id: "early-transcript-item",
+                realtimeSessionId: this.#realtimeSessionId,
+                type: "transcriptSegment",
+                role: "user",
+                text: this.earlyTranscriptText,
+              },
+            }),
+          );
+          this.earlyTranscriptText = undefined;
+        }
+        this.emit(
+          "notification",
+          this.closeRealtimeStartAfterEarlyTranscript
+            ? notification("thread/realtime/closed", { threadId })
+            : notification("thread/realtime/sdp", { threadId, sdp: "answer-sdp" }),
+        );
       } else if (method === "thread/realtime/stop") {
         this.emit("notification", notification("thread/realtime/closed", { threadId }));
       } else if (this.#providerEcho) {
@@ -280,6 +303,24 @@ describe.sequential("AgentService: providers", () => {
         { id: "member-1", name: "Alex" },
       ),
     );
+    const initialChannelBoundaries = service.channels.store
+      .messages("channel-live-voice")
+      .map((entry) => entry.message)
+      .filter((message) => message.itemType?.startsWith("live-voice-session-"));
+    expect(initialChannelBoundaries).toHaveLength(1);
+    expect(initialChannelBoundaries[0]).toMatchObject({
+      author: "system",
+      text: "",
+      itemType: "live-voice-session-start",
+    });
+    await expect(
+      runCauseEffect(
+        service.channels.clearChannelHistory({
+          channelId: "channel-live-voice",
+          operationId: "clear-during-live-voice",
+        }),
+      ),
+    ).rejects.toThrow();
     const spoken = "Keep this transcription in the channel.";
     liveClient.emit(
       "notification",
@@ -317,6 +358,105 @@ describe.sequential("AgentService: providers", () => {
     await runCauseEffect(
       service.stopLiveVoice({ agentId: agent.id, threadId: agent.threadId, sessionId: started.sessionId }),
     );
+    const channelBoundaries = service.channels.store
+      .messages("channel-live-voice")
+      .map((entry) => entry.message)
+      .filter((message) => message.itemType?.startsWith("live-voice-session-"));
+    expect(channelBoundaries).toHaveLength(2);
+    expect(channelBoundaries[1]).toMatchObject({ author: "system", text: "" });
+    expect(channelBoundaries[1]?.itemType).toMatch(/^live-voice-session-end:\d+$/u);
+    expect(
+      (await runCauseEffect(service.readConversation(agent.id))).messages.some((message) =>
+        message.itemType?.startsWith("live-voice-session-"),
+      ),
+    ).toBe(false);
+  });
+
+  it("persists Live voice start and end boundaries in the direct Bot conversation", async () => {
+    const liveClient = new FakeLiveVoiceClient(false);
+    liveClient.earlyTranscriptText = "Early transcript stays after its start marker.";
+    const { service: agentService } = await startService(root, {
+      preferredProvider: "codex",
+      client: () => liveClient,
+    });
+    service = agentService;
+    await runCauseEffect(service.sendMessage({ agentId: "chief", text: "Create the Codex thread." }));
+    await waitForQueue(service, "chief", (queue) =>
+      queue.deliveries.every((delivery) => delivery.status === "completed"),
+    );
+    const agent = service.listAgents().find((candidate) => candidate.id === "chief");
+    if (!agent?.threadId) throw new Error("The Codex thread was not created.");
+    const clientSessionId = randomUUID();
+    const started = await runCauseEffect(
+      service.startLiveVoice({
+        agentId: agent.id,
+        threadId: agent.threadId,
+        clientSessionId,
+        sdpOffer: "offer-sdp",
+      }),
+    );
+
+    const messagesAfterStart = (await runCauseEffect(service.readConversation(agent.id))).messages;
+    const startMarker = messagesAfterStart.find((message) => message.itemType?.startsWith("live-voice-session-"));
+    expect(startMarker).toMatchObject({
+      id: `livevoice-${createHash("sha256").update(clientSessionId).digest("hex").slice(0, 48)}-start`,
+      author: "system",
+      text: "",
+      itemType: "live-voice-session-start",
+    });
+    const earlyTranscript = messagesAfterStart.find(
+      (message) => message.text === "Early transcript stays after its start marker.",
+    );
+    if (!startMarker || !earlyTranscript)
+      throw new Error("The Live voice start marker or transcript was not persisted.");
+    expect(messagesAfterStart.indexOf(startMarker)).toBeLessThan(messagesAfterStart.indexOf(earlyTranscript));
+
+    await runCauseEffect(
+      service.stopLiveVoice({ agentId: agent.id, threadId: agent.threadId, sessionId: started.sessionId }),
+    );
+
+    const markers = (await runCauseEffect(service.readConversation(agent.id))).messages.filter((message) =>
+      message.itemType?.startsWith("live-voice-session-"),
+    );
+    expect(markers).toHaveLength(2);
+    expect(markers[1]).toMatchObject({
+      id: `livevoice-${createHash("sha256").update(clientSessionId).digest("hex").slice(0, 48)}-end`,
+      author: "system",
+      text: "",
+    });
+    expect(markers[1]?.itemType).toMatch(/^live-voice-session-end:\d+$/u);
+  });
+
+  it("does not persist buffered Live voice transcripts when startup closes before the answer", async () => {
+    const liveClient = new FakeLiveVoiceClient(false);
+    liveClient.earlyTranscriptText = "This transcript arrived before failed startup.";
+    liveClient.closeRealtimeStartAfterEarlyTranscript = true;
+    const { service: agentService } = await startService(root, {
+      preferredProvider: "codex",
+      client: () => liveClient,
+    });
+    service = agentService;
+    await runCauseEffect(service.sendMessage({ agentId: "chief", text: "Create the Codex thread." }));
+    await waitForQueue(service, "chief", (queue) =>
+      queue.deliveries.every((delivery) => delivery.status === "completed"),
+    );
+    const agent = service.listAgents().find((candidate) => candidate.id === "chief");
+    if (!agent?.threadId) throw new Error("The Codex thread was not created.");
+
+    await expect(
+      runCauseEffect(
+        service.startLiveVoice({
+          agentId: agent.id,
+          threadId: agent.threadId,
+          clientSessionId: randomUUID(),
+          sdpOffer: "offer-sdp",
+        }),
+      ),
+    ).rejects.toThrow();
+
+    const messages = (await runCauseEffect(service.readConversation(agent.id))).messages;
+    expect(messages.some((message) => message.text === "This transcript arrived before failed startup.")).toBe(false);
+    expect(messages.some((message) => message.itemType?.startsWith("live-voice-session-"))).toBe(false);
   });
 
   it("resumes the saved provider thread before the first Live voice start after host restart", async () => {
@@ -418,7 +558,14 @@ describe.sequential("AgentService: providers", () => {
     expect(liveClient.realtimeThreadId).toBe(
       store.database.activeProviderSession(secondThreadId, "codex")?.externalSessionId,
     );
-    expect(store.database.readConversation(secondAgent.id, secondThreadId).messages).toEqual([]);
+    expect(store.database.readConversation(secondAgent.id, secondThreadId).messages).toMatchObject([
+      {
+        id: expect.stringMatching(/^livevoice-[a-f0-9]{48}-start$/u),
+        author: "system",
+        text: "",
+        itemType: "live-voice-session-start",
+      },
+    ]);
 
     await runCauseEffect(
       service.stopLiveVoice({ agentId: secondAgent.id, threadId: secondThreadId, sessionId: started.sessionId }),

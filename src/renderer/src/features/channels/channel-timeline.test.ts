@@ -146,6 +146,33 @@ describe("channelTimelineEntries", () => {
     expect(entries[0]?.showAuthor).toBe(false);
   });
 
+  it("renders Live Voice start and end boundaries without counting them as unread messages", () => {
+    const author = { kind: "agent" as const, id: chief.id, name: "Chief" };
+    const start = message({ id: "start", sequence: 1, author, text: "", createdAt: new Date(2026, 8, 9, 12, 0) });
+    start.message = {
+      ...start.message,
+      id: `livevoice-${"a".repeat(48)}-start`,
+      author: "system",
+      itemType: "live-voice-session-start",
+    };
+    const end = message({ id: "end", sequence: 2, author, text: "", createdAt: new Date(2026, 8, 9, 12, 5) });
+    end.message = {
+      ...end.message,
+      id: `livevoice-${"a".repeat(48)}-end`,
+      author: "system",
+      itemType: "live-voice-session-end:300000",
+    };
+    const reply = message({ id: "reply", sequence: 3, author, text: "Done", createdAt: new Date(2026, 8, 9, 12, 6) });
+    const entries = channelTimelineEntries(page([start, end, reply]), [chief], () => false, options);
+
+    expect(entries.map((entry) => entry.message.actionMarker)).toMatchObject([
+      { kind: "live-voice-session", action: "started" },
+      { kind: "live-voice-session", action: "ended", durationMs: 300000 },
+      undefined,
+    ]);
+    expect(firstUnreadChannelMessageId(entries, 1)).toBe("reply");
+  });
+
   it("leaves an ordinary agent message without an activity marker", () => {
     const entries = channelTimelineEntries(
       page([

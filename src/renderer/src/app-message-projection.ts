@@ -9,6 +9,7 @@ import {
   routineRunConversationEvent,
   skillConversationEvent,
 } from "@openbot/contracts/ipc";
+import { parseLiveVoiceSessionMarker } from "@openbot/contracts/ipc-live-voice";
 import { cleanAgentMessageText } from "@openbot/team-client/agent-message-text";
 import type {
   AgentDeliveryMarkerStatus,
@@ -245,6 +246,17 @@ function chatActionMarker(
   routineRunEvent: ReturnType<typeof routineRunConversationEvent>,
   hostedSiteEvent: ReturnType<typeof hostedSiteConversationEvent>,
 ): ChatActionMarkerModel | null {
+  const liveVoiceMarker = parseLiveVoiceSessionMarker(message);
+  if (liveVoiceMarker) {
+    return liveVoiceMarker.action === "started"
+      ? { kind: "live-voice-session", action: "started", timestamp: message.createdAt }
+      : {
+          kind: "live-voice-session",
+          action: "ended",
+          durationMs: liveVoiceMarker.durationMs ?? 0,
+          timestamp: message.createdAt,
+        };
+  }
   if (message.exchange) {
     const targetDeliveries = message.exchange.deliveries.map((delivery) => ({
       agentId: delivery.recipientAgentId,

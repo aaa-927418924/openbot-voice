@@ -88,6 +88,45 @@ describe("toAgentMessage", () => {
     });
   });
 
+  it("projects Live voice session boundaries as visible action markers", () => {
+    const started = {
+      id: `livevoice-${"a".repeat(48)}-start`,
+      author: "system",
+      source: "system",
+      text: "",
+      createdAt: "2026-09-01T08:00:00.000Z",
+      status: "completed",
+      itemType: "live-voice-session-start",
+    } satisfies ConversationMessage;
+    const ended = {
+      id: `livevoice-${"a".repeat(48)}-end`,
+      author: "system",
+      source: "system",
+      text: "",
+      createdAt: "2026-09-01T08:01:05.000Z",
+      status: "completed",
+      itemType: "live-voice-session-end:65000",
+    } satisfies ConversationMessage;
+
+    expect(toAgentMessages([started, ended], "chief")).toMatchObject([
+      {
+        kind: "action-marker",
+        body: "",
+        actionMarker: { kind: "live-voice-session", action: "started", timestamp: started.createdAt },
+      },
+      {
+        kind: "action-marker",
+        body: "",
+        actionMarker: {
+          kind: "live-voice-session",
+          action: "ended",
+          durationMs: 65_000,
+          timestamp: ended.createdAt,
+        },
+      },
+    ]);
+  });
+
   it("projects routine invocation, transitions, and malformed fallback markers", () => {
     const invocation = {
       id: "routine-delivery",

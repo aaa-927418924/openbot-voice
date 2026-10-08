@@ -4,6 +4,7 @@ import {
   type ChannelTask,
   channelRoutingConversationEvent,
 } from "@openbot/contracts/ipc";
+import { parseLiveVoiceSessionMarker } from "@openbot/contracts/ipc-live-voice";
 import { sourceText } from "@openbot/i18n/source";
 import { Context, Effect, Layer } from "effect";
 import { type ChannelOperationError, channelFailure, channelSync } from "./channel-effects";
@@ -38,7 +39,10 @@ function render(messages: ChannelMessage[]): string {
  * only repeat the routing that the turn instructions tell the member to leave out of its reply.
  */
 function conversation(messages: ChannelMessage[]): ChannelMessage[] {
-  return messages.filter((message) => channelRoutingConversationEvent(message.message) === null);
+  return messages.filter(
+    (message) =>
+      channelRoutingConversationEvent(message.message) === null && !parseLiveVoiceSessionMarker(message.message),
+  );
 }
 
 /** Cuts one rendered message into inputs the summary model accepts. The source ID stays the same. */

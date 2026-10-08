@@ -64,6 +64,8 @@ export interface AgentMessageMarkerModel {
 }
 
 export type ChatActionMarkerModel =
+  | { kind: "live-voice-session"; action: "started"; timestamp: string }
+  | { kind: "live-voice-session"; action: "ended"; durationMs: number; timestamp: string }
   | (SkillConversationEvent & { kind: "skill-lifecycle"; timestamp: string })
   | AgentMessageMarkerModel
   /**

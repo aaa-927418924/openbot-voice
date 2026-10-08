@@ -13,6 +13,7 @@ import {
   ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX,
   SKILL_EVENT_ITEM_TYPE_PREFIX,
 } from "@openbot/contracts/ipc";
+import { LIVE_VOICE_SESSION_START_ITEM_TYPE } from "@openbot/contracts/ipc-live-voice";
 import type { AgentMessage } from "@openbot/ui/data";
 
 /**
@@ -37,6 +38,8 @@ export function isRoutineEventItem(message: { itemType?: string }): boolean {
     message.itemType?.startsWith(HOSTED_SITE_EVENT_ITEM_TYPE_PREFIX) === true ||
     message.itemType?.startsWith(SKILL_EVENT_ITEM_TYPE_PREFIX) === true ||
     message.itemType?.startsWith(MARKETPLACE_SUGGESTION_ITEM_TYPE_PREFIX) === true ||
+    message.itemType === LIVE_VOICE_SESSION_START_ITEM_TYPE ||
+    message.itemType?.startsWith("live-voice-session-end:") === true ||
     message.itemType === CONTEXT_RESET_ITEM_TYPE
   );
 }

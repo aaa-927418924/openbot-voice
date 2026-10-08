@@ -215,7 +215,7 @@ function AgentMessageGroupMarker(props: {
       </div>
       <span class="sr-only" role="status" aria-live="polite">
         <For each={joinedMessages()} keyed={(entry) => entry.id}>
-          {(entry) => <span>{markerAccessibleLabel(entry().marker, props.agents, t)}</span>}
+          {(entry) => <span>{markerAccessibleLabel(entry().marker, props.agents, t, format)}</span>}
         </For>
       </span>
     </Marker>
@@ -226,7 +226,7 @@ function SingleChatActionMarker(
   props: Omit<ChatActionMarkerProps, "marker"> & { marker: SingleChatActionMarkerModel },
 ) {
   const { t, format } = useText();
-  const label = () => markerLabel(props.marker, t);
+  const label = () => markerLabel(props.marker, t, format);
   const [historyExpanded, setHistoryExpanded] = createSignal(false);
   /* The list leaves with an animation of its own, so it stays mounted until that
      animation ends. Without motion there is nothing to wait for. */
@@ -244,7 +244,7 @@ function SingleChatActionMarker(
       class={`chat-action-marker chat-action-marker-${props.marker.kind}`}
       role={props.announce ? "status" : "group"}
       aria-live={props.announce ? "polite" : "off"}
-      aria-label={markerAccessibleLabel(props.marker, props.agents, t)}
+      aria-label={markerAccessibleLabel(props.marker, props.agents, t, format)}
     >
       <div class="chat-action-marker-summary">
         <MarkerContent class="chat-action-marker-content">
@@ -603,9 +603,13 @@ const SKILL_ACTION_LABELS = {
   installed: "chat.marker.skill.installed",
 } as const satisfies Record<Extract<ChatActionMarkerModel, { kind: "skill-lifecycle" }>["action"], AppTextKey>;
 
-function markerLabel(marker: SingleChatActionMarkerModel, t: AppTranslate): string {
+function markerLabel(marker: SingleChatActionMarkerModel, t: AppTranslate, format: AppFormat): string {
   if (marker.kind === "unavailable") return marker.label;
   if (marker.kind === "context-reset") return t("chat.marker.contextReset");
+  if (marker.kind === "live-voice-session") {
+    if (marker.action === "started") return t("chat.marker.liveVoice.started");
+    return t("chat.marker.liveVoice.ended", { duration: formatLiveVoiceDuration(marker.durationMs, t, format) });
+  }
   if (marker.kind === "marketplace-suggestion") return t("chat.marker.marketplaceSuggestion");
   if (marker.kind === "skill-lifecycle") return t(SKILL_ACTION_LABELS[marker.action]);
   if (marker.kind === "agent-message") {
@@ -666,9 +670,19 @@ function agentTargetsStyle(agents: Array<AgentProfile | undefined>): string | un
   return mixedColor ? `--chat-action-agent-color: ${mixedColor}` : undefined;
 }
 
-function markerAccessibleLabel(marker: SingleChatActionMarkerModel, agents: AgentProfile[], t: AppTranslate): string {
-  const label = markerLabel(marker, t);
-  if (marker.kind === "unavailable" || marker.kind === "context-reset" || marker.kind === "marketplace-suggestion")
+function markerAccessibleLabel(
+  marker: SingleChatActionMarkerModel,
+  agents: AgentProfile[],
+  t: AppTranslate,
+  format: AppFormat,
+): string {
+  const label = markerLabel(marker, t, format);
+  if (
+    marker.kind === "unavailable" ||
+    marker.kind === "context-reset" ||
+    marker.kind === "live-voice-session" ||
+    marker.kind === "marketplace-suggestion"
+  )
     return label;
   if (marker.kind === "skill-lifecycle") return t("chat.marker.accessible.named", { label, name: marker.skillName });
   const unavailable = t("chat.marker.unavailableAgent");
@@ -688,6 +702,16 @@ function markerAccessibleLabel(marker: SingleChatActionMarkerModel, agents: Agen
   if (marker.kind === "hosted-site")
     return t("chat.marker.accessible.named", { label, name: marker.hostname ?? marker.title });
   return t("chat.marker.accessible.named", { label, name: marker.routineName });
+}
+
+function formatLiveVoiceDuration(durationMs: number, t: AppTranslate, format: AppFormat): string {
+  const totalSeconds = Math.max(0, Math.floor(durationMs / 1_000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  const parts: string[] = [];
+  if (minutes > 0) parts.push(t("chat.marker.liveVoice.minutes", { count: minutes }));
+  if (seconds > 0 || minutes === 0) parts.push(t("chat.marker.liveVoice.seconds", { count: seconds }));
+  return format.list(parts);
 }
 
 function hostedSiteMarkerStatus(

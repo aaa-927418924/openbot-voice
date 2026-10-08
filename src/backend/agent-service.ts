@@ -92,6 +92,10 @@ import {
   type QueueSteerFallback,
   workspaceAccessEnforced,
 } from "@openbot/contracts/ipc";
+import {
+  LIVE_VOICE_SESSION_END_ITEM_TYPE,
+  LIVE_VOICE_SESSION_START_ITEM_TYPE,
+} from "@openbot/contracts/ipc-live-voice";
 import { ContextResetBusyError } from "@openbot/contracts/team-protocol/context-reset-v1";
 import { LiveVoiceRefusedError } from "@openbot/contracts/team-protocol/live-voice-v1";
 import type { QueueEditRequest } from "@openbot/contracts/team-protocol/queue-edit-v1";
@@ -208,6 +212,10 @@ interface LiveVoiceSession {
   readonly client: AgentClient;
   readonly releaseLease: () => void;
   readonly pendingTextEchoes: LiveVoiceTextEcho[];
+  readonly channel?: { readonly channelId: string; readonly actor: { readonly id: string; readonly name: string } };
+  readonly pendingTranscriptItems: CodexTranscriptSegment[];
+  readonly finish: (status: "closed" | "error") => void;
+  startedAt: number | null;
   textSequence: number;
 }
 
@@ -215,6 +223,7 @@ interface LiveVoiceStartReservation {
   readonly agentId: string;
   readonly threadId: string;
   readonly sessionId: string;
+  readonly channelId?: string;
   cancelled: boolean;
 }
 
@@ -770,6 +779,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             );
         }).pipe(toChannelOperationError),
       schedule: (agentId) => this.#drain.scheduleDrain(agentId),
+      liveVoiceActive: (channelId) =>
+        this.#pendingLiveVoiceStart?.channelId === channelId ||
+        [...this.#liveVoiceSessions.values()].some((session) => session.channel?.channelId === channelId),
       awaitDrain: (agentId) => this.#drain.taskFor(agentId)?.pipe(toChannelOperationError),
       contextCharacters: (agentId, threadId) => {
         const agent = this.#store.list().find((item) => item.id === agentId);
@@ -1088,6 +1100,62 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
   }
 
+  #persistLiveVoiceBoundary(
+    session: LiveVoiceSession,
+    phase: "start" | "end",
+    timestampMs: number,
+    durationMs?: number,
+  ): void {
+    try {
+      const sessionHash = createHash("sha256").update(session.sessionId).digest("hex").slice(0, 48);
+      const message: ConversationMessage = {
+        id: `livevoice-${sessionHash}-${phase}`,
+        author: "system",
+        source: "system",
+        text: "",
+        createdAt: new Date(timestampMs).toISOString(),
+        status: "completed",
+        itemType:
+          phase === "start"
+            ? LIVE_VOICE_SESSION_START_ITEM_TYPE
+            : `${LIVE_VOICE_SESSION_END_ITEM_TYPE}:${Math.max(0, Math.floor(durationMs ?? 0))}`,
+      };
+      if (session.channel) {
+        const agent = this.#store.list().find((candidate) => candidate.id === session.agentId);
+        if (!agent) return;
+        this.channels.appendLiveVoiceBoundary({
+          channelId: session.channel.channelId,
+          agent,
+          actor: session.channel.actor,
+          message,
+        });
+        return;
+      }
+      this.#conversation.withConversationTransaction(session.agentId, ({ threadId, snapshot }) => {
+        if (snapshot.messages.some((candidate) => candidate.id === message.id)) return { result: undefined, snapshot };
+        snapshot.messages.push(message);
+        sortConversationMessages(snapshot.messages);
+        snapshot.revision = this.#store.database.appendConversationMessage({
+          agentId: session.agentId,
+          threadId,
+          activeTurnId: snapshot.activeTurnId,
+          message,
+          eventType: phase === "start" ? "thread.live-voice.session-started" : "thread.live-voice.session-ended",
+          commandId: `live-voice-boundary:${message.id}`,
+        });
+        return { result: undefined, snapshot };
+      });
+    } catch {
+      logger.warn("Could not save a Codex Live session boundary.", { agentId: session.agentId, phase });
+    }
+  }
+
+  #flushLiveVoiceTranscripts(session: LiveVoiceSession): void {
+    for (const item of session.pendingTranscriptItems.splice(0)) {
+      this.#persistLiveVoiceTranscript(session.agentId, item, session.channel);
+    }
+  }
+
   /**
    * `live-voice-v1`: a session's lifecycle as it happens, for the client that started it. It is a
    * method rather than `on("liveVoice", ...)` because a Team API listener takes a different event
@@ -1124,6 +1192,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       agentId: agent.id,
       threadId: input.threadId,
       sessionId: input.clientSessionId,
+      ...(input.channelId ? { channelId: input.channelId } : {}),
       cancelled: false,
     };
     // Hold the global slot before provider or thread setup yields. Otherwise two calls for
@@ -1139,6 +1208,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const finish = (session: LiveVoiceSession, status: "closed" | "error") => {
       if (this.#liveVoiceSessions.get(session.agentId) !== session) return;
       this.#liveVoiceSessions.delete(session.agentId);
+      if (session.startedAt !== null) {
+        const endedAt = Date.now();
+        this.#persistLiveVoiceBoundary(session, "end", endedAt, Math.max(0, endedAt - session.startedAt));
+        this.#flushLiveVoiceTranscripts(session);
+      } else {
+        // The provider may emit transcript notifications before returning the SDP answer. Do not
+        // persist those fragments if startup ultimately fails, since no session boundary exists.
+        session.pendingTranscriptItems.length = 0;
+      }
       session.releaseLease();
       this.emit("liveVoice", {
         agentId: session.agentId,
@@ -1201,12 +1279,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
                 return;
               }
             }
-            if (input.channelId && channelActor)
-              this.#persistLiveVoiceTranscript(agent.id, event.item, {
-                channelId: input.channelId,
-                actor: channelActor,
-              });
-            else this.#persistLiveVoiceTranscript(agent.id, event.item);
+            if (session.startedAt === null) session.pendingTranscriptItems.push(event.item);
+            else this.#persistLiveVoiceTranscript(agent.id, event.item, session.channel);
           }
         },
       });
@@ -1220,6 +1294,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         client,
         releaseLease,
         pendingTextEchoes: [],
+        ...(input.channelId && channelActor ? { channel: { channelId: input.channelId, actor: channelActor } } : {}),
+        pendingTranscriptItems: [],
+        startedAt: null,
+        finish: (status) => {
+          if (session) finish(session, status);
+        },
         textSequence: 0,
       };
       this.#liveVoiceSessions.set(agent.id, session);
@@ -1233,6 +1313,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const answer = yield* liveAdapter.start(providerThreadId, input.sdpOffer);
       if (this.#liveVoiceSessions.get(agent.id) !== session)
         throw new LiveVoiceRefusedError(sourceText("error.liveVoice.unavailable"));
+      const startedAt = Date.now();
+      session.startedAt = startedAt;
+      this.#persistLiveVoiceBoundary(session, "start", startedAt);
+      this.#flushLiveVoiceTranscripts(session);
       this.emit("liveVoice", {
         agentId: session.agentId,
         threadId: session.threadId,
@@ -1291,15 +1375,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     yield* session.adapter.stop(session.providerThreadId).pipe(
       Effect.tap(() =>
         Effect.sync(() => {
-          if (this.#liveVoiceSessions.get(session.agentId) !== session) return;
-          this.#liveVoiceSessions.delete(session.agentId);
-          session.releaseLease();
-          this.emit("liveVoice", {
-            agentId: session.agentId,
-            threadId: session.threadId,
-            sessionId: session.sessionId,
-            status: "closed",
-          });
+          session.finish("closed");
         }),
       ),
     );
@@ -2684,16 +2760,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#stopping = true;
     for (const session of [...this.#liveVoiceSessions.values()]) {
       yield* session.adapter.stop(session.providerThreadId).pipe(Effect.ignore);
-      if (this.#liveVoiceSessions.get(session.agentId) === session) {
-        this.#liveVoiceSessions.delete(session.agentId);
-        session.releaseLease();
-        this.emit("liveVoice", {
-          agentId: session.agentId,
-          threadId: session.threadId,
-          sessionId: session.sessionId,
-          status: "closed",
-        });
-      }
+      // A confirmed provider close usually ran finish() through its event. This handles hosts
+      // shutting down after a failed/late close while the conversation and channel stores are alive.
+      session.finish("closed");
     }
     const channelStop = yield* Effect.forkChild(
       this.channels

@@ -10,6 +10,7 @@
 
 import type { ChannelMessage, ChannelPage } from "@openbot/contracts/ipc";
 import { channelRoutingConversationEvent } from "@openbot/contracts/ipc";
+import { parseLiveVoiceSessionMarker } from "@openbot/contracts/ipc-live-voice";
 import type { AgentMessage, AgentProfile, ChatActionMarkerModel } from "@openbot/ui/data";
 import type { ChatMessageAuthor } from "@openbot/ui/features/conversation/ChatMessageRow";
 import { type DayMarkerOptions, dayMarkerLabel } from "@openbot/ui/features/conversation/chat-day-markers";
@@ -32,7 +33,12 @@ export interface ChannelTimelineEntry {
 
 /** A row with no text, no attachment and no question has nothing to draw. */
 function hasContent(entry: ChannelMessage): boolean {
-  return Boolean(entry.message.text.trim() || entry.message.attachments?.length || entry.message.questionPrompt);
+  return Boolean(
+    entry.message.text.trim() ||
+      entry.message.attachments?.length ||
+      entry.message.questionPrompt ||
+      parseLiveVoiceSessionMarker(entry.message),
+  );
 }
 
 /**
@@ -42,14 +48,24 @@ function hasContent(entry: ChannelMessage): boolean {
  * feedback about how the work was shared, so it carries no bubble, no author face and no message
  * actions, and it does not count as a new message.
  */
-function channelRoutingMarker(entry: ChannelMessage): ChatActionMarkerModel | null {
+function channelActionMarker(entry: ChannelMessage): ChatActionMarkerModel | null {
   const event = channelRoutingConversationEvent(entry.message);
-  return event ? { ...event, kind: "channel-routing", timestamp: entry.message.createdAt } : null;
+  if (event) return { ...event, kind: "channel-routing", timestamp: entry.message.createdAt };
+  const liveVoice = parseLiveVoiceSessionMarker(entry.message);
+  if (!liveVoice) return null;
+  if (liveVoice.action === "started")
+    return { kind: "live-voice-session", action: "started", timestamp: entry.message.createdAt };
+  return {
+    kind: "live-voice-session",
+    action: "ended",
+    timestamp: entry.message.createdAt,
+    durationMs: liveVoice.durationMs ?? 0,
+  };
 }
 
 function toAgentMessage(entry: ChannelMessage, own: boolean, options: DayMarkerOptions): AgentMessage {
   const message = entry.message;
-  const actionMarker = channelRoutingMarker(entry);
+  const actionMarker = channelActionMarker(entry);
   const plan = actionMarker ? null : messagePlan(message);
   const time = { hour: "numeric", minute: "2-digit" } as const;
   const createdAt = new Date(message.createdAt);
@@ -105,7 +121,7 @@ export function channelTimelineEntries(
       ? { kind: "you", name: t("chat.message.you") }
       : { kind: "agent", name: source.author.name, agent, avatarSeed: agent ? undefined : source.author.id };
     const dayMarker = dayMarkerLabel(previous?.message.createdAt, source.message.createdAt, options);
-    const marker = channelRoutingMarker(source);
+    const marker = channelActionMarker(source);
     const sameAuthor =
       previousAuthored !== undefined && previousAuthored === previous && previousAuthored.authorId === source.author.id;
     const withinWindow = withinGroupingWindow(previousAuthored?.message.createdAt, source.message.createdAt);

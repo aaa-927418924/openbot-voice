@@ -499,6 +499,19 @@
   text-align: center;
 }
 
+.chat-action-marker-live-voice-session {
+  gap: var(--openbot-space-3);
+}
+
+.chat-action-marker-live-voice-session::before,
+.chat-action-marker-live-voice-session::after {
+  content: "";
+  flex: 1 1 auto;
+  min-width: var(--openbot-space-3);
+  height: 1px;
+  background: var(--openbot-border-strong);
+}
+
 .chat-action-marker-content {
   max-width: 100%;
   gap: var(--openbot-space-1);

@@ -6,7 +6,11 @@ import {
   routineRunConversationEventItemType,
 } from "@openbot/contracts/ipc";
 import { describe, expect, it } from "vitest";
-import { decideAgentAutoRead, readStateForMessages } from "./conversation-read-state";
+import {
+  decideAgentAutoRead,
+  latestIncomingConversationMessage,
+  readStateForMessages,
+} from "./conversation-read-state";
 
 describe("readStateForMessages", () => {
   it("does not count response attachments as unread replies", () => {
@@ -49,6 +53,41 @@ describe("readStateForMessages", () => {
     expect(
       readStateForMessages({ unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null }, messages),
     ).toMatchObject({ unreadCount: 0, firstUnreadMessageId: null });
+  });
+
+  it("does not treat Live voice session boundaries as unread or the latest incoming message", () => {
+    const messages: ConversationMessage[] = [
+      {
+        id: "livevoice-start",
+        author: "system",
+        source: "system",
+        text: "",
+        createdAt: "2026-08-30T11:00:00.000Z",
+        status: "completed",
+        itemType: "live-voice-session-start",
+      },
+      {
+        id: "livevoice-end",
+        author: "system",
+        source: "system",
+        text: "",
+        createdAt: "2026-08-30T11:01:00.000Z",
+        status: "completed",
+        itemType: "live-voice-session-end:65000",
+      },
+      {
+        id: "answer",
+        author: "assistant",
+        text: "The call is complete.",
+        createdAt: "2026-08-30T11:02:00.000Z",
+        status: "completed",
+      },
+    ];
+
+    expect(
+      readStateForMessages({ unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null }, messages),
+    ).toMatchObject({ unreadCount: 1, firstUnreadMessageId: "answer" });
+    expect(latestIncomingConversationMessage(messages)?.id).toBe("answer");
   });
 
   it("does not count routine run markers, including malformed markers, as unread replies", () => {
