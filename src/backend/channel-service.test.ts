@@ -2388,6 +2388,45 @@ describe("channel transcript history mutations", () => {
     expect(service.store.messages("channel-1").map((message) => message.id)).toEqual(["channel-keep"]);
   });
 
+  it("does not restore an individually deleted message from the owning agent thread", async () => {
+    const threadId = service.store.context("channel-1", "agent-a").threadId;
+    const snapshot = {
+      agentId: "agent-a",
+      threadId,
+      activeTurnId: null,
+      revision: 1,
+      messages: [
+        {
+          id: "channel-agent-reply",
+          author: "assistant" as const,
+          turnId: "turn-channel-reply",
+          text: "This reply is stored in the channel-owned provider thread.",
+          createdAt: "2026-09-07T12:00:00.000Z",
+          status: "completed" as const,
+        },
+      ],
+    };
+    expect(service.event({ type: "conversation", snapshot })).toBe(true);
+    expect(service.store.messages("channel-1").map((message) => message.id)).toContain("channel-agent-reply");
+
+    await runCauseEffect(
+      service.deleteChannelMessage({
+        channelId: "channel-1",
+        messageId: "channel-agent-reply",
+        operationId: operationId(),
+      }),
+    );
+
+    expect(service.store.isMessageDeleted("channel-1", "channel-agent-reply")).toBe(true);
+    expect(service.event({ type: "conversation", snapshot })).toBe(true);
+    expect(service.store.messages("channel-1").map((message) => message.id)).not.toContain("channel-agent-reply");
+
+    service.store.rebuild("channel-1");
+    expect(service.store.isMessageDeleted("channel-1", "channel-agent-reply")).toBe(true);
+    service.event({ type: "conversation", snapshot });
+    expect(service.store.messages("channel-1").map((message) => message.id)).not.toContain("channel-agent-reply");
+  });
+
   it("clears the channel transcript and execution contexts but keeps channel settings, tasks, and direct chats", async () => {
     const direct = await addDirectMessage("agent-a", "Direct history survives a channel clear.");
     const task: ChannelTask = {

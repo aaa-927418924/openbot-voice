@@ -1549,6 +1549,9 @@ export class ChannelService {
         assignment && original?.superseded && task?.revision === assignment.taskRevision
           ? `${message.id}-revision-${task.revision}`
           : message.id;
+      // The provider's conversation snapshot still contains a deleted channel row. Keep the
+      // durable channel tombstone authoritative so a later snapshot cannot resurrect it.
+      if (this.store.isMessageDeleted(channelId, messageId)) continue;
       if (messageId !== message.id && JSON.stringify(original?.message) === JSON.stringify(message)) continue;
       const value: ChannelMessage = {
         id: messageId,

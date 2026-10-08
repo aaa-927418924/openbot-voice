@@ -215,6 +215,19 @@ export class ChannelStore {
     return value;
   }
 
+  /** A channel transcript row deleted by a member must not be re-imported from a provider thread. */
+  isMessageDeleted(channelId: string, messageId: string): boolean {
+    return (
+      databaseRow(
+        this.database.connection
+          .prepare(
+            "SELECT 1 AS deleted FROM projection_channel_messages WHERE channel_id = ? AND message_id = ? AND json_extract(message_json, '$.message.itemType') = ?",
+          )
+          .get(channelId, messageId, CHANNEL_MESSAGE_DELETED_ITEM_TYPE),
+      ) !== null
+    );
+  }
+
   tasks(channelId: string): ChannelTask[] {
     return databaseRows(
       this.database.connection
