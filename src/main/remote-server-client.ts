@@ -19,6 +19,7 @@
 
 import { randomBytes, verify } from "node:crypto";
 import type { RemoteDesktopCapabilities, ServerCompatibility } from "@openbot/contracts/ipc";
+import { isDynamicRecord } from "@openbot/contracts/runtime-values";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import {
   AGENT_LIVE_VOICE_SETTINGS_CAPABILITY,
@@ -153,9 +154,15 @@ export class RemoteServerClient {
     init: RemoteRequestInit = {},
   ): Effect.fn.Return<T, RemoteWorkflowError> {
     const server = yield* remoteDecode(() => this.#servers.require(serverId));
+    const refreshLiveVoiceSettings = isAgentLiveVoiceSettingsUpdate(path, init);
     return yield* Effect.gen({ self: this }, function* () {
       if (server.transport === "webrtc-v2") {
-        const compatibility = yield* this.ensureCompatibility(server);
+        const compatibility = yield* this.ensureCompatibility(server, refreshLiveVoiceSettings);
+        if (refreshLiveVoiceSettings && !compatibility.capabilities.includes(AGENT_LIVE_VOICE_SETTINGS_CAPABILITY)) {
+          return yield* remoteDecode(() => {
+            throw new Error(sourceText("error.team.liveVoiceUnsupported"));
+          });
+        }
         const value = yield* this.#hostRequestEffect(server.id, path, {
           ...init,
           preserveSemanticTags: supportsTeamSemanticTags(compatibility.capabilities),
@@ -169,7 +176,12 @@ export class RemoteServerClient {
         // the server looking healthy.
         return yield* remoteDecode(() => addRemotePreviewUrls(decodeOrProtocolError(decoder, value), server.id));
       }
-      const compatibility = yield* this.ensureCompatibility(server);
+      const compatibility = yield* this.ensureCompatibility(server, refreshLiveVoiceSettings);
+      if (refreshLiveVoiceSettings && !compatibility.capabilities.includes(AGENT_LIVE_VOICE_SETTINGS_CAPABILITY)) {
+        return yield* remoteDecode(() => {
+          throw new Error(sourceText("error.team.liveVoiceUnsupported"));
+        });
+      }
       const value = yield* requestJson(server.apiUrl, path, decoder, {
         ...init,
         token: this.#servers.token(server),
@@ -629,17 +641,28 @@ export class RemoteServerClient {
     capabilities: readonly string[],
   ): boolean {
     const method = (init.method ?? (init.body === undefined ? "GET" : "POST")).toUpperCase();
-    return (
-      method === "PATCH" &&
-      /^\/v1\/agents\/[^/]+$/u.test(new URL(path, "http://openbot.invalid").pathname) &&
-      capabilities.includes(AGENT_LIVE_VOICE_SETTINGS_CAPABILITY)
-    );
+    return isAgentUpdateRoute(method, path) && capabilities.includes(AGENT_LIVE_VOICE_SETTINGS_CAPABILITY);
   }
 
   #requireTransport(): RemoteHostRequestTransport {
     if (!this.#transport) throw new Error(sourceText("error.remote.webRtcUnavailable"));
     return this.#transport;
   }
+}
+
+/** Re-negotiate before encoding a voice update so a cached V1 record cannot reject the new field. */
+function isAgentLiveVoiceSettingsUpdate(path: string, init: RemoteRequestInit): boolean {
+  const method = (init.method ?? (init.body === undefined ? "GET" : "POST")).toUpperCase();
+  return (
+    isAgentUpdateRoute(method, path) &&
+    isDynamicRecord(init.body) &&
+    Object.hasOwn(init.body, "codexLiveVoice") &&
+    init.body.codexLiveVoice !== undefined
+  );
+}
+
+function isAgentUpdateRoute(method: string, path: string): boolean {
+  return method === "PATCH" && /^\/v1\/agents\/[^/]+$/u.test(new URL(path, "http://openbot.invalid").pathname);
 }
 
 function decodeOrProtocolError<T>(

@@ -49,21 +49,63 @@ describe("Team API compatibility negotiation", () => {
       });
       const serverId = `voice-${capabilities.length}`;
 
-      await runCauseEffect(
-        fixture.manager.request(serverId, path, (value) => value, {
-          method: "PATCH",
-          body: { name: "Voice", codexLiveVoice: "maple" },
-        }),
-      );
+      const request = fixture.manager.request(serverId, path, (value) => value, {
+        method: "PATCH",
+        body: { name: "Voice", codexLiveVoice: "maple" },
+      });
 
       if (capabilities.length > 0) {
+        await runCauseEffect(request);
         expect(stub.requests(path)[0]?.body).toMatchObject({ name: "Voice", codexLiveVoice: "maple" });
         expect(stub.requests(path)[0]?.headers.get(TEAM_PROTOCOL_VERSION_HEADER)).toBe("6");
       } else {
-        expect(stub.requests(path)[0]?.body).toMatchObject({ name: "Voice" });
-        expect(stub.requests(path)[0]?.body).not.toHaveProperty("codexLiveVoice");
+        await expect(runCauseEffect(request)).rejects.toThrow("Live voice conversations are not supported");
+        expect(stub.requests(path)).toHaveLength(0);
       }
     }
+  });
+
+  it("refreshes a stale compatibility record before encoding a GPT Live voice update", async () => {
+    const path = "/v1/agents/agent-voice";
+    const stub = stubTeamFetch({
+      compatibility: {
+        appVersion: "0.4.0",
+        protocol: { minimum: 1, maximum: 6 },
+        capabilities: [AGENT_LIVE_VOICE_SETTINGS_CAPABILITY],
+      },
+      routes: { [path]: () => new Response(null, { status: 204 }) },
+    });
+    const server = storedHttpsServer("voice-refresh");
+    const connections = new RemoteServerConnections({
+      appVersion: "0.4.0",
+      onChanged: () => undefined,
+      onReconnectSuspended: () => undefined,
+    });
+    connections.setCompatibility("voice-refresh", {
+      localAppVersion: "0.4.0",
+      hostAppVersion: "0.4.0",
+      localProtocol: { minimum: 1, maximum: 6 },
+      hostProtocol: { minimum: 1, maximum: 1 },
+      negotiatedProtocol: 1,
+      capabilities: [],
+    });
+    const client = new RemoteServerClient({
+      appVersion: "0.4.0",
+      servers: { require: () => server, token: () => "token" },
+      connections,
+      transport: null,
+    });
+
+    await runCauseEffect(
+      client.request("voice-refresh", path, (value) => value, {
+        method: "PATCH",
+        body: { codexLiveVoice: "maple" },
+      }),
+    );
+
+    expect(stub.requests("/v1/compatibility")).toHaveLength(1);
+    expect(stub.requests(path)[0]?.body).toMatchObject({ codexLiveVoice: "maple" });
+    expect(stub.requests(path)[0]?.headers.get(TEAM_PROTOCOL_VERSION_HEADER)).toBe("6");
   });
 
   it("limits app-version-less connections to v1 capabilities", async () => {
