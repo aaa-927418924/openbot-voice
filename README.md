@@ -1,7 +1,11 @@
-# OpenBot
+# OpenBot Voice
 
-[![CI](https://github.com/nightly-labs/openbot/actions/workflows/ci.yml/badge.svg)](https://github.com/nightly-labs/openbot/actions/workflows/ci.yml)
+[![CI](https://github.com/aaa-927418924/openbot-voice/actions/workflows/ci.yml/badge.svg)](https://github.com/aaa-927418924/openbot-voice/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-PolyForm_Noncommercial_1.0.0-blue.svg)](LICENSE)
+
+This is an unofficial fork of [nightly-labs/openbot](https://github.com/nightly-labs/openbot),
+focused on GPT Live voice conversations and quality-of-life improvements. The upstream README
+below remains the guide to OpenBot's core features and setup.
 
 OpenBot is a local-first desktop workspace for persistent AI teammates. It supports the local
 [Codex App Server](https://learn.chatgpt.com/docs/app-server) and
@@ -9,6 +13,15 @@ OpenBot is a local-first desktop workspace for persistent AI teammates. It suppo
 OpenCode, Gemini, [Cursor CLI](https://cursor.com/cli), and [Cline CLI](https://cline.bot/cli) through ACP. It gives every agent its own workspace and
 conversation, and provides local queues, file transfers, an embedded browser, and agent-to-agent
 messaging in one desktop app.
+
+## What this fork adds
+
+- GPT Live voice conversations through a ChatGPT subscription, with call controls and a persistent card under the model picker.
+- Live Voice for direct Bot chats and channels with a single Bot, including transcript boundaries and call duration.
+- Text and URL handoff during a call, with delegated work continuing after the call ends.
+- Individual message deletion and clear-history controls in direct chats and channels.
+- Improved title bar and controls for hiding remote servers.
+- Fixes for Live Voice startup and remote history handling, plus other reliability improvements.
 
 > [!WARNING]
 > OpenBot is a development preview. Agents currently run with `danger-full-access` and
@@ -42,17 +55,17 @@ or arm64 Linux as an AppImage.
 
 ### macOS
 
-1. Download the latest `OpenBot-*-arm64.dmg` (or `OpenBot-*-x64.dmg` on an Intel Mac) from [GitHub Releases](https://github.com/nightly-labs/openbot/releases).
+1. Download the latest `OpenBot-*-arm64.dmg` (or `OpenBot-*-x64.dmg` on an Intel Mac) from [GitHub Releases](https://github.com/aaa-927418924/openbot-voice/releases).
 2. Drag OpenBot to Applications and open it.
 
 ### Windows
 
-1. Download the latest `OpenBot-*-x64.exe` from [GitHub Releases](https://github.com/nightly-labs/openbot/releases).
+1. Download the latest `OpenBot-*-x64.exe` from [GitHub Releases](https://github.com/aaa-927418924/openbot-voice/releases).
 2. Run the installer and open OpenBot.
 
 ### Linux
 
-1. Download the latest `OpenBot-*-x86_64.AppImage` (or `OpenBot-*-arm64.AppImage` on arm64) from [GitHub Releases](https://github.com/nightly-labs/openbot/releases).
+1. Download the latest `OpenBot-*-x86_64.AppImage` (or `OpenBot-*-arm64.AppImage` on arm64) from [GitHub Releases](https://github.com/aaa-927418924/openbot-voice/releases).
 2. Make it executable with `chmod +x OpenBot-*.AppImage`, then run it.
 
 On Ubuntu 23.10 or newer and on Debian 13, unprivileged user namespaces are restricted by AppArmor
@@ -202,8 +215,8 @@ iex "& {$(irm https://bun.com/install.ps1)} -Version 1.4.0"
 ```
 
 ```bash
-git clone https://github.com/nightly-labs/openbot.git
-cd openbot
+git clone https://github.com/aaa-927418924/openbot-voice.git
+cd openbot-voice
 bun install --frozen-lockfile
 bun run codex:doctor
 bun run dev
