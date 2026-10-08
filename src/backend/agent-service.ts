@@ -211,6 +211,13 @@ interface LiveVoiceSession {
   textSequence: number;
 }
 
+interface LiveVoiceStartReservation {
+  readonly agentId: string;
+  readonly threadId: string;
+  readonly sessionId: string;
+  cancelled: boolean;
+}
+
 interface LiveVoiceTextEcho {
   readonly text: string;
   readonly itemId: string;
@@ -333,6 +340,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   /** The last turn of each agent's chat that the user stopped. One per agent, so it needs no clean-up. */
   readonly #stoppedTurns = new Map<string, string>();
   readonly #liveVoiceSessions = new Map<string, LiveVoiceSession>();
+  /** Reserves the one global voice slot while its provider client and thread become ready. */
+  #pendingLiveVoiceStart: LiveVoiceStartReservation | undefined;
   readonly #usedLiveVoiceSessionIds = new Set<string>();
   #initialized = false;
   #stopping = false;
@@ -1100,21 +1109,33 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const agent = this.#store.list().find((candidate) => candidate.id === input.agentId);
     if (!agent || agent.threadId !== input.threadId || agent.provider !== "codex")
       throw new LiveVoiceRefusedError(sourceText("error.liveVoice.unavailable"));
+    // Do not start or activate Codex for an account that is not on the supported subscription path.
     if (!this.#providers.hasCodexChatGptAccount())
       throw new LiveVoiceRefusedError(sourceText("error.liveVoice.accountRequired"));
-    if (this.#liveVoiceSessions.size > 0 || this.#usedLiveVoiceSessionIds.has(input.clientSessionId))
+    if (
+      this.#liveVoiceSessions.size > 0 ||
+      this.#pendingLiveVoiceStart ||
+      this.#usedLiveVoiceSessionIds.has(input.clientSessionId)
+    )
       throw new LiveVoiceRefusedError(sourceText("error.liveVoice.busy"));
-    const providerSession = this.#store.database.activeProviderSession(agent.threadId, "codex");
-    const client = this.#providers.clientForAgent(agent);
-    if (!providerSession || !client?.running || client.provider !== "codex")
-      throw new LiveVoiceRefusedError(sourceText("error.liveVoice.unavailable"));
     const releaseLease = this.#drain.acquireVoiceLease(agent.id);
     if (!releaseLease) throw new LiveVoiceRefusedError(sourceText("error.liveVoice.busy"));
+    const reservation: LiveVoiceStartReservation = {
+      agentId: agent.id,
+      threadId: input.threadId,
+      sessionId: input.clientSessionId,
+      cancelled: false,
+    };
+    // Hold the global slot before provider or thread setup yields. Otherwise two calls for
+    // different agents could both see an empty session map and start concurrently.
+    this.#pendingLiveVoiceStart = reservation;
     this.#usedLiveVoiceSessionIds.add(input.clientSessionId);
     if (this.#usedLiveVoiceSessionIds.size > 4096) {
       const oldest = this.#usedLiveVoiceSessionIds.values().next();
       if (!oldest.done) this.#usedLiveVoiceSessionIds.delete(oldest.value);
     }
+    let session: LiveVoiceSession | undefined;
+    let adapter: CodexLiveVoiceAdapter | undefined;
     const finish = (session: LiveVoiceSession, status: "closed" | "error") => {
       if (this.#liveVoiceSessions.get(session.agentId) !== session) return;
       this.#liveVoiceSessions.delete(session.agentId);
@@ -1127,67 +1148,89 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         ...(status === "error" ? { message: sourceText("error.liveVoice.unavailable") } : {}),
       });
     };
-    let session: LiveVoiceSession;
-    const adapter = new CodexLiveVoiceAdapter({
-      client,
-      onEvent: (event) => {
-        if (!session || this.#liveVoiceSessions.get(agent.id) !== session) return;
-        if (event.type === "closed") finish(session, "closed");
-        if (event.type === "error")
-          this.emit("liveVoice", {
-            agentId: session.agentId,
-            threadId: session.threadId,
-            sessionId: session.sessionId,
-            status: "error",
-            message: sourceText("error.liveVoice.unavailable"),
-          });
-        if (event.type === "item") {
-          if (event.item.role === "user") {
-            const submitted = session.pendingTextEchoes.find(
-              (candidate) => candidate.text === event.item.text && !candidate.echoedItem,
-            );
-            if (submitted) {
-              submitted.echoedItem = event.item;
-              // app-server exposes no append request id on transcript items, so only correlate
-              // an echo while its appendText request is still in flight.
-              return;
-            }
-          }
-          if (input.channelId && channelActor)
-            this.#persistLiveVoiceTranscript(agent.id, event.item, { channelId: input.channelId, actor: channelActor });
-          else this.#persistLiveVoiceTranscript(agent.id, event.item);
-        }
-      },
-    });
-    session = {
-      agentId: agent.id,
-      threadId: input.threadId,
-      providerThreadId: providerSession.externalSessionId,
-      sessionId: input.clientSessionId,
-      adapter,
-      client,
-      releaseLease,
-      pendingTextEchoes: [],
-      textSequence: 0,
-    };
-    this.#liveVoiceSessions.set(agent.id, session);
-    this.emit("liveVoice", {
-      agentId: session.agentId,
-      threadId: session.threadId,
-      sessionId: session.sessionId,
-      status: "starting",
-    });
     const start = Effect.gen({ self: this }, function* () {
+      // Match the normal-message readiness path. A new or cleared Bot chat has no provider session
+      // yet, and a provider may still need to start after the host has restarted.
+      const client = yield* this.#providers.ensureAgentClient(agent);
+      if (reservation.cancelled) throw new LiveVoiceRefusedError(sourceText("error.liveVoice.unavailable"));
+      if (client.provider !== "codex" || !client.running)
+        throw new LiveVoiceRefusedError(sourceText("error.liveVoice.unavailable"));
+      if (!this.#providers.hasCodexChatGptAccount())
+        throw new LiveVoiceRefusedError(sourceText("error.liveVoice.accountRequired"));
       // Re-read the official account mode without refreshing credentials. API-key auth is not a
       // supported subscription path for Codex Live.
       const account = yield* client.request("account/read", { refreshToken: false }, decodeAccountReadResult, 5_000);
       if (account.account?.type !== "chatgpt")
         throw new LiveVoiceRefusedError(sourceText("error.liveVoice.accountRequired"));
-      // The provider process may have restarted while its saved session stayed active. Normal
-      // turns resume that session before using it; Live voice must establish the same readiness
-      // barrier before app-server accepts a realtime start on the thread.
-      yield* this.#threads.resumeThread(agent, client, session.providerThreadId);
-      const answer = yield* adapter.start(session.providerThreadId, input.sdpOffer);
+      if (reservation.cancelled) throw new LiveVoiceRefusedError(sourceText("error.liveVoice.unavailable"));
+
+      // ensureThread starts an empty Bot thread and recovers a saved provider thread after restart.
+      // Keep the explicit resume used by Live Voice for an already-loaded session as a readiness
+      // barrier; ensureThread itself resumes sessions that are not loaded by this client.
+      const savedSession = this.#store.database.activeProviderSession(input.threadId, "codex");
+      const savedClient = savedSession ? this.#conversation.loadedClientFor(savedSession.externalSessionId) : undefined;
+      const providerThreadId = yield* this.#threads.ensureThread(agent, client);
+      if (reservation.cancelled) throw new LiveVoiceRefusedError(sourceText("error.liveVoice.unavailable"));
+      if (savedSession?.externalSessionId === providerThreadId && savedClient === client)
+        yield* this.#threads.resumeThread(agent, client, providerThreadId);
+      if (this.#pendingLiveVoiceStart !== reservation)
+        throw new LiveVoiceRefusedError(sourceText("error.liveVoice.unavailable"));
+
+      const liveAdapter = new CodexLiveVoiceAdapter({
+        client,
+        onEvent: (event) => {
+          if (!session || this.#liveVoiceSessions.get(agent.id) !== session) return;
+          if (event.type === "closed") finish(session, "closed");
+          if (event.type === "error")
+            this.emit("liveVoice", {
+              agentId: session.agentId,
+              threadId: session.threadId,
+              sessionId: session.sessionId,
+              status: "error",
+              message: sourceText("error.liveVoice.unavailable"),
+            });
+          if (event.type === "item") {
+            if (event.item.role === "user") {
+              const submitted = session.pendingTextEchoes.find(
+                (candidate) => candidate.text === event.item.text && !candidate.echoedItem,
+              );
+              if (submitted) {
+                submitted.echoedItem = event.item;
+                // app-server exposes no append request id on transcript items, so only correlate
+                // an echo while its appendText request is still in flight.
+                return;
+              }
+            }
+            if (input.channelId && channelActor)
+              this.#persistLiveVoiceTranscript(agent.id, event.item, {
+                channelId: input.channelId,
+                actor: channelActor,
+              });
+            else this.#persistLiveVoiceTranscript(agent.id, event.item);
+          }
+        },
+      });
+      adapter = liveAdapter;
+      session = {
+        agentId: agent.id,
+        threadId: input.threadId,
+        providerThreadId,
+        sessionId: input.clientSessionId,
+        adapter: liveAdapter,
+        client,
+        releaseLease,
+        pendingTextEchoes: [],
+        textSequence: 0,
+      };
+      this.#liveVoiceSessions.set(agent.id, session);
+      this.#pendingLiveVoiceStart = undefined;
+      this.emit("liveVoice", {
+        agentId: session.agentId,
+        threadId: session.threadId,
+        sessionId: session.sessionId,
+        status: "starting",
+      });
+      const answer = yield* liveAdapter.start(providerThreadId, input.sdpOffer);
       if (this.#liveVoiceSessions.get(agent.id) !== session)
         throw new LiveVoiceRefusedError(sourceText("error.liveVoice.unavailable"));
       this.emit("liveVoice", {
@@ -1202,18 +1245,29 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       Effect.onExit((exit) =>
         Exit.isFailure(exit)
           ? Effect.gen({ self: this }, function* () {
-              const stopExit = yield* Effect.exit(adapter.stop(session.providerThreadId));
-              if (Exit.isSuccess(stopExit) || !adapter.isActive(session.providerThreadId)) finish(session, "closed");
-              else
-                this.emit("liveVoice", {
-                  agentId: session.agentId,
-                  threadId: session.threadId,
-                  sessionId: session.sessionId,
-                  status: "error",
-                  message: sourceText("error.liveVoice.unavailable"),
-                });
+              if (session && adapter) {
+                const stopExit = yield* Effect.exit(adapter.stop(session.providerThreadId));
+                if (Exit.isSuccess(stopExit) || !adapter.isActive(session.providerThreadId)) finish(session, "closed");
+                else
+                  this.emit("liveVoice", {
+                    agentId: session.agentId,
+                    threadId: session.threadId,
+                    sessionId: session.sessionId,
+                    status: "error",
+                    message: sourceText("error.liveVoice.unavailable"),
+                  });
+              }
+              yield* Effect.sync(() => {
+                if (this.#pendingLiveVoiceStart === reservation) this.#pendingLiveVoiceStart = undefined;
+                // If a failed start still owns a realtime session, keep its lease until the
+                // authoritative closed event. Otherwise release the preparation lease now.
+                if (!session || this.#liveVoiceSessions.get(agent.id) !== session) releaseLease();
+              });
             })
-          : Effect.void,
+          : Effect.sync(() => {
+              if (this.#pendingLiveVoiceStart === reservation) this.#pendingLiveVoiceStart = undefined;
+              if (!session || this.#liveVoiceSessions.get(agent.id) !== session) releaseLease();
+            }),
       ),
     );
   }).bind(this);
@@ -1222,6 +1276,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this: AgentService,
     input: LiveVoiceStopInput,
   ) {
+    const pending = this.#pendingLiveVoiceStart;
+    if (
+      pending?.agentId === input.agentId &&
+      pending.threadId === input.threadId &&
+      pending.sessionId === input.sessionId
+    ) {
+      pending.cancelled = true;
+      return;
+    }
     const session = this.#liveVoiceSessions.get(input.agentId);
     if (!session || session.threadId !== input.threadId || session.sessionId !== input.sessionId)
       throw new LiveVoiceRefusedError(sourceText("error.liveVoice.unavailable"));

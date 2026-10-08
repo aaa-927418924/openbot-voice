@@ -41,7 +41,7 @@ import {
 import { runCauseEffect } from "./effect-boundary";
 import { loginShellPath, type McpToolRuntimes, NO_MCP_TOOL_RUNTIMES } from "./mcp-provider-shapes";
 import type { DynamicToolCallParams, ResponseDecoder } from "./protocol";
-import type { ProviderClientOperationError } from "./provider-client-effects";
+import { ProviderClientOperationError } from "./provider-client-effects";
 import { NO_PROVIDER_CREDENTIALS } from "./provider-drivers";
 import { SidebarLayoutStore } from "./sidebar-layout-store";
 
@@ -69,9 +69,10 @@ class FakeLiveVoiceClient extends FakeAgentClient {
   readonly liveRequestOrder: string[] = [];
   readonly liveRequests: Array<{ method: string; params: unknown }> = [];
   realtimeThreadId: string | undefined;
+  failNextThreadStart = false;
 
-  constructor(providerEcho: boolean) {
-    super("codex");
+  constructor(providerEcho: boolean, requestHook?: (method: string, provider: AgentProvider) => Promise<void>) {
+    super("codex", "CODEX_DONE", true, true, {}, requestHook);
     this.#providerEcho = providerEcho;
   }
 
@@ -82,6 +83,16 @@ class FakeLiveVoiceClient extends FakeAgentClient {
   ): Effect.Effect<T, ProviderClientOperationError> {
     this.liveRequestOrder.push(method);
     this.liveRequests.push({ method, params: structuredClone(params) });
+    if (method === "thread/start" && this.failNextThreadStart) {
+      this.failNextThreadStart = false;
+      return super
+        .request(method, params, decoder)
+        .pipe(
+          Effect.flatMap(() =>
+            Effect.fail(new ProviderClientOperationError({ cause: new Error("Injected thread start failure.") })),
+          ),
+        );
+    }
     if (method === "thread/resume") {
       this.#resumedSinceRestart = true;
       return super.request(method, params, decoder);
@@ -324,6 +335,79 @@ describe.sequential("AgentService: providers", () => {
     expect(realtimeIndex).toBeGreaterThan(resumeIndex);
     await runCauseEffect(
       service.stopLiveVoice({ agentId: agent.id, threadId: agent.threadId, sessionId: started.sessionId }),
+    );
+  });
+
+  it("starts a fresh Codex chat without a text turn and releases a failed global preparation", async () => {
+    let reachedThreadStart!: () => void;
+    let releaseThreadStart!: () => void;
+    const threadStartReached = new Promise<void>((resolve) => {
+      reachedThreadStart = resolve;
+    });
+    const threadStartGate = new Promise<void>((resolve) => {
+      releaseThreadStart = resolve;
+    });
+    let threadStartCount = 0;
+    const liveClient = new FakeLiveVoiceClient(false, async (method) => {
+      if (method !== "thread/start" || threadStartCount++ > 0) return;
+      reachedThreadStart();
+      await threadStartGate;
+    });
+    liveClient.failNextThreadStart = true;
+    const { service: agentService, store } = await startService(root, {
+      preferredProvider: "codex",
+      client: () => liveClient,
+    });
+    service = agentService;
+    const firstAgent = await runCauseEffect(store.getOrCreate("chief"));
+    const secondAgent = await runCauseEffect(store.getOrCreate("worker"));
+    const firstThreadId = await runCauseEffect(store.ensureThreadId(firstAgent.id));
+    const secondThreadId = await runCauseEffect(store.ensureThreadId(secondAgent.id));
+    expect(store.database.activeProviderSession(firstThreadId, "codex")).toBeNull();
+    expect(store.database.activeProviderSession(secondThreadId, "codex")).toBeNull();
+
+    const failedStart = runCauseEffect(
+      service.startLiveVoice({
+        agentId: firstAgent.id,
+        threadId: firstThreadId,
+        clientSessionId: randomUUID(),
+        sdpOffer: "first-offer",
+      }),
+    );
+    await threadStartReached;
+    await expect(
+      runCauseEffect(
+        service.startLiveVoice({
+          agentId: secondAgent.id,
+          threadId: secondThreadId,
+          clientSessionId: randomUUID(),
+          sdpOffer: "second-offer",
+        }),
+      ),
+    ).rejects.toThrow();
+    releaseThreadStart();
+    await expect(failedStart).rejects.toThrow("Injected thread start failure.");
+    expect(store.database.activeProviderSession(firstThreadId, "codex")).toBeNull();
+
+    const started = await runCauseEffect(
+      service.startLiveVoice({
+        agentId: secondAgent.id,
+        threadId: secondThreadId,
+        clientSessionId: randomUUID(),
+        sdpOffer: "second-offer",
+      }),
+    );
+    const threadStartIndex = liveClient.liveRequestOrder.lastIndexOf("thread/start");
+    const realtimeStartIndex = liveClient.liveRequestOrder.lastIndexOf("thread/realtime/start");
+    expect(threadStartIndex).toBeGreaterThan(-1);
+    expect(realtimeStartIndex).toBeGreaterThan(threadStartIndex);
+    expect(liveClient.realtimeThreadId).toBe(
+      store.database.activeProviderSession(secondThreadId, "codex")?.externalSessionId,
+    );
+    expect(store.database.readConversation(secondAgent.id, secondThreadId).messages).toEqual([]);
+
+    await runCauseEffect(
+      service.stopLiveVoice({ agentId: secondAgent.id, threadId: secondThreadId, sessionId: started.sessionId }),
     );
   });
 
