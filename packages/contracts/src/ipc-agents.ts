@@ -10,6 +10,7 @@ import {
 } from "./ipc-agent-identity";
 import { type AgentProviderId, isAgentProvider } from "./ipc-agent-status";
 import { isBoundedString, isIdentifier } from "./ipc-bounded-values";
+import { type CodexLiveVoice, isCodexLiveVoice } from "./ipc-live-voice";
 import { type BusyMessageMode, isBusyMessageMode } from "./ipc-queue";
 import type { SidebarLayoutSnapshot } from "./ipc-sidebar-layout";
 import { isBoolean, isDynamicRecord, isNumber, isOneOf } from "./runtime-values";
@@ -90,6 +91,8 @@ export interface AgentSummary {
    * app default.
    */
   busyMessageMode?: BusyMessageMode;
+  /** Codex GPT Live speech voice. Absent uses `DEFAULT_CODEX_LIVE_VOICE`. */
+  codexLiveVoice?: CodexLiveVoice;
   threadId: string | null;
   workspacePath: string;
   preview: string;
@@ -121,6 +124,7 @@ export function isAgentSummary(value: unknown): value is AgentSummary {
     (value.computerUse === undefined || isBoolean(value.computerUse)) &&
     (value.allowAutomation === undefined || isBoolean(value.allowAutomation)) &&
     (value.busyMessageMode === undefined || isBusyMessageMode(value.busyMessageMode)) &&
+    (value.codexLiveVoice === undefined || isCodexLiveVoice(value.codexLiveVoice)) &&
     (value.threadId === null || isIdentifier(value.threadId)) &&
     isBoundedString(value.workspacePath, INPUT_LIMITS.path) &&
     isBoundedString(value.preview, INPUT_LIMITS.messageText) &&
@@ -163,6 +167,7 @@ export interface UpdateAgentInput {
   allowAutomation?: boolean;
   /** `null` returns the agent to the app default. */
   busyMessageMode?: BusyMessageMode | null;
+  codexLiveVoice?: CodexLiveVoice;
   avatarSeed?: string;
   avatarHue?: AvatarHue | null;
 }

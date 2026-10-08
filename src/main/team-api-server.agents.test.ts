@@ -1,4 +1,8 @@
 import { isAgentSummary } from "@openbot/contracts/ipc";
+import {
+  AGENT_LIVE_VOICE_SETTINGS_CAPABILITY,
+  TEAM_CURRENT_CAPABILITIES,
+} from "@openbot/contracts/team-protocol/current";
 import { QueueEditRejectedError } from "@openbot/contracts/team-protocol/queue-edit-v1";
 import { Effect } from "effect";
 import opencodeFixture from "../../packages/contracts/src/team-protocol/fixtures/v4/host-http-response.json";
@@ -36,6 +40,52 @@ import {
 afterEach(stopTeamApiFixtures);
 
 describe("TeamApiServer agents", () => {
+  it("round-trips a GPT Live voice preference only for capable protocol 6 clients", async () => {
+    const { root, start, signIn } = await createTeamApiFixture("agent-live-voice-setting", { configure: true });
+    const store = new AgentStore(join(root, "agents"), join(root, "home"));
+    await Effect.runPromise(store.initialize());
+    const agent = await Effect.runPromise(store.getOrCreate("chief"));
+    const { base } = await start({
+      agents: createAgents({
+        listAgents: () => store.list(),
+        updateAgent: (input) =>
+          store
+            .updateAgent(input)
+            .pipe(
+              Effect.mapError((error) => new AgentLifecycleFailed({ operation: "updateAgent", cause: error.cause })),
+            ),
+      }),
+    });
+    const token = await signIn();
+    const headers = {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      [TEAM_APP_VERSION_HEADER]: "0.30.0",
+      [TEAM_PROTOCOL_VERSION_HEADER]: "6",
+      [TEAM_CAPABILITIES_HEADER]: TEAM_CURRENT_CAPABILITIES.join(","),
+    };
+    const path = `${base}/v1/agents/${agent.id}`;
+    const updated = await fetch(path, { method: "PATCH", headers, body: JSON.stringify({ codexLiveVoice: "coral" }) });
+    expect(updated.status).toBe(200);
+    expect(await updated.json()).toMatchObject({ codexLiveVoice: "coral" });
+
+    const oldClientHeaders = {
+      ...headers,
+      [TEAM_CAPABILITIES_HEADER]: TEAM_CURRENT_CAPABILITIES.filter(
+        (capability) => capability !== AGENT_LIVE_VOICE_SETTINGS_CAPABILITY,
+      ).join(","),
+    };
+    const hidden = await fetch(`${base}/v1/agents`, { headers: oldClientHeaders });
+    expect(JSON.stringify(await hidden.json())).not.toContain("codexLiveVoice");
+    const ignoredUpdate = await fetch(path, {
+      method: "PATCH",
+      headers: oldClientHeaders,
+      body: JSON.stringify({ codexLiveVoice: "cedar" }),
+    });
+    expect(ignoredUpdate.status).toBe(400);
+    expect(store.list()[0]?.codexLiveVoice).toBe("coral");
+  });
+
   it("requires authentication, capability and valid input for a queue edit", async () => {
     const { start, signIn } = await createTeamApiFixture("queue-edit", { configure: true });
     const editQueuedMessage = vi.fn<TeamApiAgents["editQueuedMessage"]>(() =>

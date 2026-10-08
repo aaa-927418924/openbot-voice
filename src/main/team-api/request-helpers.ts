@@ -21,6 +21,7 @@ import {
   isAgentProvider,
   isAvatarHue,
   isAvatarSeed,
+  isCodexLiveVoice,
   isReasoningEffort,
   MARKETPLACE_SUGGESTION_ITEM_TYPE_PREFIX,
   type RespondToApprovalInput,
@@ -32,6 +33,7 @@ import {
 } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isBoolean, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import {
+  AGENT_LIVE_VOICE_SETTINGS_CAPABILITY,
   isTeamCurrentCapability,
   supportsTeamSemanticTags,
   TEAM_AGENT_CREATE_MODEL_CAPABILITY,
@@ -206,6 +208,7 @@ export async function readJson(request: IncomingMessage): Promise<DynamicRecord>
     return teamHttpCodec(requestProtocol(request)).decodeRequest(request.method ?? "GET", path, value, {
       preserveSemanticTags: supportsTeamSemanticTags(capabilities),
       agentCreateModel: capabilities.has(TEAM_AGENT_CREATE_MODEL_CAPABILITY),
+      agentLiveVoiceSettings: capabilities.has(AGENT_LIVE_VOICE_SETTINGS_CAPABILITY),
     });
   } catch {
     throw new HttpError(400, "A valid JSON object is required.");
@@ -360,6 +363,10 @@ export function agentUpdate(value: DynamicRecord, agentId: string): UpdateAgentI
       throw new HttpError(400, "reasoningEffort is invalid.");
     }
     result.reasoningEffort = value.reasoningEffort;
+  }
+  if (value.codexLiveVoice !== undefined) {
+    if (!isCodexLiveVoice(value.codexLiveVoice)) throw new HttpError(400, "codexLiveVoice is invalid.");
+    result.codexLiveVoice = value.codexLiveVoice;
   }
   if (value.avatarSeed !== undefined) {
     if (!isAvatarSeed(value.avatarSeed)) throw new HttpError(400, "avatarSeed is invalid.");

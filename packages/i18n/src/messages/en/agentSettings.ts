@@ -41,6 +41,8 @@ export const messages = defineMessages("agentSettings", {
   "agentSettings.runtime.model": "Agent model",
   "agentSettings.runtime.modelBusy": "Wait for the current work to finish before changing models.",
   "agentSettings.runtime.modelUnavailable": "Models are available after an agent CLI connects.",
+  "agentSettings.runtime.liveVoice": "GPT Live voice",
+  "agentSettings.runtime.liveVoiceLabel": "GPT Live voice",
   "agentSettings.runtime.reasoning": "Reasoning",
   "agentSettings.runtime.reasoningLabel": "Agent reasoning level",
   "agentSettings.runtime.selectReasoning": "Select reasoning",

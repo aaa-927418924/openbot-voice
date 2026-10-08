@@ -10,6 +10,7 @@ import { remoteDecode } from "./remote-service-effects";
 // reports the mock's source location and, worse, cannot fail at all when the route is never reached.
 
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
+import { AGENT_LIVE_VOICE_SETTINGS_CAPABILITY } from "@openbot/contracts/team-protocol/current";
 import { TEAM_CAPABILITIES_HEADER } from "@openbot/contracts/team-protocol/v1";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runCauseEffect } from "../backend/effect-boundary";
@@ -31,6 +32,39 @@ afterEach(async () => {
 });
 
 describe("Team API compatibility negotiation", () => {
+  it("sends a selected GPT Live voice only to hosts that advertise the setting", async () => {
+    const path = "/v1/agents/agent-voice";
+    for (const capabilities of [[AGENT_LIVE_VOICE_SETTINGS_CAPABILITY], []]) {
+      const stub = stubTeamFetch({
+        compatibility: {
+          appVersion: "0.4.0",
+          protocol: { minimum: 6, maximum: 6 },
+          capabilities,
+        },
+        routes: { [path]: () => new Response(null, { status: 204 }) },
+      });
+      const fixture = await createRemoteManager({
+        servers: [storedHttpsServer(`voice-${capabilities.length}`)],
+        appVersion: "0.4.0",
+      });
+      const serverId = `voice-${capabilities.length}`;
+
+      await runCauseEffect(
+        fixture.manager.request(serverId, path, (value) => value, {
+          method: "PATCH",
+          body: { name: "Voice", codexLiveVoice: "coral" },
+        }),
+      );
+
+      if (capabilities.length > 0) {
+        expect(stub.requests(path)[0]?.body).toMatchObject({ name: "Voice", codexLiveVoice: "coral" });
+      } else {
+        expect(stub.requests(path)[0]?.body).toMatchObject({ name: "Voice" });
+        expect(stub.requests(path)[0]?.body).not.toHaveProperty("codexLiveVoice");
+      }
+    }
+  });
+
   it("limits app-version-less connections to v1 capabilities", async () => {
     stubTeamFetch({});
     const fixture = await createRemoteManager({ servers: [storedHttpsServer("assumed")] });

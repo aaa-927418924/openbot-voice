@@ -308,7 +308,13 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
     this: TeamWebRtcClientTransport,
     hostId: string,
     path: string,
-    init: { method?: string; body?: unknown; preserveSemanticTags?: boolean; agentCreateModel?: boolean } = {},
+    init: {
+      method?: string;
+      body?: unknown;
+      preserveSemanticTags?: boolean;
+      agentCreateModel?: boolean;
+      agentLiveVoiceSettings?: boolean;
+    } = {},
   ): Effect.fn.Return<TeamProtocolV2Json | undefined, RemoteWorkflowError> {
     return yield* this.#owned(
       this.requestResponse(hostId, path, init).pipe(
@@ -327,6 +333,7 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
       contentType?: string;
       preserveSemanticTags?: boolean;
       agentCreateModel?: boolean;
+      agentLiveVoiceSettings?: boolean;
     } = {},
   ): Effect.fn.Return<
     {
@@ -366,6 +373,7 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
                   : encodeTeamProtocolV6WebRtcHttpRequest(method, path, init.body, {
                       preserveSemanticTags: init.preserveSemanticTags,
                       agentCreateModel: init.agentCreateModel,
+                      agentLiveVoiceSettings: init.agentLiveVoiceSettings,
                     }),
               capabilities: [...TEAM_CURRENT_CAPABILITIES],
               ...(bodyTransferId ? { bodyTransferId } : {}),

@@ -43,6 +43,8 @@ export interface TeamHttpCodecOptions {
   preserveSemanticTags?: boolean;
   /** Read only by V4, V5 and V6, which accept a model in an agent create request. */
   agentCreateModel?: boolean;
+  /** Read only by V6 when the client supports the optional Codex Live voice preference. */
+  agentLiveVoiceSettings?: boolean;
 }
 
 type DecodedRequest =

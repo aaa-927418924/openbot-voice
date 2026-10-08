@@ -176,6 +176,8 @@ export interface AgentProfile {
   provider: AgentProviderId;
   model: AgentModelId;
   reasoningEffort: AgentReasoningEffort;
+  /** The Bot's selected Codex GPT Live voice; absent means the Codex default. */
+  codexLiveVoice?: AgentSummary["codexLiveVoice"];
   /** Absent for an agent on a remote host, which does not share it; the host then decides. */
   access?: AgentAccess;
   /** Absent means on. Absent for an agent on a remote host too, which does not share it. */

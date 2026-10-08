@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { isAgentSummary } from "../ipc-agents";
+import { AGENT_LIVE_VOICE_SETTINGS_CAPABILITY, TEAM_CURRENT_CAPABILITIES } from "./current";
 import request from "./fixtures/v6/client-http-request.json";
 import response from "./fixtures/v6/host-http-response.json";
 import models from "./fixtures/v6/host-models-response.json";
@@ -15,12 +16,72 @@ import { decodeTeamProtocolV6BaseCurrentEvent, encodeTeamProtocolV6BaseCurrentEv
 import {
   createTeamProtocolV6Event,
   decodeTeamProtocolV6CurrentEvent,
+  decodeTeamProtocolV6CurrentEventPayload,
   decodeTeamProtocolV6WebRtcHttpResponse,
+  encodeTeamProtocolV6CurrentEvent,
   encodeTeamProtocolV6WebRtcHttpRequest,
   encodeTeamProtocolV6WebRtcHttpResponse,
 } from "./v6-webrtc-adapter";
 
 describe("Team protocol v6", () => {
+  it("carries the optional Codex Live voice only for hosts that advertise the setting", () => {
+    const patch = { codexLiveVoice: "coral" };
+    const route = "/v1/agents/agent-cursor";
+    const encodedRequest = JSON.parse(
+      encodeTeamProtocolV6CurrentHttpRequest("PATCH", route, patch, { agentLiveVoiceSettings: true }),
+    );
+    expect(encodedRequest).toMatchObject(patch);
+    expect(
+      decodeTeamProtocolV6CurrentHttpRequest("PATCH", route, encodedRequest, { agentLiveVoiceSettings: true }),
+    ).toMatchObject(patch);
+    expect(
+      JSON.parse(encodeTeamProtocolV6CurrentHttpRequest("PATCH", route, { name: "Explorer", ...patch })),
+    ).not.toHaveProperty("codexLiveVoice");
+    expect(TEAM_CURRENT_CAPABILITIES).toContain(AGENT_LIVE_VOICE_SETTINGS_CAPABILITY);
+
+    const agent = { ...response[0], codexLiveVoice: "coral" };
+    const encodedResponse = JSON.parse(
+      encodeTeamProtocolV6CurrentHttpResponse("GET", "/v1/agents", 200, [agent], {
+        agentLiveVoiceSettings: true,
+      }),
+    );
+    expect(encodedResponse[0].codexLiveVoice).toBe("coral");
+    expect(decodeTeamProtocolV6CurrentHttpResponse("GET", "/v1/agents", 200, encodedResponse)).toMatchObject([
+      { codexLiveVoice: "coral" },
+    ]);
+    expect(
+      JSON.parse(encodeTeamProtocolV6CurrentHttpResponse("GET", "/v1/agents", 200, [agent]))[0],
+    ).not.toHaveProperty("codexLiveVoice");
+
+    const frame = createTeamProtocolV6Event(
+      1,
+      { type: "agents-changed", agents: [agent] },
+      {
+        agentLiveVoiceSettings: true,
+      },
+    );
+    expect(frame.payload).toMatchObject({ type: "bots-changed", bots: [{ codexLiveVoice: "coral" }] });
+    expect(decodeTeamProtocolV6CurrentEvent(frame)).toMatchObject({
+      status: "known",
+      event: { type: "agents-changed", agents: [{ codexLiveVoice: "coral" }] },
+    });
+
+    const encodedEvent = encodeTeamProtocolV6CurrentEvent(
+      { type: "agents-changed", agents: [agent] },
+      {
+        agentLiveVoiceSettings: true,
+      },
+    );
+    expect(encodedEvent && JSON.parse(encodedEvent)).toMatchObject({
+      type: "bots-changed",
+      bots: [{ codexLiveVoice: "coral" }],
+    });
+    expect(encodedEvent && decodeTeamProtocolV6CurrentEventPayload(JSON.parse(encodedEvent))).toMatchObject({
+      kind: "known",
+      event: { type: "agents-changed", agents: [{ codexLiveVoice: "coral" }] },
+    });
+  });
+
   it("round-trips Cursor and Cline agents with Cursor model ids, and v5 still refuses them", () => {
     expect(decodeTeamProtocolV6CurrentHttpRequest("PATCH", "/v1/agents/agent-cursor", request)).toEqual(request);
     expect(encodeTeamProtocolV6WebRtcHttpRequest("PATCH", "/v1/agents/agent-cursor", request)).toEqual(request);

@@ -93,6 +93,7 @@ import {
   workspaceAccessEnforced,
 } from "@openbot/contracts/ipc";
 import {
+  DEFAULT_CODEX_LIVE_VOICE,
   LIVE_VOICE_SESSION_END_ITEM_TYPE,
   LIVE_VOICE_SESSION_START_ITEM_TYPE,
 } from "@openbot/contracts/ipc-live-voice";
@@ -1320,7 +1321,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         sessionId: session.sessionId,
         status: "starting",
       });
-      const answer = yield* liveAdapter.start(providerThreadId, input.sdpOffer);
+      const answer = yield* liveAdapter.start(
+        providerThreadId,
+        input.sdpOffer,
+        agent.codexLiveVoice ?? DEFAULT_CODEX_LIVE_VOICE,
+      );
       if (this.#liveVoiceSessions.get(agent.id) !== session)
         throw new LiveVoiceRefusedError(sourceText("error.liveVoice.unavailable"));
       const startedAt = Date.now();

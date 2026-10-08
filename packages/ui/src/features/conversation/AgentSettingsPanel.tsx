@@ -13,10 +13,13 @@ import {
   agentAutomationAllowed,
   agentComputerUseEnabled,
   type BusyMessageMode,
+  CODEX_LIVE_VOICES,
+  type CodexLiveVoice,
   type CustomAgentSummary,
   type CustomProviderSummary,
   DEFAULT_AGENT_ACCESS,
   DEFAULT_BUSY_MESSAGE_MODE,
+  DEFAULT_CODEX_LIVE_VOICE,
   type ProviderRuntimeStatus,
   type UpdateAgentInput,
 } from "@openbot/contracts/ipc";
@@ -87,6 +90,8 @@ export interface AgentSettingsPanelProps {
   automationEditable?: boolean;
   /** The busy-message setting is local-only too: the Team API does not carry it. */
   busyMessageModeEditable?: boolean;
+  /** Remote hosts expose the Bot's GPT Live voice only when they advertise its settings capability. */
+  liveVoiceSettingsEditable?: boolean;
   /** The app default an agent without its own busy-message setting follows. */
   defaultBusyMessageMode?: BusyMessageMode;
   providerRuntimeStatuses?: Partial<Record<AgentProviderId, ProviderRuntimeStatus>>;
@@ -153,6 +158,7 @@ interface AgentSettingsDraft {
   allowAutomation: boolean;
   /** `default` follows the app setting. */
   busyMessage: BusyMessageChoice;
+  codexLiveVoice: CodexLiveVoice;
   /** Widening to full access waits here for the confirmation. */
   confirmingFullAccess: boolean;
   runtime: AgentRuntimeSettings;
@@ -195,6 +201,7 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
     computerUse: true,
     allowAutomation: false,
     busyMessage: "default",
+    codexLiveVoice: props.agent.codexLiveVoice ?? DEFAULT_CODEX_LIVE_VOICE,
     confirmingFullAccess: false,
     runtime: untrack(() => ({ ...props.runtimeSettings })),
     saveError: null,
@@ -256,6 +263,7 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
           String(agentComputerUseEnabled(agent)),
           String(agentAutomationAllowed(agent)),
           agent.busyMessageMode ?? "default",
+          agent.codexLiveVoice ?? DEFAULT_CODEX_LIVE_VOICE,
           runtimeSettings.provider,
           runtimeSettings.model,
           runtimeSettings.reasoningEffort,
@@ -292,6 +300,7 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
           state.computerUse = agentComputerUseEnabled(agent);
           state.allowAutomation = agentAutomationAllowed(agent);
           state.busyMessage = agent.busyMessageMode ?? "default";
+          state.codexLiveVoice = agent.codexLiveVoice ?? DEFAULT_CODEX_LIVE_VOICE;
           if (agentChanged) state.confirmingFullAccess = false;
           state.runtime.provider = runtimeSettings.provider;
           state.runtime.model = runtimeSettings.model;
@@ -588,6 +597,20 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
     if (!disposed && props.agent.id === agentId && draft.busyMessage === next) {
       setDraft((state) => {
         state.busyMessage = previous;
+      });
+    }
+  }
+
+  async function saveCodexLiveVoice(next: CodexLiveVoice): Promise<void> {
+    const agentId = props.agent.id;
+    const previous = draft.codexLiveVoice;
+    setDraft((state) => {
+      state.codexLiveVoice = next;
+    });
+    if (await saveAgentPatch({ codexLiveVoice: next }, agentId)) return;
+    if (!disposed && props.agent.id === agentId && draft.codexLiveVoice === next) {
+      setDraft((state) => {
+        state.codexLiveVoice = previous;
       });
     }
   }
@@ -912,6 +935,31 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
                 </SelectTrigger>
                 <SelectContent />
               </Select>
+              <Show when={draft.runtime.provider === "codex" && props.liveVoiceSettingsEditable !== false}>
+                <Select<CodexLiveVoice>
+                  class="agent-settings-runtime-select"
+                  options={[...CODEX_LIVE_VOICES]}
+                  value={draft.codexLiveVoice}
+                  onChange={(nextVoice) => {
+                    if (!nextVoice || nextVoice === draft.codexLiveVoice) return;
+                    void saveCodexLiveVoice(nextVoice);
+                  }}
+                  itemComponent={(item) => (
+                    <SelectItem item={item.item}>{liveVoiceName(item.item.rawValue)}</SelectItem>
+                  )}
+                >
+                  <SelectTrigger
+                    class="agent-settings-runtime-row"
+                    aria-label={t("agentSettings.runtime.liveVoiceLabel")}
+                  >
+                    <span class="agent-settings-runtime-label">{t("agentSettings.runtime.liveVoice")}</span>
+                    <SelectValue<CodexLiveVoice>>
+                      {(state) => liveVoiceName(state.selectedOption() ?? DEFAULT_CODEX_LIVE_VOICE)}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent />
+                </Select>
+              </Show>
               <Show when={props.accessEditable}>
                 <Select<AgentAccess>
                   class="agent-settings-runtime-select"
@@ -1112,6 +1160,10 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
       {props.children}
     </SettingsPanel>
   );
+}
+
+function liveVoiceName(voice: CodexLiveVoice): string {
+  return `${voice.slice(0, 1).toUpperCase()}${voice.slice(1)}`;
 }
 
 /** Lets a long path wrap after a slash instead of inside a folder name. */

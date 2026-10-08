@@ -1,7 +1,7 @@
 import type { HostRestartEvent } from "@openbot/contracts/team-protocol/host-update-v1";
 import type { LiveVoiceWireEvent } from "@openbot/contracts/team-protocol/live-voice-v1";
 import { optionalTeamEvent } from "@openbot/contracts/team-protocol/optional-events";
-import { decodeTeamProtocolV6BaseCurrentEvent } from "@openbot/contracts/team-protocol/v6-base-adapter";
+import { decodeTeamProtocolV6CurrentEventPayload } from "@openbot/contracts/team-protocol/v6-webrtc-adapter";
 import { Effect, Exit, Result, Scope } from "effect";
 import { RemoteWorkflowError, remoteDecode } from "./remote-service-effects";
 // The live event channel for HTTPS servers, and the reconnect policy both transports share.
@@ -517,7 +517,7 @@ export class RemoteEventStream {
             const optional = optionalTeamEvent(value);
             const decoded = optional
               ? { kind: "known" as const, event: optional }
-              : decodeTeamProtocolV6BaseCurrentEvent(value);
+              : decodeTeamProtocolV6CurrentEventPayload(value);
             if (decoded.kind === "unknown") return;
             if (decoded.kind === "invalid") {
               protocolFailed = true;

@@ -42,6 +42,8 @@ export const messages = {
   "agentSettings.runtime.model": "エージェントのモデル",
   "agentSettings.runtime.modelBusy": "モデルを変更する前に、現在の作業が終わるまで待ってください。",
   "agentSettings.runtime.modelUnavailable": "エージェント CLI が接続されると、モデルを選択できます。",
+  "agentSettings.runtime.liveVoice": "GPT Live の音声",
+  "agentSettings.runtime.liveVoiceLabel": "GPT Live の音声",
   "agentSettings.runtime.reasoning": "推論",
   "agentSettings.runtime.reasoningLabel": "エージェントの推論レベル",
   "agentSettings.runtime.selectReasoning": "推論を選択",

@@ -28,6 +28,7 @@ import {
   AGENT_ADMIN_CAPABILITY,
   AGENT_IMPORT_CAPABILITY,
   AGENT_INSTALL_CAPABILITY,
+  AGENT_LIVE_VOICE_SETTINGS_CAPABILITY,
   AGENT_PUBLISH_CAPABILITY,
   AGENT_UPDATE_CAPABILITY,
   CHANNEL_DELETE_CAPABILITY,
@@ -77,6 +78,7 @@ import { TEAM_LOCAL_PROVIDERS_CAPABILITY } from "@openbot/contracts/team-protoco
 import { encodeTeamProtocolV5BaseCurrentEvent } from "@openbot/contracts/team-protocol/v5-base-adapter";
 import { TEAM_CURSOR_CLINE_CAPABILITY, TEAM_PROTOCOL_V6 } from "@openbot/contracts/team-protocol/v6";
 import { encodeTeamProtocolV6BaseCurrentEvent } from "@openbot/contracts/team-protocol/v6-base-adapter";
+import { encodeTeamProtocolV6CurrentEvent } from "@openbot/contracts/team-protocol/v6-webrtc-adapter";
 import { sourceText } from "@openbot/i18n/source";
 import { createOpenBotLogger, toLogValue } from "@openbot/logging";
 import { Deferred, Effect } from "effect";
@@ -805,6 +807,13 @@ export class TeamApiServer {
     const hidden = hiddenProviderAgentIds(this.#options.agents.listAgents(), protocol);
     const visible = protocol === 1 ? legacyProviderView(event, hidden) : hiddenAgentView(event, hidden, protocol);
     if (!isAgentEvent(visible) && !isTeamRealtimeEvent(visible)) return null;
+    if (protocol === 6 && capabilities.has(AGENT_LIVE_VOICE_SETTINGS_CAPABILITY)) {
+      return encodeTeamProtocolV6CurrentEvent(visible, {
+        ...options,
+        preserveBrowserSecrets: capabilities.has("browser-secret-handoff"),
+        agentLiveVoiceSettings: true,
+      });
+    }
     if (protocol !== 1)
       return (
         protocol === 6
@@ -1242,7 +1251,10 @@ export class TeamApiServer {
   #json(response: ServerResponse, status: number, value: object | null): RouteOutcome {
     const route = this.#responseRoutes.get(response);
     if (!route) throw new Error("Team API response route is unavailable.");
-    const options = { preserveSemanticTags: supportsTeamSemanticTags(route.capabilities) };
+    const options = {
+      preserveSemanticTags: supportsTeamSemanticTags(route.capabilities),
+      agentLiveVoiceSettings: route.capabilities.has(AGENT_LIVE_VOICE_SETTINGS_CAPABILITY),
+    };
     // The body is encoded before the head is written. A response the negotiated protocol cannot
     // represent - a route its frozen adapter does not classify - makes the encoder throw, and with
     // the headers already sent that throw could neither answer the caller nor end the request: it
@@ -1274,7 +1286,10 @@ export class TeamApiServer {
     capabilities: ReadonlySet<string>,
   ): Set<string> {
     const codec = teamHttpCodec(protocol);
-    const options = { preserveSemanticTags: supportsTeamSemanticTags(capabilities) };
+    const options = {
+      preserveSemanticTags: supportsTeamSemanticTags(capabilities),
+      agentLiveVoiceSettings: capabilities.has(AGENT_LIVE_VOICE_SETTINGS_CAPABILITY),
+    };
     const hidden = new Set<string>();
     for (const agent of agents) {
       try {

@@ -25,6 +25,7 @@ import {
   isAvatarHue,
   isAvatarSeed,
   isBusyMessageMode,
+  isCodexLiveVoice,
   isMessageReaction,
   isReasoningEffort,
   isRoutineSchedule,
@@ -562,6 +563,10 @@ export function parseUpdateAgent(value: unknown): UpdateAgentInput {
       throw new Error("Invalid busy message mode.");
     }
     result.busyMessageMode = value.busyMessageMode;
+  }
+  if (value.codexLiveVoice !== undefined) {
+    if (!isCodexLiveVoice(value.codexLiveVoice)) throw new Error("Invalid Codex Live voice.");
+    result.codexLiveVoice = value.codexLiveVoice;
   }
   if (value.avatarSeed !== undefined) {
     if (!isAvatarSeed(value.avatarSeed)) throw new Error("Invalid avatar seed.");

@@ -675,6 +675,13 @@ describe("agent IPC input parsing", () => {
     expect(() => parseUpdateAgent({ agentId: "bot-1", notifications: "yes" })).toThrowError(
       "Invalid notifications value.",
     );
+    expect(parseUpdateAgent({ agentId: "bot-1", codexLiveVoice: "coral" })).toEqual({
+      agentId: "bot-1",
+      codexLiveVoice: "coral",
+    });
+    expect(() => parseUpdateAgent({ agentId: "bot-1", codexLiveVoice: "unknown" })).toThrowError(
+      "Invalid Codex Live voice.",
+    );
     expect(parseUpdateAgent({ agentId: "bot-1", access: "workspace" })).toEqual({
       agentId: "bot-1",
       access: "workspace",

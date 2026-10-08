@@ -283,6 +283,9 @@ export function ConversationPanels(panelProps: { onOpenUsage?: (trigger: HTMLBut
               computerUseEditable={props.server?.kind === "local"}
               automationEditable={props.server?.kind === "local"}
               busyMessageModeEditable={props.server?.kind === "local"}
+              liveVoiceSettingsEditable={
+                props.server?.kind === "local" || serverSupportsCapability(props.server, "agent-live-voice-settings-v1")
+              }
               defaultBusyMessageMode={props.defaultBusyMessageMode}
               agents={props.agents}
               onStartNewChat={props.onClearAgentContext}

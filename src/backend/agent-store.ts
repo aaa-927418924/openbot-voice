@@ -28,6 +28,7 @@ import {
   type AgentSummary,
   type AvatarImageInput,
   type BusyMessageMode,
+  type CodexLiveVoice,
   type CreateAgentInput,
   DEFAULT_AGENT_ACCESS,
   type DuplicateAgentResult,
@@ -39,6 +40,7 @@ import {
   isAvatarHue,
   isAvatarSeed,
   isBusyMessageMode,
+  isCodexLiveVoice,
   isReasoningEffort,
   isSidebarLayoutSnapshot,
   providerForLegacyModel,
@@ -72,6 +74,8 @@ type PersistedStoredAgent = Omit<StoredAgent, "avatarUrl" | "provider" | "access
   allowAutomation?: boolean;
   // Absent means the app default, as for every agent stored before the setting existed.
   busyMessageMode?: BusyMessageMode;
+  // Absent means the Codex Live default, as for every agent stored before the setting existed.
+  codexLiveVoice?: CodexLiveVoice;
 };
 type StoredAgentBase = Omit<PersistedStoredAgent, "avatarSeed" | "avatarHue"> & DynamicRecord;
 
@@ -616,6 +620,10 @@ export class AgentStore {
       else if (input.busyMessageMode !== undefined) {
         if (!isBusyMessageMode(input.busyMessageMode)) throw new Error("Invalid busy message mode.");
         next.busyMessageMode = input.busyMessageMode;
+      }
+      if (input.codexLiveVoice !== undefined) {
+        if (!isCodexLiveVoice(input.codexLiveVoice)) throw new Error("Invalid Codex Live voice.");
+        next.codexLiveVoice = input.codexLiveVoice;
       }
       if (input.avatarSeed !== undefined) {
         if (!isAvatarSeed(input.avatarSeed)) throw new Error("Invalid avatar seed.");
@@ -1594,6 +1602,7 @@ function isStoredAgent(value: unknown): value is PersistedStoredAgent {
     (record.computerUse === undefined || isBoolean(record.computerUse)) &&
     (record.allowAutomation === undefined || isBoolean(record.allowAutomation)) &&
     (record.busyMessageMode === undefined || isBusyMessageMode(record.busyMessageMode)) &&
+    (record.codexLiveVoice === undefined || isCodexLiveVoice(record.codexLiveVoice)) &&
     isAvatarSeed(record.avatarSeed) &&
     (record.avatarHue === null || isAvatarHue(record.avatarHue)) &&
     isMarketplaceSource(record.marketplaceSource)
@@ -1656,6 +1665,10 @@ function readStoredAgent(value: unknown): ReadStoredAgent | UnreadableStoredAgen
     value.busyMessageMode === undefined || isBusyMessageMode(value.busyMessageMode)
       ? value.busyMessageMode
       : reset("busyMessageMode", undefined);
+  const codexLiveVoice =
+    value.codexLiveVoice === undefined || isCodexLiveVoice(value.codexLiveVoice)
+      ? value.codexLiveVoice
+      : reset("codexLiveVoice", undefined);
   let marketplaceSource: StoredAgent["marketplaceSource"];
   if (value.marketplaceSource !== undefined) {
     if (isMarketplaceSource(value.marketplaceSource)) {
@@ -1689,6 +1702,7 @@ function readStoredAgent(value: unknown): ReadStoredAgent | UnreadableStoredAgen
     ...(computerUse === undefined ? {} : { computerUse }),
     ...(allowAutomation === undefined ? {} : { allowAutomation }),
     ...(busyMessageMode === undefined ? {} : { busyMessageMode }),
+    ...(codexLiveVoice === undefined ? {} : { codexLiveVoice }),
     ...(marketplaceSource === undefined ? {} : { marketplaceSource }),
   };
   return { agent, repaired };

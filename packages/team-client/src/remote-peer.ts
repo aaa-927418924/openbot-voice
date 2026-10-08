@@ -1093,6 +1093,7 @@ export function createRemoteTeamPeer(actions: ActionsRef) {
                 encodeTeamProtocolV6WebRtcHttpRequest(method, path, body, {
                   preserveSemanticTags: true,
                   agentCreateModel: true,
+                  agentLiveVoiceSettings: true,
                 }),
               );
         const requestId = createTeamRequestId((size) => crypto.getRandomValues(new Uint8Array(size)));

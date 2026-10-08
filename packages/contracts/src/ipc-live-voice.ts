@@ -3,6 +3,26 @@ import { isDynamicRecord, isOneOf, isString } from "./runtime-values";
 
 export const LIVE_VOICE_SDP_LIMIT = 256_000;
 
+/** Codex's built-in v2 realtime voices; v3 sessions accept the same configured voice field. */
+export const CODEX_LIVE_VOICES = [
+  "alloy",
+  "ash",
+  "ballad",
+  "coral",
+  "echo",
+  "sage",
+  "shimmer",
+  "verse",
+  "marin",
+  "cedar",
+] as const;
+export type CodexLiveVoice = (typeof CODEX_LIVE_VOICES)[number];
+export const DEFAULT_CODEX_LIVE_VOICE: CodexLiveVoice = "marin";
+
+export function isCodexLiveVoice(value: unknown): value is CodexLiveVoice {
+  return isOneOf(CODEX_LIVE_VOICES, value);
+}
+
 export interface LiveVoiceStartInput {
   agentId: string;
   threadId: string;

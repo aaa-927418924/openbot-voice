@@ -20,6 +20,36 @@ afterEach(() => {
 });
 
 describe("AgentSettingsPanel", () => {
+  it("saves the selected GPT Live voice on the Codex agent", async () => {
+    const onUpdateAgent = vi.fn(async () => undefined);
+    render(() => (
+      <SharedAgentSettingsPanel
+        agent={firstAgent}
+        runtimeSettings={{ provider: "codex", model: "gpt-5.6-sol", reasoningEffort: "high" }}
+        agentStatus={STORY_AGENT_STATUS}
+        modelOptions={STORY_MODELS}
+        working={false}
+        width={296}
+        maxWidth={() => 640}
+        onClose={vi.fn()}
+        onResize={vi.fn()}
+        onResizeEnd={vi.fn()}
+        onUpdateAgent={onUpdateAgent}
+        onUpdateRuntimeSettings={vi.fn(async () => true)}
+        onSetAgentAvatar={vi.fn(async () => undefined)}
+      />
+    ));
+
+    const voiceTrigger = await screen.findByRole("button", { name: /GPT Live voice/u });
+    await fireEvent.pointerDown(voiceTrigger, {
+      pointerType: "mouse",
+      button: 0,
+    });
+    await fireEvent.click(await screen.findByRole("option", { name: "Coral" }));
+
+    await waitFor(() => expect(onUpdateAgent).toHaveBeenCalledWith(firstAgent.id, { codexLiveVoice: "coral" }));
+  });
+
   it("saves through callbacks without a desktop preload", async () => {
     vi.stubGlobal("openbot", undefined);
     const onUpdateAgent = vi.fn(async () => undefined);

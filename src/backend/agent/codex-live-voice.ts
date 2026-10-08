@@ -1,3 +1,4 @@
+import { type CodexLiveVoice, DEFAULT_CODEX_LIVE_VOICE } from "@openbot/contracts/ipc-live-voice";
 import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { Deferred, Effect, Exit } from "effect";
 import type { AgentClient } from "../agent-client";
@@ -66,6 +67,7 @@ export class CodexLiveVoiceAdapter {
     this: CodexLiveVoiceAdapter,
     threadId: string,
     offer: string,
+    voice: CodexLiveVoice = DEFAULT_CODEX_LIVE_VOICE,
   ) {
     if (this.#client.provider !== "codex" || !this.#client.running) throw new Error("Codex Live is unavailable.");
     if (!threadId || !offer || offer.length > SDP_LIMIT) throw new Error("Invalid realtime offer.");
@@ -166,6 +168,7 @@ export class CodexLiveVoiceAdapter {
           outputModality: "audio",
           model: "gpt-live-1-codex",
           version: "v3",
+          voice,
           initialItems: LIVE_VOICE_INITIAL_ITEMS,
           realtimeStartInstructions: LIVE_VOICE_START_INSTRUCTIONS,
           realtimeEndInstructions: LIVE_VOICE_END_INSTRUCTIONS,

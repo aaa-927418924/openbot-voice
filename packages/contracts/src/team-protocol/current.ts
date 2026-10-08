@@ -40,6 +40,8 @@ export const TEAM_MODEL_SCOPED_USAGE_CAPABILITY = "model-scoped-usage";
  * client only sends a chosen pair — and only offers the choice — when the host advertises this.
  */
 export const TEAM_AGENT_CREATE_MODEL_CAPABILITY = "agent-create-model";
+/** A host accepts and returns the optional GPT Live voice preference on agent summaries. */
+export const AGENT_LIVE_VOICE_SETTINGS_CAPABILITY = "agent-live-voice-settings-v1";
 export const TEAM_MEDIA_ATTACHMENTS_CAPABILITY = "media-attachments";
 export const TEAM_EML_ATTACHMENTS_CAPABILITY = "eml-attachments";
 /**
@@ -98,6 +100,7 @@ export const TEAM_CURRENT_CAPABILITIES = [
   TEAM_CONVERSATION_UNREAD_CAPABILITY,
   TEAM_MODEL_SCOPED_USAGE_CAPABILITY,
   TEAM_AGENT_CREATE_MODEL_CAPABILITY,
+  AGENT_LIVE_VOICE_SETTINGS_CAPABILITY,
   TEAM_EML_ATTACHMENTS_CAPABILITY,
   TEAM_MEDIA_ATTACHMENTS_CAPABILITY,
   "channel-chats-v1",

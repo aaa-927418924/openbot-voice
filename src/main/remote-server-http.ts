@@ -35,6 +35,7 @@ export interface RemoteJsonRequestOptions {
   capabilities?: readonly TeamCurrentCapability[];
   preserveSemanticTags?: boolean;
   agentCreateModel?: boolean;
+  agentLiveVoiceSettings?: boolean;
   timeoutMs?: number;
 }
 
@@ -72,6 +73,7 @@ export const requestJson = Effect.fn("RemoteHttp.requestJson")(function* <T>(
             : codec.encodeRequest(method, path, options.body, {
                 preserveSemanticTags: options.preserveSemanticTags,
                 agentCreateModel: options.agentCreateModel,
+                agentLiveVoiceSettings: options.agentLiveVoiceSettings,
               }),
     },
     options.timeoutMs,

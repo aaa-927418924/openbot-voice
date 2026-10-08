@@ -1,6 +1,7 @@
 import { decodeAgentAnalytics } from "../ipc-agent-analytics";
 import { BROWSER_SECRET_RESPONSE_PATH, parseBrowserSecretResponse } from "../ipc-browser-secret";
 import { decodeHostAnalytics } from "../ipc-host-analytics";
+import { isCodexLiveVoice } from "../ipc-live-voice";
 import { isBoolean, isDynamicRecord, isOneOf, isString } from "../runtime-values";
 import { decodeAnalyticsV1Response } from "./analytics-v1";
 import {
@@ -45,6 +46,7 @@ import {
   decodeRemoteDesktopSetupResponse,
   isRemoteDesktopSetupRoute,
 } from "./remote-desktop-setup-v1";
+import { decodeTeamProtocolV2Json, type TeamProtocolV2Json } from "./v2";
 import { decodeTeamProtocolV6HttpRequest, decodeTeamProtocolV6HttpResponse } from "./v6";
 import type { TeamProtocolV6BaseJsonObject, TeamProtocolV6BaseJsonValue } from "./v6-base";
 import {
@@ -170,7 +172,7 @@ export function encodeTeamProtocolV6CurrentHttpRequest(
   method: string,
   path: string,
   value: unknown,
-  options: { preserveSemanticTags?: boolean; agentCreateModel?: boolean } = {},
+  options: { preserveSemanticTags?: boolean; agentCreateModel?: boolean; agentLiveVoiceSettings?: boolean } = {},
 ): string {
   if (isRemoteDesktopSetupRoute(method, path)) return JSON.stringify(decodeRemoteDesktopSetupRequest(path, value));
   if (method === "POST" && path === BROWSER_SECRET_RESPONSE_PATH)
@@ -186,6 +188,15 @@ export function encodeTeamProtocolV6CurrentHttpRequest(
     return JSON.stringify(decodeScopedUsageRequest(value));
   }
   if (!duplicateRoute(method, path)) {
+    if (isAgentUpdateRoute(method, path) && options.agentLiveVoiceSettings) {
+      const voiceField = codexLiveVoiceField(value);
+      const baseValue = withoutCodexLiveVoice(value);
+      const projected =
+        Object.keys(voiceField).length > 0 && isDynamicRecord(baseValue) && Object.keys(baseValue).length === 0
+          ? {}
+          : JSON.parse(encodeTeamProtocolV6BaseCurrentHttpRequest(method, path, baseValue, options));
+      return JSON.stringify({ ...projected, ...voiceField });
+    }
     // The frozen base projection names no provider or model, so a chosen pair rides beside it:
     // only a host behind the capability reads them, and anything older drops unknown keys.
     if (isAgentCreateRoute(method, path) && options.agentCreateModel) {
@@ -207,7 +218,7 @@ export function decodeTeamProtocolV6CurrentHttpRequest(
   method: string,
   path: string,
   value: unknown,
-  options: { preserveSemanticTags?: boolean; agentCreateModel?: boolean } = {},
+  options: { preserveSemanticTags?: boolean; agentCreateModel?: boolean; agentLiveVoiceSettings?: boolean } = {},
 ): TeamProtocolV6BaseJsonObject {
   if (isRemoteDesktopSetupRoute(method, path)) return decodeRemoteDesktopSetupRequest(path, value);
   if (method === "POST" && path === BROWSER_SECRET_RESPONSE_PATH) return { ...parseBrowserSecretResponse(value) };
@@ -221,21 +232,34 @@ export function decodeTeamProtocolV6CurrentHttpRequest(
     return decodeScopedUsageRequest(value);
   }
   if (!duplicateRoute(method, path)) {
-    const decoded = options.preserveSemanticTags
-      ? decodeTeamProtocolV6BaseCurrentHttpRequest(method, path, value)
-      : decodeTeamProtocolV6BaseCurrentHttpRequest(
-          method,
-          path,
-          // The encode call is only here to expand semantic tags, and it leaves the object in wire
-          // vocabulary. Decoding its output is what brings the keys back to the current spelling the
-          // handlers read.
-          JSON.parse(encodeTeamProtocolV6BaseCurrentHttpRequest(method, path, value)),
-        );
+    const agentLiveVoiceUpdate = isAgentUpdateRoute(method, path) && options.agentLiveVoiceSettings;
+    const baseValue = agentLiveVoiceUpdate ? withoutCodexLiveVoice(value) : value;
+    const voiceOnlyUpdate =
+      agentLiveVoiceUpdate &&
+      isDynamicRecord(value) &&
+      value.codexLiveVoice !== undefined &&
+      isDynamicRecord(baseValue) &&
+      Object.keys(baseValue).length === 0;
+    const decoded = voiceOnlyUpdate
+      ? {}
+      : options.preserveSemanticTags
+        ? decodeTeamProtocolV6BaseCurrentHttpRequest(method, path, baseValue)
+        : decodeTeamProtocolV6BaseCurrentHttpRequest(
+            method,
+            path,
+            // The encode call is only here to expand semantic tags, and it leaves the object in wire
+            // vocabulary. Decoding its output is what brings the keys back to the current spelling the
+            // handlers read.
+            JSON.parse(encodeTeamProtocolV6BaseCurrentHttpRequest(method, path, baseValue)),
+          );
     // Read off the raw request, not the projection: the frozen base codec drops unknown keys, so
     // the pair is gone by the time `decoded` exists. A request without the capability takes the
     // host default exactly as before.
     if (isAgentCreateRoute(method, path) && options.agentCreateModel) {
       return { ...decoded, ...decodeAgentCreateModel(value) };
+    }
+    if (agentLiveVoiceUpdate) {
+      return { ...decoded, ...codexLiveVoiceField(value) };
     }
     if (isAgentMessageRoute(method, path))
       return { ...decoded, ...messageTimezone(value), ...decodeMessageClientId(value) };
@@ -249,7 +273,7 @@ export function encodeTeamProtocolV6CurrentHttpResponse(
   path: string,
   status: number,
   value: unknown,
-  options: { preserveSemanticTags?: boolean } = {},
+  options: { preserveSemanticTags?: boolean; agentLiveVoiceSettings?: boolean } = {},
 ): string {
   if (isRemoteDesktopSetupRoute(method, path) && status < 400)
     return JSON.stringify(decodeRemoteDesktopSetupResponse(path, value));
@@ -297,7 +321,11 @@ export function encodeTeamProtocolV6CurrentHttpResponse(
     return encodeTeamProtocolV6BaseCurrentHttpResponse(method, "/v1/agents/usage", status, value, options);
   }
   if (!duplicateRoute(method, path)) {
-    return encodeTeamProtocolV6BaseCurrentHttpResponse(method, path, status, value, options);
+    const encoded = encodeTeamProtocolV6BaseCurrentHttpResponse(method, path, status, value, options);
+    if (status < 400 && options.agentLiveVoiceSettings && isAgentSummaryResponseRoute(method, path)) {
+      return JSON.stringify(withCodexLiveVoice(JSON.parse(encoded), value));
+    }
+    return encoded;
   }
   // The duplicate route reaches the frozen v3 codec directly, so the vocabulary swap happens here.
   const currentValue: TeamProtocolV6BaseJsonValue = JSON.parse(JSON.stringify(value ?? null));
@@ -343,7 +371,10 @@ export function decodeTeamProtocolV6CurrentHttpResponse(
   if (scopedUsageRoute(method, path) || isAgentAnalyticsRoute(method, path) || isHostAnalyticsRoute(method, path)) {
     return decodeTeamProtocolV6BaseCurrentHttpResponse(method, "/v1/agents/usage", status, value);
   }
-  if (!duplicateRoute(method, path)) return decodeTeamProtocolV6BaseCurrentHttpResponse(method, path, status, value);
+  if (!duplicateRoute(method, path)) {
+    const decoded = decodeTeamProtocolV6BaseCurrentHttpResponse(method, path, status, value);
+    return status < 400 && isAgentSummaryResponseRoute(method, path) ? withCodexLiveVoice(decoded, value) : decoded;
+  }
   return toCurrentAgentKeys(structuredClone(decodeTeamProtocolV6HttpResponse(method, path, status, value)));
 }
 
@@ -355,6 +386,47 @@ export function decodeTeamProtocolV6CurrentHttpResponse(
 const V6_AGENT_PROVIDERS = ["codex", "claude", "grok", "opencode", "antigravity", "acp", "cursor", "cline"] as const;
 export const V6_AGENT_MODEL = /^[A-Za-z0-9][A-Za-z0-9._:/[\],=-]{0,159}$/u;
 const V6_REASONING_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+
+function isAgentUpdateRoute(method: string, path: string): boolean {
+  return method === "PATCH" && /^\/v1\/agents\/[^/]+$/u.test(new URL(path, "http://openbot.invalid").pathname);
+}
+
+function isAgentSummaryResponseRoute(method: string, path: string): boolean {
+  const pathname = new URL(path, "http://openbot.invalid").pathname;
+  return (method === "GET" && pathname === "/v1/agents") || isAgentUpdateRoute(method, pathname);
+}
+
+function codexLiveVoiceField(value: unknown): TeamProtocolV6BaseJsonObject {
+  if (!isDynamicRecord(value) || value.codexLiveVoice === undefined) return {};
+  if (!isCodexLiveVoice(value.codexLiveVoice)) throw new Error("Invalid Codex Live voice setting.");
+  return { codexLiveVoice: value.codexLiveVoice };
+}
+
+function withoutCodexLiveVoice(value: unknown): TeamProtocolV2Json {
+  const json = decodeTeamProtocolV2Json(value);
+  if (!isV2JsonObject(json) || json.codexLiveVoice === undefined) return json;
+  const { codexLiveVoice: _codexLiveVoice, ...base } = json;
+  return base;
+}
+
+function withCodexLiveVoice(projected: TeamProtocolV6BaseJsonValue, source: unknown): TeamProtocolV6BaseJsonValue {
+  if (Array.isArray(projected) && Array.isArray(source)) {
+    return projected.map((entry, index) => withCodexLiveVoice(entry, source[index]));
+  }
+  if (!isV6JsonObject(projected) || !isDynamicRecord(source)) return projected;
+  if (isV6JsonObject(projected.agent) && isDynamicRecord(source.agent)) {
+    return { ...projected, agent: withCodexLiveVoice(projected.agent, source.agent) };
+  }
+  return { ...projected, ...codexLiveVoiceField(source) };
+}
+
+function isV2JsonObject(value: TeamProtocolV2Json): value is { [key: string]: TeamProtocolV2Json } {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isV6JsonObject(value: TeamProtocolV6BaseJsonValue | undefined): value is TeamProtocolV6BaseJsonObject {
+  return value !== undefined && value !== null && typeof value === "object" && !Array.isArray(value);
+}
 
 /**
  * The provider, model and reasoning effort of an agent creation request, validated and fail-closed:

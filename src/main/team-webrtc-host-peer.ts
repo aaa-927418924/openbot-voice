@@ -6,6 +6,7 @@ import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import { browserViewStreamSessionId } from "@openbot/contracts/team-protocol/browser-view-v1";
 import {
+  AGENT_LIVE_VOICE_SETTINGS_CAPABILITY,
   supportsTeamSemanticTags,
   TEAM_AGENT_CREATE_MODEL_CAPABILITY,
   TEAM_CURRENT_CAPABILITIES,
@@ -604,6 +605,7 @@ export class TeamWebRtcHostPeer {
                             : decodeTeamProtocolV3WebRtcHttpRequest)(input.method, input.path, input.body, {
                         preserveSemanticTags,
                         agentCreateModel: peerCapabilities.has(TEAM_AGENT_CREATE_MODEL_CAPABILITY),
+                        agentLiveVoiceSettings: peerCapabilities.has(AGENT_LIVE_VOICE_SETTINGS_CAPABILITY),
                       }),
                 ),
               );
@@ -677,6 +679,7 @@ export class TeamWebRtcHostPeer {
                       ? encodeTeamProtocolV4WebRtcHttpResponse
                       : encodeTeamProtocolV3WebRtcHttpResponse)(input.method, input.path, response.status, body, {
                   preserveSemanticTags,
+                  agentLiveVoiceSettings: peerCapabilities.has(AGENT_LIVE_VOICE_SETTINGS_CAPABILITY),
                 }),
           }));
         }),
@@ -727,6 +730,7 @@ export class TeamWebRtcHostPeer {
                     : createTeamProtocolV2Event)(this.#nextEventSequence, event, {
                 preserveSemanticTags: supportsTeamSemanticTags(this.#peerCapabilities),
                 preserveBrowserSecrets: this.#peerCapabilities.has("browser-secret-handoff"),
+                agentLiveVoiceSettings: this.#peerCapabilities.has(AGENT_LIVE_VOICE_SETTINGS_CAPABILITY),
               }),
         );
       } catch {

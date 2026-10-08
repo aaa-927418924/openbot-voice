@@ -33,6 +33,7 @@ export function toAgentProfile(stored: AgentSummary): AgentProfile {
     provider: stored.provider,
     model: stored.model,
     reasoningEffort: stored.reasoningEffort,
+    codexLiveVoice: stored.codexLiveVoice,
     access: stored.access,
     computerUse: stored.computerUse,
     allowAutomation: stored.allowAutomation,
@@ -179,6 +180,7 @@ export function agentProfilesEqual(left: AgentProfile, right: AgentProfile): boo
     left.provider === right.provider &&
     left.model === right.model &&
     left.reasoningEffort === right.reasoningEffort &&
+    left.codexLiveVoice === right.codexLiveVoice &&
     left.access === right.access &&
     left.computerUse === right.computerUse &&
     left.threadId === right.threadId &&

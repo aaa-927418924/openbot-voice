@@ -60,6 +60,23 @@ describe("AgentStore", () => {
     expect(chief.workspacePath).not.toBe(sales.workspacePath);
   });
 
+  it("persists each agent's selected Codex Live voice", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-store-"));
+    temporaryRoots.push(root);
+    const userData = join(root, "user-data");
+    const home = join(root, "home");
+    const store = new AgentStore(userData, home);
+
+    await runCauseEffect(store.initialize());
+    const agent = await runCauseEffect(store.getOrCreate("chief"));
+    const updated = await runCauseEffect(store.updateAgent({ agentId: agent.id, codexLiveVoice: "coral" }));
+    expect(updated.codexLiveVoice).toBe("coral");
+
+    const reopened = new AgentStore(userData, home);
+    await runCauseEffect(reopened.initialize());
+    expect(reopened.list().find((candidate) => candidate.id === agent.id)?.codexLiveVoice).toBe("coral");
+  });
+
   it("moves a workspace left behind in the pre-rename directory without overwriting the new one", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-store-"));
     temporaryRoots.push(root);
