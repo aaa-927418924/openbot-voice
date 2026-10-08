@@ -23,7 +23,7 @@ describe("Codex Live voices", () => {
       "sol",
       "cove",
     ]);
-    expect(DEFAULT_CODEX_LIVE_VOICE).toBe("juniper");
+    expect(DEFAULT_CODEX_LIVE_VOICE).toBe("sol");
     expect(CODEX_LIVE_VOICES.every(isCodexLiveVoice)).toBe(true);
     expect(isCodexLiveVoice("marin")).toBe(false);
   });

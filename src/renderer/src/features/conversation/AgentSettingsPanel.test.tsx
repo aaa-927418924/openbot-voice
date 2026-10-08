@@ -20,7 +20,7 @@ afterEach(() => {
 });
 
 describe("AgentSettingsPanel", () => {
-  it("saves the selected GPT Live voice on the Codex agent", async () => {
+  it("does not expose a setting to change the GPT Live voice", async () => {
     const onUpdateAgent = vi.fn(async () => undefined);
     render(() => (
       <SharedAgentSettingsPanel
@@ -40,14 +40,11 @@ describe("AgentSettingsPanel", () => {
       />
     ));
 
-    const voiceTrigger = await screen.findByRole("button", { name: /GPT Live voice/u });
-    await fireEvent.pointerDown(voiceTrigger, {
-      pointerType: "mouse",
-      button: 0,
-    });
-    await fireEvent.click(await screen.findByRole("option", { name: "Maple" }));
-
-    await waitFor(() => expect(onUpdateAgent).toHaveBeenCalledWith(firstAgent.id, { codexLiveVoice: "maple" }));
+    expect(screen.queryByRole("button", { name: /GPT Live voice/u })).not.toBeInTheDocument();
+    expect(onUpdateAgent).not.toHaveBeenCalledWith(
+      firstAgent.id,
+      expect.objectContaining({ codexLiveVoice: expect.anything() }),
+    );
   });
 
   it("saves through callbacks without a desktop preload", async () => {

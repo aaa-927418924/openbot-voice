@@ -16,7 +16,7 @@ export const CODEX_LIVE_VOICES = [
   "cove",
 ] as const;
 export type CodexLiveVoice = (typeof CODEX_LIVE_VOICES)[number];
-export const DEFAULT_CODEX_LIVE_VOICE: CodexLiveVoice = "juniper";
+export const DEFAULT_CODEX_LIVE_VOICE: CodexLiveVoice = "sol";
 
 export function isCodexLiveVoice(value: unknown): value is CodexLiveVoice {
   return isOneOf(CODEX_LIVE_VOICES, value);

@@ -306,7 +306,7 @@ describe.sequential("AgentService: providers", () => {
     );
     expect(liveClient.liveRequests.find((request) => request.method === "thread/realtime/start")?.params).toMatchObject(
       {
-        voice: "maple",
+        voice: "sol",
       },
     );
     const initialChannelBoundaries = service.channels.store
@@ -592,7 +592,7 @@ describe.sequential("AgentService: providers", () => {
   it("persists Live voice start and end boundaries in the direct Bot conversation", async () => {
     const liveClient = new FakeLiveVoiceClient(false);
     liveClient.earlyTranscriptText = "Early transcript stays after its start marker.";
-    const { service: agentService } = await startService(root, {
+    const { service: agentService, store } = await startService(root, {
       preferredProvider: "codex",
       client: () => liveClient,
     });
@@ -601,6 +601,7 @@ describe.sequential("AgentService: providers", () => {
     await waitForQueue(service, "chief", (queue) =>
       queue.deliveries.every((delivery) => delivery.status === "completed"),
     );
+    await runCauseEffect(store.updateAgent({ agentId: "chief", codexLiveVoice: "maple" }));
     const agent = service.listAgents().find((candidate) => candidate.id === "chief");
     if (!agent?.threadId) throw new Error("The Codex thread was not created.");
     const clientSessionId = randomUUID();
@@ -611,6 +612,11 @@ describe.sequential("AgentService: providers", () => {
         clientSessionId,
         sdpOffer: "offer-sdp",
       }),
+    );
+    expect(liveClient.liveRequests.find((request) => request.method === "thread/realtime/start")?.params).toMatchObject(
+      {
+        voice: "sol",
+      },
     );
 
     const messagesAfterStart = (await runCauseEffect(service.readConversation(agent.id))).messages;
