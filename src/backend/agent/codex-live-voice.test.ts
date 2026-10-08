@@ -27,6 +27,13 @@ class FakeClient extends EventEmitter implements AgentClient {
           outputModality: "audio",
           model: "gpt-live-1-codex",
           version: "v3",
+          initialItems: [
+            {
+              role: "developer",
+              text: expect.stringContaining("complete submitted text and every URL"),
+            },
+          ],
+          realtimeStartInstructions: expect.stringContaining("available Codex tools"),
           transport: { type: "webrtc", sdp: "offer-sdp" },
         });
         this.emit("notification", {

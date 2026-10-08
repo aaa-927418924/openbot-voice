@@ -67,6 +67,7 @@ class FakeLiveVoiceClient extends FakeAgentClient {
   readonly #realtimeSessionId = "realtime-session";
   #resumedSinceRestart = true;
   readonly liveRequestOrder: string[] = [];
+  readonly liveRequests: Array<{ method: string; params: unknown }> = [];
   realtimeThreadId: string | undefined;
 
   constructor(providerEcho: boolean) {
@@ -80,6 +81,7 @@ class FakeLiveVoiceClient extends FakeAgentClient {
     decoder: ResponseDecoder<T>,
   ): Effect.Effect<T, ProviderClientOperationError> {
     this.liveRequestOrder.push(method);
+    this.liveRequests.push({ method, params: structuredClone(params) });
     if (method === "thread/resume") {
       this.#resumedSinceRestart = true;
       return super.request(method, params, decoder);
@@ -392,6 +394,10 @@ describe.sequential("AgentService: providers", () => {
         .slice(conversationCountBefore);
       expect(liveRows).toHaveLength(3);
       expect(storedRows).toHaveLength(3);
+      expect(liveClient.liveRequests.filter((request) => request.method === "thread/realtime/appendText")).toEqual([
+        { method: "thread/realtime/appendText", params: { threadId: liveClient.realtimeThreadId, text, role: "user" } },
+        { method: "thread/realtime/appendText", params: { threadId: liveClient.realtimeThreadId, text, role: "user" } },
+      ]);
       expect(new Set(liveRows.map((message) => message.id)).size).toBe(3);
       expect(newConversationEvents).toHaveLength(3);
       for (const event of newConversationEvents) {

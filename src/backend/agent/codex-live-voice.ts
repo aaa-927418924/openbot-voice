@@ -9,6 +9,16 @@ const SDP_LIMIT = 256_000;
 const ANSWER_TIMEOUT_MS = 30_000;
 const START_TIMEOUT_MS = 15_000;
 
+const LIVE_VOICE_INITIAL_ITEMS = [
+  {
+    role: "developer",
+    text: "Composer text added during this Live Voice session is a user message in this same conversation. Treat the complete submitted text and every URL as user intent. For research or other tool-assisted requests, send the exact message through this session's native Codex handoff. Do not only acknowledge it or claim that supplied text or a URL is missing. Speak as one assistant, and do not start another ordinary turn for the same message.",
+  },
+];
+
+const LIVE_VOICE_START_INSTRUCTIONS =
+  "Treat each concrete request in this thread's Live Voice conversation, including composer text and exact URLs, as user intent. When Live Voice hands off a request, do the requested research or task with available Codex tools using the complete message and URLs. Return progress and the result through this same conversation. Do not only acknowledge the request, claim supplied text or a URL is missing, or start an independent ordinary turn for input already in this conversation.";
+
 export interface CodexRealtimeAnswer {
   readonly threadId: string;
   readonly sdp: string;
@@ -153,6 +163,8 @@ export class CodexLiveVoiceAdapter {
           outputModality: "audio",
           model: "gpt-live-1-codex",
           version: "v3",
+          initialItems: LIVE_VOICE_INITIAL_ITEMS,
+          realtimeStartInstructions: LIVE_VOICE_START_INSTRUCTIONS,
           transport: { type: "webrtc", sdp: offer },
         },
         decodeRecordResponse,
