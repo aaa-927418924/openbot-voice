@@ -173,6 +173,20 @@ export function isIgnoredConfigDiagnostic(message: string): boolean {
 }
 
 /**
+ * Whether Codex says that project-local settings are disabled because the workspace is not trusted.
+ *
+ * The app-server reports this as an ERROR-level diagnostic while the provider remains usable. It
+ * describes Codex's existing trust boundary, not a failed Live Voice request or provider outage.
+ * Keep the diagnostic in the host log; do not turn it into a provider-error toast or trust the
+ * workspace automatically.
+ */
+export function isUntrustedProjectConfigDiagnostic(message: string): boolean {
+  return /\bproject-local config,\s*hooks,\s*and exec policies are disabled\b[\s\S]{0,500}\buntil the project is trusted\b[\s\S]{0,200}\bskills still load\b/i.test(
+    message,
+  );
+}
+
+/**
  * What a Codex `configWarning` summary names as ignored, or `null` for any other warning.
  *
  * `count` is the total from the first line. Codex names up to three of them, one per line, as

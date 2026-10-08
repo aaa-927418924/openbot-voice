@@ -1724,6 +1724,34 @@ describe.sequential("ProviderRuntime: account checks and login", () => {
     ]);
   });
 
+  it("keeps Codex's non-fatal untrusted-project config warning out of provider errors", async () => {
+    const { store, mailbox } = stores(root);
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    service = createTestService({
+      store,
+      mailbox,
+      preferredProvider: "codex",
+      clientFactory: (provider) => {
+        const client = new FakeAgentClient(provider);
+        clients.set(provider, client);
+        return client;
+      },
+    });
+    const events: AgentEvent[] = [];
+    service.on("event", (event) => events.push(event));
+    await runCauseEffect(service.initialize());
+    const client = clients.get("codex");
+    if (!client) throw new Error("Codex did not start.");
+
+    client.emit(
+      "diagnostic",
+      "ERROR codex_app_server: Project-local config, hooks, and exec policies are disabled in the following folders until the project is trusted, but skills still load.",
+    );
+
+    expect(events.filter((event) => event.type === "error")).toEqual([]);
+    expect(service.getStatus().phase).toBe("ready");
+  });
+
   it("keeps Grok's failed tool call out of the provider error toast", async () => {
     process.env.OPENBOT_GROK_PATH = await fakeGrokCli();
     const { store, mailbox } = stores(root);

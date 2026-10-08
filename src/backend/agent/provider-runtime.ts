@@ -62,6 +62,7 @@ import {
   isMcpSubsystemDiagnostic,
   isTelemetryExportDiagnostic,
   isToolCallDiagnostic,
+  isUntrustedProjectConfigDiagnostic,
   isUsageLimitDiagnostic,
   LOG_TIMESTAMP_PREFIX,
 } from "./provider-diagnostics";
@@ -2190,6 +2191,13 @@ export class ProviderRuntime implements ProviderPort {
       }
       if (isIgnoredConfigDiagnostic(message)) {
         stderrLogger.warn("A provider ignored settings in its configuration.", { provider: client.provider, message });
+        return;
+      }
+      if (isUntrustedProjectConfigDiagnostic(message)) {
+        stderrLogger.warn("Codex disabled project-local configuration for an untrusted workspace.", {
+          provider: client.provider,
+          message,
+        });
         return;
       }
       if (isUsageLimitDiagnostic(message)) {
