@@ -17,7 +17,10 @@
 abi <abi/4.0>,
 include <tunables/global>
 
-profile openbot "/{home/*/{Applications,Desktop,Downloads,.local/bin},opt/OpenBot}/OpenBot*.AppImage" flags=(unconfined) {
-  userns,
+profile openbot "/{home/*/{Applications,Desktop,Downloads,.local/bin},opt/OpenBot}/OpenBot*.AppImage" flags=(default_allow) {
+  userns create,
+  # Chromium needs this capability after entering its unprivileged user namespace
+  # to create per-renderer PID namespaces. The AppArmor rule grants no host capability.
+  capability sys_admin,
   include if exists <local/openbot>
 }
