@@ -10,13 +10,18 @@ import { remoteDecode } from "./remote-service-effects";
 // reports the mock's source location and, worse, cannot fail at all when the route is never reached.
 
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
-import { AGENT_LIVE_VOICE_SETTINGS_CAPABILITY } from "@openbot/contracts/team-protocol/current";
+import {
+  AGENT_LIVE_VOICE_SETTINGS_CAPABILITY,
+  TEAM_CURRENT_CAPABILITIES,
+} from "@openbot/contracts/team-protocol/current";
 import { TEAM_CAPABILITIES_HEADER, TEAM_PROTOCOL_VERSION_HEADER } from "@openbot/contracts/team-protocol/v1";
+import { Effect } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runCauseEffect } from "../backend/effect-boundary";
 import { decodeAgentModelOptions } from "./remote-agent-decoding";
 import { RemoteServerClient } from "./remote-server-client";
 import { RemoteServerConnections } from "./remote-server-connections";
+import { requestJson } from "./remote-server-http";
 import {
   createRemoteManager,
   deferredRoute,
@@ -32,6 +37,29 @@ afterEach(async () => {
 });
 
 describe("Team API compatibility negotiation", () => {
+  it("keeps the Live voice capability on V6 when a stale protocol is passed to the HTTP boundary", async () => {
+    const path = "/v1/agents/agent-voice";
+    const stub = stubTeamFetch({ routes: { [path]: () => new Response(null, { status: 204 }) } });
+
+    await Effect.runPromise(
+      requestJson("https://team.example", path, (value) => value, {
+        method: "PATCH",
+        body: { codexLiveVoice: "maple" },
+        protocol: 1,
+        appVersion: "0.4.0",
+        capabilities: TEAM_CURRENT_CAPABILITIES.filter(
+          (capability) => capability !== AGENT_LIVE_VOICE_SETTINGS_CAPABILITY,
+        ),
+        agentLiveVoiceSettings: true,
+      }),
+    );
+
+    const request = stub.requests(path)[0];
+    expect(request?.headers.get(TEAM_PROTOCOL_VERSION_HEADER)).toBe("6");
+    expect(request?.headers.get(TEAM_CAPABILITIES_HEADER)?.split(",")).toContain(AGENT_LIVE_VOICE_SETTINGS_CAPABILITY);
+    expect(request?.body).toMatchObject({ codexLiveVoice: "maple" });
+  });
+
   it("sends a selected GPT Live voice only to hosts that advertise the setting", async () => {
     const path = "/v1/agents/agent-voice";
     for (const capabilities of [[AGENT_LIVE_VOICE_SETTINGS_CAPABILITY], []]) {

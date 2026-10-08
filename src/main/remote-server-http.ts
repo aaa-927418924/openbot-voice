@@ -1,15 +1,18 @@
 // Putting one Team API call on the wire, and reading what came back off it.
 //
-// HTTP uses the adapter for the negotiated protocol: V6 adds Cursor and Cline, V5 adds Gemini and
-// custom ACP agents, V4 adds OpenCode, V3 adds duplication, and V1 serves older hosts. The WebRTC
-// transport retains its released V2 framing.
+// HTTP uses the adapter for the negotiated protocol: V6 adds Cursor, Cline and capability-gated GPT
+// Live voice preferences, V5 adds Gemini and custom ACP agents, V4 adds OpenCode, V3 adds duplication,
+// and V1 serves older hosts. The WebRTC transport retains its released V2 framing.
 //
 // Nothing here knows a server exists. It takes a URL, a token and a protocol number, and it either
 // returns a decoded value or throws one of `remote-server-errors.ts`. Deciding what a throw means for
 // the user is `remote-server-connection-status.ts`; deciding which server to ask is the caller's.
 
 import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
-import type { TeamCurrentCapability } from "@openbot/contracts/team-protocol/current";
+import {
+  AGENT_LIVE_VOICE_SETTINGS_CAPABILITY,
+  type TeamCurrentCapability,
+} from "@openbot/contracts/team-protocol/current";
 import { teamHttpCodec } from "@openbot/contracts/team-protocol/http-codecs";
 import { teamSideRouteCodec } from "@openbot/contracts/team-protocol/side-routes";
 import {
@@ -19,6 +22,7 @@ import {
 } from "@openbot/contracts/team-protocol/v1";
 import { decodeTeamProtocolV1CurrentHttpResponse } from "@openbot/contracts/team-protocol/v1-adapter";
 import { decodeTeamProtocolV2Json, type TeamProtocolV2Json } from "@openbot/contracts/team-protocol/v2";
+import { TEAM_PROTOCOL_V6 } from "@openbot/contracts/team-protocol/v6";
 import { sourceText } from "@openbot/i18n/source";
 import { Effect, Result, Schema } from "effect";
 import type { ResponseDecoder } from "./remote-host-decoding";
@@ -51,7 +55,13 @@ export const requestJson = Effect.fn("RemoteHttp.requestJson")(function* <T>(
   );
   const method = options.method ?? (options.body === undefined ? "GET" : "POST");
   const sideRoute = teamSideRouteCodec(path);
-  const codec = teamHttpCodec(options.protocol);
+  // The voice preference is a V6 extension. Keep the wire codec, protocol header and capability
+  // header aligned even when a caller reaches this shared boundary with cached V1 metadata.
+  const protocol = options.agentLiveVoiceSettings ? TEAM_PROTOCOL_V6 : options.protocol;
+  const capabilities = options.agentLiveVoiceSettings
+    ? [...new Set([...(options.capabilities ?? []), AGENT_LIVE_VOICE_SETTINGS_CAPABILITY])]
+    : options.capabilities;
+  const codec = teamHttpCodec(protocol);
   const response = yield* remoteFetch(
     new URL(path, apiUrl),
     {
@@ -61,9 +71,9 @@ export const requestJson = Effect.fn("RemoteHttp.requestJson")(function* <T>(
         Accept: "application/json",
         ...(options.body === undefined ? {} : { "Content-Type": "application/json" }),
         ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
-        ...(options.protocol ? { [TEAM_PROTOCOL_VERSION_HEADER]: String(options.protocol) } : {}),
+        ...(protocol ? { [TEAM_PROTOCOL_VERSION_HEADER]: String(protocol) } : {}),
         ...(options.appVersion ? { [TEAM_APP_VERSION_HEADER]: options.appVersion } : {}),
-        ...(options.capabilities ? { [TEAM_CAPABILITIES_HEADER]: options.capabilities.join(",") } : {}),
+        ...(capabilities ? { [TEAM_CAPABILITIES_HEADER]: capabilities.join(",") } : {}),
       },
       body:
         options.body === undefined
