@@ -1177,6 +1177,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const agent = this.#store.list().find((candidate) => candidate.id === input.agentId);
     if (!agent || agent.threadId !== input.threadId || agent.provider !== "codex")
       throw new LiveVoiceRefusedError(sourceText("error.liveVoice.unavailable"));
+    if (input.channelId) {
+      const channel = this.channels.store.get(input.channelId);
+      if (channel.archived || channel.members.length !== 1 || channel.members[0]?.agentId !== agent.id)
+        throw new LiveVoiceRefusedError(sourceText("error.liveVoice.unavailable"));
+    }
     // Do not start or activate Codex for an account that is not on the supported subscription path.
     if (!this.#providers.hasCodexChatGptAccount())
       throw new LiveVoiceRefusedError(sourceText("error.liveVoice.accountRequired"));
@@ -1245,9 +1250,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       // ensureThread starts an empty Bot thread and recovers a saved provider thread after restart.
       // Keep the explicit resume used by Live Voice for an already-loaded session as a readiness
       // barrier; ensureThread itself resumes sessions that are not loaded by this client.
-      const savedSession = this.#store.database.activeProviderSession(input.threadId, "codex");
+      const executionThreadId = input.channelId
+        ? this.channels.store.context(input.channelId, agent.id).threadId
+        : undefined;
+      const savedThreadId = executionThreadId ?? input.threadId;
+      const savedSession = this.#store.database.activeProviderSession(savedThreadId, "codex");
       const savedClient = savedSession ? this.#conversation.loadedClientFor(savedSession.externalSessionId) : undefined;
-      const providerThreadId = yield* this.#threads.ensureThread(agent, client);
+      const providerThreadId = yield* this.#threads.ensureThread(agent, client, executionThreadId);
       if (reservation.cancelled) throw new LiveVoiceRefusedError(sourceText("error.liveVoice.unavailable"));
       if (savedSession?.externalSessionId === providerThreadId && savedClient === client)
         yield* this.#threads.resumeThread(agent, client, providerThreadId);

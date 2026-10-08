@@ -1536,13 +1536,17 @@ export class ChannelService {
       const assignment =
         assignments.find((item) => item.turnId === message.turnId) ??
         assignments.find((item) => item.agentId === snapshot.agentId && activeAssignment(item));
-      if (!assignment) continue;
-      const task = tasks.get(assignment.taskId);
-      const result = existing(`channel-result-${assignment.id}-revision-${assignment.taskRevision}`);
+      // Channel execution threads also carry Live Voice tasks, which have no channel assignment.
+      // Their Thinking items and final answers still belong to this channel and may arrive after
+      // the call ends. Any such assistant output on this channel-owned thread is durable here.
+      const task = assignment ? tasks.get(assignment.taskId) : undefined;
+      const result = assignment
+        ? existing(`channel-result-${assignment.id}-revision-${assignment.taskRevision}`)
+        : undefined;
       if (result?.message.text === message.text) continue;
       const original = existing(message.id);
       const messageId =
-        original?.superseded && task?.revision === assignment.taskRevision
+        assignment && original?.superseded && task?.revision === assignment.taskRevision
           ? `${message.id}-revision-${task.revision}`
           : message.id;
       if (messageId !== message.id && JSON.stringify(original?.message) === JSON.stringify(message)) continue;
@@ -1551,9 +1555,10 @@ export class ChannelService {
         channelId,
         sequence: 0,
         author: { kind: "agent", id: snapshot.agentId, name },
-        taskId: assignment.taskId,
-        superseded:
-          task?.revision !== assignment.taskRevision || (messageId === message.id && original?.superseded === true),
+        taskId: assignment?.taskId ?? null,
+        superseded: assignment
+          ? task?.revision !== assignment.taskRevision || (messageId === message.id && original?.superseded === true)
+          : false,
         message,
       };
       const previous = existing(value.id);

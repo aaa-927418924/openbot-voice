@@ -372,6 +372,122 @@ describe.sequential("AgentService: providers", () => {
     ).toBe(false);
   });
 
+  it("routes channel Live voice Thinking and task results into the channel execution thread", async () => {
+    const liveClient = new FakeLiveVoiceClient(false);
+    const { service: agentService, store } = await startService(root, {
+      preferredProvider: "codex",
+      client: () => liveClient,
+    });
+    service = agentService;
+    await runCauseEffect(agentService.sendMessage({ agentId: "chief", text: "Create the direct Codex thread." }));
+    await waitForQueue(service, "chief", (queue) =>
+      queue.deliveries.every((delivery) => delivery.status === "completed"),
+    );
+    const agent = agentService.listAgents().find((candidate) => candidate.id === "chief");
+    if (!agent?.threadId) throw new Error("The conversation thread was not created.");
+    await runCauseEffect(
+      agentService.channels.command(
+        {
+          type: "save",
+          channelId: "channel-live-voice-results",
+          operationId: "create-live-voice-results-channel",
+          draft: {
+            name: "Research notes",
+            title: "",
+            instructions: "",
+            members: [{ agentId: agent.id }],
+            leadAgentId: agent.id,
+          },
+        },
+        { id: "member-1", name: "Alex" },
+      ),
+    );
+
+    await runCauseEffect(
+      agentService.startLiveVoice(
+        {
+          agentId: agent.id,
+          threadId: agent.threadId,
+          clientSessionId: randomUUID(),
+          sdpOffer: "offer-sdp",
+          channelId: "channel-live-voice-results",
+        },
+        { id: "member-1", name: "Alex" },
+      ),
+    );
+    const channelThreadId = agentService.channels.store.context("channel-live-voice-results", agent.id).threadId;
+    const channelSession = store.database.activeProviderSession(channelThreadId, "codex");
+    const directSession = store.database.activeProviderSession(agent.threadId, "codex");
+    if (!channelSession || !directSession)
+      throw new Error("The direct and channel provider sessions were not created.");
+    expect(liveClient.realtimeThreadId).toBe(channelSession.externalSessionId);
+    expect(channelSession.externalSessionId).not.toBe(directSession.externalSessionId);
+
+    const turnId = "channel-live-voice-task";
+    const threadId = channelSession.externalSessionId;
+    liveClient.emit("notification", notification("turn/started", { threadId, turn: { id: turnId } }));
+    liveClient.emit(
+      "notification",
+      notification("item/started", {
+        threadId,
+        turnId,
+        item: { id: "channel-thinking", type: "reasoning", summary: [], content: [] },
+      }),
+    );
+    liveClient.emit(
+      "notification",
+      notification("item/reasoning/summaryTextDelta", {
+        threadId,
+        turnId,
+        itemId: "channel-thinking",
+        summaryIndex: 0,
+        delta: "Searching the requested sources.",
+      }),
+    );
+    await waitFor(() =>
+      agentService.channels.store
+        .messages("channel-live-voice-results")
+        .some((entry) => entry.message.id === "channel-thinking" && entry.message.status === "streaming"),
+    );
+    expect(
+      (await runCauseEffect(agentService.readConversation(agent.id))).messages.some(
+        (message) => message.id === "channel-thinking",
+      ),
+    ).toBe(false);
+
+    liveClient.emit(
+      "notification",
+      notification("item/completed", {
+        threadId,
+        turnId,
+        item: {
+          id: "channel-answer",
+          type: "agentMessage",
+          text: "The researched result belongs to this channel.",
+        },
+      }),
+    );
+    liveClient.emit(
+      "notification",
+      notification("turn/completed", { threadId, turn: { id: turnId, status: "completed" } }),
+    );
+    await waitFor(() =>
+      agentService.channels.store
+        .messages("channel-live-voice-results")
+        .some((entry) => entry.message.id === "channel-answer"),
+    );
+    const channelMessages = agentService.channels.store.messages("channel-live-voice-results");
+    expect(channelMessages.find((entry) => entry.message.id === "channel-thinking")).toMatchObject({ taskId: null });
+    expect(channelMessages.find((entry) => entry.message.id === "channel-answer")?.message.text).toBe(
+      "The researched result belongs to this channel.",
+    );
+    expect(
+      (await runCauseEffect(agentService.readConversation(agent.id))).messages.some(
+        (message) => message.id === "channel-answer",
+      ),
+    ).toBe(false);
+  });
+
   it("persists Live voice start and end boundaries in the direct Bot conversation", async () => {
     const liveClient = new FakeLiveVoiceClient(false);
     liveClient.earlyTranscriptText = "Early transcript stays after its start marker.";
