@@ -221,6 +221,27 @@ describe.sequential("AgentService: providers", () => {
       (await runCauseEffect(service.readConversation(agent.id))).messages.some((message) => message.id === first.id),
     ).toBe(false);
     expect(store.database.searchConversationFiles("delete-me.txt").results).toEqual([]);
+
+    const assistantReply = [...stored.messages]
+      .reverse()
+      .find((message) => message.author === "assistant" && message.text === "DONE");
+    if (!assistantReply) throw new Error("The latest assistant reply was not persisted.");
+    await runCauseEffect(service.deleteConversationMessage({ agentId: agent.id, messageId: assistantReply.id }));
+    expect(service.listAgents().find((candidate) => candidate.id === agent.id)?.preview).toBe("Keep this reply.");
+
+    const remainingUserMessage = (await runCauseEffect(service.readConversation(agent.id))).messages.find(
+      (message) => message.author === "user" && message.text === "Keep this reply.",
+    );
+    if (!remainingUserMessage) throw new Error("The remaining user message was not found.");
+    await runCauseEffect(service.deleteConversationMessage({ agentId: agent.id, messageId: remainingUserMessage.id }));
+    expect(service.listAgents().find((candidate) => candidate.id === agent.id)?.preview).toBe("DONE");
+
+    const olderAssistantReply = [...(await runCauseEffect(service.readConversation(agent.id))).messages]
+      .reverse()
+      .find((message) => message.author === "assistant" && message.text === "DONE");
+    if (!olderAssistantReply) throw new Error("The older assistant reply was not found.");
+    await runCauseEffect(service.deleteConversationMessage({ agentId: agent.id, messageId: olderAssistantReply.id }));
+    expect(service.listAgents().find((candidate) => candidate.id === agent.id)?.preview).toBe("");
   });
 
   it("clears all chat history without changing the agent thread identity", async () => {

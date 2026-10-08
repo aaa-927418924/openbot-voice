@@ -112,6 +112,7 @@ import { BootRecovery } from "./agent/boot-recovery";
 import { BrowserUploads } from "./agent/browser-uploads";
 import { CodexLiveVoiceAdapter, type CodexTranscriptSegment } from "./agent/codex-live-voice";
 import { ContextCompaction } from "./agent/context-compaction";
+import { latestConversationPreview } from "./agent/conversation-preview";
 import { ConversationReader } from "./agent/conversation-reader";
 import { ConversationRuntime } from "./agent/conversation-runtime";
 import { CustomEndpoints, toEndpointChangeFailed } from "./agent/custom-endpoints";
@@ -2330,9 +2331,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             new AgentLifecycleFailed({ operation: "delete mailbox conversation message", cause: failure.cause }),
         ),
       );
-    yield* lifecycleStep("delete conversation message", () => {
+    const preview = yield* lifecycleStep("delete conversation message", () => {
       const database = this.#store.database;
-      this.#conversation.withConversationTransaction(input.agentId, ({ threadId, snapshot }) => {
+      return this.#conversation.withConversationTransaction(input.agentId, ({ threadId, snapshot }) => {
         const messageIndex = snapshot.messages.findIndex((message) => message.id === input.messageId);
         if (messageIndex < 0) throw new Error(sourceText("error.agent.messageNotFound"));
         const message = snapshot.messages[messageIndex];
@@ -2345,9 +2346,20 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           { messageId: input.messageId },
           `conversation-message-delete:${threadId}:${input.messageId}`,
         ).revision;
-        return { result: undefined, snapshot };
+        return {
+          result: latestConversationPreview(snapshot.messages, agentNamesById(this.#store.list())),
+          snapshot,
+        };
       });
     });
+    yield* this.#store
+      .updatePreview(input.agentId, preview)
+      .pipe(
+        Effect.mapError(
+          (failure) => new AgentLifecycleFailed({ operation: "update message preview", cause: failure.cause }),
+        ),
+      );
+    this.#emit({ type: "agents-changed", agents: this.listAgents() });
   }).bind(this);
 
   readonly clearConversationHistory = Effect.fn("AgentService.clearConversationHistory")(function* (
