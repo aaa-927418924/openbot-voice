@@ -1608,6 +1608,7 @@ describe.sequential("AgentService: providers", () => {
     const starts = client.requests.filter((request) => request.method === "thread/start");
     expect(starts).toHaveLength(2);
     expect(paramsRecord(starts[1]?.params)?.config).toEqual({
+      features: { realtime_conversation: true },
       tools: CODEX_TOOLS,
       mcp_servers: { Filesystem: { command: "/bin/echo", args: ["ready"], env: await launchEnvironment() } },
     });
