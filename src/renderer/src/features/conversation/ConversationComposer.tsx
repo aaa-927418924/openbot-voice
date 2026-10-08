@@ -132,35 +132,6 @@ export function ConversationComposer() {
     if (target) void live.start(target);
   };
   /**
-   * The Live voice dock hangs over the same bottom-right corner the composer occupies, and it lives at
-   * the shell rather than here, so it cannot read this element's box. The composer publishes how much
-   * of the window it takes as a root custom property, which is what keeps the panel off the send
-   * arrow instead of a fixed corner guess that a taller draft would break.
-   */
-  let composerWrap: HTMLDivElement | undefined;
-  createEffect(
-    () => composerWrap,
-    (element) => {
-      if (!element) return;
-      const publish = () => {
-        const { top } = element.getBoundingClientRect();
-        document.documentElement.style.setProperty(
-          "--live-voice-dock-bottom",
-          `${Math.max(0, Math.round(window.innerHeight - top))}px`,
-        );
-      };
-      publish();
-      window.addEventListener("resize", publish);
-      const observer = typeof ResizeObserver === "function" ? new ResizeObserver(publish) : undefined;
-      observer?.observe(element);
-      onCleanup(() => {
-        window.removeEventListener("resize", publish);
-        observer?.disconnect();
-        document.documentElement.style.removeProperty("--live-voice-dock-bottom");
-      });
-    },
-  );
-  /**
    * The provider status is the only source of truth for a signed-out provider, so the notice and the
    * model picker's "Sign in required" label can never disagree, and the notice is shown before the
    * user sends rather than only after a request comes back 401.
@@ -219,7 +190,7 @@ export function ConversationComposer() {
   };
   return (
     <Show when={!props.approval && !props.browserTakeover}>
-      <div class="composer-wrap" ref={composerWrap}>
+      <div class="composer-wrap">
         <div
           class="agent-queue-slot"
           data-open={slotOpen() ? "true" : "false"}
