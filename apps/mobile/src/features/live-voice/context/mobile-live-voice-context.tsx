@@ -9,7 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { View } from "react-native";
+import { Platform, View } from "react-native";
 import { useAppForeground } from "@/shared/lib/use-app-foreground";
 import LiveVoiceBridge from "../components/live-voice-bridge.dom";
 import {
@@ -289,7 +289,7 @@ export function MobileLiveVoiceProvider({
           commands={commands}
           currentSessionId={origin?.sessionId ?? null}
           dom={{
-            useExpoDOMWebView: true,
+            useExpoDOMWebView: Platform.OS !== "android",
             mediaPlaybackRequiresUserAction: false,
             containerStyle: {
               flex: 0,

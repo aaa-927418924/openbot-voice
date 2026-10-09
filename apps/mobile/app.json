@@ -24,7 +24,7 @@
       "package": "run.openbot.mobile",
       "icon": "./assets/icons/app-icon.png",
       "predictiveBackGestureEnabled": false,
-      "permissions": ["android.permission.CAMERA"],
+      "permissions": ["android.permission.CAMERA", "android.permission.RECORD_AUDIO"],
       "blockedPermissions": [
         "android.permission.READ_MEDIA_IMAGES",
         "android.permission.READ_MEDIA_VIDEO",
