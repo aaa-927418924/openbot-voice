@@ -81,6 +81,13 @@ export const messages = defineMessages("mobile.settings", {
   "mobile.settings.privacy.analytics": "Share product analytics",
   "mobile.settings.privacy.retry": "Retry saving privacy setting",
   "mobile.settings.conversations.title": "Conversations",
+  "mobile.settings.servers.hiddenTitle": "Hidden servers",
+  "mobile.settings.servers.hiddenDescription":
+    "These servers are hidden from the server drawer. Showing one does not change your membership or connection.",
+  "mobile.settings.servers.hiddenShowNamed": "Show {name}",
+  "mobile.settings.servers.hiddenShowAll": "Show all",
+  "mobile.settings.servers.hiddenEmpty": "No hidden servers.",
+  "mobile.settings.servers.hiddenSaveFailed": "Could not update hidden servers. Try again.",
   "mobile.settings.conversations.hiddenChats": "Hidden chats",
   "mobile.settings.conversations.deletedChannels": "Deleted channels",
   "mobile.settings.profile.nameUnsafe": "Remove line breaks and control characters from your name.",

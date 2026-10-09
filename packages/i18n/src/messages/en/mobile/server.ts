@@ -4,6 +4,8 @@ export const messages = defineMessages("mobile.server", {
   "mobile.server.drawer.local": "Local",
   "mobile.server.drawer.remote": "Remote",
   "mobile.server.drawer.options": "Options",
+  "mobile.server.drawer.hide": "Hide server",
+  "mobile.server.drawer.hideFailed": "Could not hide the server. Try again.",
   "mobile.server.drawer.routines": "Routines",
   "mobile.server.drawer.usage": "Usage",
   "mobile.server.drawer.editOrder": "Edit order",

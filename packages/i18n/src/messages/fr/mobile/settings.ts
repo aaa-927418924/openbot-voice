@@ -84,6 +84,13 @@ export const messages = {
   "mobile.settings.privacy.analytics": "Partager les statistiques d’utilisation",
   "mobile.settings.privacy.retry": "Réessayer d’enregistrer le réglage de confidentialité",
   "mobile.settings.conversations.title": "Conversations",
+  "mobile.settings.servers.hiddenTitle": "Serveurs masqués",
+  "mobile.settings.servers.hiddenDescription":
+    "Ces serveurs sont masqués du tiroir des serveurs. Les réafficher ne change ni votre adhésion ni votre connexion.",
+  "mobile.settings.servers.hiddenShowNamed": "Afficher {name}",
+  "mobile.settings.servers.hiddenShowAll": "Tout afficher",
+  "mobile.settings.servers.hiddenEmpty": "Aucun serveur masqué.",
+  "mobile.settings.servers.hiddenSaveFailed": "Impossible de mettre à jour les serveurs masqués. Réessayez.",
   "mobile.settings.conversations.hiddenChats": "Discussions masquées",
   "mobile.settings.conversations.deletedChannels": "Canaux supprimés",
   "mobile.settings.profile.nameUnsafe": "Retirez les sauts de ligne et les caractères de contrôle de votre nom.",

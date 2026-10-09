@@ -82,6 +82,13 @@ export const messages = {
   "mobile.settings.privacy.analytics": "Ürün analizlerini paylaş",
   "mobile.settings.privacy.retry": "Gizlilik ayarını kaydetmeyi tekrar dene",
   "mobile.settings.conversations.title": "Konuşmalar",
+  "mobile.settings.servers.hiddenTitle": "Gizli sunucular",
+  "mobile.settings.servers.hiddenDescription":
+    "Bu sunucular sunucu çekmecesinde gizlidir. Görünür yapmak üyeliğinizi veya bağlantınızı değiştirmez.",
+  "mobile.settings.servers.hiddenShowNamed": "{name} sunucusunu göster",
+  "mobile.settings.servers.hiddenShowAll": "Tümünü göster",
+  "mobile.settings.servers.hiddenEmpty": "Gizli sunucu yok.",
+  "mobile.settings.servers.hiddenSaveFailed": "Gizli sunucular güncellenemedi. Yeniden deneyin.",
   "mobile.settings.conversations.hiddenChats": "Gizli sohbetler",
   "mobile.settings.conversations.deletedChannels": "Silinen kanallar",
   "mobile.settings.profile.nameUnsafe": "Adınızdaki satır sonlarını ve kontrol karakterlerini kaldırın.",

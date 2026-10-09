@@ -272,6 +272,9 @@ export function GeneralSettingsScreen() {
         ) : null}
       </SettingsSection>
       <SettingsSection title={t("mobile.settings.conversations.title")}>
+        <SettingsRow onPress={() => router.push("/settings/hidden-servers")}>
+          <Typography.Paragraph>{t("mobile.settings.servers.hiddenTitle")}</Typography.Paragraph>
+        </SettingsRow>
         <SettingsRow onPress={() => router.push("/settings/hidden-chats")}>
           <Typography.Paragraph>{t("mobile.settings.conversations.hiddenChats")}</Typography.Paragraph>
         </SettingsRow>

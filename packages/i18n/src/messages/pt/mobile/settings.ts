@@ -83,6 +83,13 @@ export const messages = {
   "mobile.settings.privacy.analytics": "Compartilhar análises do produto",
   "mobile.settings.privacy.retry": "Tentar salvar a configuração de privacidade novamente",
   "mobile.settings.conversations.title": "Conversas",
+  "mobile.settings.servers.hiddenTitle": "Servidores ocultos",
+  "mobile.settings.servers.hiddenDescription":
+    "Estes servidores estão ocultos no menu de servidores. Exibir um deles não altera sua associação nem conexão.",
+  "mobile.settings.servers.hiddenShowNamed": "Exibir {name}",
+  "mobile.settings.servers.hiddenShowAll": "Exibir todos",
+  "mobile.settings.servers.hiddenEmpty": "Não há servidores ocultos.",
+  "mobile.settings.servers.hiddenSaveFailed": "Não foi possível atualizar os servidores ocultos. Tente novamente.",
   "mobile.settings.conversations.hiddenChats": "Chats ocultos",
   "mobile.settings.conversations.deletedChannels": "Canais excluídos",
   "mobile.settings.profile.nameUnsafe": "Remova quebras de linha e caracteres de controle do seu nome.",

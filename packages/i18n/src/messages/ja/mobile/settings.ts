@@ -84,6 +84,13 @@ export const messages = {
   "mobile.settings.privacy.analytics": "製品の分析データを共有",
   "mobile.settings.privacy.retry": "プライバシー設定をもう一度保存",
   "mobile.settings.conversations.title": "会話",
+  "mobile.settings.servers.hiddenTitle": "非表示のサーバー",
+  "mobile.settings.servers.hiddenDescription":
+    "サーバードロワーから非表示にしたサーバー。再表示しても参加状態や接続は変わらない。",
+  "mobile.settings.servers.hiddenShowNamed": "{name}を表示",
+  "mobile.settings.servers.hiddenShowAll": "すべて表示",
+  "mobile.settings.servers.hiddenEmpty": "非表示のサーバーはない。",
+  "mobile.settings.servers.hiddenSaveFailed": "非表示サーバーを更新できなかった。もう一度試して。",
   "mobile.settings.conversations.hiddenChats": "非表示のチャット",
   "mobile.settings.conversations.deletedChannels": "削除したチャンネル",
   "mobile.settings.profile.nameUnsafe": "名前から改行と制御文字を削除してください。",

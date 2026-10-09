@@ -5,6 +5,8 @@ export const messages = {
   "mobile.server.drawer.local": "Local",
   "mobile.server.drawer.remote": "Remoto",
   "mobile.server.drawer.options": "Opções",
+  "mobile.server.drawer.hide": "Ocultar servidor",
+  "mobile.server.drawer.hideFailed": "Não foi possível ocultar o servidor. Tente novamente.",
   "mobile.server.drawer.routines": "Rotinas",
   "mobile.server.drawer.usage": "Uso",
   "mobile.server.drawer.editOrder": "Editar ordem",

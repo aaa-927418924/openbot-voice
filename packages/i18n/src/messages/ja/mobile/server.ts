@@ -5,6 +5,8 @@ export const messages = {
   "mobile.server.drawer.local": "ローカル",
   "mobile.server.drawer.remote": "リモート",
   "mobile.server.drawer.options": "オプション",
+  "mobile.server.drawer.hide": "サーバーを非表示",
+  "mobile.server.drawer.hideFailed": "サーバーを非表示にできなかった。もう一度試して。",
   "mobile.server.drawer.routines": "ルーティン",
   "mobile.server.drawer.usage": "使用量",
   "mobile.server.drawer.editOrder": "順序を編集",

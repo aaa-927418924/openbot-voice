@@ -4,7 +4,7 @@ import type { Href } from "expo-router";
 import { Typography } from "heroui-native";
 import { Check, Plus, Settings } from "lucide-react-native";
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import { Pressable, ScrollView, View, type ViewStyle } from "react-native";
+import { Alert, Pressable, ScrollView, View, type ViewStyle } from "react-native";
 import { useUniwind } from "uniwind";
 import type { MobileSession } from "@/features/auth/api/mobile-auth";
 import { mobileUserName } from "@/features/auth/api/mobile-user-name";
@@ -13,6 +13,12 @@ import {
   refreshHostedServerAvailability,
   useHostedServerAvailability,
 } from "@/features/servers/model/hosted-server-checkout";
+import {
+  filterVisibleServers,
+  mergeVisibleServerOrder,
+  serverMoveAccessibility,
+  useServerVisibility,
+} from "@/features/servers/model/server-visibility";
 import type { MobileServer } from "@/features/workspace/context/mobile-workspace-context";
 import { moveServerId } from "@/features/workspace/model/server-order";
 import { serverStatusLabel } from "@/features/workspace/model/server-status";
@@ -21,7 +27,7 @@ import { SheetScrollEdgeEffect } from "@/shared/components/sheet-scroll-edge-eff
 import { haptics } from "@/shared/lib/haptics";
 import { refreshMobileFeatures, useMobileFeature } from "@/shared/lib/mobile-features";
 import { isAndroid } from "@/shared/lib/platform";
-import { useText } from "@/shared/lib/text";
+import { currentText, useText } from "@/shared/lib/text";
 import { ServerAvatar } from "./server-avatar";
 import { ServerDrawerIconButton } from "./server-drawer-icon-button";
 import { SERVER_ROW_HEIGHT, SortableServerList } from "./sortable-server-list";
@@ -70,6 +76,7 @@ export function ServerDrawerContent({
 }: ServerDrawerContentProps) {
   const { t } = useText();
   const { theme } = useUniwind();
+  const { hiddenServerIds, hideServer } = useServerVisibility(session.apiUrl, session.user.id);
   // Android: the row's own long press opens its menu, as on the agent rows. `shouldOpenOnLongPress`
   // does not open it there, because the row takes the long press.
   const menus = useRef(new Map<string, MenuComponentRef | null>());
@@ -80,13 +87,16 @@ export function ServerDrawerContent({
   const [dragging, setDragging] = useState(false);
   // The iOS menu host sizes to its content, so a row in a menu gets the slot width explicitly.
   const [rowWidth, setRowWidth] = useState<number>();
-  const localServers = servers.filter((server) => server.kind === "local");
+  const visibleServers = filterVisibleServers(servers, hiddenServerIds);
+  const localServers = visibleServers.filter((server) => server.kind === "local");
   const remoteIds = servers.filter((server) => server.kind !== "local").map((server) => server.id);
-  const canReorder = remoteIds.length > 1;
+  const visibleRemoteIds = visibleServers.filter((server) => server.kind !== "local").map((server) => server.id);
+  const canReorder = visibleRemoteIds.length > 1;
   const menuActions: MenuAction[] = [
     { id: "options", title: t("mobile.server.drawer.options"), image: "gearshape" },
     { id: "routines", title: t("mobile.server.drawer.routines"), image: "calendar" },
     { id: "usage", title: t("mobile.server.drawer.usage"), image: "chart.bar" },
+    { id: "hide", title: t("mobile.server.drawer.hide"), image: "eye.slash" },
   ];
   if (canReorder)
     menuActions.push({ id: "reorder", title: t("mobile.server.drawer.editOrder"), image: "arrow.up.arrow.down" });
@@ -116,8 +126,20 @@ export function ServerDrawerContent({
   }, [open, session]);
 
   function move(serverId: string, targetIndex: number) {
-    const next = moveServerId(remoteIds, serverId, targetIndex);
+    const nextVisible = moveServerId(visibleRemoteIds, serverId, targetIndex);
+    const next = mergeVisibleServerOrder(remoteIds, visibleRemoteIds, nextVisible);
     if (next.join("\n") !== remoteIds.join("\n")) onReorder(next);
+  }
+
+  function hide(serverId: string) {
+    try {
+      hideServer(serverId);
+      void haptics.notification();
+    } catch (error) {
+      void haptics.notification("error");
+      const text = currentText();
+      Alert.alert(text.t("mobile.server.drawer.hideFailed"), text.errorMessage(error, t("mobile.settings.saveFailed")));
+    }
   }
 
   const openOptions = (serverId: string) => onNavigate({ pathname: "/server-settings", params: { serverId } });
@@ -126,7 +148,8 @@ export function ServerDrawerContent({
 
   function renderRow(serverItem: MobileServer, width?: number) {
     const selected = serverItem.id === activeServerId;
-    const remoteIndex = remoteIds.indexOf(serverItem.id);
+    const remoteIndex = visibleRemoteIds.indexOf(serverItem.id);
+    const { canMoveUp, canMoveDown } = serverMoveAccessibility(visibleRemoteIds, serverItem.id);
     const serverLabel = serverKindLabel(serverItem, t);
     const accessibilityActions = [
       ...(editing
@@ -135,11 +158,10 @@ export function ServerDrawerContent({
             { name: "options", label: t("mobile.server.drawer.serverOptions") },
             { name: "routines", label: t("mobile.server.drawer.routines") },
             { name: "usage", label: t("mobile.server.drawer.usage") },
+            { name: "hide", label: t("mobile.server.drawer.hide") },
           ]),
-      ...(remoteIndex > 0 ? [{ name: "moveUp", label: t("mobile.server.drawer.moveUp") }] : []),
-      ...(remoteIndex >= 0 && remoteIndex < remoteIds.length - 1
-        ? [{ name: "moveDown", label: t("mobile.server.drawer.moveDown") }]
-        : []),
+      ...(canMoveUp ? [{ name: "moveUp", label: t("mobile.server.drawer.moveUp") }] : []),
+      ...(canMoveDown ? [{ name: "moveDown", label: t("mobile.server.drawer.moveDown") }] : []),
     ];
     return (
       <Pressable
@@ -153,6 +175,7 @@ export function ServerDrawerContent({
           if (action === "options") openOptions(serverItem.id);
           if (action === "routines") openRoutines(serverItem.id);
           if (action === "usage") openUsage(serverItem.id);
+          if (action === "hide") hide(serverItem.id);
           if (action === "moveUp") move(serverItem.id, remoteIndex - 1);
           if (action === "moveDown") move(serverItem.id, remoteIndex + 1);
         }}
@@ -216,6 +239,7 @@ export function ServerDrawerContent({
           if (event.nativeEvent.event === "options") openOptions(serverItem.id);
           if (event.nativeEvent.event === "routines") openRoutines(serverItem.id);
           if (event.nativeEvent.event === "usage") openUsage(serverItem.id);
+          if (event.nativeEvent.event === "hide") hide(serverItem.id);
           if (event.nativeEvent.event === "reorder") setEditing(true);
         }}
       >
@@ -243,16 +267,16 @@ export function ServerDrawerContent({
         {editing ? (
           <SortableServerList
             color={mutedColor}
-            ids={remoteIds}
+            ids={visibleRemoteIds}
             renderRow={(id) => {
               const serverItem = servers.find((candidate) => candidate.id === id);
               return serverItem ? renderRow(serverItem) : null;
             }}
             onDragActive={setDragging}
-            onReorder={onReorder}
+            onReorder={(ids) => onReorder(mergeVisibleServerOrder(remoteIds, visibleRemoteIds, ids))}
           />
         ) : (
-          servers.filter((serverItem) => serverItem.kind !== "local").map(withMenu)
+          visibleServers.filter((serverItem) => serverItem.kind !== "local").map(withMenu)
         )}
         {editing && localServers.length ? (
           <Typography.Paragraph type="body-xs" className="px-3 pt-3 text-text-secondary">
