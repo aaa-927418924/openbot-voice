@@ -29,6 +29,13 @@ import {
   type MobileLiveVoiceCommand,
   type MobileLiveVoiceCommandResult,
 } from "../model/live-voice-command";
+import {
+  formatLiveVoiceDomDiagnostic,
+  isLiveVoiceDomDiagnosticWarning,
+  LIVE_VOICE_DIAGNOSTIC_BUILD_ID,
+  LIVE_VOICE_DOM_DIAGNOSTIC_TYPE,
+  parseLiveVoiceDomDiagnostic,
+} from "../model/live-voice-dom-diagnostic";
 import { isMobileLiveVoiceStartRejectedError, type MobileLiveVoiceHost } from "../model/live-voice-host";
 import type {
   LiveVoiceDiagnostic,
@@ -116,7 +123,11 @@ export function MobileLiveVoiceProvider({
   const start = useCallback(
     (target: MobileLiveVoiceTarget) => {
       if (!canStart(target)) return;
-      supportLog.add("info", "connection", "Live Voice probe: native start accepted");
+      supportLog.add(
+        "info",
+        "connection",
+        `Live Voice probe [${LIVE_VOICE_DIAGNOSTIC_BUILD_ID}]: native start accepted`,
+      );
       const nextOrigin = { target, sessionId: Crypto.randomUUID() };
       originRef.current = nextOrigin;
       setOrigin(nextOrigin);
@@ -134,7 +145,7 @@ export function MobileLiveVoiceProvider({
         supportLog.add(
           "info",
           "connection",
-          `Live Voice probe: command ${result.ok ? "acknowledged" : (result.error ?? "failed")}`,
+          `Live Voice probe [${LIVE_VOICE_DIAGNOSTIC_BUILD_ID}]: command ${result.ok ? "acknowledged" : (result.error ?? "failed")}`,
         );
         if (result.ok || originRef.current?.sessionId !== nextOrigin.sessionId) return;
         if (result.error === "timeout") {
@@ -199,7 +210,11 @@ export function MobileLiveVoiceProvider({
     const level = ["failed", "timeout", "rejected", "permission-denied", "unsupported"].includes(outcome)
       ? "warn"
       : "info";
-    supportLog.add(level, "connection", `Live Voice ${step}: ${outcome} (${elapsedMs} ms)`);
+    supportLog.add(
+      level,
+      "connection",
+      `Live Voice probe [${LIVE_VOICE_DIAGNOSTIC_BUILD_ID}]: ${step}: ${outcome} (${elapsedMs} ms)`,
+    );
   }, []);
 
   const onCommandResult = useCallback(
@@ -207,7 +222,7 @@ export function MobileLiveVoiceProvider({
       supportLog.add(
         result.ok ? "info" : "warn",
         "connection",
-        `Live Voice probe: command result callback ${result.ok ? "success" : (result.error ?? "failed")}`,
+        `Live Voice probe [${LIVE_VOICE_DIAGNOSTIC_BUILD_ID}]: command result callback ${result.ok ? "success" : (result.error ?? "failed")}`,
       );
       mailbox.receive(result);
     },
@@ -318,18 +333,30 @@ export function MobileLiveVoiceProvider({
           dom={{
             ...(Platform.OS === "android" ? androidReactNativeDomOptions : {}),
             webviewDebuggingEnabled: true,
-            injectedJavaScript: `window.ReactNativeWebView?.postMessage(JSON.stringify({type:"openbot-voice-probe",data:{stage:"page-finished",hasProps:typeof window.$$EXPO_INITIAL_PROPS!=="undefined",hasBridge:typeof window.ReactNativeWebView!=="undefined"}}));true;`,
-            onLoadEnd: () => supportLog.add("info", "connection", "Live Voice probe: WebView load ended"),
-            onError: () => supportLog.add("warn", "connection", "Live Voice probe: WebView load error"),
-            onRenderProcessGone: () => supportLog.add("warn", "connection", "Live Voice probe: WebView renderer gone"),
+            injectedJavaScript: `window.ReactNativeWebView?.postMessage(JSON.stringify({type:${JSON.stringify(LIVE_VOICE_DOM_DIAGNOSTIC_TYPE)},buildId:${JSON.stringify(LIVE_VOICE_DIAGNOSTIC_BUILD_ID)},stage:"webview-page-finished",hasProps:typeof window.$$EXPO_INITIAL_PROPS!=="undefined",hasBridge:typeof window.ReactNativeWebView!=="undefined"}));true;`,
+            onLoadEnd: () =>
+              supportLog.add(
+                "info",
+                "connection",
+                `Live Voice probe [${LIVE_VOICE_DIAGNOSTIC_BUILD_ID}]: WebView load ended`,
+              ),
+            onError: () =>
+              supportLog.add(
+                "warn",
+                "connection",
+                `Live Voice probe [${LIVE_VOICE_DIAGNOSTIC_BUILD_ID}]: WebView load error`,
+              ),
+            onRenderProcessGone: () =>
+              supportLog.add(
+                "warn",
+                "connection",
+                `Live Voice probe [${LIVE_VOICE_DIAGNOSTIC_BUILD_ID}]: WebView renderer gone`,
+              ),
             onMessage: (event) => {
-              try {
-                const message = JSON.parse(event.nativeEvent.data);
-                if (message?.type === "openbot-voice-probe")
-                  supportLog.add("info", "connection", `Live Voice probe: ${JSON.stringify(message.data)}`);
-              } catch {
-                supportLog.add("warn", "connection", "Live Voice probe: invalid WebView message");
-              }
+              const diagnostic = parseLiveVoiceDomDiagnostic(event.nativeEvent.data);
+              if (!diagnostic) return;
+              const level = isLiveVoiceDomDiagnosticWarning(diagnostic) ? "warn" : "info";
+              supportLog.add(level, "connection", formatLiveVoiceDomDiagnostic(diagnostic));
             },
             mediaPlaybackRequiresUserAction: false,
             containerStyle: {

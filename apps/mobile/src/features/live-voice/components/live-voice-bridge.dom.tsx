@@ -2,7 +2,14 @@
 
 import { useEffect, useRef } from "react";
 import type { MobileLiveVoiceCommand, MobileLiveVoiceCommandResult } from "../model/live-voice-command";
+import { createLiveVoiceDomDiagnostic, type LiveVoiceDomDiagnosticInput } from "../model/live-voice-dom-diagnostic";
 import { createLiveVoiceWebController, type LiveVoiceWebActions } from "../model/live-voice-web-controller";
+
+declare global {
+  interface Window {
+    ReactNativeWebView?: { postMessage(message: string): void };
+  }
+}
 
 interface LiveVoiceBridgeProps extends LiveVoiceWebActions {
   active: boolean;
@@ -13,6 +20,16 @@ interface LiveVoiceBridgeProps extends LiveVoiceWebActions {
 }
 
 const NO_COMMANDS: MobileLiveVoiceCommand[] = [];
+
+function postDiagnostic(input: LiveVoiceDomDiagnosticInput): void {
+  const bridge = window.ReactNativeWebView;
+  if (!bridge) return;
+  try {
+    bridge.postMessage(JSON.stringify(createLiveVoiceDomDiagnostic(input)));
+  } catch {
+    // Diagnostics must not interrupt a voice command if the WebView bridge is unavailable.
+  }
+}
 
 export default function LiveVoiceBridge({
   active,
@@ -41,8 +58,19 @@ export default function LiveVoiceBridge({
   const processedCommandIds = useRef(new Set<string>());
 
   useEffect(() => {
+    postDiagnostic({ stage: "dom-mounted" });
     void actions.current.onDiagnostic?.({ step: "dom-bridge", outcome: "mounted", elapsedMs: 0 });
   }, []);
+
+  useEffect(() => {
+    postDiagnostic({
+      stage: "props-updated",
+      active,
+      hasSessionId: Boolean(currentSessionId),
+      commandCount: commands.length,
+      commandTypes: commands.map((command) => command.type),
+    });
+  }, [active, commands, currentSessionId]);
 
   useEffect(() => {
     const currentIds = new Set(commands.map((command) => command.id));
@@ -52,6 +80,14 @@ export default function LiveVoiceBridge({
     for (const command of commands) {
       if (processedCommandIds.current.has(command.id)) continue;
       processedCommandIds.current.add(command.id);
+      if (command.type === "start") {
+        postDiagnostic({
+          stage: "start-command-received",
+          active,
+          hasSessionId: Boolean(currentSessionId),
+          sessionMatches: command.origin.sessionId === currentSessionId,
+        });
+      }
       void actions.current.onDiagnostic?.({ step: "command", outcome: "received", elapsedMs: 0 });
       if (
         (command.type === "start" && (!active || command.origin.sessionId !== currentSessionId)) ||
@@ -60,7 +96,7 @@ export default function LiveVoiceBridge({
         void actions.current.onCommandResult({ commandId: command.id, ok: false, error: "inactive" });
         continue;
       }
-      void executeCommand(controller, command).then(
+      void executeCommand(controller, command, postDiagnostic).then(
         () => actions.current.onCommandResult({ commandId: command.id, ok: true }),
         () => actions.current.onCommandResult({ commandId: command.id, ok: false, error: "failed" }),
       );
@@ -81,11 +117,20 @@ export default function LiveVoiceBridge({
 async function executeCommand(
   controller: ReturnType<typeof createLiveVoiceWebController>,
   command: MobileLiveVoiceCommand,
+  postDiagnostic: (input: LiveVoiceDomDiagnosticInput) => void,
 ): Promise<void> {
   switch (command.type) {
-    case "start":
-      await controller.start(command.origin);
+    case "start": {
+      postDiagnostic({ stage: "controller-start-invoked" });
+      try {
+        await controller.start(command.origin);
+      } catch (error) {
+        postDiagnostic({ stage: "controller-start-threw" });
+        throw error;
+      }
+      postDiagnostic({ stage: "controller-start-returned" });
       return;
+    }
     case "stop":
       controller.stop();
       return;
