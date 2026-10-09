@@ -12,6 +12,7 @@ import { MermaidRendererHost } from "@/features/chat/components/mermaid-renderer
 import { MessageActionsProvider } from "@/features/chat/context/message-actions-context";
 import { QueuedMessagesProvider } from "@/features/chat/context/queued-messages-context";
 import { setLiveActivityNavigator } from "@/features/live-activity/model/live-activity-link";
+import { LiveVoiceWorkspaceProvider } from "@/features/live-voice/context/live-voice-workspace-provider";
 import { AppDrawerShell } from "@/features/servers/components/app-drawer-shell";
 import { MobileWorkspaceProvider } from "@/features/workspace/context/mobile-workspace-context";
 import { isAndroid, isIOS } from "@/shared/lib/platform";
@@ -346,16 +347,18 @@ export default function AuthenticatedLayout() {
 
   return (
     <MobileWorkspaceProvider key={workspaceKey}>
-      <AgentPinTransitionProvider>
-        <AppDrawerShell>
-          <MessageActionsProvider>
-            <QueuedMessagesProvider>
-              <AuthenticatedStack />
-              <MermaidRendererHost />
-            </QueuedMessagesProvider>
-          </MessageActionsProvider>
-        </AppDrawerShell>
-      </AgentPinTransitionProvider>
+      <LiveVoiceWorkspaceProvider>
+        <AgentPinTransitionProvider>
+          <AppDrawerShell>
+            <MessageActionsProvider>
+              <QueuedMessagesProvider>
+                <AuthenticatedStack />
+                <MermaidRendererHost />
+              </QueuedMessagesProvider>
+            </MessageActionsProvider>
+          </AppDrawerShell>
+        </AgentPinTransitionProvider>
+      </LiveVoiceWorkspaceProvider>
     </MobileWorkspaceProvider>
   );
 }

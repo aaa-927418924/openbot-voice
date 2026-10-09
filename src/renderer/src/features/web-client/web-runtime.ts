@@ -293,7 +293,10 @@ export function createWebWorkspaceRuntime(
         events.connection(update);
       },
       onHostStreamData: (data) => browserView.receive(data),
-      onTeamEvent: async (id, event) => events.event(id, event),
+      onTeamEvent: async (id, event) => {
+        if (event.type === "live-voice") return;
+        events.event(id, event);
+      },
       onAccountProfileChanged: events.accountChanged,
     },
   });

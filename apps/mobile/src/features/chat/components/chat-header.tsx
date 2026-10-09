@@ -2,7 +2,7 @@ import { GlassView } from "expo-glass-effect";
 import { Link, router } from "expo-router";
 import { Typography } from "heroui-native";
 import { useThemeColor } from "heroui-native/hooks";
-import { ArrowLeft, TriangleAlert } from "lucide-react-native";
+import { ArrowLeft, Mic, TriangleAlert } from "lucide-react-native";
 import { useMemo } from "react";
 import { Pressable, View, type ViewStyle } from "react-native";
 import { AgentPinAvatar } from "@/features/agents/components/agent-pin-avatar";
@@ -25,6 +25,8 @@ interface ChatHeaderProps {
   onBack: () => void;
   needsAction?: boolean;
   readOnly?: boolean;
+  canStartLiveVoice?: boolean;
+  onStartLiveVoice?: () => void;
 }
 
 export function ChatHeader({
@@ -36,6 +38,8 @@ export function ChatHeader({
   onBack,
   needsAction = false,
   readOnly = false,
+  canStartLiveVoice = false,
+  onStartLiveVoice,
 }: ChatHeaderProps) {
   const warning = useThemeColor("warning");
   const { t } = useText();
@@ -131,6 +135,19 @@ export function ChatHeader({
         </GlassView>
 
         <View className="flex-1" />
+        {canStartLiveVoice && onStartLiveVoice ? (
+          <ChatGlassIconButton
+            accessibilityLabel={t("mobile.liveVoice.start")}
+            fallbackBackground={fallbackBackground}
+            liquidGlassAvailable={liquidGlassAvailable}
+            onPress={() => {
+              void haptics.impact("soft");
+              onStartLiveVoice();
+            }}
+          >
+            <Mic color={iconColor} size={22} />
+          </ChatGlassIconButton>
+        ) : null}
         {target.kind === "channel" ? (
           <View style={{ width: 48, height: 48 }} collapsable={false} pointerEvents={needsAction ? "auto" : "none"}>
             <BlurReveal

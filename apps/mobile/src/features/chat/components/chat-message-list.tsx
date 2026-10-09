@@ -319,6 +319,29 @@ function RoutineMarkerRow({
   );
 }
 
+function LiveVoiceBoundaryRow({
+  message,
+  muted,
+}: {
+  message: Extract<ChatMessage, { kind: "live-voice-boundary" }>;
+  muted: ViewStyle["backgroundColor"];
+}) {
+  const { t, format } = useText();
+  const elapsedSeconds = Math.floor((message.durationMs ?? 0) / 1000);
+  const time = `${format.number(Math.floor(elapsedSeconds / 60), { minimumIntegerDigits: 2, useGrouping: false })}:${format.number(elapsedSeconds % 60, { minimumIntegerDigits: 2, useGrouping: false })}`;
+  const label =
+    message.action === "started"
+      ? t("mobile.liveVoice.history.started")
+      : t("mobile.liveVoice.history.ended", { time });
+  return (
+    <View accessible accessibilityLabel={label} className="items-center py-2">
+      <Typography.Paragraph type="body-xs" style={{ color: muted }}>
+        {label}
+      </Typography.Paragraph>
+    </View>
+  );
+}
+
 function playbackEligible(message: VisibleMessage) {
   return (
     message.kind === "message" &&
@@ -412,7 +435,9 @@ const MessageRow = memo(function MessageRow({
   const memberColor =
     message.kind === "message" && message.sender ? getBloubAvatarColor(message.sender.id, null) : undefined;
   const rendered =
-    message.kind === "routine" ? (
+    message.kind === "live-voice-boundary" ? (
+      <LiveVoiceBoundaryRow key={message.id} message={message} muted={muted} />
+    ) : message.kind === "routine" ? (
       <RoutineMarkerRow key={message.id} message={message} muted={muted} />
     ) : message.kind === "exchange" || message.kind === "channel-routing" ? (
       <View key={message.id} className="flex-row flex-wrap items-center justify-center gap-2 py-2">

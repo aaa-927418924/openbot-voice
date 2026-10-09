@@ -1,4 +1,5 @@
 import type { AgentEvent, TeamRealtimeEvent } from "@openbot/contracts/ipc";
+import type { LiveVoiceWireEvent } from "@openbot/contracts/team-protocol/live-voice-v1";
 import { sourceText } from "@openbot/i18n/source";
 import {
   createRemoteConnectionRecovery,
@@ -32,7 +33,7 @@ interface Props {
   load(hostId: string, publicKey: string, client: RemoteTeamTransportRef, context: ServerLoadContext): Promise<void>;
   onStatus(hostId: string, status: RemoteRecoveryStatus, failure: string | null): void;
   onMembershipChanged?(): Promise<void>;
-  onTeamEvent(hostId: string, event: AgentEvent | TeamRealtimeEvent): void;
+  onTeamEvent(hostId: string, event: AgentEvent | TeamRealtimeEvent | LiveVoiceWireEvent): void;
 }
 
 /** Each mounted membership owns its transport; selection does not change its lifetime. */

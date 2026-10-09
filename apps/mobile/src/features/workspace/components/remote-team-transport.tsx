@@ -1,4 +1,6 @@
 import type { AgentEvent, TeamRealtimeEvent } from "@openbot/contracts/ipc";
+import { LIVE_VOICE_CHANNEL_START_ROUTE } from "@openbot/contracts/team-protocol/live-voice-channel-v1";
+import { LIVE_VOICE_ROUTES, type LiveVoiceWireEvent } from "@openbot/contracts/team-protocol/live-voice-v1";
 import { isQueueEditRoute, QueueEditRejectedError } from "@openbot/contracts/team-protocol/queue-edit-v1";
 import type { TeamProtocolV2Json } from "@openbot/contracts/team-protocol/v2";
 import { sourceText } from "@openbot/i18n/source";
@@ -44,13 +46,30 @@ interface RemoteTeamTransportProps {
   onMembershipChanged?: () => Promise<void>;
   /** The phone got a network again. */
   onNetworkRestored?: () => void;
-  onTeamEvent: (hostId: string, event: AgentEvent | TeamRealtimeEvent) => void;
+  onTeamEvent: (hostId: string, event: AgentEvent | TeamRealtimeEvent | LiveVoiceWireEvent) => void;
 }
 
 type RemoteTeamCommandInput =
   | { type: "connect"; hostId: string; hostPublicKey: string }
   | { type: "disconnect" }
   | { type: "request"; method: string; path: string; body: TeamProtocolV2Json; upload?: RemoteFileUpload };
+
+/** Carries an HTTP status without retaining the remote response body or error text. */
+export class RemoteTeamHttpError extends Error {
+  constructor(readonly status: number) {
+    super(`Remote server returned HTTP ${status}.`);
+    this.name = "RemoteTeamHttpError";
+  }
+}
+
+function isLiveVoiceRoute(path: string): boolean {
+  return (
+    path === LIVE_VOICE_ROUTES.start ||
+    path === LIVE_VOICE_ROUTES.stop ||
+    path === LIVE_VOICE_ROUTES.sendText ||
+    path === LIVE_VOICE_CHANNEL_START_ROUTE
+  );
+}
 
 export const RemoteTeamTransport = forwardRef<RemoteTeamTransportRef, RemoteTeamTransportProps>(
   function RemoteTeamTransport(
@@ -109,22 +128,34 @@ export const RemoteTeamTransport = forwardRef<RemoteTeamTransportRef, RemoteTeam
         ): Promise<T> => {
           const started = Date.now();
           const result = await enqueue({ type: "request", method, path, body, upload }, onUploadProgress);
+          const liveVoiceRoute = isLiveVoiceRoute(path);
           // Method, path, status and time only. Never the body or the upload.
           const request = `${hostIdRef.current ?? "unknown server"} ${method} ${supportLogUrl(path)}`;
           const time = `(${Date.now() - started} ms)`;
-          if (!result.ok)
-            supportLog.add("warn", "connection", `${request} -> failed: ${result.error ?? "no error"} ${time}`);
-          else
+          if (!result.ok) {
+            const failure = liveVoiceRoute ? "failed" : `failed: ${result.error ?? "no error"}`;
+            supportLog.add("warn", "connection", `${request} -> ${failure} ${time}`);
+          } else
             supportLog.add(
               result.status !== undefined && result.status >= 400 ? "warn" : "info",
               "connection",
               `${request} -> ${result.status ?? "no status"} ${time}`,
             );
-          if (!result.ok) throw new Error(result.error ?? sourceText("error.remote.serverRequestFailed"));
+          if (!result.ok) {
+            if (liveVoiceRoute && result.status !== undefined && result.status >= 400 && result.status < 500)
+              throw new RemoteTeamHttpError(result.status);
+            throw new Error(
+              liveVoiceRoute
+                ? sourceText("error.remote.serverRequestFailed")
+                : (result.error ?? sourceText("error.remote.serverRequestFailed")),
+            );
+          }
           if (result.status === 409 && isQueueEditRoute(method, path))
             throw new QueueEditRejectedError(currentText().t("mobile.workspace.error.queueEditRejected"));
-          if (result.status !== undefined && result.status >= 400)
+          if (result.status !== undefined && result.status >= 400) {
+            if (liveVoiceRoute) throw new RemoteTeamHttpError(result.status);
             throw new Error(sourceText("error.remote.serverRequestFailed"));
+          }
           return decode(result.body);
         },
       }),

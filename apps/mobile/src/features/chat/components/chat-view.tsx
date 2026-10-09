@@ -28,6 +28,9 @@ import {
   type PendingChatMessage,
   presentChatMessages,
 } from "@/features/chat/model/chat-messages";
+import { LiveVoiceSessionCard } from "@/features/live-voice/components/live-voice-session-card";
+import { useMobileLiveVoice } from "@/features/live-voice/context/mobile-live-voice-context";
+import type { MobileLiveVoiceTarget } from "@/features/live-voice/model/live-voice";
 import { ConnectionStatus } from "@/features/workspace/components/connection-status";
 import { useBrowserRequests } from "@/features/workspace/components/use-live-workspace";
 import type { MobileAgent } from "@/features/workspace/context/mobile-workspace-context";
@@ -51,6 +54,8 @@ import type { ChatQueueController } from "./use-chat-queue";
 
 export interface ChatViewProps {
   target: ChatTarget;
+  liveVoiceTarget?: MobileLiveVoiceTarget;
+  refreshLiveVoiceHistory?: () => Promise<void>;
   queue?: ChatQueueController;
   agents: MobileAgent[];
   mentionAgents: MobileAgent[];
@@ -98,6 +103,8 @@ function leaveConversation(): void {
 
 export function ChatView({
   target,
+  liveVoiceTarget,
+  refreshLiveVoiceHistory,
   queue,
   agents: serverAgents,
   mentionAgents,
@@ -126,6 +133,7 @@ export function ChatView({
 }: ChatViewProps) {
   const { t, errorMessage } = useText();
   const { respondToBrowserSecret, respondToBrowserTakeover, attachmentSupport } = useMobileWorkspace();
+  const liveVoice = useMobileLiveVoice();
   const browserRequests = useBrowserRequests(target.serverId);
   const isFocused = useIsFocused();
   const foregroundVisit = useAppForeground();
@@ -367,6 +375,47 @@ export function ChatView({
     if (!serverOnline || !canSend || sendingRef.current || pendingMessage) return;
     const body = value.trim();
     if (!body && attachments.items.length === 0) return;
+    if (liveVoiceTarget && liveVoice.routesComposer(liveVoiceTarget)) {
+      if (attachments.items.length > 0 || replyTarget) {
+        setSendError({ agentId: target.id, message: t("mobile.liveVoice.error.textOnly") });
+        return;
+      }
+      if (!body) return;
+      setSendError(null);
+      Keyboard.dismiss();
+      void haptics.impact();
+      setShowStarter(false);
+      setDraft("");
+      sendingRef.current = true;
+      setSending(true);
+      void liveVoice
+        .sendText(body)
+        .then(async () => {
+          if (!refreshLiveVoiceHistory) return;
+          try {
+            // The host owns the canonical transcript row; refresh this exact origin after
+            // its void acknowledgement instead of inventing a local message ID.
+            await refreshLiveVoiceHistory();
+            setHistoryReceipt(null);
+          } catch {
+            // The input was accepted. Keep the draft cleared and offer a history-only retry.
+            setHistoryReceipt({ refreshHistory: refreshLiveVoiceHistory });
+          }
+        })
+        .catch(() => {
+          setDraft((current) => (current ? `${body}\n${current}` : body));
+          void haptics.notification("error");
+          setSendError({
+            agentId: target.id,
+            message: t("mobile.liveVoice.error.send"),
+          });
+        })
+        .finally(() => {
+          sendingRef.current = false;
+          setSending(false);
+        });
+      return;
+    }
     // While the agent asks a question, the composer text is the answer. Files still go as a message.
     if (answersQuestion && questionForm && attachments.items.length === 0) {
       if (!body || questionForm.disabled) return;
@@ -500,12 +549,15 @@ export function ChatView({
               target={target}
               readOnly={readOnly}
               needsAction={needsAction}
+              canStartLiveVoice={Boolean(liveVoiceTarget && liveVoice.canStart(liveVoiceTarget))}
+              onStartLiveVoice={liveVoiceTarget ? () => liveVoice.start(liveVoiceTarget) : undefined}
               fallbackBackground={fieldBackground}
               foreground={foreground}
               liquidGlassAvailable={liquidGlassAvailable}
               topInset={insets.top}
               onBack={leaveConversation}
             />
+            {isFocused ? <LiveVoiceSessionCard topInset={insets.top} /> : null}
             <ChatMessageList
               agents={serverAgents}
               target={target}
@@ -692,7 +744,14 @@ export function ChatView({
                   agentName={target.name}
                   placeholder={answersQuestion ? t("mobile.chat.question.answerPlaceholder") : undefined}
                   bottomInset={insets.bottom}
-                  disabled={!serverOnline || !canSend}
+                  disabled={
+                    !serverOnline ||
+                    !canSend ||
+                    Boolean(
+                      liveVoiceTarget && liveVoice.routesComposer(liveVoiceTarget) && liveVoice.state.phase !== "live",
+                    )
+                  }
+                  dictationEnabled={!(liveVoiceTarget && liveVoice.routesComposer(liveVoiceTarget))}
                   sending={sending || Boolean(pendingMessage)}
                   attachments={attachments}
                   draft={draft}

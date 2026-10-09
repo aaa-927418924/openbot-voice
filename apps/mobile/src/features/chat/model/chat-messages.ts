@@ -16,6 +16,7 @@ import {
   CONVERSATION_PLAN_ITEM_TYPE,
   channelRoutingConversationEvent,
   parseConversationPlanText,
+  parseLiveVoiceSessionMarker,
   routineConversationEvent,
   routineRunConversationEvent,
 } from "@openbot/contracts/ipc";
@@ -38,6 +39,7 @@ export type ChatMessage =
           };
     }
   | { id: string; kind: "exchange"; exchange: AgentExchangeSummary }
+  | { id: string; kind: "live-voice-boundary"; action: "started" | "ended"; durationMs?: number }
   /** A routine created, changed, deleted, or run by the agent. The label matches the desktop marker. */
   | { id: string; kind: "routine"; event: RoutineMarkerEvent; label: MobileTextKey; routineName: string }
   | { id: string; kind: "question"; turnId: string | undefined; prompt: ConversationQuestionPrompt }
@@ -284,6 +286,16 @@ export function projectChatMessages(
   const sorted = sortedConversationMessages(messages);
   const latestRuns = latestRoutineRunMessages(sorted);
   for (const message of sorted) {
+    const liveVoice = parseLiveVoiceSessionMarker(message);
+    if (liveVoice) {
+      result.push({
+        id: message.id,
+        kind: "live-voice-boundary",
+        action: liveVoice.action,
+        ...(liveVoice.durationMs === undefined ? {} : { durationMs: liveVoice.durationMs }),
+      });
+      continue;
+    }
     // Routine events are system messages, skipped below. Like desktop, a routine instruction shows only as its marker.
     const routine = projectRoutineMarker(message, latestRuns);
     if (routine) result.push(routine);
@@ -403,6 +415,15 @@ function projectChannelMessage(
   self: boolean,
   latestRuns: ReadonlySet<string>,
 ): ChatMessage | null {
+  const liveVoice = parseLiveVoiceSessionMarker(entry.message);
+  if (liveVoice) {
+    return {
+      id: entry.id,
+      kind: "live-voice-boundary",
+      action: liveVoice.action,
+      ...(liveVoice.durationMs === undefined ? {} : { durationMs: liveVoice.durationMs }),
+    };
+  }
   const routine = routineMarker(entry.message);
   if (routine) {
     if (routine.runId && !latestRuns.has(entry.message.id)) return null;
@@ -475,6 +496,7 @@ export function projectChannelMessages(messages: ChannelMessage[], memberId: str
     .filter(
       (entry) =>
         entry.message.questionPrompt ||
+        parseLiveVoiceSessionMarker(entry.message) ||
         entry.message.imageGeneration ||
         entry.message.text.trim() ||
         entry.message.attachments?.length,

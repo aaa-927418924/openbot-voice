@@ -22,6 +22,7 @@ import {
   type TeamProtocolV2Json,
   teamProtocolV2AuthenticationTranscript,
 } from "@openbot/contracts/team-protocol";
+import type { LiveVoiceWireEvent } from "@openbot/contracts/team-protocol/live-voice-v1";
 import { optionalTeamEvent } from "@openbot/contracts/team-protocol/optional-events";
 import { teamSideRouteCodec } from "@openbot/contracts/team-protocol/side-routes";
 import {
@@ -163,7 +164,7 @@ export interface RemoteTeamPeerActions {
   onDiagnostic?: (diagnostic: RemoteTeamDiagnostic) => Promise<void>;
   /** The platform reported that the network came back. A consumer that waits to retry can retry now. */
   onNetworkRestored?: () => Promise<void>;
-  onTeamEvent: (hostId: string, event: AgentEvent | TeamRealtimeEvent) => Promise<void>;
+  onTeamEvent: (hostId: string, event: AgentEvent | TeamRealtimeEvent | LiveVoiceWireEvent) => Promise<void>;
 }
 interface ActionsRef {
   current: RemoteTeamPeerActions;
@@ -243,7 +244,10 @@ class RemotePeerIO extends Context.Service<
       sessionId: string | null,
     ): Effect.Effect<RemoteTeamBootstrapPayload, RemotePeerError>;
     connectionUpdate(update: RemoteTeamConnectionUpdate): Effect.Effect<void, RemotePeerError>;
-    teamEvent(hostId: string, event: AgentEvent | TeamRealtimeEvent): Effect.Effect<void, RemotePeerError>;
+    teamEvent(
+      hostId: string,
+      event: AgentEvent | TeamRealtimeEvent | LiveVoiceWireEvent,
+    ): Effect.Effect<void, RemotePeerError>;
   }
 >()("@openbot/team-client/RemotePeerIO") {
   static layer(actions: ActionsRef) {
@@ -256,8 +260,9 @@ class RemotePeerIO extends Context.Service<
         connectionUpdate: Effect.fn("RemotePeerIO.connectionUpdate")((update: RemoteTeamConnectionUpdate) =>
           peerCall(() => actions.current.onConnectionUpdate(update)),
         ),
-        teamEvent: Effect.fn("RemotePeerIO.teamEvent")((hostId: string, event: AgentEvent | TeamRealtimeEvent) =>
-          peerCall(() => actions.current.onTeamEvent(hostId, event)),
+        teamEvent: Effect.fn("RemotePeerIO.teamEvent")(
+          (hostId: string, event: AgentEvent | TeamRealtimeEvent | LiveVoiceWireEvent) =>
+            peerCall(() => actions.current.onTeamEvent(hostId, event)),
         ),
       }),
     );
@@ -995,10 +1000,9 @@ export function createRemoteTeamPeer(actions: ActionsRef) {
       if (decoded.status === "invalid")
         return yield* new RemotePeerError({ message: sourceText("error.remote.malformedEvent") });
       state.lastEventSequence = frame.sequence;
-      // The peer's vocabulary is the frozen one plus the optional events that are part of it. A Live
-      // voice lifecycle belongs to the desktop client's own channel, which this browser and mobile
-      // transport has no Live voice UI for, so it is acknowledged and dropped rather than forwarded.
-      if (decoded.status === "known" && decoded.event.type !== "live-voice") {
+      // Optional events are decoded by their frozen capability contract before they reach a client.
+      // Workspace consumers apply the advertised capability and current-session checks.
+      if (decoded.status === "known") {
         const event = decoded.event;
         yield* RemotePeerIO.use((io) => io.teamEvent(state.hostId, event));
       }

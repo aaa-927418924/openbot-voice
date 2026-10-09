@@ -1,8 +1,15 @@
-import type { ConversationMessage, QueueDelivery } from "@openbot/contracts/ipc";
+import {
+  type ChannelMessage,
+  type ConversationMessage,
+  LIVE_VOICE_SESSION_END_ITEM_TYPE,
+  LIVE_VOICE_SESSION_START_ITEM_TYPE,
+  type QueueDelivery,
+} from "@openbot/contracts/ipc";
 import { describe, expect, it } from "vitest";
 import {
   latestReadableMessage,
   messageIdForHistoryMutation,
+  projectChannelMessages,
   projectChatMessages,
   withFailureReasons,
 } from "./chat-messages";
@@ -185,5 +192,39 @@ describe("message history mutation ids", () => {
     expect(messageIdForHistoryMutation("local-message-1", new Map([["server-message-7", "local-message-1"]]))).toBe(
       "server-message-7",
     );
+  });
+});
+
+describe("Live Voice history markers", () => {
+  const hash = "a".repeat(48);
+  const marker = (phase: "start" | "end"): ConversationMessage => ({
+    id: `livevoice-${hash}-${phase}`,
+    author: "system",
+    text: "",
+    itemType: phase === "start" ? LIVE_VOICE_SESSION_START_ITEM_TYPE : `${LIVE_VOICE_SESSION_END_ITEM_TYPE}:12500`,
+    createdAt: "2026-10-09T10:00:00.000Z",
+    status: "completed",
+  });
+
+  it("projects human-readable direct-chat boundaries and omits internal item types", () => {
+    expect(projectChatMessages([marker("start"), marker("end")])).toEqual([
+      { id: `livevoice-${hash}-start`, kind: "live-voice-boundary", action: "started" },
+      { id: `livevoice-${hash}-end`, kind: "live-voice-boundary", action: "ended", durationMs: 12_500 },
+    ]);
+  });
+
+  it("projects channel boundaries with the channel row identity", () => {
+    const entry: ChannelMessage = {
+      id: "channel-start-row",
+      channelId: "channel-one",
+      sequence: 8,
+      author: { kind: "agent", id: "agent-one", name: "Sol" },
+      taskId: "task-one",
+      superseded: false,
+      message: marker("end"),
+    };
+    expect(projectChannelMessages([entry], null)).toEqual([
+      { id: "channel-start-row", kind: "live-voice-boundary", action: "ended", durationMs: 12_500 },
+    ]);
   });
 });

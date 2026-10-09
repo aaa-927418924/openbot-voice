@@ -91,6 +91,8 @@ interface ChatComposerProps {
   mentionAgents: MobileAgent[];
   bottomInset: number;
   disabled: boolean;
+  /** Live Voice owns the microphone while its call is active. */
+  dictationEnabled?: boolean;
   draft: string;
   fallbackBackground: ViewStyle["backgroundColor"];
   foreground: ViewStyle["backgroundColor"];
@@ -133,6 +135,7 @@ export function ChatComposer({
   mentionAgents,
   bottomInset,
   disabled,
+  dictationEnabled = true,
   draft,
   fallbackBackground,
   foreground,
@@ -184,7 +187,7 @@ export function ChatComposer({
   // and edit it before an explicit send. Leaving the chat or losing the server
   // stops listening and keeps the text.
   const dictation = useVoiceDictation({
-    enabled: isFocused && !disabled,
+    enabled: isFocused && !disabled && dictationEnabled,
     onDraft: (text) => {
       sendGate.edit();
       latestTextRef.current = text;
@@ -464,7 +467,7 @@ export function ChatComposer({
     busy,
     canStop: Boolean(onStop),
     stopping,
-    voiceAvailable: dictation.available,
+    voiceAvailable: dictation.available && dictationEnabled,
     dictation: dictation.phase,
   });
 

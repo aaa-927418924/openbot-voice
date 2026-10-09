@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useMobileSession } from "@/features/auth/context/mobile-session-context";
+import type { MobileLiveVoiceTarget } from "@/features/live-voice/model/live-voice";
 import { useAgentActivity } from "@/features/workspace/components/use-agent-activity";
 import { type MobileAgent, useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
 import { latestReadableMessage, projectChatMessages, withFailureReasons } from "../model/chat-messages";
@@ -91,9 +92,24 @@ export function MobileChatView({ agent }: { agent: MobileAgent }) {
     online,
     respondToPrompt,
   );
+  const liveVoiceTarget: MobileLiveVoiceTarget | undefined =
+    agent.provider === "codex" && (conversation?.threadId ?? agent.threadId)
+      ? {
+          serverId: agent.serverId,
+          agentId: agent.id,
+          threadId: conversation?.threadId ?? agent.threadId ?? "",
+          agentName: agent.name,
+          avatarSeed: agent.avatarSeed,
+          avatarHue: agent.avatarHue,
+        }
+      : undefined;
   return (
     <ChatView
       target={{ ...agent, kind: "agent" }}
+      liveVoiceTarget={liveVoiceTarget}
+      refreshLiveVoiceHistory={async () => {
+        await loadConversation(agent.id, agent.serverId, true);
+      }}
       queue={queue}
       agents={serverAgents}
       mentionAgents={mentionAgents}

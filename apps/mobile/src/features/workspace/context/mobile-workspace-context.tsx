@@ -6,6 +6,7 @@ import {
   type TeamRealtimeEvent,
   type UpdateAgentInput,
 } from "@openbot/contracts/ipc";
+import { isLiveVoiceStartResult } from "@openbot/contracts/ipc-live-voice";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import {
   CLEAR_CONVERSATION_HISTORY_ROUTE,
@@ -15,6 +16,15 @@ import {
 import { TEAM_CONVERSATION_UNREAD_CAPABILITY } from "@openbot/contracts/team-protocol/current";
 import { HOST_ADMIN_CAPABILITY } from "@openbot/contracts/team-protocol/host-admin-v1";
 import { LIVE_ACTIVITY_PUSH_CAPABILITY } from "@openbot/contracts/team-protocol/live-activity-push-v1";
+import {
+  LIVE_VOICE_CHANNEL_START_ROUTE,
+  LIVE_VOICE_CHANNEL_TRANSCRIPTS_CAPABILITY,
+} from "@openbot/contracts/team-protocol/live-voice-channel-v1";
+import {
+  LIVE_VOICE_CAPABILITY,
+  LIVE_VOICE_ROUTES,
+  type LiveVoiceWireEvent,
+} from "@openbot/contracts/team-protocol/live-voice-v1";
 import { SKILLS_ADMIN_CAPABILITY } from "@openbot/contracts/team-protocol/skills-admin-v1";
 import { decodeTeamProtocolSupportV1 } from "@openbot/contracts/team-protocol/v1";
 import type { TeamProtocolV2Json } from "@openbot/contracts/team-protocol/v2";
@@ -65,9 +75,22 @@ import { trackWorkspaceActions } from "@/features/analytics/workspace-actions";
 import { useMobileSession } from "@/features/auth/context/mobile-session-context";
 import { MobileChannelStore } from "@/features/channels/model/channel-store";
 import { useLiveActivity } from "@/features/live-activity/use-live-activity";
+import {
+  isDefinitiveLiveVoiceStartRefusalStatus,
+  MobileLiveVoiceStartRejectedError,
+} from "@/features/live-voice/model/live-voice-host";
+import type {
+  LiveVoiceSendTextRequest,
+  LiveVoiceStartRequest,
+  LiveVoiceStartResponse,
+  LiveVoiceStopRequest,
+} from "@/features/live-voice/model/live-voice-web-controller";
 import { fetch } from "@/features/support/model/logged-fetch";
 import { supportLog } from "@/features/support/model/support-log";
-import type { RemoteTeamTransportRef } from "@/features/workspace/components/remote-team-transport";
+import {
+  RemoteTeamHttpError,
+  type RemoteTeamTransportRef,
+} from "@/features/workspace/components/remote-team-transport";
 import {
   ServerConnection,
   type ServerConnectionHandle,
@@ -176,6 +199,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
   const removedServers = useRef(new Set<string>());
   const readRefresh = useMemo(() => createRemoteReadRefresh(), []);
   const serverCapabilities = useRef(new Map<string, string[]>());
+  const liveVoiceListeners = useRef(new Set<(serverId: string, event: LiveVoiceWireEvent) => void>());
   const [activeServerId, setActiveServerId] = useState<string | null>(session.host?.hostId ?? null);
   const activeServerIdRef = useRef(activeServerId);
   activeServerIdRef.current = activeServerId;
@@ -358,6 +382,17 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
     (serverId: string, path: string, body: TeamProtocolV2Json) => request("POST", path, ignoreResponse, body, serverId),
     [request],
   );
+  const supportsLiveVoice = useCallback((serverId: string, channel: boolean) => {
+    const capabilities = serverCapabilities.current.get(serverId);
+    return Boolean(
+      capabilities?.includes(LIVE_VOICE_CAPABILITY) &&
+        (!channel || capabilities.includes(LIVE_VOICE_CHANNEL_TRANSCRIPTS_CAPABILITY)),
+    );
+  }, []);
+  const subscribeLiveVoiceEvents = useCallback((listener: (serverId: string, event: LiveVoiceWireEvent) => void) => {
+    liveVoiceListeners.current.add(listener);
+    return () => liveVoiceListeners.current.delete(listener);
+  }, []);
   const supportsLiveActivityPush = useCallback(
     (serverId: string) => serverCapabilities.current.get(serverId)?.includes(LIVE_ACTIVITY_PUSH_CAPABILITY) === true,
     [],
@@ -678,8 +713,13 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
   );
 
   const handleTeamEvent = useCallback(
-    (serverId: string, event: AgentEvent | TeamRealtimeEvent) => {
+    (serverId: string, event: AgentEvent | TeamRealtimeEvent | LiveVoiceWireEvent) => {
       if (removedServers.current.has(serverId)) return;
+      if (event.type === "live-voice") {
+        if (!serverCapabilities.current.get(serverId)?.includes(LIVE_VOICE_CAPABILITY)) return;
+        for (const listener of liveVoiceListeners.current) listener(serverId, event);
+        return;
+      }
       applyLiveActivityEvent(serverId, event);
       if (event.type === "runtime-snapshot") {
         liveState.update("browserRequests", (current) => {
@@ -942,6 +982,38 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
       );
     };
     const workspace: MobileWorkspaceContextValue = {
+      supportsLiveVoice,
+      startLiveVoice: async (input: LiveVoiceStartRequest): Promise<LiveVoiceStartResponse> => {
+        if (!supportsLiveVoice(input.serverId, Boolean(input.channelId))) throw new MobileLiveVoiceStartRejectedError();
+        const { serverId, ...body } = input;
+        try {
+          const path = input.channelId ? LIVE_VOICE_CHANNEL_START_ROUTE : LIVE_VOICE_ROUTES.start;
+          return await request(
+            "POST",
+            path,
+            (value) => {
+              if (!isLiveVoiceStartResult(value)) throw new Error("The host returned an invalid Live Voice session.");
+              return value;
+            },
+            body,
+            serverId,
+          );
+        } catch (error) {
+          if (error instanceof RemoteTeamHttpError && isDefinitiveLiveVoiceStartRefusalStatus(error.status)) {
+            throw new MobileLiveVoiceStartRejectedError();
+          }
+          throw error;
+        }
+      },
+      stopLiveVoice: async (input: LiveVoiceStopRequest) => {
+        const { serverId, ...body } = input;
+        await request("POST", LIVE_VOICE_ROUTES.stop, ignoreResponse, body, serverId);
+      },
+      sendLiveVoiceText: async (input: LiveVoiceSendTextRequest) => {
+        const { serverId, ...body } = input;
+        await request("POST", LIVE_VOICE_ROUTES.sendText, ignoreResponse, body, serverId);
+      },
+      subscribeLiveVoiceEvents,
       sidebarByServer,
       mutateSidebarLayout: async (serverId, action) => {
         if (!serverCapabilities.current.get(serverId)?.includes("sidebar-layout")) {
@@ -1379,6 +1451,8 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
     sessionScope,
     queryClient,
     liveState,
+    subscribeLiveVoiceEvents,
+    supportsLiveVoice,
     preferences,
     updatePreferences,
   ]);

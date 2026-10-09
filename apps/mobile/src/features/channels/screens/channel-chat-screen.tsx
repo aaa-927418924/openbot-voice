@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChatView } from "@/features/chat/components/chat-view";
 import { useQuestionPrompt } from "@/features/chat/components/use-question-prompt";
 import { projectChannelMessages } from "@/features/chat/model/chat-messages";
+import type { MobileLiveVoiceTarget } from "@/features/live-voice/model/live-voice";
 import { useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
 import { useText } from "@/shared/lib/text";
 import { useChannels } from "../components/use-channels";
@@ -44,6 +45,23 @@ function ChannelChat({ channelId, serverId }: { channelId: string; serverId: str
         : [],
     [online, channel?.archived, channel?.leadAgentId, page?.tasks, page?.messages],
   );
+  const liveVoiceMember = channel?.members.length === 1 && members.length === 1 ? members[0] : undefined;
+  const liveVoiceTarget: MobileLiveVoiceTarget | undefined =
+    channel &&
+    !channel.archived &&
+    liveVoiceMember?.provider === "codex" &&
+    liveVoiceMember.threadId &&
+    channel.leadAgentId === liveVoiceMember.id
+      ? {
+          serverId,
+          agentId: liveVoiceMember.id,
+          threadId: liveVoiceMember.threadId,
+          channelId,
+          agentName: liveVoiceMember.name,
+          avatarSeed: liveVoiceMember.avatarSeed,
+          avatarHue: liveVoiceMember.avatarHue,
+        }
+      : undefined;
   const [sender] = useState(() => new ChannelSend(state.store, serverId, channelId, Crypto.randomUUID));
   useEffect(() => () => sender.dispose(), [sender]);
   const [olderLoading, setOlderLoading] = useState(false);
@@ -72,6 +90,8 @@ function ChannelChat({ channelId, serverId }: { channelId: string; serverId: str
   );
   return (
     <ChatView
+      liveVoiceTarget={liveVoiceTarget}
+      refreshLiveVoiceHistory={() => state.store.refresh(serverId, channelId)}
       target={{
         kind: "channel",
         id: channelId,

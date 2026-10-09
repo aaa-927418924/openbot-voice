@@ -15,7 +15,7 @@ import { formatUpdatedAt } from "@/shared/lib/format-updated-at";
 
 export type RemoteAgent = Pick<
   AgentSummary,
-  "id" | "name" | "title" | "description" | "preview" | "updatedAt" | "avatarSeed" | "avatarHue"
+  "id" | "name" | "title" | "description" | "preview" | "updatedAt" | "avatarSeed" | "avatarHue" | "threadId"
 > &
   Partial<Pick<AgentSummary, "provider" | "model" | "reasoningEffort" | "avatarUrl">>;
 
@@ -34,6 +34,7 @@ export function projectAgent(serverId: string, agent: RemoteAgent): MobileAgent 
     avatarUrl: agent.avatarUrl ?? null,
     avatarSeed: agent.avatarSeed,
     avatarHue: agent.avatarHue,
+    threadId: agent.threadId,
   };
 }
 
@@ -47,6 +48,7 @@ export function decodeAgent(value: unknown): RemoteAgent {
     !isString(value.preview) ||
     (value.updatedAt !== null && !isString(value.updatedAt)) ||
     !isString(value.avatarSeed) ||
+    (value.threadId !== undefined && value.threadId !== null && !isString(value.threadId)) ||
     (value.avatarHue !== null && !isAvatarHue(value.avatarHue))
   ) {
     throw new Error("The server returned an invalid agent.");
@@ -64,6 +66,7 @@ export function decodeAgent(value: unknown): RemoteAgent {
     avatarUrl: isString(value.avatarUrl) ? value.avatarUrl : null,
     avatarSeed: value.avatarSeed,
     avatarHue: value.avatarHue,
+    threadId: isString(value.threadId) ? value.threadId : null,
   };
 }
 

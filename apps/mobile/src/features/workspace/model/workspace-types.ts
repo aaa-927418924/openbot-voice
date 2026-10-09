@@ -39,6 +39,7 @@ import type { QueueEditRequest } from "@openbot/contracts/team-protocol/queue-ed
 import type { RemoteRecoveryStatus, RemoteTeamDirectoryClient } from "@openbot/team-client";
 import type { RemoteFileUpload } from "@openbot/team-client/remote-peer";
 import type { MobileChannelStore } from "@/features/channels/model/channel-store";
+import type { MobileLiveVoiceHost } from "@/features/live-voice/model/live-voice-host";
 import type { MobileConversationStore } from "./conversation-store";
 import type { LiveWorkspaceStore } from "./live-workspace-store";
 
@@ -79,6 +80,7 @@ export interface MobileAgent {
   avatarUrl?: string | null;
   avatarSeed: string;
   avatarHue: AvatarHue | null;
+  threadId?: string | null;
 }
 
 type ToggleAgentPinResult = "pinned" | "unpinned" | "error";
@@ -87,7 +89,7 @@ interface AddRemoteServerInput {
   inviteUrl: string;
 }
 
-export interface MobileWorkspaceContextValue {
+export interface MobileWorkspaceContextValue extends MobileLiveVoiceHost {
   respondToBrowserTakeover: (
     serverId: string,
     input: { requestId: string | number; decision: "complete" | "cancel" },
@@ -185,7 +187,7 @@ export interface MobileWorkspaceContextValue {
   deleteStoredFile: (fileId: string, serverId: string) => Promise<void>;
   /** Searches message text in the server's agent chats, one page from `cursor` or from the newest match. */
   searchMessages: (query: string, serverId: string, cursor?: string) => Promise<ConversationSearchPage>;
-  loadConversation: (agentId: string) => Promise<ConversationSnapshot>;
+  loadConversation: (agentId: string, serverId?: string | null, refresh?: boolean) => Promise<ConversationSnapshot>;
   canChangeConversationHistory: (serverId: string) => boolean;
   canClearConversationHistory: (agentId: string, serverId: string) => boolean;
   deleteConversationMessage: (

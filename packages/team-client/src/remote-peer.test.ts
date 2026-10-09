@@ -10,6 +10,7 @@ import {
   teamProtocolV2AuthenticationTranscript,
 } from "@openbot/contracts/team-protocol";
 import { CHANNEL_ROUTES } from "@openbot/contracts/team-protocol/channels-v1";
+import type { LiveVoiceWireEvent } from "@openbot/contracts/team-protocol/live-voice-v1";
 import { STORAGE_ROUTES } from "@openbot/contracts/team-protocol/storage-v1";
 import { encodeTeamProtocolV6WebRtcHttpResponse } from "@openbot/contracts/team-protocol/v6-webrtc-adapter";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -209,6 +210,40 @@ describe("browser remote peer recovery", () => {
     expect(network.updates.at(-1)).toMatchObject({ state: "online" });
     await network.runtime.dispose();
   });
+  it("forwards only a decoded Live Voice lifecycle event to the existing mobile event callback", async () => {
+    const received = deferred();
+    const onTeamEvent = vi.fn(async () => received.resolve());
+    const network = await setupNetwork({ onTeamEvent });
+    await network.connect();
+    const event: LiveVoiceWireEvent = {
+      type: "live-voice",
+      agentId: "agent-one",
+      threadId: "thread-one",
+      sessionId: "00000000-0000-4000-8000-000000000001",
+      status: "closed",
+    };
+    network
+      .connection()
+      .channel(TEAM_PROTOCOL_V2_CHANNELS.events)
+      .receive(
+        encodeTeamProtocolV2Frame({
+          version: 2,
+          type: "event",
+          sequence: 1,
+          payload: {
+            type: event.type,
+            agentId: event.agentId,
+            threadId: event.threadId,
+            sessionId: event.sessionId,
+            status: event.status,
+          },
+        }),
+      );
+    await received.promise;
+    expect(onTeamEvent).toHaveBeenCalledWith("host", event);
+    await network.runtime.dispose();
+  });
+
   it("rejects an invalid outgoing request without leaving a promise to fail on disconnect", async () => {
     const network = await setupNetwork();
     await network.connect();
@@ -1025,7 +1060,7 @@ function deferred() {
 async function setupNetwork(
   options: {
     onHostStreamData?: (data: string | ArrayBuffer) => void;
-    onTeamEvent?: (hostId: string, event: AgentEvent | TeamRealtimeEvent) => Promise<void>;
+    onTeamEvent?: (hostId: string, event: AgentEvent | TeamRealtimeEvent | LiveVoiceWireEvent) => Promise<void>;
     onAccountProfileChanged?: () => Promise<void>;
     onAccountServersChanged?: () => Promise<void>;
     onNetworkRestored?: () => Promise<void>;
