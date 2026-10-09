@@ -1,4 +1,4 @@
-import { isAndroid } from "@/shared/lib/platform";
+import { isAndroid } from "./platform";
 
 /** Expo Go on Android. The constants load only on Android, so iOS and tests do not load them here. */
 function expoGoOnAndroid(): boolean {
@@ -35,7 +35,11 @@ const restoreDomHostValues = `(function () {
   keep("$$EXPO_INITIAL_PROPS", function () { return injected().initialProps || { names: [], props: {} }; });
 })();
 true;`;
+/** Use when Android needs React Native WebView's native media permission handling. */
+export const androidReactNativeDomOptions = {
+  useExpoDOMWebView: false,
+  injectedJavaScriptBeforeContentLoaded: restoreDomHostValues,
+} as const;
+
 /** Spread into the `dom` prop of every DOM component. */
-export const expoGoDomOptions = useExpoDOMWebView
-  ? { useExpoDOMWebView }
-  : { useExpoDOMWebView, injectedJavaScriptBeforeContentLoaded: restoreDomHostValues };
+export const expoGoDomOptions = useExpoDOMWebView ? { useExpoDOMWebView } : androidReactNativeDomOptions;

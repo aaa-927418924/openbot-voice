@@ -29,6 +29,38 @@ export interface LiveVoiceStartResponse {
   sdpAnswer: string;
 }
 
+export type LiveVoiceDiagnosticStep =
+  | "startup"
+  | "microphone"
+  | "audio-context"
+  | "peer"
+  | "offer"
+  | "local-description"
+  | "ice"
+  | "host-request"
+  | "remote-description";
+
+export type LiveVoiceDiagnosticOutcome =
+  | "started"
+  | "ready"
+  | "waiting"
+  | "complete"
+  | "accepted"
+  | "rejected"
+  | "connected"
+  | "disconnected"
+  | "failed"
+  | "timeout"
+  | "permission-denied"
+  | "unsupported"
+  | "blocked";
+
+export interface LiveVoiceDiagnostic {
+  step: LiveVoiceDiagnosticStep;
+  outcome: LiveVoiceDiagnosticOutcome;
+  elapsedMs: number;
+}
+
 /** Plain data crosses the Expo DOM boundary; Error prototypes do not. */
 export type LiveVoiceStartActionResult =
   | { kind: "started"; response: LiveVoiceStartResponse }
@@ -40,6 +72,7 @@ export interface LiveVoiceWebActions {
   stopSession(input: LiveVoiceStopRequest): Promise<void>;
   sendText(input: LiveVoiceSendTextRequest): Promise<void>;
   onState(state: MobileLiveVoiceState): Promise<void>;
+  onDiagnostic?(diagnostic: LiveVoiceDiagnostic): Promise<void>;
 }
 
 interface ActiveVoiceSession {
@@ -69,6 +102,8 @@ interface ActiveVoiceSession {
   audioBlocked: boolean;
   microphoneBlocked: boolean;
   error?: string;
+  startedAtMs: number;
+  currentStep: LiveVoiceDiagnosticStep;
 }
 
 const EMPTY_LEVELS = () => Array<number>(16).fill(0);
@@ -104,6 +139,13 @@ export function createLiveVoiceWebController(actions: LiveVoiceWebActions) {
 
   const hostMayBeActive = (session: ActiveVoiceSession) =>
     session.hostAccepted || session.leaseUncertain || (session.startRequested && !session.startResultKnown);
+
+  const report = (session: ActiveVoiceSession, step: LiveVoiceDiagnosticStep, outcome: LiveVoiceDiagnosticOutcome) => {
+    session.currentStep = step;
+    const record = actions.onDiagnostic;
+    if (!record) return;
+    void record({ step, outcome, elapsedMs: Math.max(0, Date.now() - session.startedAtMs) }).catch(() => undefined);
+  };
 
   const publish = (
     session: ActiveVoiceSession,
@@ -258,16 +300,23 @@ export function createLiveVoiceWebController(actions: LiveVoiceWebActions) {
       muted: false,
       audioBlocked: false,
       microphoneBlocked: false,
+      startedAtMs: Date.now(),
+      currentStep: "startup",
     };
     active = session;
+    report(session, "startup", "started");
     publish(session, "connecting", false);
     const isCurrent = () => !disposed && active === session && !session.cancelled;
     // Cover microphone permission, SDP creation, ICE gathering and the host request. Previously
     // this deadline started only after all local media setup had completed.
     session.startTimer = window.setTimeout(() => {
-      if (isCurrent()) void requestStop(session, "unavailable");
+      if (isCurrent()) {
+        report(session, session.currentStep, "timeout");
+        void requestStop(session, "unavailable");
+      }
     }, START_TIMEOUT_MS);
     try {
+      report(session, "microphone", "waiting");
       if (!navigator.mediaDevices?.getUserMedia)
         throw new DOMException("Microphone is unavailable.", "NotSupportedError");
       session.stream = await navigator.mediaDevices.getUserMedia({
@@ -277,8 +326,10 @@ export function createLiveVoiceWebController(actions: LiveVoiceWebActions) {
         for (const track of session.stream.getTracks()) track.stop();
         return;
       }
+      report(session, "microphone", "ready");
       const peer = new RTCPeerConnection();
       session.peer = peer;
+      report(session, "peer", "ready");
       for (const track of session.stream.getAudioTracks()) track.enabled = !session.muted;
 
       const AudioContextConstructor = window.AudioContext;
@@ -288,8 +339,10 @@ export function createLiveVoiceWebController(actions: LiveVoiceWebActions) {
           await session.audioContext.resume();
         } catch {
           session.audioBlocked = true;
+          report(session, "audio-context", "blocked");
         }
         if (!isCurrent()) return;
+        if (!session.audioBlocked) report(session, "audio-context", "ready");
         session.microphoneAnalyser = session.audioContext.createAnalyser();
         session.microphoneAnalyser.fftSize = 128;
         session.audioContext.createMediaStreamSource(session.stream).connect(session.microphoneAnalyser);
@@ -334,6 +387,7 @@ export function createLiveVoiceWebController(actions: LiveVoiceWebActions) {
       peer.onconnectionstatechange = () => {
         if (!isCurrent()) return;
         if (peer.connectionState === "connected") {
+          report(session, "peer", "connected");
           if (session.startTimer !== undefined) window.clearTimeout(session.startTimer);
           if (session.connectedTimer !== undefined) window.clearTimeout(session.connectedTimer);
           session.startTimer = undefined;
@@ -341,19 +395,27 @@ export function createLiveVoiceWebController(actions: LiveVoiceWebActions) {
           session.startedAt ??= Date.now();
           publish(session, "live", true);
         } else if (["failed", "disconnected", "closed"].includes(peer.connectionState)) {
+          report(session, "peer", peer.connectionState === "disconnected" ? "disconnected" : "failed");
           void requestStop(session, "unavailable");
         }
       };
 
+      report(session, "offer", "waiting");
       const offer = await peer.createOffer();
+      report(session, "offer", "ready");
+      report(session, "local-description", "waiting");
       await peer.setLocalDescription(offer);
+      report(session, "local-description", "ready");
+      report(session, "ice", "waiting");
       await waitForIce(peer);
+      report(session, "ice", "complete");
       if (!isCurrent()) return;
       const sdpOffer = peer.localDescription?.sdp;
       if (!sdpOffer) throw new Error("Live voice did not create an SDP offer.");
 
       session.startRequested = true;
       publish(session, "connecting", hostMayBeActive(session));
+      report(session, "host-request", "started");
       const outcome = await actions.startSession({
         serverId: origin.target.serverId,
         agentId: origin.target.agentId,
@@ -364,6 +426,7 @@ export function createLiveVoiceWebController(actions: LiveVoiceWebActions) {
       });
       session.startResultKnown = true;
       if (outcome.kind === "rejected") {
+        report(session, "host-request", "rejected");
         session.hostAccepted = false;
         session.leaseUncertain = false;
         session.stopSucceeded = true;
@@ -378,8 +441,10 @@ export function createLiveVoiceWebController(actions: LiveVoiceWebActions) {
       }
       if (outcome.kind !== "started") {
         session.leaseUncertain = true;
+        report(session, "host-request", "failed");
         throw new Error("Live Voice start outcome is uncertain.");
       }
+      report(session, "host-request", "accepted");
       const result = outcome.response;
       session.hostAccepted = true;
       session.hostSessionId = result.sessionId;
@@ -388,7 +453,9 @@ export function createLiveVoiceWebController(actions: LiveVoiceWebActions) {
         return;
       }
       if (result.sessionId !== origin.sessionId) throw new Error("Live voice session identity changed.");
+      report(session, "remote-description", "waiting");
       await peer.setRemoteDescription({ type: "answer", sdp: result.sdpAnswer });
+      report(session, "remote-description", "ready");
       if (!isCurrent()) {
         await stopLateAcceptedSession(session, result.sessionId);
         return;
@@ -404,6 +471,7 @@ export function createLiveVoiceWebController(actions: LiveVoiceWebActions) {
         error instanceof DOMException && ["NotAllowedError", "SecurityError"].includes(error.name);
       session.microphoneBlocked = microphoneBlocked;
       const failure = microphoneBlocked ? "microphone" : "unavailable";
+      report(session, session.currentStep, diagnosticFailureOutcome(error));
       if (session.startRequested) {
         if (!session.startResultKnown) {
           session.startResultKnown = true;
@@ -502,6 +570,15 @@ async function waitForIce(peer: RTCPeerConnection): Promise<void> {
     }, START_TIMEOUT_MS);
     peer.addEventListener("icegatheringstatechange", onChange);
   });
+}
+
+function diagnosticFailureOutcome(error: unknown): "failed" | "timeout" | "permission-denied" | "unsupported" {
+  if (error instanceof DOMException) {
+    if (["NotAllowedError", "SecurityError"].includes(error.name)) return "permission-denied";
+    if (["NotSupportedError", "NotFoundError"].includes(error.name)) return "unsupported";
+    if (error.name === "TimeoutError") return "timeout";
+  }
+  return "failed";
 }
 
 function readLevels(analyser: AnalyserNode | undefined, muted: boolean): number[] {

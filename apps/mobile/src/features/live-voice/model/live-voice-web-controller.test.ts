@@ -126,6 +126,34 @@ afterEach(() => {
 });
 
 describe("Live Voice WebRTC controller lifecycle", () => {
+  it("reports the failed setup stage without exposing the browser error message", async () => {
+    installWebRtcStubs();
+    const onDiagnostic = vi.fn(async () => {});
+    vi.stubGlobal("navigator", {
+      mediaDevices: {
+        getUserMedia: vi.fn(async () => {
+          throw new DOMException("private browser detail", "NotAllowedError");
+        }),
+      },
+    });
+    const controller = createLiveVoiceWebController({
+      startSession: vi.fn(async () => ({ kind: "rejected" as const })),
+      stopSession: vi.fn(async () => {}),
+      sendText: vi.fn(async () => {}),
+      onState: vi.fn(async (_state: MobileLiveVoiceState) => {}),
+      onDiagnostic,
+    });
+
+    await controller.start(origin);
+
+    expect(onDiagnostic).toHaveBeenCalledWith({
+      step: "microphone",
+      outcome: "permission-denied",
+      elapsedMs: expect.any(Number),
+    });
+    expect(JSON.stringify(onDiagnostic.mock.calls)).not.toContain("private browser detail");
+  });
+
   it("ends startup when microphone permission never resolves and releases a late stream", async () => {
     const microphone = deferred<FakeStream>();
     let startupTimeout: (() => void) | undefined;

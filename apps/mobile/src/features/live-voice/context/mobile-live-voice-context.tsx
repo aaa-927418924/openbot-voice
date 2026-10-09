@@ -10,6 +10,8 @@ import {
   useState,
 } from "react";
 import { Platform, View } from "react-native";
+import { supportLog } from "@/features/support/model/support-log";
+import { androidReactNativeDomOptions } from "@/shared/lib/expo-go-dom";
 import { useAppForeground } from "@/shared/lib/use-app-foreground";
 import LiveVoiceBridge from "../components/live-voice-bridge.dom";
 import {
@@ -29,6 +31,7 @@ import {
 } from "../model/live-voice-command";
 import { isMobileLiveVoiceStartRejectedError, type MobileLiveVoiceHost } from "../model/live-voice-host";
 import type {
+  LiveVoiceDiagnostic,
   LiveVoiceSendTextRequest,
   LiveVoiceStartActionResult,
   LiveVoiceStartRequest,
@@ -113,6 +116,7 @@ export function MobileLiveVoiceProvider({
   const start = useCallback(
     (target: MobileLiveVoiceTarget) => {
       if (!canStart(target)) return;
+      supportLog.add("info", "connection", "Live Voice probe: native start accepted");
       const nextOrigin = { target, sessionId: Crypto.randomUUID() };
       originRef.current = nextOrigin;
       setOrigin(nextOrigin);
@@ -127,6 +131,11 @@ export function MobileLiveVoiceProvider({
         origin: nextOrigin,
       };
       void mailbox.send(command).then((result) => {
+        supportLog.add(
+          "info",
+          "connection",
+          `Live Voice probe: command ${result.ok ? "acknowledged" : (result.error ?? "failed")}`,
+        );
         if (result.ok || originRef.current?.sessionId !== nextOrigin.sessionId) return;
         if (result.error === "timeout") {
           // Best effort: the bridge may have started the provider request before its reply stalled.
@@ -186,6 +195,13 @@ export function MobileLiveVoiceProvider({
     [publish],
   );
 
+  const onBridgeDiagnostic = useCallback(async ({ step, outcome, elapsedMs }: LiveVoiceDiagnostic) => {
+    const level = ["failed", "timeout", "rejected", "permission-denied", "unsupported"].includes(outcome)
+      ? "warn"
+      : "info";
+    supportLog.add(level, "connection", `Live Voice ${step}: ${outcome} (${elapsedMs} ms)`);
+  }, []);
+
   const onCommandResult = useCallback(
     async (result: MobileLiveVoiceCommandResult) => {
       mailbox.receive(result);
@@ -214,17 +230,21 @@ export function MobileLiveVoiceProvider({
         serverOnline &&
         hostRef.current.supportsLiveVoice(input.serverId, Boolean(input.channelId)),
     );
-    if (
-      !isCurrentLiveVoiceStartAction(currentOrigin, input, {
-        mounted: mountedRef.current,
-        foreground: actionContext.foreground,
-        activeServerId: actionContext.activeServerId,
-        serverOnline,
-        sessionPhase: stateRef.current.phase,
-        hostSessionActive: stateRef.current.hostSessionActive,
-        supported,
-      })
-    ) {
+    const allowed = isCurrentLiveVoiceStartAction(currentOrigin, input, {
+      mounted: mountedRef.current,
+      foreground: actionContext.foreground,
+      activeServerId: actionContext.activeServerId,
+      serverOnline,
+      sessionPhase: stateRef.current.phase,
+      hostSessionActive: stateRef.current.hostSessionActive,
+      supported,
+    });
+    if (!allowed) {
+      supportLog.add(
+        "warn",
+        "connection",
+        `Live Voice start rejected locally (mounted=${mountedRef.current}, foreground=${actionContext.foreground}, selected=${actionContext.activeServerId === input.serverId}, online=${serverOnline}, supported=${supported}, phase=${stateRef.current.phase}, active=${stateRef.current.hostSessionActive})`,
+      );
       return { kind: "rejected" };
     }
     try {
@@ -291,7 +311,21 @@ export function MobileLiveVoiceProvider({
           commands={commands}
           currentSessionId={origin?.sessionId ?? null}
           dom={{
-            useExpoDOMWebView: Platform.OS !== "android",
+            ...(Platform.OS === "android" ? androidReactNativeDomOptions : {}),
+            webviewDebuggingEnabled: true,
+            injectedJavaScript: `window.ReactNativeWebView?.postMessage(JSON.stringify({type:"openbot-voice-probe",data:{stage:"page-finished",hasProps:typeof window.$$EXPO_INITIAL_PROPS!=="undefined",hasBridge:typeof window.ReactNativeWebView!=="undefined"}}));true;`,
+            onLoadEnd: () => supportLog.add("info", "connection", "Live Voice probe: WebView load ended"),
+            onError: () => supportLog.add("warn", "connection", "Live Voice probe: WebView load error"),
+            onRenderProcessGone: () => supportLog.add("warn", "connection", "Live Voice probe: WebView renderer gone"),
+            onMessage: (event) => {
+              try {
+                const message = JSON.parse(event.nativeEvent.data);
+                if (message?.type === "openbot-voice-probe")
+                  supportLog.add("info", "connection", `Live Voice probe: ${JSON.stringify(message.data)}`);
+              } catch {
+                supportLog.add("warn", "connection", "Live Voice probe: invalid WebView message");
+              }
+            },
             mediaPlaybackRequiresUserAction: false,
             containerStyle: {
               flex: 0,
@@ -307,6 +341,7 @@ export function MobileLiveVoiceProvider({
             style: { flex: 0, height: 1, width: 1 },
           }}
           onCommandResult={onCommandResult}
+          onDiagnostic={onBridgeDiagnostic}
           onState={onBridgeState}
           sendText={sendSessionText}
           startSession={startSession}

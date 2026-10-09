@@ -23,9 +23,10 @@ export default function LiveVoiceBridge({
   stopSession,
   sendText,
   onState,
+  onDiagnostic,
 }: LiveVoiceBridgeProps) {
-  const actions = useRef({ startSession, stopSession, sendText, onState, onCommandResult });
-  actions.current = { startSession, stopSession, sendText, onState, onCommandResult };
+  const actions = useRef({ startSession, stopSession, sendText, onState, onDiagnostic, onCommandResult });
+  actions.current = { startSession, stopSession, sendText, onState, onDiagnostic, onCommandResult };
   const controllerRef = useRef<ReturnType<typeof createLiveVoiceWebController> | null>(null);
   if (!controllerRef.current) {
     controllerRef.current = createLiveVoiceWebController({
@@ -33,6 +34,7 @@ export default function LiveVoiceBridge({
       stopSession: (input) => actions.current.stopSession(input),
       sendText: (input) => actions.current.sendText(input),
       onState: (state) => actions.current.onState(state),
+      onDiagnostic: (diagnostic) => actions.current.onDiagnostic?.(diagnostic) ?? Promise.resolve(),
     });
   }
   const controller = controllerRef.current;
