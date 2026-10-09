@@ -386,6 +386,7 @@ it("instruments message commands without sending their contents or changing the 
       kind: "remote",
       state: "online",
       initialConnectionPending: false,
+      initialAgentListLoaded: true,
       connectionMessage: null,
       address: null,
       accent: "",

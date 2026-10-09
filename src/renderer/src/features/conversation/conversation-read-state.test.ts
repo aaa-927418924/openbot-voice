@@ -10,6 +10,7 @@ import {
   decideAgentAutoRead,
   latestIncomingConversationMessage,
   readStateForMessages,
+  retainedAutoReadState,
 } from "./conversation-read-state";
 
 describe("readStateForMessages", () => {
@@ -148,7 +149,7 @@ describe("decideAgentAutoRead", () => {
     ).toMatchObject({ kind: "deferred" });
   });
 
-  it("reads that same unread once the user opens the conversation, leaving the badge to main", () => {
+  it("requests a read once the user opens the conversation", () => {
     expect(
       decideAgentAutoRead({
         messageId: "latest",
@@ -158,10 +159,10 @@ describe("decideAgentAutoRead", () => {
         explicitlyOpened: true,
         retryingRead: false,
       }),
-    ).toMatchObject({ kind: "mark", optimisticState: null });
+    ).toEqual({ kind: "mark" });
   });
 
-  it("clears the badge ahead of main only when the caller says the unread is already seen", () => {
+  it("does not clear the badge before the host confirms the read", () => {
     expect(
       decideAgentAutoRead({
         messageId: "latest",
@@ -171,11 +172,8 @@ describe("decideAgentAutoRead", () => {
         explicitlyOpened: false,
         retryingRead: false,
       }),
-    ).toMatchObject({
-      kind: "mark",
-      optimisticState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "latest" },
-      rollbackState: unread,
-    });
+    ).toEqual({ kind: "mark" });
+    expect(retainedAutoReadState({ messageId: "latest", status: "pending" })).toBeNull();
   });
 });
 

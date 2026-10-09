@@ -179,6 +179,7 @@ function server(id: string, name: string, role: MobileServer["role"]): MobileSer
     kind: "remote",
     state: "online",
     initialConnectionPending: false,
+    initialAgentListLoaded: true,
     connectionMessage: null,
     address: null,
     accent: "blue",

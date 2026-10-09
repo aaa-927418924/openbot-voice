@@ -352,38 +352,24 @@ const Conversation = createSimpleContext({
       );
     }
 
-    function refreshAgentReadStateAfterFailure(
-      agentId: string,
-      messageId: string,
-      serverId: string,
-      minimumRevision: number,
-      fallbackState: ConversationReadState | null,
-    ): void {
+    function refreshAgentReadStateAfterFailure(agentId: string, serverId: string, minimumRevision: number): void {
       const trackingKey = agentConversationKey(serverId, agentId);
       const conversationAtStart = conversations[agentId];
-      const applyFallback = () => {
-        if (!scopeIsCurrent() || autoReadAgentMessages.has(trackingKey) || !fallbackState) return;
-        const latest = conversations[agentId]?.read;
-        if (latest?.unreadCount === 0 && latest.throughMessageId === messageId) {
-          applyConversationReadState(agentId, fallbackState);
-        }
-      };
       void conversationPort()
         .agent.readConversationPage({ agentId, anchor: { type: "latest" }, limit: 1 }, serverId)
         .then((page) => {
           if (
             !scopeIsCurrent() ||
             conversations[agentId] !== conversationAtStart ||
-            autoReadAgentMessages.has(trackingKey) ||
+            autoReadAgentMessages.get(trackingKey)?.status === "pending" ||
             page.revision < minimumRevision ||
             !page.readState
           ) {
-            applyFallback();
             return;
           }
           applyConversationReadState(agentId, page.readState);
         })
-        .catch(applyFallback);
+        .catch(() => undefined);
     }
 
     function autoMarkAgentMessageRead(agentId: string, messageId: string, optimisticallyClearUnread = false): void {
@@ -406,9 +392,7 @@ const Conversation = createSimpleContext({
         return;
       }
       agentChatsToRetryRead.delete(trackingKey);
-      const optimisticState = decision.optimisticState;
-      autoReadAgentMessages.set(trackingKey, { messageId, status: "pending", optimisticState });
-      if (optimisticState) applyConversationReadState(agentId, optimisticState);
+      autoReadAgentMessages.set(trackingKey, { messageId, status: "pending" });
       void markAgentMessagesRead(agentId, messageId, serverId, (state) => {
         if (autoReadAgentMessages.get(trackingKey)?.messageId !== messageId) return;
         autoReadAgentMessages.set(trackingKey, { messageId, status: "succeeded", state });
@@ -417,14 +401,8 @@ const Conversation = createSimpleContext({
         autoReadAgentMessages.delete(trackingKey);
         agentChatsToRetryRead.add(trackingKey);
         if (!scopeIsCurrent()) return;
-        refreshAgentReadStateAfterFailure(
-          agentId,
-          messageId,
-          serverId,
-          conversations[agentId]?.revision ?? -1,
-          decision.rollbackState,
-        );
         appendUiError(agentId, error, currentText().t("chat.errorStatus.readState"), serverId);
+        refreshAgentReadStateAfterFailure(agentId, serverId, conversations[agentId]?.revision ?? -1);
       });
     }
 
@@ -874,9 +852,11 @@ const Conversation = createSimpleContext({
                 latestVisibleMessageId !== boundary &&
                 latestVisibleMessageId !== visibleMessageIdAtStart
               ) {
-                void markAgentMessagesRead(agentId, latestVisibleMessageId, serverId).catch((error) =>
-                  appendUiError(agentId, error, currentText().t("chat.errorStatus.readState"), serverId),
-                );
+                void markAgentMessagesRead(agentId, latestVisibleMessageId, serverId).catch((error) => {
+                  appendUiError(agentId, error, currentText().t("chat.errorStatus.readState"), serverId);
+                  agentChatsToRetryRead.add(requestKey);
+                  refreshAgentReadStateAfterFailure(agentId, serverId, conversations[agentId]?.revision ?? -1);
+                });
               }
             });
           }

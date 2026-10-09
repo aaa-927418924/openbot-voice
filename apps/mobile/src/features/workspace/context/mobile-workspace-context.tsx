@@ -145,6 +145,7 @@ const EMPTY_SERVER: MobileServer = {
   kind: "local",
   state: "connecting",
   initialConnectionPending: true,
+  initialAgentListLoaded: false,
   connectionMessage: null,
   address: null,
   accent: serverAccent("unavailable"),
@@ -292,6 +293,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
             kind: serverKind(host.hostId, session.host?.hostId),
             state: previous?.state ?? "unknown",
             initialConnectionPending: previous?.initialConnectionPending ?? true,
+            initialAgentListLoaded: previous?.initialAgentListLoaded ?? false,
             connectionMessage: previous?.connectionMessage ?? null,
             recoveryStatus: previous?.recoveryStatus,
             address: null,
@@ -519,11 +521,16 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
       serverCapabilities.current.set(serverId, compatibility.capabilities);
       channelStore.configure(serverId, compatibility.capabilities);
       void channelStore.refresh(serverId);
-      if (compatibility.capabilities.includes("sidebar-layout")) {
+
+      const loadSidebarLayout = async () => {
+        if (!compatibility.capabilities.includes("sidebar-layout")) {
+          if (context.isCurrent())
+            setSidebarByServer((current) => ({ ...current, [serverId]: { layout: null, error: null } }));
+          return;
+        }
         try {
           const layout = await client.request("GET", TEAM_API_ROUTES.sidebarLayout.state, decodeSidebarLayout);
-          if (!context.isCurrent()) return;
-          applySidebarLayout(serverId, layout);
+          if (context.isCurrent()) applySidebarLayout(serverId, layout);
         } catch (error) {
           if (!context.isCurrent()) return;
           const text = currentText();
@@ -536,15 +543,10 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
             },
           }));
         }
-      } else {
-        setSidebarByServer((current) => ({ ...current, [serverId]: { layout: null, error: null } }));
-      }
-      context.stage = "agents";
-      const summaries = await client.request("GET", TEAM_API_ROUTES.agents.all, decodeAgentSummaries);
-      if (!context.isCurrent()) return;
-      replaceServerAgents(serverId, summaries);
-      context.stage = "reads";
-      await runTeamEffect(
+      };
+      void loadSidebarLayout();
+
+      void runTeamEffect(
         readRefresh.refresh(
           serverId,
           () =>
@@ -554,28 +556,42 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
           applyConversationReads,
           () => context.isCurrent() && !removedServers.current.has(serverId),
         ),
-      );
+      ).catch(() => {
+        if (context.isCurrent()) supportLog.add("warn", "connection", `${serverId} initial read-state refresh failed`);
+      });
+
+      context.stage = "agents";
+      const summaries = await client.request("GET", TEAM_API_ROUTES.agents.all, decodeAgentSummaries);
       if (!context.isCurrent()) return;
-      context.stage = "conversations";
-      const ordered = [...summaries].sort(
-        (a, b) => Number(conversationStore.isObserved(b.id)) - Number(conversationStore.isObserved(a.id)),
+      replaceServerAgents(serverId, summaries);
+      setServers((current) =>
+        current.map((server) => (server.id === serverId ? { ...server, initialAgentListLoaded: true } : server)),
       );
-      for (const agent of ordered) {
-        if (!context.isCurrent()) return;
-        if (!conversationStore.get(agent.id)) continue;
-        await conversationStore.loadLatest(
-          agent.id,
-          () =>
-            client.request(
-              "GET",
-              `${TEAM_API_ROUTES.agent.conversationPage(agent.id)}?limit=50`,
-              decodeConversationPage,
-            ),
-          context.isCurrent,
-          true,
-        );
-      }
       context.stage = "connection";
+
+      const loadObservedConversations = async () => {
+        const ordered = [...summaries].sort(
+          (a, b) => Number(conversationStore.isObserved(b.id)) - Number(conversationStore.isObserved(a.id)),
+        );
+        for (const agent of ordered) {
+          if (!context.isCurrent()) return;
+          if (!conversationStore.get(agent.id)) continue;
+          await conversationStore.loadLatest(
+            agent.id,
+            () =>
+              client.request(
+                "GET",
+                `${TEAM_API_ROUTES.agent.conversationPage(agent.id)}?limit=50`,
+                decodeConversationPage,
+              ),
+            context.isCurrent,
+            true,
+          );
+        }
+      };
+      void loadObservedConversations().catch(() => {
+        if (context.isCurrent()) supportLog.add("warn", "connection", `${serverId} cached conversation refresh failed`);
+      });
     },
     [
       replaceServerAgents,
@@ -900,9 +916,8 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
       if (!activeServerId) return;
       const isCurrentRead = readRefresh.invalidate(activeServerId);
       const generation = loadGeneration.current;
-      liveState.update("unreadAgentIds", (current) =>
-        visibleMessageId === null ? [...new Set([...current, agentId])] : current.filter((id) => id !== agentId),
-      );
+      if (visibleMessageId === null)
+        liveState.update("unreadAgentIds", (current) => [...new Set([...current, agentId])]);
       const write = (readWrites.current.get(agentId) ?? Promise.resolve())
         .then(async () => {
           if (generation !== loadGeneration.current) return;
@@ -1147,6 +1162,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
             kind: "remote",
             state: "unknown",
             initialConnectionPending: true,
+            initialAgentListLoaded: false,
             connectionMessage: null,
             address: null,
             accent: serverAccent(host.hostId),

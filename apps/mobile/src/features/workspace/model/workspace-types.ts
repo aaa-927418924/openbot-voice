@@ -55,6 +55,8 @@ export interface MobileServer {
   kind: MobileServerKind;
   state: MobileServerState;
   initialConnectionPending: boolean;
+  /** The host returned its initial agent list, including a valid empty list. */
+  initialAgentListLoaded: boolean;
   connectionMessage: string | null;
   recoveryStatus?: RemoteRecoveryStatus;
   address: string | null;

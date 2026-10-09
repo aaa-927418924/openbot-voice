@@ -131,6 +131,7 @@ const host: MobileServer = {
   state: "online",
   kind: "remote",
   initialConnectionPending: false,
+  initialAgentListLoaded: true,
   connectionMessage: null,
   address: null,
   accent: "",

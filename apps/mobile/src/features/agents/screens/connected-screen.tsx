@@ -194,7 +194,7 @@ export function ConnectedScreen() {
   const hasSelectedServer = servers.some((server) => server.id === activeServer.id);
   const showLoader =
     (serverDirectoryState === "loading" && servers.length === 0) ||
-    (hasSelectedServer && activeServer.initialConnectionPending);
+    (hasSelectedServer && activeServer.initialConnectionPending && !activeServer.initialAgentListLoaded);
   const listReady = !showLoader && !isLoaderPresent;
   // Connecting to a server continues while the user reads a chat, so the label only
   // belongs to this screen while it is the route on top.

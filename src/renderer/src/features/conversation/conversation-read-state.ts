@@ -18,12 +18,11 @@ import type { AgentMessage } from "@openbot/ui/data";
 
 /**
  * What the renderer has already asked main to mark read, per conversation. A
- * pending entry carries the state it optimistically painted so a repeat for the
- * same message repaints it instead of asking again; a succeeded entry carries
- * what main actually returned.
+ * pending entries prevent duplicate writes for the same message. Their state
+ * does not replace the server state until the acknowledgement arrives.
  */
 export type AgentAutoReadEntry =
-  | { messageId: string; status: "pending"; optimisticState: ConversationReadState | null }
+  | { messageId: string; status: "pending" }
   | { messageId: string; status: "succeeded"; state: ConversationReadState };
 
 /**
@@ -162,41 +161,29 @@ export function preserveKnownDirectUnread(
   };
 }
 
-/**
- * The read state an in-flight or finished mark-read still stands behind: what
- * main returned if it answered, otherwise what the renderer painted ahead of it.
- */
+/** Only an acknowledged read may override a read state returned by the host. */
 export function retainedAutoReadState(entry: AgentAutoReadEntry | undefined): ConversationReadState | null {
   if (!entry) return null;
-  return entry.status === "succeeded" ? entry.state : entry.optimisticState;
+  return entry.status === "succeeded" ? entry.state : null;
 }
 
 /** What to do about a message the renderer would like to mark read. */
 export type AgentAutoReadDecision =
-  /** Already asked for this message: repaint what that ask stands behind. */
+  /** Already asked for this message: retain only a state the host confirmed. */
   | { readonly kind: "retained"; readonly state: ConversationReadState | null }
   /** Unread the user has not acknowledged: leave the badge alone. */
   | { readonly kind: "deferred" }
-  /** Ask main, painting `optimisticState` now and restoring `rollbackState` if it fails. */
-  | {
-      readonly kind: "mark";
-      readonly optimisticState: ConversationReadState | null;
-      readonly rollbackState: ConversationReadState | null;
-    };
+  /** Ask the host to persist the read boundary. */
+  | { readonly kind: "mark" };
 
 /**
  * Whether opening a conversation clears its badge.
  *
  * Unread the user never acknowledged survives: arriving at a conversation that
  * already had unread messages does not silently read them. Three things
- * override that - the caller clearing optimistically (a page that arrived while
- * the conversation was open and focused), the user having opened this
- * conversation themselves, and a retry of a mark-read that failed earlier.
- *
- * `rollbackState` is non-null exactly when `optimisticState` is, because there
- * is nothing to restore unless something was painted; when the conversation had
- * unread that the caller cleared anyway, restoring means putting back the count
- * that was there, and otherwise it means putting back a single unread message.
+ * override that - a page that arrived while the conversation was open and
+ * focused, the user having opened this conversation themselves, and a retry
+ * of a mark-read that failed earlier.
  */
 export function decideAgentAutoRead(input: {
   readonly messageId: string;
@@ -215,11 +202,7 @@ export function decideAgentAutoRead(input: {
     return { kind: "deferred" };
   }
   if (!current || (hasUnread && !input.optimisticallyClearUnread)) {
-    return { kind: "mark", optimisticState: null, rollbackState: null };
+    return { kind: "mark" };
   }
-  return {
-    kind: "mark",
-    optimisticState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: input.messageId },
-    rollbackState: hasUnread ? current : { ...current, unreadCount: 1, firstUnreadMessageId: input.messageId },
-  };
+  return { kind: "mark" };
 }

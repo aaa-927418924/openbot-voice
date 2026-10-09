@@ -82,6 +82,13 @@ let sidebarSupported = false;
 let hostAdminSupported = false;
 let conversationHistorySupported = false;
 let identityFailure: Error | null = null;
+let initialConversationReads: Record<
+  string,
+  { unreadCount: number; firstUnreadMessageId: string | null; throughMessageId: string | null }
+> = {};
+let pendingConversationRead: Promise<unknown> | null = null;
+let pendingConversationReadsRequest: Promise<unknown> | null = null;
+let emptyInitialAgentList = false;
 const initialLayout: SidebarLayoutSnapshot = {
   revision: 1,
   sections: [
@@ -141,16 +148,18 @@ vi.mock("../components/remote-team-transport", () => ({
             });
           if (path === TEAM_API_ROUTES.agents.all)
             return decode(
-              ["working", "waiting"].map((id) => ({
-                id,
-                name: id,
-                title: "",
-                description: "",
-                preview: "",
-                updatedAt: null,
-                avatarSeed: "first-bot",
-                avatarHue: null,
-              })),
+              emptyInitialAgentList
+                ? []
+                : ["working", "waiting"].map((id) => ({
+                    id,
+                    name: id,
+                    title: "",
+                    description: "",
+                    preview: "",
+                    updatedAt: null,
+                    avatarSeed: "first-bot",
+                    avatarHue: null,
+                  })),
             );
           if (path === DELETE_CONVERSATION_MESSAGE_ROUTE || path === CLEAR_CONVERSATION_HISTORY_ROUTE)
             return decode({});
@@ -164,7 +173,12 @@ vi.mock("../components/remote-team-transport", () => ({
               references: {},
               pageInfo: { hasOlder: false, olderCursor: null },
             } satisfies ConversationPage);
-          if (path === TEAM_API_ROUTES.agents.conversationReads) return decode({});
+          if (path === TEAM_API_ROUTES.agents.conversationReads)
+            return decode(
+              pendingConversationReadsRequest ? await pendingConversationReadsRequest : initialConversationReads,
+            );
+          if (path === TEAM_API_ROUTES.agent.conversationRead("working") && pendingConversationRead)
+            return decode(await pendingConversationRead);
           if (path === HOST_ADMIN_ROUTES.identity) {
             if (identityFailure) throw identityFailure;
             return decode({});
@@ -198,6 +212,10 @@ afterEach(async () => {
   hostAdminSupported = false;
   conversationHistorySupported = false;
   identityFailure = null;
+  initialConversationReads = {};
+  pendingConversationRead = null;
+  pendingConversationReadsRequest = null;
+  emptyInitialAgentList = false;
   Object.assign(host, { name: "Desktop", logoKey: null, role: "owner" });
   sidebarRequest.mockReset();
   sidebarRequest.mockResolvedValue(initialLayout);
@@ -493,6 +511,52 @@ it("capability-gates direct history operations on older hosts", async () => {
     "Conversation history changes are not supported by this connection.",
   );
   expect(sent.some((item) => item.path === DELETE_CONVERSATION_MESSAGE_ROUTE)).toBe(false);
+});
+
+it("keeps a message unread until the host acknowledges the read", async () => {
+  initialConversationReads = {
+    working: { unreadCount: 1, firstUnreadMessageId: "message-one", throughMessageId: null },
+  };
+  const read = Promise.withResolvers<{
+    unreadCount: number;
+    firstUnreadMessageId: string | null;
+    throughMessageId: string | null;
+  }>();
+  pendingConversationRead = read.promise;
+  await mountWorkspace();
+  await vi.waitFor(() => expect(current.liveState.get().unreadAgentIds).toContain("working"));
+
+  await act(async () => current.markAgentRead("working", "message-one"));
+  expect(current.liveState.get().unreadAgentIds).toContain("working");
+
+  await act(async () => read.resolve({ unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "message-one" }));
+  await vi.waitFor(() => expect(current.liveState.get().unreadAgentIds).not.toContain("working"));
+});
+
+it("shows agents before optional startup reads and layout finish", async () => {
+  sidebarSupported = true;
+  const layout = Promise.withResolvers<SidebarLayoutSnapshot>();
+  const reads = Promise.withResolvers<unknown>();
+  sidebarRequest.mockImplementationOnce(() => layout.promise);
+  pendingConversationReadsRequest = reads.promise;
+
+  await mountWorkspace();
+  await vi.waitFor(() => expect(current.activeServer.initialAgentListLoaded).toBe(true));
+  expect(current.activeAgents.map((agent) => agent.id)).toEqual(["working", "waiting"]);
+  expect(sent.some((item) => item.path === TEAM_API_ROUTES.sidebarLayout.state)).toBe(true);
+  expect(sent.some((item) => item.path === TEAM_API_ROUTES.agents.conversationReads)).toBe(true);
+
+  await act(async () => {
+    layout.resolve(initialLayout);
+    reads.resolve({});
+  });
+});
+
+it("treats an empty agent summary response as loaded", async () => {
+  emptyInitialAgentList = true;
+  await mountWorkspace();
+  await vi.waitFor(() => expect(current.activeServer.initialAgentListLoaded).toBe(true));
+  expect(current.activeAgents).toEqual([]);
 });
 
 it("uses existing direct history routes and refreshes the conversation and sidebar preview", async () => {

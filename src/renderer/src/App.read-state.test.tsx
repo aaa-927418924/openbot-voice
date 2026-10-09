@@ -429,11 +429,18 @@ describe("OpenBot connected desktop shell", () => {
     },
   );
 
-  it("keeps a successful realtime read when a pending reload resolves later", async () => {
+  it("keeps unread visible until the host confirms a realtime read", async () => {
     let resolveInitialPage: ((page: ConversationPage) => void) | undefined;
+    let resolveRead: ((state: ConversationReadState) => void) | undefined;
     vi.mocked(window.openbot.agent.listConversationReads).mockResolvedValueOnce({
       chief: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
     });
+    vi.mocked(window.openbot.agent.markConversationRead).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveRead = resolve;
+        }),
+    );
     vi.mocked(window.openbot.agent.readConversationPage).mockImplementationOnce(
       () =>
         new Promise((resolve) => {
@@ -449,6 +456,9 @@ describe("OpenBot connected desktop shell", () => {
 
     emitAgentEvent?.({ type: "conversation-page", page: unreadPage });
     await waitFor(() => expect(window.openbot.agent.markConversationRead).toHaveBeenCalledOnce());
+    expect(screen.getByRole("status", { name: "1 new message" })).toBeInTheDocument();
+
+    resolveRead?.({ unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "reply-reload-race" });
     await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
 
     resolveInitialPage?.(unreadPage);

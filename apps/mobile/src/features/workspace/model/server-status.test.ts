@@ -12,6 +12,7 @@ const server: MobileServer = {
   kind: "local",
   state: "online",
   initialConnectionPending: false,
+  initialAgentListLoaded: true,
   connectionMessage: null,
   address: null,
   accent: "",
