@@ -155,10 +155,10 @@ describe("CodexLiveVoiceAdapter", () => {
             excludeTmpdirEnvVar: false,
             excludeSlashTmp: false,
           },
-          additionalContext: [
-            { key: "openbot_live_voice_spoken_context", kind: "untrusted", text: "[]" },
-            { key: "openbot_live_voice_typed_dispatch", kind: "application", text: "Perform the typed request." },
-          ],
+          additionalContext: {
+            openbot_live_voice_spoken_context: { kind: "untrusted", value: "[]" },
+            openbot_live_voice_typed_dispatch: { kind: "application", value: "Perform the typed request." },
+          },
         }),
       ),
     ).resolves.toBeUndefined();
@@ -172,7 +172,7 @@ describe("CodexLiveVoiceAdapter", () => {
           cwd: "/tmp/openbot-live",
           runtimeWorkspaceRoots: [],
           sandboxPolicy: { type: "dangerFullAccess" },
-          additionalContext: [],
+          additionalContext: {},
         }),
       ),
     ).rejects.toThrow();
@@ -195,10 +195,10 @@ describe("CodexLiveVoiceAdapter", () => {
             excludeTmpdirEnvVar: false,
             excludeSlashTmp: false,
           },
-          additionalContext: [
-            { key: "openbot_live_voice_spoken_context", kind: "untrusted", text: "[]" },
-            { key: "openbot_live_voice_typed_dispatch", kind: "application", text: "Perform the typed request." },
-          ],
+          additionalContext: {
+            openbot_live_voice_spoken_context: { kind: "untrusted", value: "[]" },
+            openbot_live_voice_typed_dispatch: { kind: "application", value: "Perform the typed request." },
+          },
         },
       },
     ]);

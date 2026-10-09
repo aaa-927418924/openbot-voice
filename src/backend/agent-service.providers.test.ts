@@ -1031,21 +1031,19 @@ describe.sequential("AgentService: providers", () => {
       approvalPolicy: "on-request",
     });
     const firstParams = paramsRecord(firstTurn?.params);
-    assert(Array.isArray(firstParams?.additionalContext));
-    expect(firstParams.additionalContext).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ key: "openbot_live_voice_spoken_context", kind: "untrusted" }),
-        expect.objectContaining({
-          key: "openbot_live_voice_typed_dispatch",
-          kind: "application",
-          text: expect.stringContaining("already this thread's user turn"),
-        }),
-      ]),
-    );
-    const spokenContext = firstParams.additionalContext.find(
-      (entry) => paramsRecord(entry)?.key === "openbot_live_voice_spoken_context",
-    );
-    const spokenContextText = paramsRecord(spokenContext)?.text;
+    const additionalContext = paramsRecord(firstParams?.additionalContext);
+    expect(additionalContext).toEqual({
+      openbot_live_voice_spoken_context: {
+        kind: "untrusted",
+        value: expect.any(String),
+      },
+      openbot_live_voice_typed_dispatch: {
+        kind: "application",
+        value: expect.stringContaining("already this thread's user turn"),
+      },
+    });
+    const spokenContext = paramsRecord(additionalContext?.openbot_live_voice_spoken_context);
+    const spokenContextText = spokenContext?.value;
     assert(typeof spokenContextText === "string");
     expect(spokenContextText).toContain("\\u003c/external_openbot_live_voice_spoken_context>");
     expect(JSON.parse(spokenContextText)).toEqual([{ role: "user", text: spoken }]);

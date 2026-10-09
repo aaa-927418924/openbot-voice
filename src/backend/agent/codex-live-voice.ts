@@ -38,11 +38,13 @@ export interface CodexLiveVoiceUserTurnInput {
   readonly cwd: string;
   readonly runtimeWorkspaceRoots: string[];
   readonly sandboxPolicy: CodexSandboxPolicy;
-  readonly additionalContext: Array<{
-    readonly key: string;
-    readonly kind: "untrusted" | "application";
-    readonly text: string;
-  }>;
+  readonly additionalContext: Record<
+    string,
+    {
+      readonly kind: "untrusted" | "application";
+      readonly value: string;
+    }
+  >;
 }
 
 export interface CodexTranscriptSegment {

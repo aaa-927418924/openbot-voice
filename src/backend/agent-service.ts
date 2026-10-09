@@ -1477,18 +1477,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         cwd: agent.workspacePath,
         runtimeWorkspaceRoots: workspaceWritableRoots(agent, this.#store.sharedRoot),
         sandboxPolicy: codexSandboxPolicy(agent, this.#store.sharedRoot),
-        additionalContext: [
-          {
-            key: "openbot_live_voice_spoken_context",
+        additionalContext: {
+          openbot_live_voice_spoken_context: {
             kind: "untrusted",
-            text: liveVoiceSpokenContext(session),
+            value: liveVoiceSpokenContext(session),
           },
-          {
-            key: "openbot_live_voice_typed_dispatch",
+          openbot_live_voice_typed_dispatch: {
             kind: "application",
-            text: LIVE_VOICE_TYPED_DISPATCH_INSTRUCTION,
+            value: LIVE_VOICE_TYPED_DISPATCH_INSTRUCTION,
           },
-        ],
+        },
       })
       .pipe(
         Effect.tapError((failure) =>
