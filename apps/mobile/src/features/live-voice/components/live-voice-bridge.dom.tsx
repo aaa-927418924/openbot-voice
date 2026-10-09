@@ -56,6 +56,7 @@ export default function LiveVoiceBridge({
   }
   const controller = controllerRef.current;
   const processedCommandIds = useRef(new Set<string>());
+  const lastPropsSignature = useRef<string | null>(null);
 
   useEffect(() => {
     postDiagnostic({ stage: "dom-mounted" });
@@ -63,6 +64,13 @@ export default function LiveVoiceBridge({
   }, []);
 
   useEffect(() => {
+    const signature = JSON.stringify({
+      active,
+      currentSessionId,
+      commands: commands.map(({ id, type }) => ({ id, type })),
+    });
+    if (lastPropsSignature.current === signature) return;
+    lastPropsSignature.current = signature;
     postDiagnostic({
       stage: "props-updated",
       active,

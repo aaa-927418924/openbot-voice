@@ -126,16 +126,13 @@ afterEach(() => {
 });
 
 describe("Live Voice WebRTC controller lifecycle", () => {
-  it("reports the failed setup stage without exposing the browser error message", async () => {
+  it("requests default audio and reports microphone failure details", async () => {
     installWebRtcStubs();
     const onDiagnostic = vi.fn(async () => {});
-    vi.stubGlobal("navigator", {
-      mediaDevices: {
-        getUserMedia: vi.fn(async () => {
-          throw new DOMException("private browser detail", "NotAllowedError");
-        }),
-      },
+    const getUserMedia = vi.fn(async () => {
+      throw Object.assign(new Error("Microphone access is blocked."), { name: "NotAllowedError" });
     });
+    vi.stubGlobal("navigator", { mediaDevices: { getUserMedia } });
     const controller = createLiveVoiceWebController({
       startSession: vi.fn(async () => ({ kind: "rejected" as const })),
       stopSession: vi.fn(async () => {}),
@@ -146,12 +143,14 @@ describe("Live Voice WebRTC controller lifecycle", () => {
 
     await controller.start(origin);
 
+    expect(getUserMedia).toHaveBeenCalledWith({ audio: true });
     expect(onDiagnostic).toHaveBeenCalledWith({
       step: "microphone",
       outcome: "permission-denied",
       elapsedMs: expect.any(Number),
+      errorName: "NotAllowedError",
+      errorMessage: "Microphone access is blocked.",
     });
-    expect(JSON.stringify(onDiagnostic.mock.calls)).not.toContain("private browser detail");
   });
 
   it("ends startup when microphone permission never resolves and releases a late stream", async () => {

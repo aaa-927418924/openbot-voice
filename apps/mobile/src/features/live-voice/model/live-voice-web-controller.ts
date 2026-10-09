@@ -63,6 +63,8 @@ export interface LiveVoiceDiagnostic {
   step: LiveVoiceDiagnosticStep;
   outcome: LiveVoiceDiagnosticOutcome;
   elapsedMs: number;
+  errorName?: string;
+  errorMessage?: string;
 }
 
 /** Plain data crosses the Expo DOM boundary; Error prototypes do not. */
@@ -144,11 +146,18 @@ export function createLiveVoiceWebController(actions: LiveVoiceWebActions) {
   const hostMayBeActive = (session: ActiveVoiceSession) =>
     session.hostAccepted || session.leaseUncertain || (session.startRequested && !session.startResultKnown);
 
-  const report = (session: ActiveVoiceSession, step: LiveVoiceDiagnosticStep, outcome: LiveVoiceDiagnosticOutcome) => {
+  const report = (
+    session: ActiveVoiceSession,
+    step: LiveVoiceDiagnosticStep,
+    outcome: LiveVoiceDiagnosticOutcome,
+    details?: Pick<LiveVoiceDiagnostic, "errorName" | "errorMessage">,
+  ) => {
     session.currentStep = step;
     const record = actions.onDiagnostic;
     if (!record) return;
-    void record({ step, outcome, elapsedMs: Math.max(0, Date.now() - session.startedAtMs) }).catch(() => undefined);
+    void record({ step, outcome, elapsedMs: Math.max(0, Date.now() - session.startedAtMs), ...details }).catch(
+      () => undefined,
+    );
   };
 
   const publish = (
@@ -323,9 +332,7 @@ export function createLiveVoiceWebController(actions: LiveVoiceWebActions) {
       report(session, "microphone", "waiting");
       if (!navigator.mediaDevices?.getUserMedia)
         throw new DOMException("Microphone is unavailable.", "NotSupportedError");
-      session.stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-      });
+      session.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       if (!isCurrent()) {
         for (const track of session.stream.getTracks()) track.stop();
         return;
@@ -471,11 +478,16 @@ export function createLiveVoiceWebController(actions: LiveVoiceWebActions) {
       }, START_TIMEOUT_MS);
     } catch (error) {
       if (active !== session || disposed) return;
-      const microphoneBlocked =
-        error instanceof DOMException && ["NotAllowedError", "SecurityError"].includes(error.name);
+      const details = describeVoiceError(error);
+      const microphoneBlocked = ["NotAllowedError", "SecurityError"].includes(details.errorName);
       session.microphoneBlocked = microphoneBlocked;
       const failure = microphoneBlocked ? "microphone" : "unavailable";
-      report(session, session.currentStep, diagnosticFailureOutcome(error));
+      report(
+        session,
+        session.currentStep,
+        diagnosticFailureOutcome(details.errorName),
+        session.currentStep === "microphone" ? details : undefined,
+      );
       if (session.startRequested) {
         if (!session.startResultKnown) {
           session.startResultKnown = true;
@@ -576,12 +588,27 @@ async function waitForIce(peer: RTCPeerConnection): Promise<void> {
   });
 }
 
-function diagnosticFailureOutcome(error: unknown): "failed" | "timeout" | "permission-denied" | "unsupported" {
-  if (error instanceof DOMException) {
-    if (["NotAllowedError", "SecurityError"].includes(error.name)) return "permission-denied";
-    if (["NotSupportedError", "NotFoundError"].includes(error.name)) return "unsupported";
-    if (error.name === "TimeoutError") return "timeout";
+function describeVoiceError(error: unknown): { errorName: string; errorMessage: string } {
+  let errorName = "UnknownError";
+  let errorMessage = "";
+  if (typeof error === "object" && error !== null) {
+    if ("name" in error && typeof error.name === "string") errorName = error.name;
+    if ("message" in error && typeof error.message === "string") errorMessage = error.message;
+  } else if (typeof error === "string") {
+    errorMessage = error;
+  } else if (error !== undefined) {
+    errorMessage = String(error);
   }
+  return {
+    errorName: errorName.slice(0, 80),
+    errorMessage: (errorMessage || errorName).slice(0, 240),
+  };
+}
+
+function diagnosticFailureOutcome(errorName: string): "failed" | "timeout" | "permission-denied" | "unsupported" {
+  if (["NotAllowedError", "SecurityError"].includes(errorName)) return "permission-denied";
+  if (["NotSupportedError", "NotFoundError"].includes(errorName)) return "unsupported";
+  if (errorName === "TimeoutError") return "timeout";
   return "failed";
 }
 

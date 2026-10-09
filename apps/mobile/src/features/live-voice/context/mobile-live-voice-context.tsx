@@ -206,16 +206,20 @@ export function MobileLiveVoiceProvider({
     [publish],
   );
 
-  const onBridgeDiagnostic = useCallback(async ({ step, outcome, elapsedMs }: LiveVoiceDiagnostic) => {
-    const level = ["failed", "timeout", "rejected", "permission-denied", "unsupported"].includes(outcome)
-      ? "warn"
-      : "info";
-    supportLog.add(
-      level,
-      "connection",
-      `Live Voice probe [${LIVE_VOICE_DIAGNOSTIC_BUILD_ID}]: ${step}: ${outcome} (${elapsedMs} ms)`,
-    );
-  }, []);
+  const onBridgeDiagnostic = useCallback(
+    async ({ step, outcome, elapsedMs, errorName, errorMessage }: LiveVoiceDiagnostic) => {
+      const level = ["failed", "timeout", "rejected", "permission-denied", "unsupported"].includes(outcome)
+        ? "warn"
+        : "info";
+      const errorDetails = errorName || errorMessage ? `; ${errorName ?? "UnknownError"}: ${errorMessage ?? ""}` : "";
+      supportLog.add(
+        level,
+        "connection",
+        `Live Voice probe [${LIVE_VOICE_DIAGNOSTIC_BUILD_ID}]: ${step}: ${outcome} (${elapsedMs} ms${errorDetails})`,
+      );
+    },
+    [],
+  );
 
   const onCommandResult = useCallback(
     async (result: MobileLiveVoiceCommandResult) => {

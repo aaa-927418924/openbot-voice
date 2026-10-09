@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { MobileLiveVoiceCommand } from "./live-voice-command";
 
-export const LIVE_VOICE_DIAGNOSTIC_BUILD_ID = "android-live-voice-dom-probe-20261010-r1";
+export const LIVE_VOICE_DIAGNOSTIC_BUILD_ID = "android-live-voice-microphone-20261010-r2";
 export const LIVE_VOICE_DOM_DIAGNOSTIC_TYPE = "openbot-live-voice-diagnostic";
 
 const commandTypes = ["start", "stop", "toggle-mute", "resume-audio", "send-text", "host-event"] as const;
