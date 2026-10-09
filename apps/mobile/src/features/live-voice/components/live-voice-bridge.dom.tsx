@@ -41,6 +41,10 @@ export default function LiveVoiceBridge({
   const processedCommandIds = useRef(new Set<string>());
 
   useEffect(() => {
+    void actions.current.onDiagnostic?.({ step: "dom-bridge", outcome: "mounted", elapsedMs: 0 });
+  }, []);
+
+  useEffect(() => {
     const currentIds = new Set(commands.map((command) => command.id));
     for (const id of processedCommandIds.current) {
       if (!currentIds.has(id)) processedCommandIds.current.delete(id);
@@ -48,6 +52,7 @@ export default function LiveVoiceBridge({
     for (const command of commands) {
       if (processedCommandIds.current.has(command.id)) continue;
       processedCommandIds.current.add(command.id);
+      void actions.current.onDiagnostic?.({ step: "command", outcome: "received", elapsedMs: 0 });
       if (
         (command.type === "start" && (!active || command.origin.sessionId !== currentSessionId)) ||
         (!active && command.type !== "stop")

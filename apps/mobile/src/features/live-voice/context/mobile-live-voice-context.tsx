@@ -204,6 +204,11 @@ export function MobileLiveVoiceProvider({
 
   const onCommandResult = useCallback(
     async (result: MobileLiveVoiceCommandResult) => {
+      supportLog.add(
+        result.ok ? "info" : "warn",
+        "connection",
+        `Live Voice probe: command result callback ${result.ok ? "success" : (result.error ?? "failed")}`,
+      );
       mailbox.receive(result);
     },
     [mailbox],

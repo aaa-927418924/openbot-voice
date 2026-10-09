@@ -30,6 +30,8 @@ export interface LiveVoiceStartResponse {
 }
 
 export type LiveVoiceDiagnosticStep =
+  | "dom-bridge"
+  | "command"
   | "startup"
   | "microphone"
   | "audio-context"
@@ -41,6 +43,8 @@ export type LiveVoiceDiagnosticStep =
   | "remote-description";
 
 export type LiveVoiceDiagnosticOutcome =
+  | "mounted"
+  | "received"
   | "started"
   | "ready"
   | "waiting"
