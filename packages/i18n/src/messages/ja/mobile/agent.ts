@@ -38,6 +38,12 @@ export const messages = {
   "mobile.agent.menu.more": "その他",
   "mobile.agent.menu.copyId": "ID をコピー",
   "mobile.agent.menu.duplicate": "複製",
+  "mobile.agent.menu.clearHistory": "履歴を消去",
+  "mobile.agent.menu.clearHistoryTitle": "{name} とのチャット履歴を消去しますか？",
+  "mobile.agent.menu.clearHistoryBody":
+    "このチャットのすべてのメッセージが完全に削除されます。この操作は取り消せません。",
+  "mobile.agent.menu.clearHistoryFailed": "チャット履歴を消去できませんでした",
+  "mobile.agent.menu.clearHistoryFailedBody": "チャット履歴を消去できませんでした。もう一度お試しください。",
   "mobile.agent.files.category.workspaces": "ワークスペース",
   "mobile.agent.files.category.attachments": "添付ファイル",
   "mobile.agent.files.category.generated": "エージェントのファイル",

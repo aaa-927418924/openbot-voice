@@ -11,6 +11,12 @@ export const messages = defineMessages("mobile.channel", {
     "This stops the channel. Its history stays in Deleted channels for preview only. You cannot restore it. Agents are kept.",
   "mobile.channel.list.deleteFailed": "Could not delete channel",
   "mobile.channel.list.deleteFailedBody": "Could not delete this channel. Try again.",
+  "mobile.channel.list.clearHistory": "Clear history",
+  "mobile.channel.list.clearHistoryTitle": "Clear {name}'s history?",
+  "mobile.channel.list.clearHistoryBody":
+    "All messages in this channel will be permanently removed. This cannot be undone.",
+  "mobile.channel.list.clearHistoryFailed": "Could not clear channel history",
+  "mobile.channel.list.clearHistoryFailedBody": "Could not clear this channel history. Try again.",
   "mobile.channel.list.open": "Open channel {name}",
   "mobile.channel.list.openWithTitle": "Open channel {name}, {title}",
   "mobile.channel.list.unread": { one: "{count} unread messages", other: "{count} unread messages" },

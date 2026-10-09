@@ -1,8 +1,12 @@
+import { expandChatTagReferences } from "@openbot/contracts/chat-tag-references";
 import {
   CHANNEL_CHATS_CAPABILITY,
   CHANNEL_DELETE_CAPABILITY,
+  CHANNEL_PREVIEW_LIMIT,
   type ChannelCommand,
+  type ChannelMessage,
   type ChannelPage,
+  type ChannelPreview,
   type ChannelSummary,
   type CreateChannelRoutineInput,
   decodeChannel,
@@ -15,6 +19,11 @@ import {
   type UpdateChannelRoutineInput,
 } from "@openbot/contracts/ipc";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
+import {
+  CHANNEL_HISTORY_DELETE_CAPABILITY,
+  CLEAR_CHANNEL_HISTORY_ROUTE,
+  DELETE_CHANNEL_MESSAGE_ROUTE,
+} from "@openbot/contracts/team-protocol/channel-history-delete-v1";
 import { CHANNEL_ROUTES } from "@openbot/contracts/team-protocol/channels-v1";
 import { decodeTeamProtocolV2Json, type TeamProtocolV2Json } from "@openbot/contracts/team-protocol/v2";
 import { sourceText } from "@openbot/i18n/source";
@@ -36,6 +45,7 @@ export interface ChannelState {
   pages: ReadonlyMap<string, ChannelPage>;
   supported: boolean;
   canDelete: boolean;
+  canMutateHistory: boolean;
   loading: boolean;
   /** The last load failure. A screen renders it in the interface language. */
   error: { cause: unknown } | null;
@@ -45,6 +55,7 @@ const EMPTY: ChannelState = {
   pages: new Map(),
   supported: false,
   canDelete: false,
+  canMutateHistory: false,
   loading: false,
   error: null,
 };
@@ -58,6 +69,7 @@ interface Entry {
   valid: boolean;
   writes: number;
   historyWaiters: Map<string, Set<(success: boolean) => void>>;
+  historyTombstones: Map<string, Set<string>>;
 }
 
 export class ChannelHistoryRefreshError extends Error {}
@@ -77,6 +89,7 @@ export class MobileChannelStore {
   constructor(
     private request: ChannelRequest,
     private onList?: (serverId: string, channels: ChannelSummary[]) => void,
+    private createOperationId: () => string = () => globalThis.crypto.randomUUID(),
   ) {}
 
   private entry(serverId: string): Entry {
@@ -94,6 +107,7 @@ export class MobileChannelStore {
         valid: true,
         writes: 0,
         historyWaiters: new Map(),
+        historyTombstones: new Map(),
       };
       this.entries.set(serverId, entry);
     }
@@ -117,6 +131,7 @@ export class MobileChannelStore {
       next.pages === entry.state.pages &&
       next.supported === entry.state.supported &&
       next.canDelete === entry.state.canDelete &&
+      next.canMutateHistory === entry.state.canMutateHistory &&
       next.loading === entry.state.loading &&
       next.error === entry.state.error
     )
@@ -129,6 +144,7 @@ export class MobileChannelStore {
     this.publish(entry, {
       supported: capabilities.includes(CHANNEL_CHATS_CAPABILITY),
       canDelete: capabilities.includes(CHANNEL_DELETE_CAPABILITY),
+      canMutateHistory: capabilities.includes(CHANNEL_HISTORY_DELETE_CAPABILITY),
     });
   }
   remove(serverId: string) {
@@ -227,7 +243,11 @@ export class MobileChannelStore {
             if (!entry.observed.has(id) || (listedIds && !listedIds.has(id))) return;
             const current = entry.state.pages.get(id);
             if (current && page.channel.revision < current.channel.revision) return;
-            const merged = mergeLatestChannelPage(current, page);
+            const tombstones = entry.historyTombstones.get(id);
+            const visiblePage = tombstones?.size
+              ? { ...page, messages: page.messages.filter((message) => !tombstones.has(message.id)) }
+              : page;
+            const merged = mergeLatestChannelPage(current, visiblePage);
             if (merged !== current) {
               const nextPages = new Map(entry.state.pages);
               nextPages.set(id, merged);
@@ -292,6 +312,7 @@ export class MobileChannelStore {
     const entry = this.entry(serverId);
     const current = entry.state.pages.get(channelId);
     if (current?.olderCursor == null) return;
+    const writes = entry.writes;
     const page = await this.request(
       "POST",
       CHANNEL_ROUTES.read,
@@ -300,8 +321,11 @@ export class MobileChannelStore {
       serverId,
     );
     const latest = entry.state.pages.get(channelId);
-    if (!entry.valid || !latest || latest.olderCursor !== current.olderCursor) return;
-    const messages = new Map(page.messages.map((message) => [message.id, message]));
+    if (!entry.valid || writes !== entry.writes || !latest || latest.olderCursor !== current.olderCursor) return;
+    const tombstones = entry.historyTombstones.get(channelId);
+    const messages = new Map(
+      page.messages.filter((message) => !tombstones?.has(message.id)).map((message) => [message.id, message]),
+    );
     for (const message of latest.messages) messages.set(message.id, message);
     const pages = new Map(entry.state.pages);
     pages.set(channelId, {
@@ -475,6 +499,67 @@ export class MobileChannelStore {
     this.publish(entry, { channels: entry.state.channels.filter((channel) => channel.id !== channelId), pages });
     void this.refresh(serverId);
   }
+
+  async deleteHistoryMessage(serverId: string, channelId: string, messageId: string) {
+    const entry = this.entry(serverId);
+    if (!entry.state.canMutateHistory) throw new Error(sourceText("error.team.channelHistoryUnsupported"));
+    if (entry.state.channels.find((channel) => channel.id === channelId)?.archived)
+      throw new Error(sourceText("error.backend.channelArchived"));
+    await this.request(
+      "POST",
+      DELETE_CHANNEL_MESSAGE_ROUTE,
+      () => undefined,
+      { channelId, messageId, operationId: this.createOperationId() },
+      serverId,
+    );
+    if (!entry.valid) return;
+    entry.writes += 1;
+    const tombstones = entry.historyTombstones.get(channelId) ?? new Set<string>();
+    tombstones.add(messageId);
+    entry.historyTombstones.set(channelId, tombstones);
+    const pages = new Map(entry.state.pages);
+    const page = pages.get(channelId);
+    if (page) pages.set(channelId, { ...page, messages: page.messages.filter((message) => message.id !== messageId) });
+    const wasLatest = page?.messages.at(-1)?.id === messageId;
+    const previous = wasLatest
+      ? page.messages.slice(0, -1).findLast((message) => isSidebarPreviewMessage(message))
+      : undefined;
+    const nextPreview =
+      wasLatest && previous
+        ? channelPreview(previous)
+        : wasLatest && page && page.olderCursor === null
+          ? null
+          : undefined;
+    const channels = entry.state.channels.map((channel) =>
+      channel.id === channelId && nextPreview !== undefined ? { ...channel, lastMessage: nextPreview } : channel,
+    );
+    this.publish(entry, { pages, channels });
+    await this.refresh(serverId);
+  }
+
+  async clearHistory(serverId: string, channelId: string) {
+    const entry = this.entry(serverId);
+    if (!entry.state.canMutateHistory) throw new Error(sourceText("error.team.channelHistoryUnsupported"));
+    const channel = entry.state.channels.find((item) => item.id === channelId);
+    if (channel?.archived) throw new Error(sourceText("error.backend.channelArchived"));
+    if (channel && channel.activeTasks > 0) throw new Error(sourceText("error.backend.channelHistoryBusy"));
+    await this.request(
+      "POST",
+      CLEAR_CHANNEL_HISTORY_ROUTE,
+      () => undefined,
+      { channelId, operationId: this.createOperationId() },
+      serverId,
+    );
+    if (!entry.valid) return;
+    entry.writes += 1;
+    const pages = new Map(entry.state.pages);
+    pages.delete(channelId);
+    const channels = entry.state.channels.map((channel) =>
+      channel.id === channelId ? { ...channel, lastMessage: null, unreadCount: 0 } : channel,
+    );
+    this.publish(entry, { pages, channels });
+    await this.refresh(serverId);
+  }
 }
 
 export function mergeLatestChannelPage(current: ChannelPage | undefined, page: ChannelPage): ChannelPage {
@@ -486,4 +571,25 @@ export function mergeLatestChannelPage(current: ChannelPage | undefined, page: C
       ? page
       : { ...page, messages: [...older, ...page.messages], olderCursor: current.olderCursor };
   return replaceEqualDeep(current, merged);
+}
+
+function isSidebarPreviewMessage(message: ChannelMessage) {
+  const itemType = message.message.itemType ?? "";
+  return (
+    itemType !== "plan" &&
+    itemType !== "live-voice-session-start" &&
+    !itemType.startsWith("live-voice-session-end:") &&
+    itemType !== "channel-message-deleted" &&
+    itemType !== "channel-history-cleared"
+  );
+}
+
+function channelPreview(message: ChannelMessage): ChannelPreview | undefined {
+  const text = expandChatTagReferences(message.message.text).trim();
+  if (!text) return undefined;
+  return {
+    authorName: message.author.name,
+    text: text.slice(0, CHANNEL_PREVIEW_LIMIT),
+    at: message.message.createdAt,
+  };
 }

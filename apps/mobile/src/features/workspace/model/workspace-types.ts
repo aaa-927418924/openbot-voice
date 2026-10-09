@@ -186,6 +186,15 @@ export interface MobileWorkspaceContextValue {
   /** Searches message text in the server's agent chats, one page from `cursor` or from the newest match. */
   searchMessages: (query: string, serverId: string, cursor?: string) => Promise<ConversationSearchPage>;
   loadConversation: (agentId: string) => Promise<ConversationSnapshot>;
+  canChangeConversationHistory: (serverId: string) => boolean;
+  canClearConversationHistory: (agentId: string, serverId: string) => boolean;
+  deleteConversationMessage: (
+    agentId: string,
+    messageId: string,
+    serverId: string,
+    previewAfterDelete?: string | null,
+  ) => Promise<void>;
+  clearConversationHistory: (agentId: string, serverId: string) => Promise<void>;
   loadOlderMessages: (agentId: string) => Promise<void>;
   respondToPrompt: (agentId: string, input: RespondToPromptInput) => Promise<void>;
   sendMessage: (

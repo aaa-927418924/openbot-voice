@@ -13,14 +13,25 @@ import { haptics } from "@/shared/lib/haptics";
 import { currentText, useText } from "@/shared/lib/text";
 
 function useAgentMenuActions(agent: MobileAgent) {
-  const { deleteAgent, duplicateAgent, hideAgent, markAgentRead, markAgentUnread, pinnedAgentIds, pinnedChannelIds } =
-    useMobileWorkspace();
+  const {
+    deleteAgent,
+    duplicateAgent,
+    hideAgent,
+    markAgentRead,
+    markAgentUnread,
+    pinnedAgentIds,
+    pinnedChannelIds,
+    canClearConversationHistory,
+    clearConversationHistory,
+  } = useMobileWorkspace();
   const { toggleAgentPinAnimated } = useAgentPinTransition();
   const sectionMenu = useChatSectionMenu(agent.serverId, agent.id);
   const isPinned = pinnedAgentIds.includes(agent.id);
   const isUnread = useAgentUnread(agent.id);
   const actionPending = useRef(false);
+  const historyPending = useRef(false);
   const { t } = useText();
+  const canClearHistory = canClearConversationHistory(agent.id, agent.serverId);
 
   async function runAgentAction(action: "delete" | "duplicate"): Promise<void> {
     if (actionPending.current) return;
@@ -62,6 +73,37 @@ function useAgentMenuActions(agent: MobileAgent) {
     ]);
   };
 
+  const handleClearHistory = () => {
+    Alert.alert(
+      t("mobile.agent.menu.clearHistoryTitle", { name: agent.name }),
+      t("mobile.agent.menu.clearHistoryBody"),
+      [
+        { text: t("common.cancel"), style: "cancel" },
+        {
+          text: t("mobile.agent.menu.clearHistory"),
+          style: "destructive",
+          onPress: () => {
+            if (historyPending.current) return;
+            historyPending.current = true;
+            void clearConversationHistory(agent.id, agent.serverId)
+              .then(() => haptics.notification())
+              .catch((error: unknown) => {
+                void haptics.notification("error");
+                const text = currentText();
+                Alert.alert(
+                  text.t("mobile.agent.menu.clearHistoryFailed"),
+                  text.errorMessage(error, text.t("mobile.agent.menu.clearHistoryFailedBody")),
+                );
+              })
+              .finally(() => {
+                historyPending.current = false;
+              });
+          },
+        },
+      ],
+    );
+  };
+
   const handleRead = () => {
     if (isUnread) markAgentRead(agent.id);
     else markAgentUnread(agent.id);
@@ -89,6 +131,8 @@ function useAgentMenuActions(agent: MobileAgent) {
     handleCopyId,
     handleDuplicate,
     handleDelete,
+    canClearHistory,
+    handleClearHistory,
   };
 }
 
@@ -106,6 +150,8 @@ export function useAgentContextMenu(agent: MobileAgent) {
     handleCopyId,
     handleDuplicate,
     handleDelete,
+    canClearHistory,
+    handleClearHistory,
   } = useAgentMenuActions(agent);
   return (
     <Link.Menu>
@@ -129,6 +175,11 @@ export function useAgentContextMenu(agent: MobileAgent) {
         <Link.MenuAction icon="plus.square.on.square" onPress={handleDuplicate}>
           {t("mobile.agent.menu.duplicate")}
         </Link.MenuAction>
+        {canClearHistory ? (
+          <Link.MenuAction destructive icon="trash.slash" onPress={handleClearHistory}>
+            {t("mobile.agent.menu.clearHistory")}
+          </Link.MenuAction>
+        ) : null}
         <Link.MenuAction destructive icon="trash" onPress={handleDelete}>
           {t("common.delete")}
         </Link.MenuAction>
@@ -158,6 +209,8 @@ export function AgentAndroidMenu({
     handleCopyId,
     handleDuplicate,
     handleDelete,
+    canClearHistory,
+    handleClearHistory,
   } = useAgentMenuActions(agent);
   const actions: MenuAction[] = [
     { id: "read", title: t(isUnread ? "mobile.agent.menu.markRead" : "mobile.agent.menu.markUnread") },
@@ -175,6 +228,11 @@ export function AgentAndroidMenu({
       subactions: [
         { id: "copy", title: t("mobile.agent.menu.copyId") },
         { id: "duplicate", title: t("mobile.agent.menu.duplicate") },
+        {
+          id: "clear-history",
+          title: t("mobile.agent.menu.clearHistory"),
+          attributes: { destructive: true, hidden: !canClearHistory },
+        },
         { id: "delete", title: t("common.delete"), attributes: { destructive: true } },
       ],
     },
@@ -186,6 +244,7 @@ export function AgentAndroidMenu({
     info: handleInfo,
     copy: handleCopyId,
     duplicate: handleDuplicate,
+    "clear-history": handleClearHistory,
     delete: handleDelete,
   };
   return (

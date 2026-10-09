@@ -6,6 +6,11 @@ import {
   type ChannelTask,
 } from "@openbot/contracts/ipc";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
+import {
+  CHANNEL_HISTORY_DELETE_CAPABILITY,
+  CLEAR_CHANNEL_HISTORY_ROUTE,
+  DELETE_CHANNEL_MESSAGE_ROUTE,
+} from "@openbot/contracts/team-protocol/channel-history-delete-v1";
 import { CHANNEL_ROUTES } from "@openbot/contracts/team-protocol/channels-v1";
 import type { TeamProtocolV2Json } from "@openbot/contracts/team-protocol/v2";
 import { createWorkspacePreferences } from "@openbot/team-client";
@@ -63,7 +68,7 @@ function fixture(
   const request: ChannelRequest = async (_method, path, decode, body, serverId) =>
     decode(await calls(path, body, serverId));
   const store = new MobileChannelStore(request, onList);
-  store.configure("host-one", [CHANNEL_CHATS_CAPABILITY, CHANNEL_DELETE_CAPABILITY]);
+  store.configure("host-one", [CHANNEL_CHATS_CAPABILITY, CHANNEL_DELETE_CAPABILITY, CHANNEL_HISTORY_DELETE_CAPABILITY]);
   return { store, calls };
 }
 function deferred<T>() {
@@ -481,6 +486,104 @@ describe("mobile channels", () => {
     await eventRead;
     expect(preferences.read("host-one")).toMatchObject({ pinned: ["agent-one"], pinnedChannels: [] });
     expect(store.get("host-one").channels).toEqual([]);
+  });
+
+  it("capability-gates history mutations on older hosts", async () => {
+    const { store, calls } = fixture(async () => ({}));
+    store.configure("host-one", [CHANNEL_CHATS_CAPABILITY]);
+    expect(store.get("host-one").canMutateHistory).toBe(false);
+    await expect(store.clearHistory("host-one", channel.id)).rejects.toThrow(
+      "Channel history changes are not supported by this connection.",
+    );
+    expect(calls).not.toHaveBeenCalled();
+  });
+
+  it("keeps a deleted channel message out of a late older-page response and refreshes its preview", async () => {
+    const olderPage = deferred<unknown>();
+    const olderStarted = Promise.withResolvers<void>();
+    const before = {
+      ...channel,
+      lastMessage: { authorName: "Member", text: "Message 5", at: "2026-09-14T00:00:00Z" },
+    };
+    const after = {
+      ...channel,
+      revision: 2,
+      lastMessage: { authorName: "Member", text: "Message 4", at: "2026-09-14T00:00:00Z" },
+    };
+    let deleted = false;
+    const { store, calls } = fixture(async (path, body) => {
+      if (path === DELETE_CHANNEL_MESSAGE_ROUTE) {
+        deleted = true;
+        return {};
+      }
+      if (path === CHANNEL_ROUTES.list) return [deleted ? after : before];
+      if (body && typeof body === "object" && "beforeSequence" in body) {
+        olderStarted.resolve();
+        return olderPage.promise;
+      }
+      return deleted ? page(3, 4) : page(3, 5);
+    });
+    const stop = store.observe("host-one", channel.id);
+    await store.refresh("host-one");
+    const loadingOlder = store.older("host-one", channel.id);
+    await olderStarted.promise;
+    await store.deleteHistoryMessage("host-one", channel.id, "message-5");
+    olderPage.resolve(page(1, 3));
+    await loadingOlder;
+    expect(calls).toHaveBeenCalledWith(
+      DELETE_CHANNEL_MESSAGE_ROUTE,
+      expect.objectContaining({ channelId: channel.id, messageId: "message-5", operationId: expect.any(String) }),
+      "host-one",
+    );
+    expect(
+      store
+        .get("host-one")
+        .pages.get(channel.id)
+        ?.messages.map((message) => message.id),
+    ).toEqual(["message-3", "message-4"]);
+    expect(store.get("host-one").channels[0]?.lastMessage?.text).toBe("Message 4");
+    stop();
+  });
+
+  it("evicts channel history before a clear refresh and ignores the stale page already in flight", async () => {
+    const stalePage = deferred<unknown>();
+    const staleReadStarted = Promise.withResolvers<void>();
+    let holdNextRead = false;
+    let cleared = false;
+    const { store, calls } = fixture(async (path) => {
+      if (path === CLEAR_CHANNEL_HISTORY_ROUTE) {
+        cleared = true;
+        return {};
+      }
+      if (path === CHANNEL_ROUTES.list)
+        return [cleared ? { ...channel, revision: 2, unreadCount: 0, lastMessage: null } : channel];
+      if (holdNextRead) {
+        holdNextRead = false;
+        staleReadStarted.resolve();
+        return stalePage.promise;
+      }
+      return cleared
+        ? { ...page(1, 1), channel: { ...channel, revision: 2 }, messages: [], olderCursor: null, throughSequence: 5 }
+        : page(1, 5);
+    });
+    const stop = store.observe("host-one", channel.id);
+    await store.refresh("host-one");
+    expect(store.get("host-one").pages.get(channel.id)?.messages).toHaveLength(5);
+    holdNextRead = true;
+    const staleRefresh = store.refresh("host-one");
+    await staleReadStarted.promise;
+    const clearing = store.clearHistory("host-one", channel.id);
+    await vi.waitFor(() => expect(store.get("host-one").pages.has(channel.id)).toBe(false));
+    stalePage.resolve(page(1, 5));
+    await Promise.all([staleRefresh, clearing]);
+    expect(calls).toHaveBeenCalledWith(
+      CLEAR_CHANNEL_HISTORY_ROUTE,
+      expect.objectContaining({ channelId: channel.id, operationId: expect.any(String) }),
+      "host-one",
+    );
+    expect(store.get("host-one").pages.get(channel.id)?.messages).toEqual([]);
+    expect(store.get("host-one").channels[0]?.lastMessage).toBeNull();
+    stop();
   });
 
   it("removes deleted channel history together with its list entry", async () => {

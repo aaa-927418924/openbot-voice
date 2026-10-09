@@ -1,5 +1,16 @@
-import type { AgentEvent, ChannelSummary, SidebarLayoutSnapshot, TeamRealtimeEvent } from "@openbot/contracts/ipc";
+import type {
+  AgentEvent,
+  ChannelSummary,
+  ConversationPage,
+  SidebarLayoutSnapshot,
+  TeamRealtimeEvent,
+} from "@openbot/contracts/ipc";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
+import {
+  CLEAR_CONVERSATION_HISTORY_ROUTE,
+  CONVERSATION_HISTORY_DELETE_CAPABILITY,
+  DELETE_CONVERSATION_MESSAGE_ROUTE,
+} from "@openbot/contracts/team-protocol/conversation-history-delete-v1";
 import { HOST_ADMIN_CAPABILITY, HOST_ADMIN_ROUTES } from "@openbot/contracts/team-protocol/host-admin-v1";
 import type { TeamProtocolV2Json } from "@openbot/contracts/team-protocol/v2";
 import { remoteHostFingerprint } from "@openbot/team-client";
@@ -69,6 +80,7 @@ vi.mock("expo-secure-store", () => ({
 }));
 let sidebarSupported = false;
 let hostAdminSupported = false;
+let conversationHistorySupported = false;
 let identityFailure: Error | null = null;
 const initialLayout: SidebarLayoutSnapshot = {
   revision: 1,
@@ -124,6 +136,7 @@ vi.mock("../components/remote-team-transport", () => ({
               capabilities: [
                 ...(sidebarSupported ? ["sidebar-layout"] : []),
                 ...(hostAdminSupported ? [HOST_ADMIN_CAPABILITY] : []),
+                ...(conversationHistorySupported ? [CONVERSATION_HISTORY_DELETE_CAPABILITY] : []),
               ],
             });
           if (path === TEAM_API_ROUTES.agents.all)
@@ -139,6 +152,18 @@ vi.mock("../components/remote-team-transport", () => ({
                 avatarHue: null,
               })),
             );
+          if (path === DELETE_CONVERSATION_MESSAGE_ROUTE || path === CLEAR_CONVERSATION_HISTORY_ROUTE)
+            return decode({});
+          if (path === `${TEAM_API_ROUTES.agent.conversationPage("working")}?limit=50`)
+            return decode({
+              agentId: "working",
+              threadId: null,
+              activeTurnId: null,
+              revision: 1,
+              messages: [],
+              references: {},
+              pageInfo: { hasOlder: false, olderCursor: null },
+            } satisfies ConversationPage);
           if (path === TEAM_API_ROUTES.agents.conversationReads) return decode({});
           if (path === HOST_ADMIN_ROUTES.identity) {
             if (identityFailure) throw identityFailure;
@@ -171,6 +196,7 @@ afterEach(async () => {
   reconnectSnapshot = null;
   sidebarSupported = false;
   hostAdminSupported = false;
+  conversationHistorySupported = false;
   identityFailure = null;
   Object.assign(host, { name: "Desktop", logoKey: null, role: "owner" });
   sidebarRequest.mockReset();
@@ -459,6 +485,37 @@ async function mountWorkspace() {
     ),
   );
 }
+
+it("capability-gates direct history operations on older hosts", async () => {
+  await mountWorkspace();
+  expect(current.canChangeConversationHistory(host.hostId)).toBe(false);
+  await expect(current.deleteConversationMessage("working", "message-one", host.hostId)).rejects.toThrow(
+    "Conversation history changes are not supported by this connection.",
+  );
+  expect(sent.some((item) => item.path === DELETE_CONVERSATION_MESSAGE_ROUTE)).toBe(false);
+});
+
+it("uses existing direct history routes and refreshes the conversation and sidebar preview", async () => {
+  conversationHistorySupported = true;
+  await mountWorkspace();
+  expect(current.canChangeConversationHistory(host.hostId)).toBe(true);
+  expect(current.canClearConversationHistory("working", host.hostId)).toBe(true);
+  await act(async () => current.deleteConversationMessage("working", "message-one", host.hostId));
+  expect(sent).toContainEqual({
+    method: "POST",
+    path: DELETE_CONVERSATION_MESSAGE_ROUTE,
+    body: { agentId: "working", messageId: "message-one" },
+  });
+  expect(sent.some((item) => item.path === `${TEAM_API_ROUTES.agent.conversationPage("working")}?limit=50`)).toBe(true);
+  expect(sent.filter((item) => item.path === TEAM_API_ROUTES.agents.all).length).toBeGreaterThan(1);
+  await act(async () => current.clearConversationHistory("working", host.hostId));
+  expect(sent).toContainEqual({
+    method: "POST",
+    path: CLEAR_CONVERSATION_HISTORY_ROUTE,
+    body: { agentId: "working" },
+  });
+  expect(current.agents.find((agent) => agent.id === "working")?.preview).toBe("");
+});
 
 it("saves and removes the server logo and name through the host, then reads the new logo key", async () => {
   hostAdminSupported = true;

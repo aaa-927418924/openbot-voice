@@ -6,6 +6,7 @@ export type ChatBubbleMessage = Extract<ChatMessage, { kind: "message" }>;
 interface MessageActions {
   message: ChatBubbleMessage;
   onReply: (() => void) | null;
+  onDelete: (() => Promise<void>) | null;
 }
 
 const MessageActionsContext = createContext<{

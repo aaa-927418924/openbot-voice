@@ -7,6 +7,11 @@ import {
   type UpdateAgentInput,
 } from "@openbot/contracts/ipc";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
+import {
+  CLEAR_CONVERSATION_HISTORY_ROUTE,
+  CONVERSATION_HISTORY_DELETE_CAPABILITY,
+  DELETE_CONVERSATION_MESSAGE_ROUTE,
+} from "@openbot/contracts/team-protocol/conversation-history-delete-v1";
 import { TEAM_CONVERSATION_UNREAD_CAPABILITY } from "@openbot/contracts/team-protocol/current";
 import { HOST_ADMIN_CAPABILITY } from "@openbot/contracts/team-protocol/host-admin-v1";
 import { LIVE_ACTIVITY_PUSH_CAPABILITY } from "@openbot/contracts/team-protocol/live-activity-push-v1";
@@ -42,6 +47,7 @@ import {
 } from "@openbot/team-client/team-api-requests";
 import { replaceEqualDeep, useQueryClient } from "@tanstack/react-query";
 import { Effect } from "effect";
+import * as Crypto from "expo-crypto";
 import * as SecureStore from "expo-secure-store";
 import {
   createContext,
@@ -378,35 +384,39 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
   const calendarChannels = useRef(new Map<string, string>());
   const channelStore = useMemo(
     () =>
-      new MobileChannelStore(request, (serverId, channels) => {
-        // The calendar leaves out archived channels. Message streaming also sends `channels-changed`,
-        // so the calendar reloads only when the set of open channels changes: an archive, a restore,
-        // a new channel or a deleted one.
-        const open = channels
-          .filter((channel) => !channel.archived)
-          .map((channel) => channel.id)
-          .sort()
-          .join("\n");
-        const previous = calendarChannels.current.get(serverId);
-        calendarChannels.current.set(serverId, open);
-        if (previous !== undefined && previous !== open)
-          void queryClient.invalidateQueries({
-            predicate: (query) => query.queryKey[0] === "server-routines" && query.queryKey[4] === serverId,
-          });
-        const pinned = preferencesRef.current[serverId]?.pinnedChannels;
-        if (!pinned?.length) return;
-        const available = new Set(channels.map((channel) => channel.id));
-        if (pinned.every((id) => available.has(id))) return;
-        try {
-          const saved = reconcileChannelPins(preferenceStore, serverId, channels);
-          setPreferences((current) => ({ ...current, [serverId]: saved }));
-        } catch {
-          Alert.alert(
-            currentText().t("mobile.workspace.alert.preferencesTitle"),
-            currentText().t("mobile.workspace.alert.preferencesBody"),
-          );
-        }
-      }),
+      new MobileChannelStore(
+        request,
+        (serverId, channels) => {
+          // The calendar leaves out archived channels. Message streaming also sends `channels-changed`,
+          // so the calendar reloads only when the set of open channels changes: an archive, a restore,
+          // a new channel or a deleted one.
+          const open = channels
+            .filter((channel) => !channel.archived)
+            .map((channel) => channel.id)
+            .sort()
+            .join("\n");
+          const previous = calendarChannels.current.get(serverId);
+          calendarChannels.current.set(serverId, open);
+          if (previous !== undefined && previous !== open)
+            void queryClient.invalidateQueries({
+              predicate: (query) => query.queryKey[0] === "server-routines" && query.queryKey[4] === serverId,
+            });
+          const pinned = preferencesRef.current[serverId]?.pinnedChannels;
+          if (!pinned?.length) return;
+          const available = new Set(channels.map((channel) => channel.id));
+          if (pinned.every((id) => available.has(id))) return;
+          try {
+            const saved = reconcileChannelPins(preferenceStore, serverId, channels);
+            setPreferences((current) => ({ ...current, [serverId]: saved }));
+          } catch {
+            Alert.alert(
+              currentText().t("mobile.workspace.alert.preferencesTitle"),
+              currentText().t("mobile.workspace.alert.preferencesBody"),
+            );
+          }
+        },
+        () => Crypto.randomUUID(),
+      ),
     [request, preferenceStore, queryClient],
   );
   useEffect(() => () => channelStore.dispose(), [channelStore]);
@@ -1156,6 +1166,72 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
           interruptAgentTurn(teamApi(serverId), agentId, turnId).pipe(Effect.mapError((error) => error.cause)),
         ),
       loadConversation,
+      canChangeConversationHistory: (serverId) =>
+        Boolean(
+          servers.find((server) => server.id === serverId)?.state === "online" &&
+            serverCapabilities.current.get(serverId)?.includes(CONVERSATION_HISTORY_DELETE_CAPABILITY),
+        ),
+      canClearConversationHistory: (agentId, serverId) =>
+        Boolean(
+          servers.find((server) => server.id === serverId)?.state === "online" &&
+            serverCapabilities.current.get(serverId)?.includes(CONVERSATION_HISTORY_DELETE_CAPABILITY) &&
+            !conversationStore.get(agentId)?.activeTurnId,
+        ),
+      deleteConversationMessage: async (agentId, messageId, serverId, previewAfterDelete) => {
+        if (
+          !servers.find((server) => server.id === serverId && server.state === "online") ||
+          !serverCapabilities.current.get(serverId)?.includes(CONVERSATION_HISTORY_DELETE_CAPABILITY)
+        ) {
+          throw new Error(sourceText("error.team.conversationHistoryUnsupported"));
+        }
+        const generation = loadGeneration.current;
+        await request("POST", DELETE_CONVERSATION_MESSAGE_ROUTE, ignoreResponse, { agentId, messageId }, serverId);
+        if (generation !== loadGeneration.current || removedServers.current.has(serverId)) return;
+        const latest = conversationStore.get(agentId)?.messages.at(-1)?.id === messageId;
+        conversationStore.deleteMessage(agentId, messageId);
+        if (latest && previewAfterDelete !== undefined) {
+          setAgents((current) =>
+            current.map((agent) =>
+              agent.id === agentId && agent.serverId === serverId
+                ? { ...agent, preview: previewAfterDelete ?? "" }
+                : agent,
+            ),
+          );
+        }
+        await Promise.allSettled([
+          loadConversation(agentId, serverId, true),
+          request("GET", TEAM_API_ROUTES.agents.all, decodeAgentSummaries, undefined, serverId).then((summaries) => {
+            if (generation === loadGeneration.current && !removedServers.current.has(serverId))
+              replaceServerAgents(serverId, summaries);
+          }),
+        ]);
+      },
+      clearConversationHistory: async (agentId, serverId) => {
+        if (
+          !servers.find((server) => server.id === serverId && server.state === "online") ||
+          !serverCapabilities.current.get(serverId)?.includes(CONVERSATION_HISTORY_DELETE_CAPABILITY)
+        ) {
+          throw new Error(sourceText("error.team.conversationHistoryUnsupported"));
+        }
+        if (conversationStore.get(agentId)?.activeTurnId)
+          throw new Error(sourceText("error.agent.waitBeforeClearContext"));
+        const generation = loadGeneration.current;
+        await request("POST", CLEAR_CONVERSATION_HISTORY_ROUTE, ignoreResponse, { agentId }, serverId);
+        if (generation !== loadGeneration.current || removedServers.current.has(serverId)) return;
+        conversationStore.remove(agentId);
+        setAgents((current) =>
+          current.map((agent) =>
+            agent.id === agentId && agent.serverId === serverId ? { ...agent, preview: "" } : agent,
+          ),
+        );
+        await Promise.allSettled([
+          loadConversation(agentId, serverId, true),
+          request("GET", TEAM_API_ROUTES.agents.all, decodeAgentSummaries, undefined, serverId).then((summaries) => {
+            if (generation === loadGeneration.current && !removedServers.current.has(serverId))
+              replaceServerAgents(serverId, summaries);
+          }),
+        ]);
+      },
       loadOlderMessages,
       uploadAttachment: async (agentId, input, targetServerId, onProgress) => {
         const serverId = targetServerId ?? agents.find((candidate) => candidate.id === agentId)?.serverId;
@@ -1290,6 +1366,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
     refreshMemberships,
     readRefresh,
     request,
+    replaceServerAgents,
     serverDirectoryError,
     teamApi,
     serverDirectoryState,

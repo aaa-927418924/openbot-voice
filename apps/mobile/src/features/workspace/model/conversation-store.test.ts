@@ -401,6 +401,33 @@ describe("mobile conversation windows", () => {
     expect(store.get("agent")?.messages.map((item) => item.id)).toEqual(["current"]);
   });
 
+  it("does not restore a deleted message from a late page, reply reference, or stream delta", async () => {
+    const { store, frame } = setup();
+    store.applyPage(page(["old", "deleted", "reply"], 4));
+    const response = Promise.withResolvers<ConversationPage>();
+    const started = Promise.withResolvers<void>();
+    const loading = store.loadLatest(
+      "agent",
+      () => {
+        started.resolve();
+        return response.promise;
+      },
+      () => true,
+    );
+    await started.promise;
+    store.deleteMessage("agent", "deleted");
+    store.enqueue({ ...delta(5, "late"), messageId: "deleted" });
+    frame();
+    const stale = page(["deleted", "reply", "latest"], 6);
+    stale.references = { deleted: message("deleted", "stale reference") };
+    response.resolve(stale);
+    await loading;
+    expect({
+      messages: store.get("agent")?.messages.map((item) => item.id),
+      references: Object.keys(store.get("agent")?.references ?? {}),
+    }).toEqual({ messages: ["old", "reply", "latest"], references: [] });
+  });
+
   it("keeps existing messages after an older-page failure and permits retry", async () => {
     const { store } = setup();
     store.applyPage(page(["recent"]));

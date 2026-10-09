@@ -22,7 +22,12 @@ import { useChatMotion } from "@/features/chat/components/use-chat-motion";
 import type { QuestionPromptController } from "@/features/chat/components/use-question-prompt";
 import { type ChatBubbleMessage, useMessageActions } from "@/features/chat/context/message-actions-context";
 import { usePublishedQueuedChat } from "@/features/chat/context/queued-messages-context";
-import { type ChatMessage, type PendingChatMessage, presentChatMessages } from "@/features/chat/model/chat-messages";
+import {
+  type ChatMessage,
+  messageIdForHistoryMutation,
+  type PendingChatMessage,
+  presentChatMessages,
+} from "@/features/chat/model/chat-messages";
 import { ConnectionStatus } from "@/features/workspace/components/connection-status";
 import { useBrowserRequests } from "@/features/workspace/components/use-live-workspace";
 import type { MobileAgent } from "@/features/workspace/context/mobile-workspace-context";
@@ -162,7 +167,8 @@ export function ChatView({
   const [messageAliases, setMessageAliases] = useState<ReadonlyMap<string, string>>(new Map());
   const sendSequence = useRef(0);
   const [showStarter, setShowStarter] = useState(true);
-  const { servers } = useMobileWorkspace();
+  const { servers, channelStore, conversationStore, canChangeConversationHistory, deleteConversationMessage } =
+    useMobileWorkspace();
   const queuePending = useMemo(
     () =>
       pendingInQueue && sending && pendingMessage
@@ -537,9 +543,43 @@ export function ChatView({
               onReply={replyToMessage}
               onOpenActions={(message) => {
                 Keyboard.dismiss();
+                const sourceMessageId = messageIdForHistoryMutation(message.id, messageAliases);
+                const messageIndex = messages.findIndex((item) => item.kind === "message" && item.id === message.id);
+                const precedingMessage =
+                  messageIndex > 0
+                    ? messages
+                        .slice(0, messageIndex)
+                        .findLast(
+                          (item): item is Extract<ChatMessage, { kind: "message" }> =>
+                            item.kind === "message" && !item.streaming && !queuedMessageIds.has(item.id),
+                        )
+                    : undefined;
+                const previewAfterDelete =
+                  messageIndex < 0
+                    ? undefined
+                    : precedingMessage
+                      ? precedingMessage.body ||
+                        precedingMessage.attachments?.map((attachment) => attachment.name).join(", ") ||
+                        ""
+                      : conversationStore.get(target.id)?.pageInfo.hasOlder === false
+                        ? null
+                        : undefined;
+                const onDelete =
+                  message.streaming || queuedMessageIds.has(message.id)
+                    ? null
+                    : target.kind === "agent"
+                      ? canChangeConversationHistory(target.serverId)
+                        ? () =>
+                            deleteConversationMessage(target.id, sourceMessageId, target.serverId, previewAfterDelete)
+                        : null
+                      : servers.find((server) => server.id === target.serverId)?.state === "online" &&
+                          channelStore.get(target.serverId).canMutateHistory
+                        ? () => channelStore.deleteHistoryMessage(target.serverId, target.id, sourceMessageId)
+                        : null;
                 selectMessageActions({
                   message,
                   onReply: replyToMessage ? () => replyToMessage(message) : null,
+                  onDelete,
                 });
                 router.push("/message-actions");
               }}

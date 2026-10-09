@@ -12,6 +12,12 @@ export const messages = {
     "Cette action arrête le canal. Son historique reste dans Canaux supprimés, en aperçu seulement. Vous ne pouvez pas le restaurer. Les agents sont conservés.",
   "mobile.channel.list.deleteFailed": "Impossible de supprimer le canal",
   "mobile.channel.list.deleteFailedBody": "Impossible de supprimer ce canal. Réessayez.",
+  "mobile.channel.list.clearHistory": "Effacer l’historique",
+  "mobile.channel.list.clearHistoryTitle": "Effacer l’historique de {name} ?",
+  "mobile.channel.list.clearHistoryBody":
+    "Tous les messages de ce canal seront définitivement supprimés. Cette action est irréversible.",
+  "mobile.channel.list.clearHistoryFailed": "Impossible d’effacer l’historique du canal",
+  "mobile.channel.list.clearHistoryFailedBody": "Impossible d’effacer cet historique. Réessayez.",
   "mobile.channel.list.open": "Ouvrir le canal {name}",
   "mobile.channel.list.openWithTitle": "Ouvrir le canal {name}, {title}",
   "mobile.channel.list.unread": { one: "{count} message non lu", other: "{count} messages non lus" },

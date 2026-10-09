@@ -38,6 +38,12 @@ export const messages = {
   "mobile.agent.menu.more": "Mais",
   "mobile.agent.menu.copyId": "Copiar ID",
   "mobile.agent.menu.duplicate": "Duplicar",
+  "mobile.agent.menu.clearHistory": "Limpar histórico",
+  "mobile.agent.menu.clearHistoryTitle": "Limpar o histórico do chat de {name}?",
+  "mobile.agent.menu.clearHistoryBody":
+    "Todas as mensagens deste chat serão removidas permanentemente. Não é possível desfazer.",
+  "mobile.agent.menu.clearHistoryFailed": "Não foi possível limpar o histórico do chat",
+  "mobile.agent.menu.clearHistoryFailedBody": "Não foi possível limpar este histórico. Tente novamente.",
   "mobile.agent.files.category.workspaces": "Espaço de trabalho",
   "mobile.agent.files.category.attachments": "Anexos",
   "mobile.agent.files.category.generated": "Arquivos dos agentes",

@@ -91,6 +91,11 @@ export function indexChatMessages(
   return index;
 }
 
+/** Resolve the rendered bubble key back to the server ID used by history mutation requests. */
+export function messageIdForHistoryMutation(messageId: string, aliases: ReadonlyMap<string, string>): string {
+  return [...aliases].find(([, localId]) => localId === messageId)?.[0] ?? messageId;
+}
+
 export function presentChatMessages(
   messages: ChatMessage[],
   pending: PendingChatMessage | null,

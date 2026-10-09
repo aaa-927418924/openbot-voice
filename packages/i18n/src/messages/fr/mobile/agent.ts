@@ -38,6 +38,12 @@ export const messages = {
   "mobile.agent.menu.more": "Plus",
   "mobile.agent.menu.copyId": "Copier l’ID",
   "mobile.agent.menu.duplicate": "Dupliquer",
+  "mobile.agent.menu.clearHistory": "Effacer l’historique",
+  "mobile.agent.menu.clearHistoryTitle": "Effacer l’historique de discussion de {name} ?",
+  "mobile.agent.menu.clearHistoryBody":
+    "Tous les messages de cette discussion seront définitivement supprimés. Cette action est irréversible.",
+  "mobile.agent.menu.clearHistoryFailed": "Impossible d’effacer l’historique de discussion",
+  "mobile.agent.menu.clearHistoryFailedBody": "Impossible d’effacer cet historique. Réessayez.",
   "mobile.agent.files.category.workspaces": "Espace de travail",
   "mobile.agent.files.category.attachments": "Pièces jointes",
   "mobile.agent.files.category.generated": "Fichiers des agents",

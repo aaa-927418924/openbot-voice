@@ -12,6 +12,11 @@ export const messages = {
     "Bu işlem kanalı durdurur. Geçmişi yalnızca önizleme amacıyla Silinen kanallar bölümünde kalır. Geri yükleyemezsiniz. Ajanlar korunur.",
   "mobile.channel.list.deleteFailed": "Kanal silinemedi",
   "mobile.channel.list.deleteFailedBody": "Bu kanal silinemedi. Tekrar deneyin.",
+  "mobile.channel.list.clearHistory": "Geçmişi temizle",
+  "mobile.channel.list.clearHistoryTitle": "{name} geçmişi temizlensin mi?",
+  "mobile.channel.list.clearHistoryBody": "Bu kanaldaki tüm mesajlar kalıcı olarak silinir. Bu işlem geri alınamaz.",
+  "mobile.channel.list.clearHistoryFailed": "Kanal geçmişi temizlenemedi",
+  "mobile.channel.list.clearHistoryFailedBody": "Bu kanal geçmişi temizlenemedi. Tekrar deneyin.",
   "mobile.channel.list.open": "{name} kanalını aç",
   "mobile.channel.list.openWithTitle": "{name} kanalını aç, {title}",
   "mobile.channel.list.unread": {

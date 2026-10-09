@@ -15,6 +15,7 @@ export class MobileConversationStore {
   #listeners = new Map<string, Set<() => void>>();
   #indices = new Map<string, Map<string, number>>();
   #deltas = new Map<string, Delta[]>();
+  #deletedMessages = new Map<string, Set<string>>();
   #cancelFrame: (() => void) | null = null;
   #olderLoads = new Map<string, symbol>();
   #loads = new Map<string, { promise: Promise<ConversationPage>; dirty: boolean }>();
@@ -49,6 +50,7 @@ export class MobileConversationStore {
     this.#entries.delete(agentId);
     this.#indices.delete(agentId);
     this.#deltas.delete(agentId);
+    this.#deletedMessages.delete(agentId);
     this.#loads.delete(agentId);
     this.#olderLoads.delete(agentId);
     for (const listener of this.#listeners.get(agentId) ?? []) listener();
@@ -87,6 +89,15 @@ export class MobileConversationStore {
     if (cursor && (!current || current.threadId !== page.threadId || current.pageInfo.olderCursor !== cursor)) return;
     if (!cursor && current && page.revision < current.revision) return;
     const sameThread = current?.threadId === page.threadId;
+    if (current && !sameThread) this.#deletedMessages.delete(page.agentId);
+    const deleted = this.#deletedMessages.get(page.agentId);
+    if (deleted?.size) {
+      page = {
+        ...page,
+        messages: page.messages.filter((message) => !deleted.has(message.id)),
+        references: Object.fromEntries(Object.entries(page.references).filter(([id]) => !deleted.has(id))),
+      };
+    }
     const indices = sameThread ? this.#indices.get(page.agentId) : undefined;
     const overlap = page.messages.find((message) => indices?.has(message.id));
     // A disconnected latest page must not leave an invisible gap in the history.
@@ -123,6 +134,18 @@ export class MobileConversationStore {
       olderError: false,
     });
     this.#publish(page.agentId, next);
+  }
+
+  deleteMessage(agentId: string, messageId: string) {
+    this.flush();
+    const deleted = this.#deletedMessages.get(agentId) ?? new Set<string>();
+    deleted.add(messageId);
+    this.#deletedMessages.set(agentId, deleted);
+    const current = this.get(agentId);
+    if (!current) return;
+    const messages = current.messages.filter((message) => message.id !== messageId);
+    const references = Object.fromEntries(Object.entries(current.references).filter(([id]) => id !== messageId));
+    this.#publish(agentId, { ...current, messages, references });
   }
 
   loadLatest(agentId: string, read: ReadPage, isCurrent: () => boolean, refresh = false): Promise<ConversationPage> {
@@ -199,9 +222,15 @@ export class MobileConversationStore {
       let threadId = current.threadId;
       let activeTurnId = current.activeTurnId;
       const updates = new Map<string, { event: Delta; parts: string[] }>();
+      const deleted = this.#deletedMessages.get(agentId);
       for (const event of deltas) {
         if (event.revision <= revision || (threadId !== null && event.threadId !== threadId)) continue;
         threadId = event.threadId;
+        if (deleted?.has(event.messageId)) {
+          revision = event.revision;
+          activeTurnId = event.turnId;
+          continue;
+        }
         const update = updates.get(event.messageId);
         if (update) update.parts.push(event.delta);
         else updates.set(event.messageId, { event, parts: [event.delta] });

@@ -1,6 +1,11 @@
 import type { ConversationMessage, QueueDelivery } from "@openbot/contracts/ipc";
 import { describe, expect, it } from "vitest";
-import { latestReadableMessage, projectChatMessages, withFailureReasons } from "./chat-messages";
+import {
+  latestReadableMessage,
+  messageIdForHistoryMutation,
+  projectChatMessages,
+  withFailureReasons,
+} from "./chat-messages";
 
 function planMessage(text: string, status: ConversationMessage["status"], plan?: ConversationMessage["plan"]) {
   return {
@@ -172,5 +177,13 @@ describe("mobile message senders", () => {
     expect(authors(projectChatMessages([host], "member-self", "account-other"))[0]?.sender).toEqual(host.senderMember);
     // A server that is still connecting names no reader, so no message is shown as another person's.
     expect(authors(projectChatMessages(messages, "")).every((message) => message.sender === undefined)).toBe(true);
+  });
+});
+
+describe("message history mutation ids", () => {
+  it("uses the acknowledged server id when a channel bubble keeps its local render key", () => {
+    expect(messageIdForHistoryMutation("local-message-1", new Map([["server-message-7", "local-message-1"]]))).toBe(
+      "server-message-7",
+    );
   });
 });

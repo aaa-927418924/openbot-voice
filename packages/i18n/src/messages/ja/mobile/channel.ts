@@ -12,6 +12,12 @@ export const messages = {
     "チャンネルを停止します。履歴は「削除したチャンネル」にプレビュー専用で残ります。復元はできません。エージェントは残ります。",
   "mobile.channel.list.deleteFailed": "チャンネルを削除できませんでした",
   "mobile.channel.list.deleteFailedBody": "このチャンネルを削除できませんでした。もう一度お試しください。",
+  "mobile.channel.list.clearHistory": "履歴を消去",
+  "mobile.channel.list.clearHistoryTitle": "{name} の履歴を消去しますか？",
+  "mobile.channel.list.clearHistoryBody":
+    "このチャンネルのすべてのメッセージが完全に削除されます。この操作は取り消せません。",
+  "mobile.channel.list.clearHistoryFailed": "チャンネル履歴を消去できませんでした",
+  "mobile.channel.list.clearHistoryFailedBody": "チャンネル履歴を消去できませんでした。もう一度お試しください。",
   "mobile.channel.list.open": "チャンネル {name} を開く",
   "mobile.channel.list.openWithTitle": "チャンネル {name} を開く、{title}",
   "mobile.channel.list.unread": { other: "未読メッセージ {count} 件" },

@@ -45,7 +45,10 @@ export const ChannelListRow = memo(function ChannelListRow({
   const server = servers.find((candidate) => candidate.id === serverId);
   const disconnected = server?.state !== "online";
   const canDelete = !disconnected && server?.role !== "member" && !channel.archived;
+  const canChangeHistory = !disconnected && channelStore.get(serverId).canMutateHistory && !channel.archived;
+  const canClearHistory = canChangeHistory && channel.activeTasks === 0;
   const deleting = useRef(false);
+  const clearingHistory = useRef(false);
   const togglePin = (withHaptic = true) => {
     toggleChannelPinAnimated(channel, serverId, { haptic: withHaptic });
   };
@@ -80,6 +83,36 @@ export const ChannelListRow = memo(function ChannelListRow({
         },
       },
     ]);
+  const clearHistory = () =>
+    Alert.alert(
+      t("mobile.channel.list.clearHistoryTitle", { name: channel.name }),
+      t("mobile.channel.list.clearHistoryBody"),
+      [
+        { text: t("common.cancel"), style: "cancel" },
+        {
+          text: t("mobile.channel.list.clearHistory"),
+          style: "destructive",
+          onPress: () => {
+            if (clearingHistory.current) return;
+            clearingHistory.current = true;
+            channelStore
+              .clearHistory(serverId, channel.id)
+              .then(() => haptics.notification())
+              .catch((cause: unknown) => {
+                void haptics.notification("error");
+                const text = currentText();
+                Alert.alert(
+                  text.t("mobile.channel.list.clearHistoryFailed"),
+                  text.errorMessage(cause, text.t("mobile.channel.list.clearHistoryFailedBody")),
+                );
+              })
+              .finally(() => {
+                clearingHistory.current = false;
+              });
+          },
+        },
+      ],
+    );
   const copyId = () => {
     void Clipboard.setStringAsync(channel.id).then(() => haptics.notification());
   };
@@ -193,6 +226,11 @@ export const ChannelListRow = memo(function ChannelListRow({
           <Link.MenuAction icon="doc.on.doc" onPress={copyId}>
             {t("mobile.agent.menu.copyId")}
           </Link.MenuAction>
+          {canClearHistory ? (
+            <Link.MenuAction destructive icon="trash.slash" onPress={clearHistory}>
+              {t("mobile.channel.list.clearHistory")}
+            </Link.MenuAction>
+          ) : null}
           {canDelete ? (
             <Link.MenuAction destructive icon="trash" onPress={remove}>
               {t("common.delete")}
@@ -219,6 +257,11 @@ export const ChannelListRow = memo(function ChannelListRow({
         { id: "hide", title: t("mobile.agent.menu.hide") },
         { id: "info", title: t("mobile.agent.menu.info") },
         { id: "copy", title: t("mobile.agent.menu.copyId") },
+        {
+          id: "clear-history",
+          title: t("mobile.channel.list.clearHistory"),
+          attributes: { destructive: true, hidden: !canClearHistory },
+        },
         { id: "delete", title: t("common.delete"), attributes: { destructive: true, hidden: !canDelete } },
       ]}
       onPressAction={({ nativeEvent }) => {
@@ -227,6 +270,7 @@ export const ChannelListRow = memo(function ChannelListRow({
         if (nativeEvent.event === "hide") hide();
         if (nativeEvent.event === "info") info();
         if (nativeEvent.event === "copy") copyId();
+        if (nativeEvent.event === "clear-history") clearHistory();
         if (nativeEvent.event === "delete") remove();
       }}
     >

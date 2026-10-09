@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => ({
   copy: vi.fn(async (_text: string) => {}),
   back: vi.fn(),
   push: vi.fn(),
-  alert: vi.fn(),
+  alert: vi.fn((_title: string, _message: string, _buttons?: Array<{ onPress?: () => void }>) => {}),
 }));
 const Container = ({ children }: PropsWithChildren) => <div>{children}</div>;
 vi.mock("react-native", () => ({
@@ -92,7 +92,12 @@ vi.mock("heroui-native", () => ({
     Paragraph: ({ children }: PropsWithChildren) => <p>{children}</p>,
   }),
 }));
-vi.mock("lucide-react-native", () => ({ Copy: () => null, Reply: () => null, TextSelect: () => null }));
+vi.mock("lucide-react-native", () => ({
+  Copy: () => null,
+  Reply: () => null,
+  TextSelect: () => null,
+  Trash2: () => null,
+}));
 vi.mock("@/shared/components/sheet-scroll-view", () => ({
   SheetScrollView: ({ children }: PropsWithChildren) => <div>{children}</div>,
 }));
@@ -129,12 +134,21 @@ const message = {
   body: "First line\nSecond line",
   streaming: false,
 };
-function Harness({ canReply = true }: { canReply?: boolean }) {
+function Harness({
+  canReply = true,
+  onDelete = null,
+}: {
+  canReply?: boolean;
+  onDelete?: (() => Promise<void>) | null;
+}) {
   const { select, selected } = useMessageActions();
   const [reply, setReply] = useState("");
   return (
     <Container>
-      <button type="button" onClick={() => select({ message, onReply: canReply ? () => setReply(message.id) : null })}>
+      <button
+        type="button"
+        onClick={() => select({ message, onReply: canReply ? () => setReply(message.id) : null, onDelete })}
+      >
         Open actions
       </button>
       <output aria-label="Reply target">{reply}</output>
@@ -175,11 +189,11 @@ it("keeps code copy and message actions separately accessible with a screen read
     openedActions: 1,
   });
 });
-async function open(canReply = true) {
+async function open(canReply = true, onDelete: (() => Promise<void>) | null = null) {
   await act(() =>
     root.render(
       <MessageActionsProvider>
-        <Harness canReply={canReply} />
+        <Harness canReply={canReply} onDelete={onDelete} />
       </MessageActionsProvider>,
     ),
   );
@@ -231,5 +245,22 @@ it("keeps actions open when copying fails", async () => {
   expect({ error: mocks.alert.mock.calls, dismissed: mocks.back.mock.calls.length }).toEqual({
     error: [["Could not copy message", "Please try again."]],
     dismissed: 0,
+  });
+});
+
+it("asks for confirmation before deleting a message and closes after success", async () => {
+  const onDelete = vi.fn(async () => {});
+  await open(true, onDelete);
+  await act(async () => fireEvent.click(screen.getByRole("button", { name: "Delete message" })));
+  expect(mocks.alert).toHaveBeenCalledWith(
+    "Delete this message?",
+    "This message will be removed from the conversation for everyone.",
+    expect.any(Array),
+  );
+  const actions = mocks.alert.mock.calls[0]?.[2] ?? [];
+  await act(async () => actions[1]?.onPress?.());
+  expect({ deleted: onDelete.mock.calls.length, dismissed: mocks.back.mock.calls.length }).toEqual({
+    deleted: 1,
+    dismissed: 1,
   });
 });

@@ -12,6 +12,12 @@ export const messages = {
     "Isso interrompe o canal. Seu histórico fica em Canais excluídos apenas para visualização. Você não pode restaurá-lo. Os agentes são mantidos.",
   "mobile.channel.list.deleteFailed": "Não foi possível excluir o canal",
   "mobile.channel.list.deleteFailedBody": "Não foi possível excluir este canal. Tente novamente.",
+  "mobile.channel.list.clearHistory": "Limpar histórico",
+  "mobile.channel.list.clearHistoryTitle": "Limpar o histórico de {name}?",
+  "mobile.channel.list.clearHistoryBody":
+    "Todas as mensagens deste canal serão removidas permanentemente. Não é possível desfazer.",
+  "mobile.channel.list.clearHistoryFailed": "Não foi possível limpar o histórico do canal",
+  "mobile.channel.list.clearHistoryFailedBody": "Não foi possível limpar este histórico. Tente novamente.",
   "mobile.channel.list.open": "Abrir canal {name}",
   "mobile.channel.list.openWithTitle": "Abrir canal {name}, {title}",
   "mobile.channel.list.unread": { one: "{count} mensagem não lida", other: "{count} mensagens não lidas" },
