@@ -14,6 +14,24 @@ export type IncomingLink =
   | { kind: "template"; url: string; templateId: string }
   | { kind: "invalid" };
 
+function normalizeVoiceMobileConnectUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    if (
+      url.protocol === "openbotvoice:" &&
+      url.hostname === "mobile-connect" &&
+      url.username === "" &&
+      url.password === "" &&
+      url.port === ""
+    ) {
+      return value.replace(/^openbotvoice:/iu, "openbot:");
+    }
+  } catch {
+    // Leave invalid input for the existing link parsers to reject.
+  }
+  return value;
+}
+
 export function parseIncomingLink(value: string): IncomingLink {
   // The other link kinds have separate parsers and cannot weaken invitation validation.
   if (isInviteLink(value)) return { kind: "invite", url: value };
@@ -23,11 +41,12 @@ export function parseIncomingLink(value: string): IncomingLink {
   } catch {
     // Not an agent link.
   }
+  const mobileConnectUrl = normalizeVoiceMobileConnectUrl(value);
   try {
-    const url = new URL(value);
-    const pairing = parseMobileConnectUrl(value);
+    const url = new URL(mobileConnectUrl);
+    const pairing = parseMobileConnectUrl(mobileConnectUrl);
     if (pairing && url.username === "" && url.password === "" && url.port === "") {
-      return { kind: "pairing", url: value };
+      return { kind: "pairing", url: mobileConnectUrl };
     }
     return { kind: "plugin", url: createPluginShareUrl(parsePluginUrl(value)) };
   } catch {

@@ -18,6 +18,15 @@ const payload = {
 
 const templateId = "AbCdEfGhIjKlMnOpQrSt_-";
 
+const canonicalPairingUrl = createMobileConnectUrl({
+  apiUrl: payload.apiUrl,
+  ticket: "c".repeat(32),
+  host: { hostId: payload.serverId, fingerprint: payload.fingerprint },
+});
+const voicePairingUrl = canonicalPairingUrl.replace(/^openbot:/u, "openbotvoice:");
+const voicePairingUrlWithFragment = new URL(voicePairingUrl);
+voicePairingUrlWithFragment.hash = "extra";
+
 function requestId(path: string): string {
   return new URL(path, "https://openbot.run").searchParams.get("request") ?? "";
 }
@@ -36,6 +45,37 @@ describe("incoming mobile links", () => {
       expect(readIncomingLink(id)).toEqual({ kind: "invalid" });
     },
   );
+
+  it("keeps canonical Mobile Connect links and normalizes only the local voice scheme", () => {
+    expect(parseIncomingLink(canonicalPairingUrl)).toEqual({
+      kind: "pairing",
+      url: canonicalPairingUrl,
+    });
+    expect(parseIncomingLink(voicePairingUrl)).toEqual({
+      kind: "pairing",
+      url: canonicalPairingUrl,
+    });
+
+    const request = redirectIncomingLink(voicePairingUrl);
+    expect(readIncomingLink(requestId(request))).toEqual({
+      kind: "pairing",
+      url: canonicalPairingUrl,
+    });
+    forgetIncomingLink(requestId(request));
+  });
+
+  it.each([
+    "openbotvoice://plugins/my-plugin",
+    "openbotvoice://join?invite=invalid",
+    "openbotvoice://mcp-auth?code=x&state=y",
+    voicePairingUrl.replace("mobile-connect?", "mobile-connect/path?"),
+    voicePairingUrlWithFragment.toString(),
+    voicePairingUrl.replace("://mobile-connect?", "://user:pass@mobile-connect?"),
+    voicePairingUrl.replace("://mobile-connect?", "://mobile-connect:8123?"),
+    voicePairingUrl.replace("mobile-connect?", "mobile-connect?extra=1&"),
+  ])("rejects a non-Mobile-Connect or invalid voice link: %s", (url) => {
+    expect(parseIncomingLink(url)).toEqual({ kind: "invalid" });
+  });
 
   it("retains an invitation while a Mobile Connect link starts sign-in", () => {
     const id = requestId(redirectIncomingLink(createInviteUrl(payload)));

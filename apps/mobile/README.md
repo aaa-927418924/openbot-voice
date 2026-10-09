@@ -399,6 +399,30 @@ To build a signed `.aab` on your computer, run `bun run mobile:android:build:loc
 and the Android SDK, and writes `/private/tmp/openbot-play.aab`.
 See [Fastlane Google Play upload](https://docs.fastlane.tools/actions/upload_to_play_store/).
 
+### OpenBot Voice local Android APK
+
+The `OPENBOT_ANDROID_APK_VARIANT=voice` config creates a separate Android app named **OpenBot
+Voice**, with application ID `com.aaa927418924.openbotvoice` and the `openbotvoice` link scheme.
+Without this variable, the normal OpenBot identity remains in effect. OpenBot Voice accepts the
+existing `openbot://` desktop pairing links and its `openbotvoice://mobile-connect` return links.
+
+Build a local standalone APK without EAS or store signing:
+
+```bash
+cd apps/mobile
+unset EXPO_PUBLIC_OPENPANEL_CLIENT_ID EXPO_PUBLIC_OPENPANEL_CLIENT_SECRET
+export EXPO_PUBLIC_APP_ENV=preview EXPO_NO_DOTENV=1 OPENBOT_ANDROID_APK_VARIANT=voice
+bunx expo prebuild --platform android --no-install
+cd android
+./gradlew --no-daemon --max-workers=2 assembleRelease
+```
+
+This requires Node.js 24, Bun, JDK 17, and the Android SDK/NDK versions required by Expo SDK 57.
+The APK is `android/app/build/outputs/apk/release/app-release.apk`; it uses local test signing and
+is not a Google Play release. Keep the same local test key outside the repository for later updates;
+regenerating it prevents installing an update over the earlier APK. Install it beside OpenBot with
+`adb install -r`.
+
 ## OpenPanel product analytics
 
 The app uses the official [`@openpanel/react-native` SDK](https://openpanel.dev/docs/sdks/react-native)
