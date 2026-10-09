@@ -128,6 +128,10 @@ export function MobileLiveVoiceProvider({
       };
       void mailbox.send(command).then((result) => {
         if (result.ok || originRef.current?.sessionId !== nextOrigin.sessionId) return;
+        if (result.error === "timeout") {
+          // Best effort: the bridge may have started the provider request before its reply stalled.
+          void mailbox.send({ id: Crypto.randomUUID(), type: "stop" });
+        }
         if (stateRef.current.phase === "stopping") return;
         if (stateRef.current.hostSessionActive) return;
         publish({
@@ -146,13 +150,11 @@ export function MobileLiveVoiceProvider({
     if (!current || !isLiveVoiceBusy(stateRef.current) || stateRef.current.phase === "stopping") return;
     publish({ ...stateRef.current, phase: "stopping" });
     void mailbox.send({ id: Crypto.randomUUID(), type: "stop" }).then((result) => {
-      if (result.ok && originRef.current?.sessionId === current.sessionId && !stateRef.current.hostSessionActive) {
-        publish(EMPTY_LIVE_VOICE_STATE);
-        return;
-      }
-      if (!result.ok && originRef.current?.sessionId === current.sessionId && stateRef.current.hostSessionActive) {
+      if (originRef.current?.sessionId !== current.sessionId) return;
+      if (result.ok && !stateRef.current.hostSessionActive) publish(EMPTY_LIVE_VOICE_STATE);
+      else if (!result.ok && stateRef.current.hostSessionActive)
         publish({ ...stateRef.current, phase: "error", error: "stop" });
-      }
+      else if (!result.ok) publish(EMPTY_LIVE_VOICE_STATE);
     });
   }, [mailbox, publish]);
 

@@ -22,7 +22,9 @@ import {
   type TeamProtocolV2Json,
   teamProtocolV2AuthenticationTranscript,
 } from "@openbot/contracts/team-protocol";
+import { LIVE_VOICE_CHANNEL_START_ROUTE } from "@openbot/contracts/team-protocol/live-voice-channel-v1";
 import type { LiveVoiceWireEvent } from "@openbot/contracts/team-protocol/live-voice-v1";
+import { LIVE_VOICE_ROUTES } from "@openbot/contracts/team-protocol/live-voice-v1";
 import { optionalTeamEvent } from "@openbot/contracts/team-protocol/optional-events";
 import { teamSideRouteCodec } from "@openbot/contracts/team-protocol/side-routes";
 import {
@@ -70,16 +72,24 @@ export interface RemoteTeamCommandResult {
 
 /** Carries every outstanding command across the native/DOM bridge, keyed by request ID. */
 export function createRemoteCommandMailbox(publish: (commands: RemoteTeamCommand[]) => void) {
-  const pending = new Map<string, { command: RemoteTeamCommand; resolve: (result: RemoteTeamCommandResult) => void }>();
+  const pending = new Map<
+    string,
+    {
+      command: RemoteTeamCommand;
+      resolve: (result: RemoteTeamCommandResult) => void;
+      timer?: ReturnType<typeof setTimeout>;
+    }
+  >();
   let target: { hostId: string; hostPublicKey: string } | null = null;
   const cancel = () => {
     for (const [commandId, entry] of pending) {
+      if (entry.timer !== undefined) clearTimeout(entry.timer);
       entry.resolve({ commandId, ok: false, error: sourceText("error.remote.serverConnectionReplaced") });
     }
     pending.clear();
   };
   return {
-    send(command: RemoteTeamCommand): Promise<RemoteTeamCommandResult> {
+    send(command: RemoteTeamCommand, timeoutMs?: number): Promise<RemoteTeamCommandResult> {
       if (command.type === "disconnect") {
         cancel();
         target = null;
@@ -90,7 +100,20 @@ export function createRemoteCommandMailbox(publish: (commands: RemoteTeamCommand
         target = { hostId: command.hostId, hostPublicKey: command.hostPublicKey };
       }
       return new Promise((resolve) => {
-        pending.set(command.id, { command, resolve });
+        const entry: {
+          command: RemoteTeamCommand;
+          resolve: (result: RemoteTeamCommandResult) => void;
+          timer?: ReturnType<typeof setTimeout>;
+        } = { command, resolve };
+        if (timeoutMs !== undefined && timeoutMs > 0) {
+          entry.timer = setTimeout(() => {
+            if (pending.get(command.id) !== entry) return;
+            pending.delete(command.id);
+            resolve({ commandId: command.id, ok: false, error: sourceText("error.remote.desktopRequestTimeout") });
+            publish([...pending.values()].map((item) => item.command));
+          }, timeoutMs);
+        }
+        pending.set(command.id, entry);
         publish([...pending.values()].map((entry) => entry.command));
       });
     },
@@ -98,6 +121,7 @@ export function createRemoteCommandMailbox(publish: (commands: RemoteTeamCommand
       const entry = pending.get(result.commandId);
       if (!entry) return;
       pending.delete(result.commandId);
+      if (entry.timer !== undefined) clearTimeout(entry.timer);
       entry.resolve(result);
       publish([...pending.values()].map((item) => item.command));
     },
@@ -234,6 +258,19 @@ const COMPATIBILITY_REQUEST_TIMEOUT_MS = 3_000;
 /** The first read on a new peer also waits for a slow relay path, such as TURN over TLS on mobile data. */
 const FIRST_COMPATIBILITY_REQUEST_TIMEOUT_MS = 10_000;
 const REQUEST_TIMEOUT_MS = 10 * 60_000 + 30_000;
+const LIVE_VOICE_START_REQUEST_TIMEOUT_MS = 45_000;
+const LIVE_VOICE_STOP_REQUEST_TIMEOUT_MS = 10_000;
+const LIVE_VOICE_TEXT_REQUEST_TIMEOUT_MS = 30_000;
+
+/** A voice setup or teardown should not leave the mobile UI waiting for the general RPC deadline. */
+export function remoteTeamRequestTimeoutMs(method: string, path: string) {
+  if (method !== "POST") return undefined;
+  if (path === LIVE_VOICE_ROUTES.start || path === LIVE_VOICE_CHANNEL_START_ROUTE)
+    return LIVE_VOICE_START_REQUEST_TIMEOUT_MS;
+  if (path === LIVE_VOICE_ROUTES.stop) return LIVE_VOICE_STOP_REQUEST_TIMEOUT_MS;
+  if (path === LIVE_VOICE_ROUTES.sendText) return LIVE_VOICE_TEXT_REQUEST_TIMEOUT_MS;
+  return undefined;
+}
 
 class RemotePeerIO extends Context.Service<
   RemotePeerIO,
@@ -1105,6 +1142,8 @@ export function createRemoteTeamPeer(actions: ActionsRef) {
         const compatibilityTimeout = state.answeredRequest
           ? COMPATIBILITY_REQUEST_TIMEOUT_MS
           : FIRST_COMPATIBILITY_REQUEST_TIMEOUT_MS;
+        const requestTimeout =
+          (checksConnection ? compatibilityTimeout : remoteTeamRequestTimeoutMs(method, path)) ?? REQUEST_TIMEOUT_MS;
         const payload = yield* peerDecode(() =>
           encodeTeamProtocolV2Frame({
             version: 2,
@@ -1125,15 +1164,12 @@ export function createRemoteTeamPeer(actions: ActionsRef) {
           // Registered before the send, so a fast response finds its request.
           Effect.sync(() => {
             const reject = (error: Error) => Deferred.doneUnsafe(answer, Effect.fail(peerError(error)));
-            const timer = setTimeout(
-              () => {
-                pendingRequests.delete(requestId);
-                const error = new Error(sourceText("error.remote.desktopRequestTimeout"));
-                reject(error);
-                if (checksConnection) failPeer(state, error, actions);
-              },
-              checksConnection ? compatibilityTimeout : REQUEST_TIMEOUT_MS,
-            );
+            const timer = setTimeout(() => {
+              pendingRequests.delete(requestId);
+              const error = new Error(sourceText("error.remote.desktopRequestTimeout"));
+              reject(error);
+              if (checksConnection) failPeer(state, error, actions);
+            }, requestTimeout);
             const resolve = (value: { status: number; body: TeamProtocolV2Json }) =>
               Deferred.doneUnsafe(answer, Effect.succeed(value));
             pendingRequests.set(requestId, { method, path, resolve, reject, timer });

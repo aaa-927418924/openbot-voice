@@ -262,6 +262,11 @@ export function createLiveVoiceWebController(actions: LiveVoiceWebActions) {
     active = session;
     publish(session, "connecting", false);
     const isCurrent = () => !disposed && active === session && !session.cancelled;
+    // Cover microphone permission, SDP creation, ICE gathering and the host request. Previously
+    // this deadline started only after all local media setup had completed.
+    session.startTimer = window.setTimeout(() => {
+      if (isCurrent()) void requestStop(session, "unavailable");
+    }, START_TIMEOUT_MS);
     try {
       if (!navigator.mediaDevices?.getUserMedia)
         throw new DOMException("Microphone is unavailable.", "NotSupportedError");
@@ -329,6 +334,10 @@ export function createLiveVoiceWebController(actions: LiveVoiceWebActions) {
       peer.onconnectionstatechange = () => {
         if (!isCurrent()) return;
         if (peer.connectionState === "connected") {
+          if (session.startTimer !== undefined) window.clearTimeout(session.startTimer);
+          if (session.connectedTimer !== undefined) window.clearTimeout(session.connectedTimer);
+          session.startTimer = undefined;
+          session.connectedTimer = undefined;
           session.startedAt ??= Date.now();
           publish(session, "live", true);
         } else if (["failed", "disconnected", "closed"].includes(peer.connectionState)) {
@@ -345,9 +354,6 @@ export function createLiveVoiceWebController(actions: LiveVoiceWebActions) {
 
       session.startRequested = true;
       publish(session, "connecting", hostMayBeActive(session));
-      session.startTimer = window.setTimeout(() => {
-        if (isCurrent()) void requestStop(session, "unavailable");
-      }, START_TIMEOUT_MS);
       const outcome = await actions.startSession({
         serverId: origin.target.serverId,
         agentId: origin.target.agentId,

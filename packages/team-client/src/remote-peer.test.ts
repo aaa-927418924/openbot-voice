@@ -10,7 +10,9 @@ import {
   teamProtocolV2AuthenticationTranscript,
 } from "@openbot/contracts/team-protocol";
 import { CHANNEL_ROUTES } from "@openbot/contracts/team-protocol/channels-v1";
+import { LIVE_VOICE_CHANNEL_START_ROUTE } from "@openbot/contracts/team-protocol/live-voice-channel-v1";
 import type { LiveVoiceWireEvent } from "@openbot/contracts/team-protocol/live-voice-v1";
+import { LIVE_VOICE_ROUTES } from "@openbot/contracts/team-protocol/live-voice-v1";
 import { STORAGE_ROUTES } from "@openbot/contracts/team-protocol/storage-v1";
 import { encodeTeamProtocolV6WebRtcHttpResponse } from "@openbot/contracts/team-protocol/v6-webrtc-adapter";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -23,6 +25,7 @@ import {
   type RemoteTeamCommand,
   type RemoteTeamConnectionUpdate,
   type RemoteUploadProgress,
+  remoteTeamRequestTimeoutMs,
 } from "./remote-peer";
 import { createRemoteConnectionRecovery } from "./remote-recovery";
 import { encodeTeamWebRtcPayload, TeamWebRtcPayloadDecoder } from "./webrtc-framing";
@@ -574,6 +577,38 @@ describe("browser remote peer recovery", () => {
     await network.runtime.dispose();
   });
 
+  it("bounds Live Voice start requests instead of using the general RPC timeout", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const response = deferred();
+    const requested = deferred();
+    const network = await setupNetwork({
+      beforeResponse: async () => {
+        requested.resolve();
+        await response.promise;
+      },
+    });
+    await network.connect();
+    const start = network.runtime.execute({
+      id: "live-voice-start",
+      type: "request",
+      method: "POST",
+      path: LIVE_VOICE_ROUTES.start,
+      body: { agentId: "agent", threadId: "thread", clientSessionId: "session", sdpOffer: "offer" },
+    });
+    await requested.promise;
+
+    await vi.advanceTimersByTimeAsync(45_000);
+    await expect(start).resolves.toMatchObject({ ok: false, error: "The desktop request timed out." });
+    expect(network.updates.at(-1)).toMatchObject({ state: "online" });
+    expect(remoteTeamRequestTimeoutMs("POST", LIVE_VOICE_ROUTES.start)).toBe(45_000);
+    expect(remoteTeamRequestTimeoutMs("POST", LIVE_VOICE_CHANNEL_START_ROUTE)).toBe(45_000);
+    expect(remoteTeamRequestTimeoutMs("POST", LIVE_VOICE_ROUTES.stop)).toBe(10_000);
+    expect(remoteTeamRequestTimeoutMs("POST", LIVE_VOICE_ROUTES.sendText)).toBe(30_000);
+    expect(remoteTeamRequestTimeoutMs("GET", LIVE_VOICE_ROUTES.start)).toBeUndefined();
+    response.resolve();
+    await network.runtime.dispose();
+  });
+
   it("rejects a malformed bootstrap response instead of leaving the agent loader pending forever", async () => {
     const network = await setupNetwork();
     await network.connect();
@@ -1019,6 +1054,26 @@ describe("native command mailbox", () => {
     mailbox.receive({ commandId: "slow", ok: true, body: "slow response" });
     await expect(slow).resolves.toMatchObject({ body: "slow response" });
     expect(published).toEqual([]);
+  });
+
+  it("expires a command the native bridge never acknowledges and ignores a late result", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    let published: RemoteTeamCommand[] = [];
+    const mailbox = createRemoteCommandMailbox((commands) => {
+      published = commands;
+    });
+    const pending = mailbox.send(
+      { id: "live-voice-stop", type: "request", method: "POST", path: LIVE_VOICE_ROUTES.stop, body: {} },
+      100,
+    );
+    expect(published.map((command) => command.id)).toEqual(["live-voice-stop"]);
+
+    await vi.advanceTimersByTimeAsync(100);
+    await expect(pending).resolves.toMatchObject({ ok: false, error: "The desktop request timed out." });
+    expect(published).toEqual([]);
+    mailbox.receive({ commandId: "live-voice-stop", ok: true });
+    expect(published).toEqual([]);
+    mailbox.dispose();
   });
 
   it.each(["connect", "disconnect"] as const)(

@@ -14,6 +14,7 @@ import {
   type RemoteTeamConnectionUpdate,
   type RemoteTeamDiagnostic,
   type RemoteUploadProgress,
+  remoteTeamRequestTimeoutMs,
 } from "@openbot/team-client/remote-peer";
 import * as Crypto from "expo-crypto";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
@@ -91,6 +92,7 @@ export const RemoteTeamTransport = forwardRef<RemoteTeamTransportRef, RemoteTeam
       (
         next: RemoteTeamCommandInput,
         onUploadProgress?: (fraction: number) => void,
+        timeoutMs?: number,
       ): Promise<RemoteTeamCommandResult> => {
         const id = Crypto.randomUUID();
         const command: RemoteTeamCommand =
@@ -99,9 +101,9 @@ export const RemoteTeamTransport = forwardRef<RemoteTeamTransportRef, RemoteTeam
             : next.type === "request"
               ? { id, type: "request", method: next.method, path: next.path, body: next.body, upload: next.upload }
               : { id, type: "disconnect" };
-        if (!onUploadProgress) return mailbox.send(command);
+        if (!onUploadProgress) return mailbox.send(command, timeoutMs);
         uploadListeners.current.set(id, onUploadProgress);
-        return mailbox.send(command).finally(() => uploadListeners.current.delete(id));
+        return mailbox.send(command, timeoutMs).finally(() => uploadListeners.current.delete(id));
       },
       [mailbox],
     );
@@ -127,7 +129,15 @@ export const RemoteTeamTransport = forwardRef<RemoteTeamTransportRef, RemoteTeam
           onUploadProgress?: (fraction: number) => void,
         ): Promise<T> => {
           const started = Date.now();
-          const result = await enqueue({ type: "request", method, path, body, upload }, onUploadProgress);
+          const innerTimeout = remoteTeamRequestTimeoutMs(method, path);
+          // Let the peer's route timer return a useful error first. This native timer also recovers
+          // if Android's hidden DOM WebView stops processing commands altogether.
+          const bridgeTimeout = innerTimeout === undefined ? undefined : innerTimeout + 5_000;
+          const result = await enqueue(
+            { type: "request", method, path, body, upload },
+            onUploadProgress,
+            bridgeTimeout,
+          );
           const liveVoiceRoute = isLiveVoiceRoute(path);
           // Method, path, status and time only. Never the body or the upload.
           const request = `${hostIdRef.current ?? "unknown server"} ${method} ${supportLogUrl(path)}`;

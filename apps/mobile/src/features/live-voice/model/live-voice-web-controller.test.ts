@@ -126,6 +126,49 @@ afterEach(() => {
 });
 
 describe("Live Voice WebRTC controller lifecycle", () => {
+  it("ends startup when microphone permission never resolves and releases a late stream", async () => {
+    const microphone = deferred<FakeStream>();
+    let startupTimeout: (() => void) | undefined;
+    const getUserMedia = vi.fn(() => microphone.promise);
+    vi.stubGlobal("navigator", { mediaDevices: { getUserMedia } });
+    vi.stubGlobal("RTCPeerConnection", FakePeer);
+    vi.stubGlobal("Audio", FakeAudio);
+    vi.stubGlobal("window", {
+      AudioContext: FakeAudioContext,
+      setInterval: vi.fn(() => 1),
+      clearInterval: vi.fn(),
+      setTimeout: vi.fn((callback: () => void) => {
+        startupTimeout = callback;
+        return 1;
+      }),
+      clearTimeout: vi.fn(),
+    });
+    const startSession = vi.fn(async () => ({
+      kind: "started" as const,
+      response: { sessionId: origin.sessionId, sdpAnswer: "answer" },
+    }));
+    const onState = vi.fn(async (_state: MobileLiveVoiceState) => {});
+    const controller = createLiveVoiceWebController({
+      startSession,
+      stopSession: vi.fn(async () => {}),
+      sendText: vi.fn(async () => {}),
+      onState,
+    });
+
+    const starting = controller.start(origin);
+    expect(getUserMedia).toHaveBeenCalledOnce();
+    startupTimeout?.();
+    expect(startSession).not.toHaveBeenCalled();
+    const stream = new FakeStream();
+    microphone.resolve(stream);
+    await starting;
+
+    expect(stream.track.stopped).toBe(true);
+    await vi.waitFor(() =>
+      expect(onState.mock.calls.at(-1)?.[0]).toMatchObject({ phase: "error", error: "unavailable" }),
+    );
+  });
+
   it("cancels before microphone permission resolves and releases the late stream without starting a host lease", async () => {
     const microphone = deferred<FakeStream>();
     const getUserMedia = vi.fn(() => microphone.promise);
