@@ -1,0 +1,239 @@
+diff --git a/android/build.gradle b/android/build.gradle
+index 8784c32d96c5382dc61d3d37bbf61247a24a3e71..2bc08df54972484c5c5474528a2c2555b38301ba 100644
+--- a/android/build.gradle
++++ b/android/build.gradle
+@@ -13,3 +13,7 @@ android {
+     versionName "57.0.1"
+   }
+ }
++
++dependencies {
++  testImplementation 'junit:junit:4.13.2'
++}
+diff --git a/android/src/main/java/expo/modules/webview/DomWebView.kt b/android/src/main/java/expo/modules/webview/DomWebView.kt
+index 125ad1db8dc4e099b689ac45b651f142b07c728c..678a798b36c7409f1eaddb6a667830d58dfb3c54 100644
+--- a/android/src/main/java/expo/modules/webview/DomWebView.kt
++++ b/android/src/main/java/expo/modules/webview/DomWebView.kt
+@@ -2,9 +2,11 @@
+ 
+ package expo.modules.webview
+ 
++import android.Manifest
+ import android.animation.ObjectAnimator
+ import android.annotation.SuppressLint
+ import android.content.Context
++import android.content.pm.PackageManager
+ import android.graphics.Bitmap
+ import android.graphics.Color
+ import android.os.Build
+@@ -12,7 +14,9 @@ import android.view.MotionEvent
+ import android.view.View
+ import android.view.View.OnTouchListener
+ import android.view.ViewGroup
++import android.webkit.PermissionRequest
+ import android.webkit.RenderProcessGoneDetail
++import android.webkit.WebChromeClient
+ import android.webkit.WebView
+ import android.webkit.WebViewClient
+ import expo.modules.core.logging.LogHandlers
+@@ -198,6 +202,7 @@ internal class DomWebView(context: Context, appContext: AppContext) : ExpoView(c
+       // API 30+ default disables file access; DOM bundles need it for sibling assets.
+       settings.allowFileAccess = true
+       settings.allowFileAccessFromFileURLs = true
++      webChromeClient = createWebChromeClient()
+       webViewClient = createWebViewClient()
+       addJavascriptInterface(rncWebViewBridge, "ReactNativeWebView")
+       addJavascriptInterface(DomWebViewBridge(this@DomWebView), "ExpoDomWebViewBridge")
+@@ -205,6 +210,25 @@ internal class DomWebView(context: Context, appContext: AppContext) : ExpoView(c
+     }
+   }
+ 
++  private fun createWebChromeClient() = object : WebChromeClient() {
++    override fun onPermissionRequest(request: PermissionRequest) {
++      val mayCaptureAudio = DomWebViewPermissionPolicy.mayGrantAudioCapture(
++        requestedResources = request.resources,
++        hasRecordAudioPermission = context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED,
++        sourceUri = source?.uri,
++        currentUrl = webView.url,
++        requestOrigin = request.origin.toString(),
++        audioCaptureResource = PermissionRequest.RESOURCE_AUDIO_CAPTURE
++      )
++
++      if (mayCaptureAudio) {
++        request.grant(arrayOf(PermissionRequest.RESOURCE_AUDIO_CAPTURE))
++      } else {
++        request.deny()
++      }
++    }
++  }
++
+   private fun createWebViewClient() = object : WebViewClient() {
+     override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+       super.onPageStarted(view, url, favicon)
+diff --git a/node_modules/@expo/dom-webview/android/src/main/java/expo/modules/webview/DomWebViewPermissionPolicy.kt b/android/src/main/java/expo/modules/webview/DomWebViewPermissionPolicy.kt
+new file mode 100644
+index 0000000000000000000000000000000000000000..cd75fa0bfcd7894f76edd8de7c0c2710defd4362
+--- /dev/null
++++ b/android/src/main/java/expo/modules/webview/DomWebViewPermissionPolicy.kt
+@@ -0,0 +1,62 @@
++// Copyright 2015-present 650 Industries. All rights reserved.
++
++package expo.modules.webview
++
++import java.net.URI
++import java.util.Locale
++
++internal object DomWebViewPermissionPolicy {
++  fun mayGrantAudioCapture(
++    requestedResources: Array<out String>,
++    hasRecordAudioPermission: Boolean,
++    sourceUri: String?,
++    currentUrl: String?,
++    requestOrigin: String?,
++    audioCaptureResource: String
++  ): Boolean {
++    if (!hasRecordAudioPermission || requestedResources.size != 1 || requestedResources[0] != audioCaptureResource) {
++      return false
++    }
++
++    val source = parse(sourceUri) ?: return false
++    val current = parse(currentUrl) ?: return false
++    val origin = parse(requestOrigin) ?: return false
++
++    return isExpoDomSource(source) &&
++      source.rawPath == current.rawPath &&
++      source.rawQuery == current.rawQuery &&
++      hasSameOrigin(source, current) &&
++      hasSameOrigin(source, origin)
++  }
++
++  private fun parse(value: String?): URI? = try {
++    value?.let { if (it == "file://") URI("file:/") else URI(it) }
++  } catch (_: Exception) {
++    null
++  }
++
++  private fun isExpoDomSource(uri: URI): Boolean {
++    if (uri.rawUserInfo != null) return false
++
++    return when (uri.scheme?.lowercase(Locale.ROOT)) {
++      "file" -> uri.rawAuthority.isNullOrEmpty() &&
++        uri.rawPath?.startsWith("/android_asset/www.bundle/") == true
++      "http", "https" -> uri.host != null &&
++        (uri.rawPath == "/_expo/@dom" || uri.rawPath?.startsWith("/_expo/@dom/") == true)
++      else -> false
++    }
++  }
++
++  private fun hasSameOrigin(first: URI, second: URI): Boolean =
++    first.scheme?.equals(second.scheme, ignoreCase = true) == true &&
++      first.rawUserInfo == null && second.rawUserInfo == null &&
++      first.host.equals(second.host, ignoreCase = true) &&
++      effectivePort(first) == effectivePort(second)
++
++  private fun effectivePort(uri: URI): Int = when {
++    uri.port != -1 -> uri.port
++    uri.scheme.equals("http", ignoreCase = true) -> 80
++    uri.scheme.equals("https", ignoreCase = true) -> 443
++    else -> -1
++  }
++}
+diff --git a/node_modules/@expo/dom-webview/android/src/test/java/expo/modules/webview/DomWebViewPermissionPolicyTest.kt b/android/src/test/java/expo/modules/webview/DomWebViewPermissionPolicyTest.kt
+new file mode 100755
+index 0000000000000000000000000000000000000000..92d67d8a96d7b772fd72fd9c7a42f2553c6cfaf2
+--- /dev/null
++++ b/android/src/test/java/expo/modules/webview/DomWebViewPermissionPolicyTest.kt
+@@ -0,0 +1,75 @@
++package expo.modules.webview
++
++import org.junit.Assert.assertFalse
++import org.junit.Assert.assertTrue
++import org.junit.Test
++
++class DomWebViewPermissionPolicyTest {
++  private val audioCapture = "android.webkit.resource.AUDIO_CAPTURE"
++  private val embeddedDom = "file:///android_asset/www.bundle/live-voice.html"
++
++  @Test
++  fun `grants audio to the current embedded app DOM page when Android permission is granted`() {
++    assertTrue(
++      DomWebViewPermissionPolicy.mayGrantAudioCapture(
++        arrayOf(audioCapture), true, embeddedDom, embeddedDom, "file://", audioCapture
++      )
++    )
++  }
++
++  @Test
++  fun `grants audio to the current Expo DOM development page`() {
++    val devDom = "http://192.168.1.20:8081/_expo/@dom/live-voice.html"
++    assertTrue(
++      DomWebViewPermissionPolicy.mayGrantAudioCapture(
++        arrayOf(audioCapture), true, devDom, devDom, "http://192.168.1.20:8081", audioCapture
++      )
++    )
++  }
++
++  @Test
++  fun `denies audio when the Android microphone permission is not granted`() {
++    assertFalse(
++      DomWebViewPermissionPolicy.mayGrantAudioCapture(
++        arrayOf(audioCapture), false, embeddedDom, embeddedDom, "file://", audioCapture
++      )
++    )
++  }
++
++  @Test
++  fun `denies requests for any resource other than audio capture alone`() {
++    assertFalse(
++      DomWebViewPermissionPolicy.mayGrantAudioCapture(
++        arrayOf("android.webkit.resource.VIDEO_CAPTURE"), true, embeddedDom, embeddedDom, "file://", audioCapture
++      )
++    )
++    assertFalse(
++      DomWebViewPermissionPolicy.mayGrantAudioCapture(
++        arrayOf(audioCapture, "android.webkit.resource.VIDEO_CAPTURE"), true, embeddedDom, embeddedDom, "file://", audioCapture
++      )
++    )
++  }
++
++  @Test
++  fun `denies origins outside the configured Expo DOM page`() {
++    assertFalse(
++      DomWebViewPermissionPolicy.mayGrantAudioCapture(
++        arrayOf(audioCapture), true, embeddedDom, embeddedDom, "https://example.com", audioCapture
++      )
++    )
++    assertFalse(
++      DomWebViewPermissionPolicy.mayGrantAudioCapture(
++        arrayOf(audioCapture), true, "https://example.com/page", "https://example.com/page", "https://example.com", audioCapture
++      )
++    )
++  }
++
++  @Test
++  fun `denies permission after the web view navigates away from its configured DOM page`() {
++    assertFalse(
++      DomWebViewPermissionPolicy.mayGrantAudioCapture(
++        arrayOf(audioCapture), true, embeddedDom, "file:///android_asset/www.bundle/other.html", "file://", audioCapture
++      )
++    )
++  }
++}
+diff --git a/expo-module.config.json b/expo-module.config.json
+index 0c107e4f48f11d1846288fdfbd9272c015bca6b2..d4cb965287ac5cf045154b86a32edac50f26c97d 100644
+--- a/expo-module.config.json
++++ b/expo-module.config.json
+@@ -4,12 +4,6 @@
+     "modules": ["DomWebViewModule"]
+   },
+   "android": {
+-    "modules": ["expo.modules.webview.DomWebViewModule"],
+-    "publication": {
+-      "groupId": "expo.modules.webview",
+-      "artifactId": "expo.modules.webview",
+-      "version": "57.0.1",
+-      "repository": "local-maven-repo"
+-    }
++    "modules": ["expo.modules.webview.DomWebViewModule"]
+   }
+ }
