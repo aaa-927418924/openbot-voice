@@ -105,8 +105,8 @@ function RootNavigator() {
                     headerTransparent: isIOS,
                   }}
                 >
+                  <Stack.Screen name="index" options={{ headerShown: false }} />
                   <Stack.Protected guard={!session}>
-                    <Stack.Screen name="index" options={{ headerShown: false }} />
                     <Stack.Screen
                       name="scan-qr-code"
                       options={{ animation: "slide_from_right", title: t("mobile.app.route.scanQrCode") }}
