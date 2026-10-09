@@ -13,6 +13,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { MobileSession } from "@/features/auth/api/mobile-auth";
 import { AddServerLinkScreen } from "@/features/servers/screens/add-server-link-screen";
 import { AddServerScreen } from "@/features/servers/screens/add-server-screen";
+import { SplashContentReadyContext } from "@/shared/lib/use-splash-gate";
 import { forgetIncomingLink, parseIncomingLink, readIncomingLink, rememberIncomingLink } from "../model/incoming-links";
 import { IncomingLinkScreen } from "./incoming-link-screen";
 
@@ -70,9 +71,10 @@ vi.mock("expo-router", () => ({
       ),
     }),
   },
-  Redirect: ({ href }: { href: { pathname: string; params?: { request?: string } } }) => (
-    <a href={`${href.pathname}?request=${href.params?.request}`}>Continue to invitation</a>
-  ),
+  Redirect: ({ href }: { href: string | { pathname: string; params?: { request?: string } } }) => {
+    const target = typeof href === "string" ? href : `${href.pathname}?request=${href.params?.request}`;
+    return <a href={target}>Continue to invitation</a>;
+  },
 }));
 vi.mock("expo-router/react-navigation", () => ({ usePreventRemove: () => {} }));
 vi.mock("expo-web-browser", () => ({ openBrowserAsync: state.openBrowser }));
@@ -104,7 +106,16 @@ vi.mock("heroui-native", () => ({
 }));
 vi.mock("heroui-native/hooks", () => ({ useThemeColor: () => ["black", "white"] }));
 vi.mock("react-native", () => ({
-  View: ({ children }: PropsWithChildren) => <div>{children}</div>,
+  View: ({ children, onLayout, testID }: PropsWithChildren<{ onLayout?: () => void; testID?: string }>) => (
+    <div
+      data-testid={testID}
+      ref={(node) => {
+        if (node) onLayout?.();
+      }}
+    >
+      {children}
+    </div>
+  ),
   Pressable: ({
     children,
     onPress,
@@ -253,6 +264,36 @@ it("does not replace an existing session with a pairing link", async () => {
   expect(state.redeem).not.toHaveBeenCalled();
 });
 
+it("returns an authenticated user to the workspace when a restored route has lost its request", async () => {
+  const id = receive(pairing);
+  forgetIncomingLink(id);
+  state.session = session;
+
+  await act(() => root.render(<IncomingLinkScreen />));
+
+  expect(screen.getByRole("link").getAttribute("href")).toBe("/connected");
+  expect(state.redeem).not.toHaveBeenCalled();
+});
+
+it("keeps an explicitly invalid link visible instead of treating it as a stale route", async () => {
+  state.session = session;
+  receive("not a supported link");
+
+  await act(() => root.render(<IncomingLinkScreen />));
+
+  expect(screen.getByRole("heading", { name: "Link unavailable" })).toBeTruthy();
+  expect(screen.queryByRole("link")).toBeNull();
+});
+
+it("keeps a missing request parameter visible as an unavailable link", async () => {
+  state.session = session;
+
+  await act(() => root.render(<IncomingLinkScreen />));
+
+  expect(screen.getByRole("heading", { name: "Link unavailable" })).toBeTruthy();
+  expect(screen.queryByRole("link")).toBeNull();
+});
+
 it("opens a plugin in the browser only after a press", async () => {
   receive("openbot://plugins/test-plugin");
   await act(() => root.render(<IncomingLinkScreen />));
@@ -271,6 +312,21 @@ it("verifies the host before showing Join and accepts only on a press", async ()
   expect(state.join).not.toHaveBeenCalled();
   await act(() => fireEvent.click(screen.getByRole("button", { name: "Join server" })));
   expect(state.join).toHaveBeenCalledExactlyOnceWith({ inviteUrl: invite });
+});
+
+it("reports splash readiness from the add-server route root after it lays out", async () => {
+  const ready = vi.fn();
+
+  await act(() =>
+    root.render(
+      <SplashContentReadyContext.Provider value={ready}>
+        <AddServerLinkScreen />
+      </SplashContentReadyContext.Provider>,
+    ),
+  );
+
+  expect(screen.getByRole("heading", { name: "Join a server" })).toBeTruthy();
+  expect(ready).toHaveBeenCalledOnce();
 });
 
 it("blocks joining when verification fails and allows a retry", async () => {

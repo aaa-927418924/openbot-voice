@@ -1,6 +1,8 @@
 import { type Href, router, useLocalSearchParams } from "expo-router";
-import { useEffect, useState } from "react";
+import { useContext, useEffect, useState } from "react";
+import { View } from "react-native";
 import { forgetIncomingLink, readIncomingLink } from "@/features/links/model/incoming-links";
+import { SplashContentReadyContext } from "@/shared/lib/use-splash-gate";
 import { AddServerScreen } from "./add-server-screen";
 
 interface SheetPlacement {
@@ -12,7 +14,12 @@ interface SheetPlacement {
 
 export function AddServerLinkScreen(placement: SheetPlacement = {}) {
   const { request } = useLocalSearchParams<{ request?: string }>();
-  return <Invitation key={request ?? "manual"} request={request} {...placement} />;
+  const reportContentReady = useContext(SplashContentReadyContext);
+  return (
+    <View className="flex-1" onLayout={() => reportContentReady()}>
+      <Invitation key={request ?? "manual"} request={request} {...placement} />
+    </View>
+  );
 }
 
 // A deep link and the scanner both hand over the invitation through the request store, so its

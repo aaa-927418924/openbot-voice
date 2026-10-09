@@ -32,6 +32,11 @@ export const SplashMotionContext = createContext<{
 // wallpaper and never the app.
 export const SPLASH_HANDOFF_DEADLINE_MS = 1500;
 
+/** These startup routes report readiness from their actual destination screen, not the parent stack. */
+export function shouldDeferRootSplashReadiness(pathname: string): boolean {
+  return pathname === "/" || pathname === "/incoming-link" || pathname === "/connected" || pathname === "/add-server";
+}
+
 // Readiness, not a display timer, controls when the app becomes available.
 export function useSplashGate(busy: boolean, splash: SplashController, nativeReady = true) {
   const shown = useRef(new Set<SplashArtwork>());

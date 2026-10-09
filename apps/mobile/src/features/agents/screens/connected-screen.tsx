@@ -4,7 +4,7 @@ import { type Href, router, Stack } from "expo-router";
 import { Button, Typography } from "heroui-native";
 import { useThemeColor } from "heroui-native/hooks";
 import { Bot, Layers3, Plus, Search, WifiOff } from "lucide-react-native";
-import { useLayoutEffect, useMemo, useState } from "react";
+import { useContext, useLayoutEffect, useMemo, useState } from "react";
 import { Pressable, View } from "react-native";
 import Animated, {
   cancelAnimation,
@@ -36,6 +36,7 @@ import { useAppLoadingOverlay, useScreenLoadingLabel } from "@/shared/components
 import { haptics } from "@/shared/lib/haptics";
 import { isAndroid, isIOS } from "@/shared/lib/platform";
 import { useText } from "@/shared/lib/text";
+import { SplashContentReadyContext } from "@/shared/lib/use-splash-gate";
 
 const EASE_OUT = Easing.bezier(0.23, 1, 0.32, 1);
 const ROW_ENTER = FadeIn.duration(180).easing(EASE_OUT).reduceMotion(ReduceMotion.System);
@@ -161,6 +162,7 @@ function openFromMenu(href: Href): void {
 }
 
 export function ConnectedScreen() {
+  const reportContentReady = useContext(SplashContentReadyContext);
   const { t, sourceText } = useText();
   const { isLoaderPresent } = useAppLoadingOverlay();
   const { openDrawer } = useAppDrawer();
@@ -254,7 +256,7 @@ export function ConnectedScreen() {
   );
 
   return (
-    <View className="flex-1 bg-background">
+    <View className="flex-1 bg-background" onLayout={() => reportContentReady()}>
       {listReady ? (
         <Animated.FlatList
           key={activeServer.id}

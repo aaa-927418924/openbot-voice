@@ -3,7 +3,12 @@ import { createRoot } from "react-dom/client";
 import type { WithTimingConfig } from "react-native-reanimated";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { SPLASH_HANDOFF_DEADLINE_MS, type SplashArtwork, useSplashGate } from "./use-splash-gate";
+import {
+  SPLASH_HANDOFF_DEADLINE_MS,
+  type SplashArtwork,
+  shouldDeferRootSplashReadiness,
+  useSplashGate,
+} from "./use-splash-gate";
 
 import { useSplashMotion } from "./use-splash-motion";
 
@@ -77,6 +82,26 @@ async function renderGate(busy: boolean, nativeReady = true) {
 }
 
 describe("splash handoff", () => {
+  it("waits for the destination screen on the index, incoming-link, and workspace startup routes", () => {
+    expect(shouldDeferRootSplashReadiness("/")).toBe(true);
+    expect(shouldDeferRootSplashReadiness("/incoming-link")).toBe(true);
+    expect(shouldDeferRootSplashReadiness("/connected")).toBe(true);
+    expect(shouldDeferRootSplashReadiness("/add-server")).toBe(true);
+    expect(shouldDeferRootSplashReadiness("/settings")).toBe(false);
+  });
+
+  it("keeps the backdrop visible across a startup redirect until the destination reports layout", async () => {
+    const gate = await renderGate(false);
+    expect(shouldDeferRootSplashReadiness("/incoming-link")).toBe(true);
+    expect(shouldDeferRootSplashReadiness("/connected")).toBe(true);
+    expect(shouldDeferRootSplashReadiness("/add-server")).toBe(true);
+    await gate.advance(SPLASH_HANDOFF_DEADLINE_MS);
+    expect(gate.hide).toHaveBeenCalledOnce();
+    expect(gate.covered).toBe(true);
+    await gate.ready();
+    expect(gate.covered).toBe(false);
+  });
+
   it("waits for artwork and screen layout without an extra display delay", async () => {
     const gate = await renderGate(false);
     await gate.ready();

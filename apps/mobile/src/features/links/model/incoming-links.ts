@@ -79,7 +79,17 @@ export function rememberIncomingLink(link: IncomingLink): string {
 }
 
 export function readIncomingLink(id: string | undefined): IncomingLink {
-  return (id && requests.get(id)) || { kind: "invalid" };
+  return findIncomingLink(id) ?? { kind: "invalid" };
+}
+
+/**
+ * Returns undefined when an internal request ID outlives the process-local link it referred to.
+ * Expo/Android may restore an internal route after process death, but these one-use links are
+ * intentionally kept in memory only so tickets and invitations never become durable navigation
+ * state.
+ */
+export function findIncomingLink(id: string | undefined): IncomingLink | undefined {
+  return id ? requests.get(id) : undefined;
 }
 
 export function forgetIncomingLink(id: string | undefined): void {

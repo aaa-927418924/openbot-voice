@@ -2,6 +2,7 @@ import { createInviteUrl, createOpenBotInviteUrl } from "@openbot/contracts/invi
 import { createMobileConnectUrl } from "@openbot/contracts/mobile-connect";
 import { describe, expect, it } from "vitest";
 import {
+  findIncomingLink,
   forgetIncomingLink,
   parseIncomingLink,
   pendingSignInLinkId,
@@ -43,6 +44,7 @@ describe("incoming mobile links", () => {
       expect(pendingSignInLinkId()).toBe(id);
       forgetIncomingLink(id);
       expect(readIncomingLink(id)).toEqual({ kind: "invalid" });
+      expect(findIncomingLink(id)).toBeUndefined();
     },
   );
 
@@ -161,6 +163,15 @@ describe("incoming mobile links", () => {
     expect(redirectIncomingLink(createInviteUrl(payload))).toBe(first);
     forgetIncomingLink(requestId(first));
     expect(redirectIncomingLink("openbot://")).toBe("/");
+  });
+
+  it("distinguishes a saved invalid link from a request ID lost after process restart", () => {
+    const invalidId = requestId(redirectIncomingLink("not a supported link"));
+    expect(findIncomingLink(invalidId)).toEqual({ kind: "invalid" });
+
+    const staleId = requestId(redirectIncomingLink(voicePairingUrl));
+    forgetIncomingLink(staleId);
+    expect(findIncomingLink(staleId)).toBeUndefined();
   });
 
   it("bounds retained links and rejects evicted requests", () => {

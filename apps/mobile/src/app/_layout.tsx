@@ -36,6 +36,7 @@ import {
   SplashContentReadyContext,
   type SplashLogoTarget,
   SplashMotionContext,
+  shouldDeferRootSplashReadiness,
   useSplashGate,
 } from "@/shared/lib/use-splash-gate";
 import { useSplashMotion } from "@/shared/lib/use-splash-motion";
@@ -78,6 +79,7 @@ function RootNavigator() {
     },
     [reportContentReady],
   );
+  const routeOwnsSplashReadiness = shouldDeferRootSplashReadiness(pathname);
 
   useLayoutEffect(() => {
     if (loading || !session || (pathname !== "/" && pathname !== "/connected")) setLoadingLabel(null);
@@ -97,7 +99,7 @@ function RootNavigator() {
             importantForAccessibility={covered ? "no-hide-descendants" : "auto"}
           >
             {!loading && appearanceReady ? (
-              <View className="flex-1" onLayout={session || pathname !== "/" ? () => reportReady() : undefined}>
+              <View className="flex-1" onLayout={!routeOwnsSplashReadiness ? () => reportReady() : undefined}>
                 <Stack
                   screenOptions={{
                     headerBackButtonDisplayMode: "minimal",
