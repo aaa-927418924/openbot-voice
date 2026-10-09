@@ -37,6 +37,7 @@ import {
   presentMainWindow,
   readMainWindowBounds,
   resolveMainWindowBounds,
+  shouldHideMainWindowOnClose,
   writeMainWindowBounds,
 } from "./main-window-state";
 import type { RemoteServerManager } from "./remote-server-manager";
@@ -44,6 +45,7 @@ import type { RemoteWorkflowError } from "./remote-service-effects";
 import { sendToRenderer } from "./renderer-ipc";
 import { isTrustedRendererUrl } from "./trusted-renderer";
 import type { UpdateService } from "./update-service";
+import { isWindowsStartupMinimized } from "./windows-startup";
 
 /**
  * What the window surface reads off the running application. Deliberately narrower than
@@ -170,6 +172,7 @@ export function createMainWindowController({
     window.once("ready-to-show", () => {
       performance.mark("openbot:window-ready");
       if (
+        !isWindowsStartupMinimized(process.platform, process.argv) &&
         shouldShowDevelopmentWindow({
           remoteRole: developmentRemoteRole,
           testClientEnabled: developmentTestClientEnabled,
@@ -180,7 +183,7 @@ export function createMainWindowController({
     });
     window.on("close", (event) => {
       rememberMainWindowBounds(window.getNormalBounds());
-      if (process.platform === "darwin" && !isQuitting()) {
+      if (shouldHideMainWindowOnClose(process.platform, isQuitting())) {
         // The hidden renderer owns the cross-host Dynamic Island coordinator and must outlive its visible window.
         event.preventDefault();
         window.hide();

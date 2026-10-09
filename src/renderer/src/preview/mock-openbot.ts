@@ -494,6 +494,12 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
       for (const listener of logoColorListeners) listener(clone(logoColorPreference));
       return clone(logoColorPreference);
     },
+    getWindowsStartupSettings: async () => ({ supported: false, launchAtLogin: false, startupMode: "shown" }),
+    setWindowsStartupSettings: async ({ startupMode }) => ({
+      supported: false,
+      launchAtLogin: false,
+      startupMode,
+    }),
     onAppLogoColorPreference: (listener) => {
       logoColorListeners.add(listener);
       return () => logoColorListeners.delete(listener);

@@ -1,6 +1,6 @@
 export type ExternalLinkTarget = "Default browser" | "OpenBot";
 
-import type { BusyMessageMode } from "@openbot/contracts/ipc";
+import type { BusyMessageMode, WindowsStartupMode } from "@openbot/contracts/ipc";
 /** Which chord sends a message. Re-exported here so settings state can name the same type. */
 import type { SendShortcutMode } from "../conversation/send-shortcut";
 
@@ -14,6 +14,7 @@ export type SoundChoice = "off" | SoundTheme;
 
 export interface GeneralSettingsValue {
   launchAtLogin: boolean;
+  windowsStartupMode: WindowsStartupMode;
   keepRunningInBackground: boolean;
   restoreLastWorkspace: boolean;
   externalLinkTarget: ExternalLinkTarget;
@@ -48,6 +49,7 @@ export interface GeneralSettingsValue {
 
 export const DEFAULT_GENERAL_SETTINGS: GeneralSettingsValue = {
   launchAtLogin: true,
+  windowsStartupMode: "shown",
   keepRunningInBackground: false,
   restoreLastWorkspace: true,
   externalLinkTarget: "Default browser",

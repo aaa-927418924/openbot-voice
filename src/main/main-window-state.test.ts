@@ -15,6 +15,7 @@ import {
   readMainWindowBounds,
   resolveMainWindowBounds,
   secondLaunchResponse,
+  shouldHideMainWindowOnClose,
   writeMainWindowBounds,
 } from "./main-window-state";
 
@@ -22,6 +23,13 @@ const primary = { x: 0, y: 0, width: 1440, height: 900 };
 const secondary = { x: 1440, y: 0, width: 1920, height: 1080 };
 
 describe("main window state", () => {
+  it("hides macOS and Windows windows on close, but lets explicit quits close them", () => {
+    expect(shouldHideMainWindowOnClose("win32", false)).toBe(true);
+    expect(shouldHideMainWindowOnClose("darwin", false)).toBe(true);
+    expect(shouldHideMainWindowOnClose("linux", false)).toBe(false);
+    expect(shouldHideMainWindowOnClose("win32", true)).toBe(false);
+  });
+
   it("keeps the macOS application in the Dock and application switcher", async () => {
     const setActivationPolicy = vi.fn();
     const showDock = vi.fn(async () => undefined);

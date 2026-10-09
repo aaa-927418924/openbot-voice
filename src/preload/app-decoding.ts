@@ -60,6 +60,7 @@ import {
   isProviderDetectionSettings,
   isRemoteDesktopSetupStatus,
   isRemoteDesktopTestStatus,
+  isWindowsStartupSettings,
   type MobileConnectedDevice,
   type MobileConnectTicket,
   type NotificationOpenedEvent,
@@ -76,6 +77,7 @@ import {
   type UpdateStatus,
   type VoiceModelStatus,
   type VoiceTranscriptionResult,
+  type WindowsStartupSettings,
 } from "@openbot/contracts/ipc";
 import {
   decodeList,
@@ -98,6 +100,11 @@ export function decodeAppInfo(value: unknown): AppInfo {
   if (!isOneOf(["production", "dev", "preview"] as const, variant)) throw new Error("Invalid variant.");
   return { name: requiredString(info, "name"), version: requiredString(info, "version"), platform, variant };
 }
+
+export const decodeWindowsStartupSettings: (value: unknown) => WindowsStartupSettings = guardedDecoder(
+  isWindowsStartupSettings,
+  "Windows startup settings",
+);
 
 export function decodeAppSetupState(value: unknown): AppSetupState {
   const state = decodeRecord(value, "setup state");

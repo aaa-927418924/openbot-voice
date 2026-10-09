@@ -2,6 +2,7 @@ import {
   type ApprovalAutomationPreference,
   agentAutoApprovalEnabled,
   type DynamicIslandGeometry,
+  type WindowsStartupSettings,
 } from "@openbot/contracts/ipc";
 import { DEFAULT_GENERAL_SETTINGS, type GeneralSettingsValue } from "@openbot/ui/features/settings/app-settings";
 import { currentText } from "@openbot/ui/text";
@@ -74,6 +75,31 @@ const Settings = createSimpleContext({
       soundFeedback: isActionSoundEnabled(),
       soundTheme: readActionSoundTheme(),
     });
+    const [windowsStartupSettings, setWindowsStartupSettings] = createSignal<WindowsStartupSettings | null>(null);
+    let windowsStartupReadCount = 0;
+    let windowsStartupSaveCount = 0;
+    let windowsStartupSaveTail: Promise<void> = Promise.resolve();
+    createEffect(
+      () => appInfo(),
+      (info) => {
+        if (info?.platform !== "win32" || landingPreview) return;
+        const read = ++windowsStartupReadCount;
+        void settingsPort()
+          .getWindowsStartupSettings()
+          .then((preference) => {
+            if (read !== windowsStartupReadCount) return;
+            setWindowsStartupSettings(preference);
+            setGeneralSettings((current) => ({
+              ...current,
+              launchAtLogin: preference.launchAtLogin,
+              windowsStartupMode: preference.startupMode,
+            }));
+          })
+          .catch(() => {
+            if (read === windowsStartupReadCount) setWindowsStartupSettings(null);
+          });
+      },
+    );
     // The mode also changes outside this dialog: another window, or the web Preferences tab on
     // the same page. The shared signal carries those changes into the displayed settings value.
     // Two-arg form: compute tracks the signal, apply writes the store outside tracking.
@@ -141,6 +167,46 @@ const Settings = createSimpleContext({
       const previous = generalSettings();
       const turboMode = turboModePending() ? previous.turboMode : value.turboMode;
       setGeneralSettings({ ...value, turboMode });
+      if (
+        windowsStartupSettings()?.supported &&
+        (previous.launchAtLogin !== value.launchAtLogin || previous.windowsStartupMode !== value.windowsStartupMode)
+      ) {
+        const save = ++windowsStartupSaveCount;
+        const requested = { launchAtLogin: value.launchAtLogin, startupMode: value.windowsStartupMode };
+        const operation = windowsStartupSaveTail
+          .catch(() => undefined)
+          .then(() => settingsPort().setWindowsStartupSettings(requested));
+        windowsStartupSaveTail = operation.then(
+          () => undefined,
+          () => undefined,
+        );
+        void operation
+          .then((preference) => {
+            if (save !== windowsStartupSaveCount) return;
+            setWindowsStartupSettings(preference);
+            setGeneralSettings((current) => ({
+              ...current,
+              launchAtLogin: preference.launchAtLogin,
+              windowsStartupMode: preference.startupMode,
+            }));
+          })
+          .catch(() => {
+            if (save !== windowsStartupSaveCount) return;
+            actionToast.error(currentText().t("settings.windowsStartup.saveFailed"));
+            void settingsPort()
+              .getWindowsStartupSettings()
+              .then((preference) => {
+                if (save !== windowsStartupSaveCount) return;
+                setWindowsStartupSettings(preference);
+                setGeneralSettings((current) => ({
+                  ...current,
+                  launchAtLogin: preference.launchAtLogin,
+                  windowsStartupMode: preference.startupMode,
+                }));
+              })
+              .catch(() => undefined);
+          });
+      }
       if (previous.taskCompletionSound !== value.taskCompletionSound) {
         setCompletionSoundEnabled(value.taskCompletionSound);
       }
@@ -413,6 +479,7 @@ const Settings = createSimpleContext({
     return {
       analyticsPreferenceLoaded,
       generalSettings,
+      windowsStartupSettings,
       builtInDisplayGeometry,
       turboModePending,
       updateGeneralSettings,

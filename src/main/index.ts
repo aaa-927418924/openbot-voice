@@ -92,6 +92,8 @@ import { trustSystemCertificates } from "./system-certificates";
 import { TeardownRegistry } from "./teardown-registry";
 import type { TraceFile } from "./trace-file";
 import { setIpcCallObserver } from "./trusted-ipc";
+import { createWindowsStartupController, WINDOWS_STARTUP_FLAG } from "./windows-startup";
+import { createWindowsTray, type WindowsTrayController } from "./windows-tray";
 
 const logger = createOpenBotLogger("main");
 
@@ -172,6 +174,13 @@ const appIconPath = resolveAppIconPath({
   isPackaged: app.isPackaged,
   resourcesPath: process.resourcesPath,
   sourceRoot: resolve(__dirname, "../.."),
+});
+const windowsStartup = createWindowsStartupController({
+  supported: process.platform === "win32" && app.isPackaged,
+  preferencePath: join(app.getPath("userData"), "windows-startup-preference.json"),
+  executablePath: process.execPath,
+  getLoginItemSettings: (options) => app.getLoginItemSettings(options),
+  setLoginItemSettings: (options) => app.setLoginItemSettings(options),
 });
 protocol.registerSchemesAsPrivileged([
   {
@@ -313,6 +322,7 @@ const windows = createMainWindowController({
 });
 
 let appIconColorImage: NativeImage | undefined;
+let windowsTray: WindowsTrayController | null = null;
 
 /**
  * Shows the chosen logo color on the Dock icon, or on each window icon where there is no Dock. A dev
@@ -341,16 +351,13 @@ function applyAppIconColor(color: AppLogoColor): void {
   if (!appIconColorImage)
     app.on("browser-window-created", (_event, window) => window.setIcon(appIconColorImage ?? icon));
   appIconColorImage = icon;
+  windowsTray?.setIcon(icon);
   for (const window of BrowserWindow.getAllWindows()) window.setIcon(icon);
 }
 
 /**
- * Outside macOS, closing the main window ends OpenBot.
- *
- * `window-all-closed` cannot carry that on its own any more. The Computer Use overlays are hidden
- * between actions and closed only after a minute of idle, and a hidden window is still a window,
- * so the event may never arrive: the user would close the last window they can see and leave OpenBot
- * and the driver running with no way back to them.
+ * If the main window is destroyed outside macOS, exit through the normal shutdown path. On Windows
+ * an ordinary close is intercepted earlier and hides the window, leaving the tray as the quit path.
  */
 function attachQuitOnMainWindowClose(window: BrowserWindow): void {
   if (process.platform === "darwin") return;
@@ -476,6 +483,7 @@ function registerIpcHandlers({
       appVariant,
       getMainWindow,
       setAnalyticsTrackingEnabled: (enabled) => analytics.setTrackingEnabled(enabled),
+      windowsStartup,
       trace,
     }),
     ...dynamicIslandIpcHandlers({ dynamicIsland }),
@@ -799,7 +807,7 @@ if (!hasSingleInstanceLock) {
       // The new instance takes this launch's link, not the one this process may have started with.
       const isLink = (value: string) => parseDeepLink(value, inviteLinkOptions) !== null;
       const link = argv.find(isLink);
-      const args = process.argv.slice(1).filter((value) => !isLink(value));
+      const args = process.argv.slice(1).filter((value) => !isLink(value) && value !== WINDOWS_STARTUP_FLAG);
       app.relaunch({ args: link ? [...args, link] : args });
     }
   });
@@ -833,6 +841,23 @@ if (!hasSingleInstanceLock) {
       configureContentSecurityPolicy();
       configureRendererPermissions();
       await Effect.runPromise(windows.restoreMainWindowBounds());
+      if (process.platform === "win32") {
+        const trayIcon = nativeImage.createFromPath(appIconPath);
+        if (trayIcon.isEmpty()) {
+          logger.warn("Unable to load the OpenBot icon for the Windows system tray.");
+        } else {
+          windowsTray = createWindowsTray({
+            platform: process.platform,
+            icon: trayIcon,
+            getTranslate: () => services?.language.translate ?? translateFor(resolveLocale("system", app.getLocale())),
+            getMainWindow: windows.getMainWindow,
+            ensureMainWindow: windows.ensureMainWindow,
+            showMainWindow,
+            quit: () => app.quit(),
+            reportError: (message, error) => logger.error(message, toLogValue(error)),
+          });
+        }
+      }
       const mainWindow = windows.openMainWindow();
 
       const built = await createApplicationServices({
@@ -941,11 +966,13 @@ if (!hasSingleInstanceLock) {
         logger.warn("Unable to ask for notification permission:", toLogValue(error)),
       );
       configureApplicationMenu(service, updater, language.translate);
+      windowsTray?.setTranslate(language.translate);
       // One place turns a language change into every visible consequence: the menu is built again
       // because a native label cannot be changed in place, and every window is told, including the
       // Dynamic Island, which has no Settings of its own to read the new value from.
       language.subscribe((preference) => {
         configureApplicationMenu(service, updater, language.translate);
+        windowsTray?.setTranslate(language.translate);
         for (const window of BrowserWindow.getAllWindows()) {
           sendToRenderer(window, IPC_ENDPOINTS.app.appLanguagePreference, preference);
         }
@@ -1062,8 +1089,10 @@ if (!hasSingleInstanceLock) {
 }
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") app.quit();
+  if (process.platform !== "darwin" && process.platform !== "win32") app.quit();
 });
+
+app.on("will-quit", () => windowsTray?.destroy());
 
 app.on("before-quit", (event) => {
   isQuitting = true;

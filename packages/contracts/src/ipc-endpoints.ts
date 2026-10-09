@@ -325,6 +325,7 @@ import type {
   UpdateTeamMemberInput,
 } from "./ipc-team-host";
 import type { VoiceModelStatus, VoiceTranscriptionInput, VoiceTranscriptionResult } from "./ipc-voice";
+import type { SetWindowsStartupSettingsInput, WindowsStartupSettings } from "./ipc-windows-startup";
 import type { AccountSession, MobileConnectedDevice, MobileConnectTicket } from "./mobile-connect";
 
 declare const payloadType: unique symbol;
@@ -447,6 +448,10 @@ export const IPC_ENDPOINTS = {
     getAppLogoColorPreference: request<undefined, AppLogoColorPreference>()("app:get-logo-color-preference"),
     setAppLogoColorPreference: request<SetAppLogoColorPreferenceInput, AppLogoColorPreference>()(
       "app:set-logo-color-preference",
+    ),
+    getWindowsStartupSettings: request<undefined, WindowsStartupSettings>()("app:get-windows-startup-settings"),
+    setWindowsStartupSettings: request<SetWindowsStartupSettingsInput, WindowsStartupSettings>()(
+      "app:set-windows-startup-settings",
     ),
     // Every window draws the logo, and the Dynamic Island has no Settings of its own, so the choice
     // is broadcast in the same way as the language.

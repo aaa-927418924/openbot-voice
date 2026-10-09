@@ -39,6 +39,10 @@ export function presentMainWindow(
   window.focus();
 }
 
+export function shouldHideMainWindowOnClose(platform: NodeJS.Platform, quitting: boolean): boolean {
+  return !quitting && (platform === "darwin" || platform === "win32");
+}
+
 export interface SecondLaunchState {
   /** Windows is ending the session; nothing may start again. */
   sessionEnding: boolean;

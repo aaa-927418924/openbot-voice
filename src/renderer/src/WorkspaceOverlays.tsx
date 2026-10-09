@@ -589,6 +589,7 @@ function AppSettings(props: AccountProps) {
     setAppSettingsOpen,
     appSettingsTab,
     generalSettings,
+    windowsStartupSettings,
     builtInDisplayGeometry,
     updateGeneralSettings,
     appSettingsRestoreTarget,
@@ -604,6 +605,7 @@ function AppSettings(props: AccountProps) {
         value={generalSettings()}
         onValueChange={updateGeneralSettings}
         appInfo={platform.appInfo()}
+        windowsStartupSettings={windowsStartupSettings()}
         builtInDisplayGeometry={builtInDisplayGeometry()}
         updateStatus={updates.status()}
         onUpdateAction={updates.runAction}

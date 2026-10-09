@@ -24,6 +24,7 @@ import type {
   SetApprovalAutomationInput,
   SetDynamicIslandInteractiveInput,
   SetEnabledSkillInput,
+  SetWindowsStartupSettingsInput,
   SubmitMarketplaceAgentInput,
   SubmitSkillInput,
   UninstallSkillInput,
@@ -42,6 +43,7 @@ import {
   isDynamicIslandPreference,
   isDynamicIslandPresentation,
   isSetApprovalAutomationInput,
+  isSetWindowsStartupSettingsInput,
   isSkillCategory,
 } from "@openbot/contracts/ipc";
 import {
@@ -91,6 +93,11 @@ export function parseApprovalAutomation(input: unknown): SetApprovalAutomationIn
 export function parseBusyMessageModePreference(input: unknown): BusyMessageModePreference {
   if (!isDynamicRecord(input) || !isBusyMessageMode(input.mode)) throw new Error("Busy message mode is required.");
   return { mode: input.mode };
+}
+
+export function parseWindowsStartupSettings(input: unknown): SetWindowsStartupSettingsInput {
+  if (!isSetWindowsStartupSettingsInput(input)) throw new Error("Windows startup settings are required.");
+  return input;
 }
 
 export function parseAppLanguagePreference(input: unknown): SetAppLanguagePreferenceInput {

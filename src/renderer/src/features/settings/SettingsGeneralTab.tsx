@@ -56,6 +56,7 @@ interface SettingsGeneralTabProps {
   onOpenNotificationSettings?: () => void | Promise<void>;
   /** Servers hidden from the rail and the menu, for restore. Hiding never leaves a server. */
   hiddenServers?: { readonly id: string; readonly name: string }[];
+  windowsStartupSupported?: boolean;
   onUnhideServer?: (serverId: string) => void;
   onUnhideAllServers?: () => void;
 }
@@ -72,6 +73,12 @@ export function SettingsGeneralTab(props: SettingsGeneralTabProps) {
   };
   const linkTargetLabel = (value: GeneralSettingsValue["externalLinkTarget"] | undefined) =>
     value === undefined ? "" : i18n.t(LINK_TARGET_KEYS[value]);
+  const startupModeLabel = (value: GeneralSettingsValue["windowsStartupMode"] | undefined) =>
+    value === "minimized"
+      ? i18n.t("settings.windowsStartup.minimized")
+      : value === "shown"
+        ? i18n.t("settings.windowsStartup.shown")
+        : "";
   const [confirmingTurbo, setConfirmingTurbo] = createSignal(false);
   const logoColor = useLogoColorChoice();
   return (
@@ -115,12 +122,48 @@ export function SettingsGeneralTab(props: SettingsGeneralTabProps) {
             label={i18n.t("settings.busyMessage.title")}
             description={i18n.t("settings.busyMessage.description")}
           />
-          <SwitchField
-            checked={props.value.launchAtLogin}
-            onChange={(checked) => props.onUpdateSetting("launchAtLogin", checked)}
-            label={i18n.t("settings.launchAtLogin.title")}
-            description={i18n.t("settings.launchAtLogin.description")}
-          />
+          <Show when={props.platform === "win32" && props.windowsStartupSupported}>
+            <SwitchField
+              checked={props.value.launchAtLogin}
+              onChange={(checked) => props.onUpdateSetting("launchAtLogin", checked)}
+              label={i18n.t("settings.windowsStartup.title")}
+              description={i18n.t("settings.windowsStartup.description")}
+            />
+            <Show when={props.value.launchAtLogin}>
+              <Item class="settings-modal-row">
+                <ItemContent>
+                  <ItemTitle>{i18n.t("settings.windowsStartup.mode")}</ItemTitle>
+                </ItemContent>
+                <ItemActions>
+                  <Select<GeneralSettingsValue["windowsStartupMode"]>
+                    class="settings-modal-select"
+                    options={["minimized", "shown"]}
+                    value={props.value.windowsStartupMode}
+                    onChange={(mode) => mode && props.onUpdateSetting("windowsStartupMode", mode)}
+                    placement="bottom-end"
+                    itemComponent={(selectProps) => (
+                      <SelectItem item={selectProps.item}>{startupModeLabel(selectProps.item.rawValue)}</SelectItem>
+                    )}
+                  >
+                    <SelectTrigger size="sm" aria-label={i18n.t("settings.windowsStartup.mode")}>
+                      <SelectValue<GeneralSettingsValue["windowsStartupMode"]>>
+                        {(state) => startupModeLabel(state.selectedOption())}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent mount={props.selectMount} />
+                  </Select>
+                </ItemActions>
+              </Item>
+            </Show>
+          </Show>
+          <Show when={props.platform !== "win32" && props.platform !== undefined}>
+            <SwitchField
+              checked={props.value.launchAtLogin}
+              onChange={(checked) => props.onUpdateSetting("launchAtLogin", checked)}
+              label={i18n.t("settings.launchAtLogin.title")}
+              description={i18n.t("settings.launchAtLogin.description")}
+            />
+          </Show>
           <SwitchField
             checked={props.value.keepRunningInBackground}
             onChange={(checked) => props.onUpdateSetting("keepRunningInBackground", checked)}

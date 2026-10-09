@@ -25,6 +25,7 @@ import { MAC_PERMISSION_URLS } from "../mac-permission-urls";
 import { exportDiagnostics, exportOpenBotData } from "../maintenance-service";
 import { readSetupState, writeSetupState } from "../setup-store";
 import type { UpdateService } from "../update-service";
+import type { WindowsStartupController } from "../windows-startup";
 import {
   parseAnalyticsPreference,
   parseAppLanguagePreference,
@@ -33,6 +34,7 @@ import {
   parseBusyMessageModePreference,
   parseExternalDestination,
   parseSetup,
+  parseWindowsStartupSettings,
 } from "./app-inputs";
 import { stringPayload } from "./validation";
 
@@ -74,6 +76,7 @@ export interface AppIpcDependencies {
   busyMessageMode: BusyMessageModePreferenceStore;
   language: LanguageService;
   logoColor: LogoColorService;
+  windowsStartup: WindowsStartupController;
   initializeAgent: () => Promise<void>;
   appVariant: AppVariant;
   getMainWindow: () => BrowserWindow | null;
@@ -92,6 +95,7 @@ export function appIpcHandlers({
   busyMessageMode,
   language,
   logoColor,
+  windowsStartup,
   initializeAgent,
   appVariant,
   getMainWindow,
@@ -136,6 +140,10 @@ export function appIpcHandlers({
       getAppLogoColorPreference: handler(() => logoColor.preference),
       setAppLogoColorPreference: payloadHandler(parseAppLogoColorPreference, (parsed) =>
         runCauseEffect(logoColor.set(parsed)),
+      ),
+      getWindowsStartupSettings: handler(() => runCauseEffect(windowsStartup.get())),
+      setWindowsStartupSettings: payloadHandler(parseWindowsStartupSettings, (parsed) =>
+        runCauseEffect(windowsStartup.set(parsed)),
       ),
       saveSetup: payloadHandler(parseSetup, async (input): Promise<AppSetupState> => {
         const state = await runCauseEffect(writeSetupState(setupFile, input));

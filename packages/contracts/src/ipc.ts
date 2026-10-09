@@ -51,6 +51,7 @@ export * from "./ipc-skills";
 export * from "./ipc-storage";
 export * from "./ipc-team-host";
 export * from "./ipc-voice";
+export * from "./ipc-windows-startup";
 export * from "./marketplace-suggestion-events";
 export * from "./mobile-connect";
 export * from "./skill-conversation-events";

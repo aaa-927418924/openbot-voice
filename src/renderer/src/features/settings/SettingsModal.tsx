@@ -9,6 +9,7 @@ import type {
   MobileConnectedDevice,
   MobileConnectTicket,
   UpdateStatus,
+  WindowsStartupSettings,
 } from "@openbot/contracts/ipc";
 import { Tabs } from "@openbot/ui";
 import { BillingPanel } from "@openbot/ui/features/billing/BillingPanel";
@@ -39,6 +40,7 @@ export interface SettingsModalProps {
   appInfo: AppInfo | null;
   /** The built-in display's notch, null when it has none, or undefined before main answers. */
   builtInDisplayGeometry?: DynamicIslandGeometry | undefined;
+  windowsStartupSettings?: WindowsStartupSettings | null;
   updateStatus: UpdateStatus;
   onUpdateAction: () => Promise<void>;
   onCancelScheduledRestart?: () => Promise<void>;
@@ -193,6 +195,7 @@ export function SettingsModal(props: SettingsModalProps) {
             value={props.value}
             variant={props.appInfo?.variant ?? "production"}
             platform={props.appInfo?.platform}
+            windowsStartupSupported={props.windowsStartupSettings?.supported ?? false}
             onUpdateSetting={updateSetting}
             onUpdateSettings={updateSettings}
             selectMount={modalElement}

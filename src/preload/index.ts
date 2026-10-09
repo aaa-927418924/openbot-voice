@@ -107,6 +107,7 @@ import {
   decodeVoiceModelStatus,
   decodeVoiceTranscriptionResult,
   decodeVoid,
+  decodeWindowsStartupSettings,
 } from "./app-decoding";
 import {
   decodeBrowserBounds,
@@ -481,6 +482,8 @@ const openbotApi: OpenBotDesktopApi = {
     getAppLogoColorPreference: decodeAppLogoColorPreference,
     setAppLogoColorPreference: decodeAppLogoColorPreference,
     appLogoColorPreference: decodeAppLogoColorPreference,
+    getWindowsStartupSettings: decodeWindowsStartupSettings,
+    setWindowsStartupSettings: decodeWindowsStartupSettings,
     openSettings: decodeVoid,
     openExternal: decodeVoid,
     openUrl: decodeVoid,
