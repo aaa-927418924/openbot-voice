@@ -46,7 +46,7 @@ export const ChannelAvatar = memo(function ChannelAvatar({
             disconnected={disconnected}
             seed={agent?.avatarSeed ?? member.agentId}
             hue={agent?.avatarHue ?? null}
-            size={(size - 6) / 2}
+            size={members.length === 1 ? size : (size - 6) / 2}
           />
         );
       })}
