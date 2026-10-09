@@ -9,9 +9,9 @@ import {
   useRef,
   useState,
 } from "react";
-import { Platform, View } from "react-native";
+import { View } from "react-native";
 import { supportLog } from "@/features/support/model/support-log";
-import { androidReactNativeDomOptions } from "@/shared/lib/expo-go-dom";
+import { expoGoDomOptions } from "@/shared/lib/expo-go-dom";
 import { useAppForeground } from "@/shared/lib/use-app-foreground";
 import LiveVoiceBridge from "../components/live-voice-bridge.dom";
 import {
@@ -331,7 +331,7 @@ export function MobileLiveVoiceProvider({
           commands={commands}
           currentSessionId={origin?.sessionId ?? null}
           dom={{
-            ...(Platform.OS === "android" ? androidReactNativeDomOptions : {}),
+            ...expoGoDomOptions,
             webviewDebuggingEnabled: true,
             injectedJavaScript: `window.ReactNativeWebView?.postMessage(JSON.stringify({type:${JSON.stringify(LIVE_VOICE_DOM_DIAGNOSTIC_TYPE)},buildId:${JSON.stringify(LIVE_VOICE_DIAGNOSTIC_BUILD_ID)},stage:"webview-page-finished",hasProps:typeof window.$$EXPO_INITIAL_PROPS!=="undefined",hasBridge:typeof window.ReactNativeWebView!=="undefined"}));true;`,
             onLoadEnd: () =>
