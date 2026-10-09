@@ -65,6 +65,7 @@ import {
   isUntrustedProjectConfigDiagnostic,
   isUsageLimitDiagnostic,
   LOG_TIMESTAMP_PREFIX,
+  parseRustTracingSeverity,
 } from "./provider-diagnostics";
 import {
   isProviderTimeout,
@@ -2147,7 +2148,19 @@ export class ProviderRuntime implements ProviderPort {
         }
         return;
       }
-      if (!/error|failed|warning/i.test(raw)) return;
+      const tracingSeverity = parseRustTracingSeverity(raw);
+      if (tracingSeverity && tracingSeverity !== "ERROR") {
+        if (/error|failed|warning/i.test(raw)) {
+          const message = shortenDiagnostic(this.#redactMcp(raw));
+          stderrLogger.info("A provider logged a trace below error level.", {
+            provider: client.provider,
+            severity: tracingSeverity,
+            message,
+          });
+        }
+        return;
+      }
+      if (!tracingSeverity && !/error|failed|warning/i.test(raw)) return;
       // Redacted before the first use, not at each one. A CLI reports an MCP failure by quoting
       // what it sent, so an API key or an inherited credential is in the line that is about to be
       // logged or turned into a renderer error event. Shortened after that, because a value cut in

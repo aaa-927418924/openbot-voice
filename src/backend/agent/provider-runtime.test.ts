@@ -1445,6 +1445,41 @@ describe.sequential("ProviderRuntime: account checks and login", () => {
     ]);
   });
 
+  it("keeps Rust tracing warnings in diagnostics without turning them into provider failures", async () => {
+    const started = await startService(root, { provider: "codex" });
+    service = started.service;
+    const events: AgentEvent[] = [];
+    const diagnosticLines: string[] = [];
+    service.on("event", (event) => events.push(event));
+    const removeTee = teeLogLines(["provider-stderr"], (line) => diagnosticLines.push(line));
+    try {
+      started.client.emit(
+        "diagnostic",
+        "2026-10-09T12:00:00.000000Z  WARN codex_core::realtime::client: reconnect failed; retrying",
+      );
+      started.client.emit(
+        "diagnostic",
+        '{"timestamp":"2026-10-09T12:00:00Z","level":"WARN","fields":{"message":"request failed; retrying"},"target":"codex_core::realtime::client"}',
+      );
+      started.client.emit("diagnostic", "2026-10-09T12:00:01Z ERROR codex_core::realtime::client: request failed");
+      started.client.emit("diagnostic", "ERROR the provider failed to reach the model endpoint");
+      started.client.emit("diagnostic", "WARN provider: request failed");
+      started.client.emit("diagnostic", '{"level":"WARN","error":"request failed"}');
+      await waitFor(() => events.filter((event) => event.type === "error").length === 4);
+    } finally {
+      removeTee();
+    }
+
+    expect(events.filter((event) => event.type === "error")).toEqual([
+      expect.objectContaining({ message: "ERROR codex_core::realtime::client: request failed" }),
+      expect.objectContaining({ message: "ERROR the provider failed to reach the model endpoint" }),
+      expect.objectContaining({ message: "WARN provider: request failed" }),
+      expect.objectContaining({ message: '{"level":"WARN","error":"request failed"}' }),
+    ]);
+    expect(diagnosticLines.filter((line) => line.includes("trace below error level"))).toHaveLength(2);
+    expect(diagnosticLines.every((line) => line.includes('"severity":"WARN"'))).toBe(true);
+  });
+
   it("redacts an MCP credential a running provider still holds after the user removes the server", async () => {
     const { store, mailbox } = stores(root);
     const clients = new Map<AgentProvider, FakeAgentClient>();

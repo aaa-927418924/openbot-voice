@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { agentProviderDescriptor } from "@openbot/contracts/agent-providers";
+import { AGENT_PROVIDERS, agentProviderDescriptor } from "@openbot/contracts/agent-providers";
 import { sortConversationMessages } from "@openbot/contracts/conversation-order";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
@@ -189,6 +189,53 @@ import {
 } from "./workspace-paths";
 
 const logger = createOpenBotLogger("agent-service");
+const errorOriginLogger = createOpenBotLogger("agent-error-origin");
+
+type LiveErrorClassification = {
+  eventCode:
+    | "provider_diagnostic"
+    | "provider_config_warning"
+    | "provider_exited"
+    | "provider_start_failed"
+    | "provider_restart_failed"
+    | "provider_metadata_refresh_failed"
+    | "agent_error"
+    | "other";
+  origin:
+    | "provider-runtime-diagnostic"
+    | "provider-runtime-config-warning"
+    | "provider-runtime-exit"
+    | "provider-runtime-start"
+    | "provider-runtime-restart"
+    | "provider-runtime-refresh"
+    | "turn-lifecycle"
+    | "unknown";
+  provider: AgentProvider | "unknown";
+};
+
+function classifyLiveError(code: string): LiveErrorClassification {
+  for (const provider of AGENT_PROVIDERS) {
+    if (code === `${provider}_diagnostic`)
+      return { eventCode: "provider_diagnostic", origin: "provider-runtime-diagnostic", provider };
+    if (code === `${provider}_config_ignored`)
+      return { eventCode: "provider_config_warning", origin: "provider-runtime-config-warning", provider };
+    if (code === `${provider}_exited`)
+      return { eventCode: "provider_exited", origin: "provider-runtime-exit", provider };
+    if (code === `${provider}_start_failed`)
+      return { eventCode: "provider_start_failed", origin: "provider-runtime-start", provider };
+    if (code === `${provider}_restart_failed`)
+      return { eventCode: "provider_restart_failed", origin: "provider-runtime-restart", provider };
+  }
+
+  switch (code) {
+    case "provider_metadata_refresh_failed":
+      return { eventCode: code, origin: "provider-runtime-refresh", provider: "unknown" };
+    case "agent_error":
+      return { eventCode: code, origin: "turn-lifecycle", provider: "unknown" };
+    default:
+      return { eventCode: "other", origin: "unknown", provider: "unknown" };
+  }
+}
 
 /**
  * Only the application knows which managed CLIs it downloaded, so a caller that says nothing gets
@@ -3424,6 +3471,26 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   #emit(event: AgentEvent): void {
+    if (event.type === "error") {
+      let livePhase: "starting" | "active" | null = null;
+      if (this.#pendingLiveVoiceStart) livePhase = "starting";
+      else {
+        for (const session of this.#liveVoiceSessions.values()) {
+          livePhase = session.startedAt === null ? "starting" : "active";
+          break;
+        }
+      }
+      if (livePhase) {
+        const classification = classifyLiveError(event.code);
+        errorOriginLogger.warn("An error event occurred during Live Voice.", {
+          eventCode: classification.eventCode,
+          origin: classification.origin,
+          provider: classification.provider,
+          livePhase,
+          agentIdPresent: typeof event.agentId === "string",
+        });
+      }
+    }
     recordAgentRestartActivity(event);
     if (this.channels?.event(event) || this.messaging?.event(event, this.#scope)) return;
     this.emit("event", event);

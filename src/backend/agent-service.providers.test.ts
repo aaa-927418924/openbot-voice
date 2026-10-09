@@ -15,6 +15,7 @@ import {
 } from "@openbot/contracts/ipc";
 import { isDynamicRecord } from "@openbot/contracts/runtime-values";
 import { sourceText } from "@openbot/i18n/source";
+import { teeLogLines } from "@openbot/logging";
 import { Effect } from "effect";
 import { afterEach, assert, beforeEach, describe, expect, it, vi } from "vitest";
 import { type AgentProvider, RequestTimeoutError } from "./agent-client";
@@ -915,6 +916,45 @@ describe.sequential("AgentService: providers", () => {
     await runCauseEffect(
       service.stopLiveVoice({ agentId: secondAgent.id, threadId: secondThreadId, sessionId: started.sessionId }),
     );
+  });
+
+  it("logs a safe provider error origin while Live Voice is active", async () => {
+    const liveClient = new FakeLiveVoiceClient(false);
+    const { service: agentService, store } = await startService(root, {
+      preferredProvider: "codex",
+      client: () => liveClient,
+    });
+    service = agentService;
+    const agent = await runCauseEffect(store.getOrCreate("chief"));
+    const threadId = await runCauseEffect(store.ensureThreadId(agent.id));
+    const started = await runCauseEffect(
+      service.startLiveVoice({
+        agentId: agent.id,
+        threadId,
+        clientSessionId: randomUUID(),
+        sdpOffer: "offer-sdp",
+      }),
+    );
+
+    const diagnosticBody = "diagnostic-body-sentinel";
+    const lines: string[] = [];
+    const removeTee = teeLogLines(["agent-error-origin"], (line) => lines.push(line));
+    try {
+      liveClient.emit("diagnostic", `ERROR codex_core::realtime::client: ${diagnosticBody}`);
+      await waitFor(() => lines.length === 1);
+      const line = lines[0] ?? "";
+      expect(line).toContain('"eventCode":"provider_diagnostic"');
+      expect(line).toContain('"origin":"provider-runtime-diagnostic"');
+      expect(line).toContain('"provider":"codex"');
+      expect(line).toContain('"livePhase":"active"');
+      expect(line).toContain('"agentIdPresent":false');
+      expect(line).not.toContain(diagnosticBody);
+      expect(line).not.toContain(agent.id);
+      expect(line).not.toContain(threadId);
+    } finally {
+      removeTee();
+      await runCauseEffect(service.stopLiveVoice({ agentId: agent.id, threadId, sessionId: started.sessionId }));
+    }
   });
 
   it("starts one same-thread user turn for each typed input and preserves spoken context", async () => {

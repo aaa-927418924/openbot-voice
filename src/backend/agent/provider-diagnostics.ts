@@ -1,3 +1,5 @@
+import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
+
 /**
  * Whether a provider diagnostic is about an MCP server rather than about the agent's work.
  *
@@ -219,6 +221,76 @@ const GLOG_RECORD =
 export function isGlogBelowErrorDiagnostic(message: string): boolean {
   const severity = GLOG_RECORD.exec(message)?.[1];
   return severity === "I" || severity === "W";
+}
+
+export type RustTracingSeverity = "TRACE" | "DEBUG" | "INFO" | "WARN" | "ERROR";
+
+const RUST_TRACING_ESCAPE = String.fromCharCode(27);
+const RUST_TRACING_CSI = String.fromCharCode(0x9b);
+const RUST_TRACING_ANSI = new RegExp(`(?:${RUST_TRACING_ESCAPE}\\[|${RUST_TRACING_CSI})[0-?]*[ -/]*[@-~]`, "gu");
+const RFC3339_TIMESTAMP_SOURCE =
+  "\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)";
+const RFC3339_TIMESTAMP = new RegExp(`^${RFC3339_TIMESTAMP_SOURCE}$`, "u");
+const RUST_TRACING_TARGET = "[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*";
+const RUST_TRACING_TEXT = new RegExp(
+  `^(${RFC3339_TIMESTAMP_SOURCE})\\s+(TRACE|DEBUG|INFO|WARN|ERROR)\\s+${RUST_TRACING_TARGET}:\\s`,
+  "u",
+);
+const RUST_TRACING_TARGET_VALUE = new RegExp(`^${RUST_TRACING_TARGET}$`, "u");
+
+/** Reads only tracing's structured level, never a severity-looking word inside the message. */
+export function parseRustTracingSeverity(record: string): RustTracingSeverity | null {
+  const line = record.replace(RUST_TRACING_ANSI, "").trim();
+  const textMatch = RUST_TRACING_TEXT.exec(line);
+  if (textMatch?.[1] && isRfc3339Timestamp(textMatch[1]) && textMatch[2]) return parseRustTracingLevel(textMatch[2]);
+
+  if (!line.startsWith("{")) return null;
+  try {
+    const value = JSON.parse(line);
+    if (!isDynamicRecord(value)) return null;
+    const fields = value.fields;
+    if (
+      !isString(value.timestamp) ||
+      !isRfc3339Timestamp(value.timestamp) ||
+      !isString(value.target) ||
+      !RUST_TRACING_TARGET_VALUE.test(value.target) ||
+      !isDynamicRecord(fields) ||
+      !isString(fields.message)
+    )
+      return null;
+    return parseRustTracingLevel(value.level);
+  } catch {
+    return null;
+  }
+}
+
+function isRfc3339Timestamp(value: string): boolean {
+  const date = /^(\d{4})-(\d{2})-(\d{2})T/u.exec(value);
+  if (!RFC3339_TIMESTAMP.test(value) || !date?.[1] || !date[2] || !date[3]) return false;
+  const year = Number(date[1]);
+  const month = Number(date[2]);
+  const day = Number(date[3]);
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysByMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return day <= (daysByMonth[month - 1] ?? 0) && Number.isFinite(Date.parse(value));
+}
+
+function parseRustTracingLevel(value: unknown): RustTracingSeverity | null {
+  if (!isString(value)) return null;
+  switch (value.toUpperCase()) {
+    case "TRACE":
+      return "TRACE";
+    case "DEBUG":
+      return "DEBUG";
+    case "INFO":
+      return "INFO";
+    case "WARN":
+      return "WARN";
+    case "ERROR":
+      return "ERROR";
+    default:
+      return null;
+  }
 }
 
 /**
