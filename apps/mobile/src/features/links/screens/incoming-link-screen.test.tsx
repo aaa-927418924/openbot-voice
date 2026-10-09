@@ -271,7 +271,7 @@ it("returns an authenticated user to the workspace when a restored route has los
 
   await act(() => root.render(<IncomingLinkScreen />));
 
-  expect(screen.getByRole("link").getAttribute("href")).toBe("/connected");
+  expect(state.replace).toHaveBeenCalledWith("/connected");
   expect(state.redeem).not.toHaveBeenCalled();
 });
 
@@ -285,9 +285,16 @@ it("keeps an explicitly invalid link visible instead of treating it as a stale r
   expect(screen.queryByRole("link")).toBeNull();
 });
 
-it("keeps a missing request parameter visible as an unavailable link", async () => {
+it("returns an authenticated user to the workspace when a restored route has no request ID", async () => {
   state.session = session;
 
+  await act(() => root.render(<IncomingLinkScreen />));
+
+  expect(state.replace).toHaveBeenCalledWith("/connected");
+  expect(screen.queryByRole("heading", { name: "Link unavailable" })).toBeNull();
+});
+
+it("keeps a route without a request parameter unavailable while signed out", async () => {
   await act(() => root.render(<IncomingLinkScreen />));
 
   expect(screen.getByRole("heading", { name: "Link unavailable" })).toBeTruthy();

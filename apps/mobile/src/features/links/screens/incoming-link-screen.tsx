@@ -27,9 +27,13 @@ function IncomingLinkContent({ request }: { request?: string }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [paired, setPaired] = useState(false);
+  const restoreWorkspace = Boolean(session && (!request || !link));
   usePreventRemove(busy, () => {
     // Redemption saves a session. Keep this screen until that operation settles.
   });
+  useEffect(() => {
+    if (restoreWorkspace) router.replace("/connected");
+  }, [restoreWorkspace]);
   useEffect(() => {
     if (!paired || busy) return;
     const pending = pendingSignInLinkId();
@@ -83,8 +87,11 @@ function IncomingLinkContent({ request }: { request?: string }) {
 
   // Request IDs are intentionally process-local. A restored route can outlive its request record;
   // return an authenticated user to the workspace instead of replaying a one-use link or showing
-  // an invalid-link error.
-  if (request && !link && session) return <Redirect href="/connected" />;
+  // an invalid-link error. This route reports layout readiness because the root splash gate waits
+  // for route-owned screens, and a redirect itself does not lay out any content.
+  if (restoreWorkspace) {
+    return <View className="flex-1 bg-background" onLayout={() => reportContentReady()} />;
+  }
 
   if (currentLink.kind === "invite") {
     if (session) return <Redirect href={{ pathname: "/add-server", params: { request } }} />;

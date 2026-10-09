@@ -289,7 +289,7 @@ export function MobileLiveVoiceProvider({
           commands={commands}
           currentSessionId={origin?.sessionId ?? null}
           dom={{
-            useExpoDOMWebView: false,
+            useExpoDOMWebView: true,
             mediaPlaybackRequiresUserAction: false,
             containerStyle: {
               flex: 0,
