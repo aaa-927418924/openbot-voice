@@ -98,32 +98,33 @@ function RootNavigator() {
             accessibilityElementsHidden={covered}
             importantForAccessibility={covered ? "no-hide-descendants" : "auto"}
           >
-            {!loading && appearanceReady ? (
-              <View className="flex-1" onLayout={!routeOwnsSplashReadiness ? () => reportReady() : undefined}>
-                <Stack
-                  screenOptions={{
-                    headerBackButtonDisplayMode: "minimal",
-                    headerShadowVisible: false,
-                    headerTransparent: isIOS,
-                  }}
-                >
-                  <Stack.Screen name="index" options={{ headerShown: false }} />
-                  <Stack.Protected guard={!session}>
-                    <Stack.Screen
-                      name="scan-qr-code"
-                      options={{ animation: "slide_from_right", title: t("mobile.app.route.scanQrCode") }}
-                    />
-                  </Stack.Protected>
-                  <Stack.Protected guard={Boolean(session)}>
-                    <Stack.Screen
-                      name="(app)"
-                      options={{ animation: "fade", gestureEnabled: false, headerShown: false }}
-                    />
-                  </Stack.Protected>
-                  <Stack.Screen name="incoming-link" options={{ headerShown: false }} />
-                </Stack>
-              </View>
-            ) : null}
+            {/* Keep the root navigator mounted while auth and appearance hydrate. Child routes
+                must not navigate before Expo Router has mounted this navigator; the splash keeps
+                the loading state covered until the destination reports ready. */}
+            <View className="flex-1" onLayout={!routeOwnsSplashReadiness ? () => reportReady() : undefined}>
+              <Stack
+                screenOptions={{
+                  headerBackButtonDisplayMode: "minimal",
+                  headerShadowVisible: false,
+                  headerTransparent: isIOS,
+                }}
+              >
+                <Stack.Screen name="index" options={{ headerShown: false }} />
+                <Stack.Protected guard={!session}>
+                  <Stack.Screen
+                    name="scan-qr-code"
+                    options={{ animation: "slide_from_right", title: t("mobile.app.route.scanQrCode") }}
+                  />
+                </Stack.Protected>
+                <Stack.Protected guard={Boolean(session)}>
+                  <Stack.Screen
+                    name="(app)"
+                    options={{ animation: "fade", gestureEnabled: false, headerShown: false }}
+                  />
+                </Stack.Protected>
+                <Stack.Screen name="incoming-link" options={{ headerShown: false }} />
+              </Stack>
+            </View>
           </View>
           <View
             style={StyleSheet.absoluteFill}
