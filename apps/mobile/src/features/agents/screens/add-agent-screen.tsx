@@ -4,12 +4,11 @@ import * as Crypto from "expo-crypto";
 import { router, Stack, useNavigation } from "expo-router";
 import { usePreventRemove } from "expo-router/react-navigation";
 import { Typography } from "heroui-native";
-import { X } from "lucide-react-native";
 import { useEffect, useRef, useState } from "react";
 import { Alert } from "react-native";
 import { AgentAppearancePicker } from "@/features/agents/components/agent-appearance-picker";
 import { useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
-import { AndroidHeaderButton } from "@/shared/components/android-header-button";
+import { AndroidSheetActions } from "@/shared/components/android-sheet-actions";
 import { SheetFormField } from "@/shared/components/sheet-form-field";
 import { SheetSaveAction } from "@/shared/components/sheet-save-action";
 import { SheetScrollView } from "@/shared/components/sheet-scroll-view";
@@ -75,24 +74,33 @@ export function AddAgentScreen() {
 
   return (
     <SheetScrollView
+      header={
+        isAndroid ? (
+          <AndroidSheetActions
+            title={t("mobile.app.route.createAgent")}
+            closeLabel={t("common.close")}
+            actionLabel={t("mobile.agent.add.create")}
+            pendingLabel={t("mobile.agent.add.creating")}
+            disabled={!valid || finished || saving}
+            pending={saving}
+            onClose={() => {
+              void haptics.impact("soft");
+              router.back();
+            }}
+            onAction={() => {
+              void haptics.impact("light");
+              void submit();
+            }}
+          />
+        ) : undefined
+      }
       className="bg-sheet"
       contentContainerClassName="gap-5 px-5 pb-safe-offset-5 pt-5"
       contentInsetAdjustmentBehavior="automatic"
       keyboardDismissMode="interactive"
       keyboardShouldPersistTaps="handled"
     >
-      {isAndroid ? (
-        <AndroidHeaderButton
-          placement="left"
-          icon={X}
-          accessibilityLabel={t("common.close")}
-          disabled={saving}
-          onPress={() => {
-            void haptics.impact("soft");
-            router.back();
-          }}
-        />
-      ) : (
+      {!isAndroid ? (
         <Stack.Toolbar placement="left">
           <Stack.Toolbar.Button
             icon={isIOS ? "xmark" : undefined}
@@ -106,15 +114,17 @@ export function AddAgentScreen() {
             {isIOS ? t("common.close") : "×"}
           </Stack.Toolbar.Button>
         </Stack.Toolbar>
-      )}
-      <SheetSaveAction
-        dirty={dirty}
-        canSave={valid && !finished}
-        pending={saving}
-        label={t("mobile.agent.add.create")}
-        pendingLabel={t("mobile.agent.add.creating")}
-        onSave={() => void submit()}
-      />
+      ) : null}
+      {!isAndroid ? (
+        <SheetSaveAction
+          dirty={dirty}
+          canSave={valid && !finished}
+          pending={saving}
+          label={t("mobile.agent.add.create")}
+          pendingLabel={t("mobile.agent.add.creating")}
+          onSave={() => void submit()}
+        />
+      ) : null}
       <AgentAppearancePicker
         seed={avatarSeed}
         hue={avatarHue}

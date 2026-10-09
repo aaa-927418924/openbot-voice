@@ -25,12 +25,13 @@ import { CHANNEL_ROUTES } from "@openbot/contracts/team-protocol/channels-v1";
 import type { TeamProtocolV2Json } from "@openbot/contracts/team-protocol/v2";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, screen, waitFor } from "@testing-library/dom";
-import { act, isValidElement, type PropsWithChildren, useState } from "react";
+import { act, isValidElement, type PropsWithChildren, type ReactNode, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, assert, beforeEach, expect, it, vi } from "vitest";
 import type { ChatTarget } from "@/features/chat/model/chat-target";
 import { takeComposerFocus, takeComposerRequest, useComposerRequest } from "@/features/chat/model/composer-requests";
 import { useHapticsPreference } from "@/features/settings/model/haptics";
+import { AndroidSheetActions } from "@/shared/components/android-sheet-actions";
 import { SheetSaveAction } from "@/shared/components/sheet-save-action";
 import { ChannelHistoryRefreshError, MobileChannelStore } from "../../channels/model/channel-store";
 import { ChannelActionsScreen } from "../../channels/screens/channel-actions-screen";
@@ -193,6 +194,8 @@ const workspace = {
   hiddenAgents,
   hiddenChannelIds,
   unhideChannel: vi.fn((_id: string, _serverId: string) => true),
+  canClearConversationHistory: vi.fn((_agentId: string, _serverId: string) => false),
+  clearConversationHistory: vi.fn(async (_agentId: string, _serverId: string) => {}),
   createAgent: vi.fn(async (_input: CreateAgentInput) => {}),
   updateAgent: vi.fn(async (input: UpdateAgentInput, _serverId?: string) => {
     const [agent] = workspace.agents;
@@ -410,7 +413,12 @@ vi.mock("@/shared/components/sheet-form-field", () => ({
   ),
 }));
 vi.mock("@/shared/components/sheet-scroll-view", () => ({
-  SheetScrollView: ({ children }: PropsWithChildren) => <div>{children}</div>,
+  SheetScrollView: ({ children, header }: PropsWithChildren<{ header?: ReactNode }>) => (
+    <div>
+      {header}
+      {children}
+    </div>
+  ),
 }));
 vi.mock("@/features/settings/components/settings-content", () => ({
   SettingsNote: ({ children }: PropsWithChildren) => <p>{children}</p>,
@@ -605,6 +613,7 @@ vi.mock("lucide-react-native", () => ({
   Shuffle: () => null,
   ImagePlus: () => null,
   Pencil: () => null,
+  X: () => null,
 }));
 vi.mock("@/features/chat/components/attachment-preview", () => ({
   AttachmentThumbnail: () => null,
@@ -1581,6 +1590,30 @@ it("shows the save action only for changed input and blocks invalid or pending s
   await act(() => root.render(<SheetSaveAction dirty canSave pending={false} onSave={save} />));
   await click("Save changes");
   expect(save).toHaveBeenCalledTimes(1);
+});
+
+it("keeps Android sheet form actions visible and runs the selected action", async () => {
+  const close = vi.fn();
+  const action = vi.fn();
+  await act(() =>
+    root.render(
+      <AndroidSheetActions
+        title="Create agent"
+        closeLabel="Close"
+        actionLabel="Create agent"
+        pendingLabel="Creating…"
+        disabled={false}
+        pending={false}
+        onClose={close}
+        onAction={action}
+      />,
+    ),
+  );
+  expect(screen.getByRole("button", { name: "Create agent" })).toHaveProperty("disabled", false);
+  await click("Create agent");
+  await click("Close");
+  expect(action).toHaveBeenCalledOnce();
+  expect(close).toHaveBeenCalledOnce();
 });
 
 it("creates an agent from changed valid input and blocks duplicate submission and closing while pending", async () => {

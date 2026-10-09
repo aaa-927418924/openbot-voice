@@ -1,11 +1,10 @@
 import { router, Stack, useLocalSearchParams, useNavigation } from "expo-router";
 import { usePreventRemove } from "expo-router/react-navigation";
 import { Typography } from "heroui-native";
-import { X } from "lucide-react-native";
 import { useEffect, useRef, useState } from "react";
 import { Alert } from "react-native";
 import { useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
-import { AndroidHeaderButton } from "@/shared/components/android-header-button";
+import { AndroidSheetActions } from "@/shared/components/android-sheet-actions";
 import { SheetFormField } from "@/shared/components/sheet-form-field";
 import { SheetSaveAction } from "@/shared/components/sheet-save-action";
 import { SheetScrollView } from "@/shared/components/sheet-scroll-view";
@@ -67,6 +66,26 @@ export function SectionFormScreen() {
   }
   return (
     <SheetScrollView
+      header={
+        isAndroid ? (
+          <AndroidSheetActions
+            title={t(sectionId ? "mobile.agent.sectionForm.renameTitle" : "mobile.agent.sectionForm.newTitle")}
+            closeLabel={t("common.close")}
+            actionLabel={t(sectionId ? "mobile.agent.sectionForm.save" : "mobile.agent.sectionForm.create")}
+            pendingLabel={t("common.saving")}
+            disabled={!available || !valid || !dirty || finished || saving}
+            pending={saving}
+            onClose={() => {
+              void haptics.impact("soft");
+              router.back();
+            }}
+            onAction={() => {
+              void haptics.impact("light");
+              void save();
+            }}
+          />
+        ) : undefined
+      }
       className="bg-sheet"
       contentContainerClassName="gap-5 px-5 pb-safe-offset-5 pt-5"
       keyboardDismissMode="interactive"
@@ -75,18 +94,7 @@ export function SectionFormScreen() {
       <Stack.Screen
         options={{ title: t(sectionId ? "mobile.agent.sectionForm.renameTitle" : "mobile.agent.sectionForm.newTitle") }}
       />
-      {isAndroid ? (
-        <AndroidHeaderButton
-          placement="left"
-          icon={X}
-          accessibilityLabel={t("common.close")}
-          disabled={saving}
-          onPress={() => {
-            void haptics.impact("soft");
-            router.back();
-          }}
-        />
-      ) : (
+      {!isAndroid ? (
         <Stack.Toolbar placement="left">
           <Stack.Toolbar.Button
             icon={isIOS ? "xmark" : undefined}
@@ -100,14 +108,16 @@ export function SectionFormScreen() {
             {isIOS ? t("common.close") : "×"}
           </Stack.Toolbar.Button>
         </Stack.Toolbar>
-      )}
-      <SheetSaveAction
-        dirty={dirty}
-        canSave={available && valid && !finished}
-        pending={saving}
-        label={t(sectionId ? "mobile.agent.sectionForm.save" : "mobile.agent.sectionForm.create")}
-        onSave={() => void save()}
-      />
+      ) : null}
+      {!isAndroid ? (
+        <SheetSaveAction
+          dirty={dirty}
+          canSave={available && valid && !finished}
+          pending={saving}
+          label={t(sectionId ? "mobile.agent.sectionForm.save" : "mobile.agent.sectionForm.create")}
+          onSave={() => void save()}
+        />
+      ) : null}
       <SheetFormField
         label={t("mobile.agent.sectionForm.name")}
         value={name}
