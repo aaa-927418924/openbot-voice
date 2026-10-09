@@ -3,6 +3,7 @@ import {
   type MobileConnectHostBinding,
   parseMobileConnectUrl,
 } from "@openbot/contracts/mobile-connect";
+import { normalizeMobileConnectLink } from "./mobile-connect-url";
 
 // `bun run dev:mobile` pairs a simulator, which has no camera, by opening the
 // Mobile Connect QR link with `simctl openurl`. Any app or web page on a device
@@ -15,13 +16,10 @@ type Listener = () => void;
 let pendingLink: string | null = null;
 const listeners = new Set<Listener>();
 
-function isMobileConnectLink(value: string): boolean {
-  return /^openbot:\/\/mobile-connect(?:[/?#]|$)/iu.test(value.trim());
-}
-
 export function readDevelopmentConnectLink(value: string, development: boolean): string | null {
-  if (!development || !isMobileConnectLink(value)) return null;
-  const link = value.trim();
+  if (!development) return null;
+  const link = normalizeMobileConnectLink(value);
+  if (!/^openbot:\/\/mobile-connect(?:[/?#]|$)/iu.test(link)) return null;
   const payload = parseMobileConnectUrl(link);
   if (!payload?.host) return null;
   const api = new URL(payload.apiUrl);
@@ -57,6 +55,6 @@ export function isSameMobileConnectTarget(
   session: { apiUrl: string; host: MobileConnectHostBinding },
   link: string,
 ): boolean {
-  const payload = parseMobileConnectUrl(link);
+  const payload = parseMobileConnectUrl(normalizeMobileConnectLink(link));
   return payload?.apiUrl === session.apiUrl && payload.host?.hostId === session.host.hostId;
 }

@@ -13,7 +13,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
   return {
     ...baseConfig,
     name: "OpenBot Voice",
-    scheme: "openbotvoice",
+    scheme: ["openbotvoice", "openbot"],
     android: {
       ...baseConfig.android,
       package: "com.aaa927418924.openbotvoice",

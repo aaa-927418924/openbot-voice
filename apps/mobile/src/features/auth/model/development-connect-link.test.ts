@@ -17,8 +17,10 @@ describe("development Mobile Connect links", () => {
     takeMobileConnectLink();
   });
 
-  it("accepts a local-network link only in a development build", () => {
+  it("accepts canonical and Voice-scheme local links only in a development build", () => {
+    const voiceLink = lanLink.replace(/^openbot:/u, "openbotvoice:");
     expect(readDevelopmentConnectLink(lanLink, true)).toBe(lanLink);
+    expect(readDevelopmentConnectLink(voiceLink, true)).toBe(lanLink);
     expect(readDevelopmentConnectLink(lanLink, false)).toBeNull();
   });
 
@@ -41,6 +43,7 @@ describe("development Mobile Connect links", () => {
   it("matches a stored session of the same account service and desktop", () => {
     const session = { apiUrl: "http://192.168.1.20:3100", host };
     expect(isSameMobileConnectTarget(session, lanLink)).toBe(true);
+    expect(isSameMobileConnectTarget(session, lanLink.replace(/^openbot:/u, "openbotvoice:"))).toBe(true);
     expect(isSameMobileConnectTarget({ ...session, apiUrl: "http://192.168.1.20:3200" }, lanLink)).toBe(false);
   });
 });

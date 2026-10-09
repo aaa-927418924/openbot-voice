@@ -217,10 +217,32 @@ describe("Mobile Connect redemption", () => {
     native.storage.clear();
     native.storage.set("openbot.mobile.device-id.v1", "existing-device");
     await expect(redeemMobileConnectUrl("invalid")).rejects.toThrow("not a valid OpenBot Mobile Connect code");
+    await expect(
+      redeemMobileConnectUrl(qrCode.replace("://mobile-connect?", "://user:pass@mobile-connect?")),
+    ).rejects.toThrow("not a valid OpenBot Mobile Connect code");
+    await expect(
+      redeemMobileConnectUrl(qrCode.replace("://mobile-connect?", "://mobile-connect:8123?")),
+    ).rejects.toThrow("not a valid OpenBot Mobile Connect code");
     native.fetch.mockRejectedValueOnce(new Error("Offline"));
     await expect(redeemMobileConnectUrl(qrCode)).rejects.toThrow("could not reach the account service");
     native.fetch.mockResolvedValueOnce(Response.json(session));
     await expect(redeemMobileConnectUrl(qrCode)).resolves.toEqual(session);
+    expect(await readMobileSession()).toEqual(session);
+  });
+
+  it("redeems a Voice-scheme desktop pairing link scanned by the in-app camera", async () => {
+    native.storage.clear();
+    native.storage.set("openbot.mobile.device-id.v1", "existing-device");
+    native.fetch.mockResolvedValueOnce(Response.json(session));
+
+    const voiceSchemeQrCode = qrCode.replace(/^openbot:/u, "openbotvoice:");
+    await expect(redeemMobileConnectUrl(` \n${voiceSchemeQrCode} \n`)).resolves.toEqual(session);
+    expect(native.fetch).toHaveBeenCalledWith(
+      "https://api.openbot.run/v1/mobile-auth/redeem",
+      expect.objectContaining({
+        body: expect.stringContaining('"ticket":"tttttttttttttttttttttttttttttttt"'),
+      }),
+    );
     expect(await readMobileSession()).toEqual(session);
   });
 });

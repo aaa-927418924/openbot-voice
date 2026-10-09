@@ -10,3 +10,7 @@
   changes this app's local list; it does not change membership or connection.
 - Install OpenBot Voice beside OpenBot as a separate Android app. It accepts existing `openbot://`
   desktop pairing links and `openbotvoice://mobile-connect` return links.
+
+### Fixed
+
+- OpenBot Voice now accepts both `openbot://` and `openbotvoice://` Mobile Connect QR codes in the in-app scanner.

@@ -18,6 +18,7 @@ import { isAndroid, isIOS } from "@/shared/lib/platform";
 import { currentText } from "@/shared/lib/text";
 // Relative: the Node test project resolves no `@/` path that the test does not mock.
 import { fetch } from "../../support/model/logged-fetch";
+import { normalizeMobileConnectLink } from "../model/mobile-connect-url";
 
 const MOBILE_SESSION_KEY = "openbot.mobile.session.v1";
 const MOBILE_REVOCATIONS_KEY = "openbot.mobile.pending-revocations.v1";
@@ -55,7 +56,7 @@ export async function redeemMobileConnectUrl(value: string): Promise<MobileSessi
 
 async function redeemMobileConnectSession(value: string): Promise<MobileSession> {
   void retryMobileSessionRevocations();
-  const payload = parseMobileConnectUrl(value);
+  const payload = parseMobileConnectUrl(normalizeMobileConnectLink(value));
   if (!payload) {
     throw new Error(currentText().t("mobile.auth.error.invalidCode"));
   }

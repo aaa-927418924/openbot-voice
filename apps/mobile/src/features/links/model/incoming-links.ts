@@ -6,6 +6,7 @@ import {
 import { parseInviteUrl, selfHostedApiOrigin } from "@openbot/contracts/invite-links";
 import { parseMobileConnectUrl } from "@openbot/contracts/mobile-connect";
 import { createPluginShareUrl, parsePluginUrl } from "@openbot/contracts/plugin-links";
+import { normalizeMobileConnectLink } from "../../auth/model/mobile-connect-url";
 
 export type IncomingLink =
   | { kind: "invite"; url: string }
@@ -13,24 +14,6 @@ export type IncomingLink =
   | { kind: "plugin"; url: string }
   | { kind: "template"; url: string; templateId: string }
   | { kind: "invalid" };
-
-function normalizeVoiceMobileConnectUrl(value: string): string {
-  try {
-    const url = new URL(value);
-    if (
-      url.protocol === "openbotvoice:" &&
-      url.hostname === "mobile-connect" &&
-      url.username === "" &&
-      url.password === "" &&
-      url.port === ""
-    ) {
-      return value.replace(/^openbotvoice:/iu, "openbot:");
-    }
-  } catch {
-    // Leave invalid input for the existing link parsers to reject.
-  }
-  return value;
-}
 
 export function parseIncomingLink(value: string): IncomingLink {
   // The other link kinds have separate parsers and cannot weaken invitation validation.
@@ -41,7 +24,7 @@ export function parseIncomingLink(value: string): IncomingLink {
   } catch {
     // Not an agent link.
   }
-  const mobileConnectUrl = normalizeVoiceMobileConnectUrl(value);
+  const mobileConnectUrl = normalizeMobileConnectLink(value);
   try {
     const url = new URL(mobileConnectUrl);
     const pairing = parseMobileConnectUrl(mobileConnectUrl);
