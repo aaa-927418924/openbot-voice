@@ -69,6 +69,48 @@ describe("provider conversation history", () => {
     expect(mergeProviderHistory(snapshot([]), imported).messages.map((item) => item.id)).toEqual(["msg-1", "msg-2"]);
   });
 
+  it("projects a native Live Voice user item through its canonical client id", () => {
+    const canonicalId = "livevoice-0123456789abcdef0123456789abcdef0123456789abcdef";
+    const thread = decodeThreadResponse({
+      thread: {
+        id: "thread-live-voice",
+        turns: [
+          {
+            id: "turn-live-voice",
+            status: "completed",
+            items: [
+              {
+                id: "native-generated-user-id",
+                clientId: canonicalId,
+                type: "userMessage",
+                content: [{ type: "text", text: "Summarize https://example.test/article" }],
+              },
+              {
+                id: "ordinary-provider-id",
+                clientId: "ordinary-client-id",
+                type: "userMessage",
+                content: [{ type: "text", text: "Keep ordinary history IDs unchanged." }],
+              },
+            ],
+          },
+        ],
+      },
+    });
+    const imported = snapshotFromThread(
+      "chief",
+      thread.thread,
+      () => null,
+      () => null,
+    );
+    const stored = snapshot([message(canonicalId, "user", "Summarize https://example.test/article")]);
+
+    expect(imported.messages.map((item) => item.id)).toEqual([canonicalId, "ordinary-provider-id"]);
+    expect(mergeProviderHistory(stored, imported, "codex").messages.map((item) => item.id)).toEqual([
+      canonicalId,
+      "ordinary-provider-id",
+    ]);
+  });
+
   it("keeps the stored Claude answer ID, timestamp, metadata, and reply references", () => {
     const answer = {
       ...message("turn-1:assistant", "assistant", "Before.After.", "agentMessage"),

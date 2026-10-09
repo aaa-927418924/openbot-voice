@@ -3,22 +3,24 @@ import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { Deferred, Effect, Exit } from "effect";
 import type { AgentClient } from "../agent-client";
 import { AppServerError } from "../app-server-client";
-import { decodeRecordResponse } from "../protocol";
+import { decodeRecordResponse, decodeTurnResponse } from "../protocol";
 import { ProviderClientOperationError, providerFailure } from "../provider-client-effects";
+import type { CodexSandboxPolicy } from "./workspace-sandbox";
 
 const SDP_LIMIT = 256_000;
 const ANSWER_TIMEOUT_MS = 30_000;
 const START_TIMEOUT_MS = 15_000;
+const TURN_START_TIMEOUT_MS = 30_000;
 
 const LIVE_VOICE_INITIAL_ITEMS = [
   {
     role: "developer",
-    text: "Composer text added during this Live Voice session is a user message in this same conversation. Treat the complete submitted text and every URL as user intent. For research or other tool-assisted requests, send the exact message through this session's native Codex handoff. Do not only acknowledge it or claim that supplied text or a URL is missing. Speak as one assistant, and do not start another ordinary turn for the same message.",
+    text: "Text submitted through the conversation composer is sent directly as a user turn to this same Codex thread. Do not wait for it to arrive as speech or create a second handoff for that same typed input. Continue to handle later spoken requests normally, and speak naturally while the same Codex thread works on the typed request.",
   },
 ];
 
 const LIVE_VOICE_START_INSTRUCTIONS =
-  "Treat each concrete request in this thread's Live Voice conversation, including composer text and exact URLs, as user intent. When Live Voice hands off a request, do the requested research or task with available Codex tools using the complete message and URLs. Return progress and the result through this same conversation. Do not only acknowledge the request, claim supplied text or a URL is missing, or start an independent ordinary turn for input already in this conversation.";
+  "Treat each spoken request in this thread's Live Voice conversation as user intent and use the complete request with available Codex tools. Return progress and the result through this same conversation. Composer messages are submitted as user turns directly to this same Codex thread; do not ask the user to repeat them or hand off the same typed message again. Keep later spoken requests working normally.";
 
 const LIVE_VOICE_END_INSTRUCTIONS =
   "When Live Voice ends, return to normal text responses. Continue any delegated work already running in this conversation and report its result here when it finishes. Do not re-review or repeat completed work, or produce a closing recap just because the session ended.";
@@ -26,6 +28,21 @@ const LIVE_VOICE_END_INSTRUCTIONS =
 export interface CodexRealtimeAnswer {
   readonly threadId: string;
   readonly sdp: string;
+}
+
+export interface CodexLiveVoiceUserTurnInput {
+  readonly clientUserMessageId: string;
+  readonly text: string;
+  readonly model: string;
+  readonly effort: string;
+  readonly cwd: string;
+  readonly runtimeWorkspaceRoots: string[];
+  readonly sandboxPolicy: CodexSandboxPolicy;
+  readonly additionalContext: Array<{
+    readonly key: string;
+    readonly kind: "untrusted" | "application";
+    readonly text: string;
+  }>;
 }
 
 export interface CodexTranscriptSegment {
@@ -225,42 +242,29 @@ export class CodexLiveVoiceAdapter {
     }
   }, Effect.uninterruptible).bind(this);
 
-  readonly appendText = Effect.fn("CodexLiveVoiceAdapter.appendText")(function* (
+  readonly startOrSteerUserTurn = Effect.fn("CodexLiveVoiceAdapter.startOrSteerUserTurn")(function* (
     this: CodexLiveVoiceAdapter,
     threadId: string,
-    text: string,
+    input: CodexLiveVoiceUserTurnInput,
   ) {
     const session = this.#sessions.get(threadId);
     if (!session || session.stopped || !this.#client.running) throw new Error("Codex Live is unavailable.");
     yield* this.#client.request(
-      "thread/realtime/appendText",
-      { threadId, text, role: "user" },
-      decodeRecordResponse,
-      START_TIMEOUT_MS,
-    );
-  }).bind(this);
-
-  readonly injectUserText = Effect.fn("CodexLiveVoiceAdapter.injectUserText")(function* (
-    this: CodexLiveVoiceAdapter,
-    threadId: string,
-    text: string,
-  ) {
-    const session = this.#sessions.get(threadId);
-    if (!session || session.stopped || !this.#client.running) throw new Error("Codex Live is unavailable.");
-    yield* this.#client.request(
-      "thread/inject_items",
+      "turn/start",
       {
         threadId,
-        items: [
-          {
-            type: "message",
-            role: "user",
-            content: [{ type: "input_text", text }],
-          },
-        ],
+        model: input.model,
+        effort: input.effort,
+        clientUserMessageId: input.clientUserMessageId,
+        input: [{ type: "text", text: input.text }],
+        cwd: input.cwd,
+        runtimeWorkspaceRoots: input.runtimeWorkspaceRoots,
+        approvalPolicy: "on-request",
+        sandboxPolicy: input.sandboxPolicy,
+        additionalContext: input.additionalContext,
       },
-      decodeRecordResponse,
-      START_TIMEOUT_MS,
+      decodeTurnResponse,
+      TURN_START_TIMEOUT_MS,
     );
   }).bind(this);
 

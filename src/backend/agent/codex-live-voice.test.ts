@@ -33,7 +33,7 @@ class FakeClient extends EventEmitter implements AgentClient {
           initialItems: [
             {
               role: "developer",
-              text: expect.stringContaining("complete submitted text and every URL"),
+              text: expect.stringContaining("sent directly as a user turn to this same Codex thread"),
             },
           ],
           realtimeStartInstructions: expect.stringContaining("available Codex tools"),
@@ -47,15 +47,8 @@ class FakeClient extends EventEmitter implements AgentClient {
           method: "thread/realtime/sdp",
           params: { threadId: "thread-a", sdp: "answer-sdp" },
         });
-      } else if (method === "thread/inject_items") {
-        expect(params).toMatchObject({
-          threadId: "thread-a",
-          items: [{ type: "message", role: "user", content: [{ type: "input_text" }] }],
-        });
-      } else if (method === "thread/realtime/appendText") {
-        expect(params).toMatchObject({ threadId: "thread-a", role: "user" });
       }
-      return decoder({});
+      return decoder(method === "turn/start" ? { turn: { id: "turn-a", status: "inProgress" } } : {});
     });
   }
   readonly notify = vi.fn();
@@ -140,27 +133,78 @@ describe("CodexLiveVoiceAdapter", () => {
     expect(client.requests.map((request) => request.method)).toEqual(["thread/realtime/start", "thread/realtime/stop"]);
   });
 
-  it("injects the exact user text into the backing thread before appending it to Live Voice", async () => {
+  it("starts one user turn with exact text and the existing provider-thread settings", async () => {
     const client = new FakeClient();
     const adapter = new CodexLiveVoiceAdapter({ client, onEvent: () => undefined });
     const text = "Summarize https://example.test/記事?q=live%20voice&lang=ja#要点";
     await Effect.runPromise(adapter.start("thread-a", "offer-sdp", "maple"));
 
-    await expect(Effect.runPromise(adapter.injectUserText("thread-a", text))).resolves.toBeUndefined();
-    await expect(Effect.runPromise(adapter.appendText("thread-a", text))).resolves.toBeUndefined();
-    await expect(Effect.runPromise(adapter.injectUserText("thread-b", "ignored"))).rejects.toThrow();
-    await expect(Effect.runPromise(adapter.appendText("thread-b", "ignored"))).rejects.toThrow();
+    await expect(
+      Effect.runPromise(
+        adapter.startOrSteerUserTurn("thread-a", {
+          clientUserMessageId: "livevoice-0123456789abcdef0123456789abcdef0123456789abcdef",
+          text,
+          model: "gpt-6-luna",
+          effort: "medium",
+          cwd: "/tmp/openbot-live",
+          runtimeWorkspaceRoots: ["/tmp/openbot-live", "/tmp/openbot-shared"],
+          sandboxPolicy: {
+            type: "workspaceWrite",
+            writableRoots: ["/tmp/openbot-live", "/tmp/openbot-shared"],
+            networkAccess: true,
+            excludeTmpdirEnvVar: false,
+            excludeSlashTmp: false,
+          },
+          additionalContext: [
+            { key: "openbot_live_voice_spoken_context", kind: "untrusted", text: "[]" },
+            { key: "openbot_live_voice_typed_dispatch", kind: "application", text: "Perform the typed request." },
+          ],
+        }),
+      ),
+    ).resolves.toBeUndefined();
+    await expect(
+      Effect.runPromise(
+        adapter.startOrSteerUserTurn("thread-b", {
+          clientUserMessageId: "livevoice-0123456789abcdef0123456789abcdef0123456789abcdef",
+          text,
+          model: "gpt-6-luna",
+          effort: "medium",
+          cwd: "/tmp/openbot-live",
+          runtimeWorkspaceRoots: [],
+          sandboxPolicy: { type: "dangerFullAccess" },
+          additionalContext: [],
+        }),
+      ),
+    ).rejects.toThrow();
     expect(client.requests.slice(1)).toEqual([
       {
-        method: "thread/inject_items",
+        method: "turn/start",
         params: {
           threadId: "thread-a",
-          items: [{ type: "message", role: "user", content: [{ type: "input_text", text }] }],
+          model: "gpt-6-luna",
+          effort: "medium",
+          clientUserMessageId: "livevoice-0123456789abcdef0123456789abcdef0123456789abcdef",
+          input: [{ type: "text", text }],
+          cwd: "/tmp/openbot-live",
+          runtimeWorkspaceRoots: ["/tmp/openbot-live", "/tmp/openbot-shared"],
+          approvalPolicy: "on-request",
+          sandboxPolicy: {
+            type: "workspaceWrite",
+            writableRoots: ["/tmp/openbot-live", "/tmp/openbot-shared"],
+            networkAccess: true,
+            excludeTmpdirEnvVar: false,
+            excludeSlashTmp: false,
+          },
+          additionalContext: [
+            { key: "openbot_live_voice_spoken_context", kind: "untrusted", text: "[]" },
+            { key: "openbot_live_voice_typed_dispatch", kind: "application", text: "Perform the typed request." },
+          ],
         },
       },
-      { method: "thread/realtime/appendText", params: { threadId: "thread-a", text, role: "user" } },
     ]);
-    expect(client.requestCalls).toBe(3);
+    expect(client.requestCalls).toBe(2);
+    expect(client.requests.map((request) => request.method)).not.toContain("thread/inject_items");
+    expect(client.requests.map((request) => request.method)).not.toContain("thread/realtime/appendText");
 
     client.emit("notification", { method: "thread/realtime/closed", params: { threadId: "thread-a" } });
     await Effect.runPromise(adapter.stop("thread-a"));

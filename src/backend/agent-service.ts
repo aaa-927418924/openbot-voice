@@ -155,9 +155,11 @@ import { ThreadLifecycle, ThreadOperationFailed } from "./agent/thread-lifecycle
 import { toToolOperationFailed } from "./agent/tool-operation";
 import { type AgentBrowserHost, TurnLifecycle } from "./agent/turn-lifecycle";
 import { toUsageReadFailed, UsageLimitGate } from "./agent/usage-limit-gate";
+import { codexSandboxPolicy, workspaceWritableRoots } from "./agent/workspace-sandbox";
 import type { AgentClient, AgentProvider } from "./agent-client";
 import type { AgentTables } from "./agent-data/agent-tables";
 import type { AgentStore } from "./agent-store";
+import { AppServerError } from "./app-server-client";
 import { automationRunCommand } from "./automation-command";
 import { toChannelOperationError } from "./channel-effects";
 import { ChannelRoutineScheduler } from "./channel-routine-scheduler";
@@ -172,6 +174,7 @@ import { McpServerStore } from "./mcp-server-store";
 import { MessagingThreads, toMessagingThreadFailed } from "./messaging/messaging-threads";
 import type { PasswordVault } from "./password-vault";
 import { decodeAccountReadResult, decodeRecordResponse } from "./protocol";
+import { ProviderClientOperationError } from "./provider-client-effects";
 import { NO_PROVIDER_CREDENTIALS, type ProviderClientContext } from "./provider-drivers";
 import { recordAgentRestartActivity } from "./restart-activity";
 import type { RoutineHoldWindow } from "./routine-store";
@@ -213,12 +216,11 @@ interface LiveVoiceSession {
   readonly adapter: CodexLiveVoiceAdapter;
   readonly client: AgentClient;
   readonly releaseLease: () => void;
-  readonly pendingTextEchoes: LiveVoiceTextEcho[];
   readonly channel?: { readonly channelId: string; readonly actor: { readonly id: string; readonly name: string } };
   readonly pendingTranscriptItems: CodexTranscriptSegment[];
+  readonly spokenTranscriptContext: CodexTranscriptSegment[];
   readonly finish: (status: "closed" | "error") => void;
   startedAt: number | null;
-  textSequence: number;
 }
 
 interface LiveVoiceStartReservation {
@@ -227,12 +229,6 @@ interface LiveVoiceStartReservation {
   readonly sessionId: string;
   readonly channelId?: string;
   cancelled: boolean;
-}
-
-interface LiveVoiceTextEcho {
-  readonly text: string;
-  readonly itemId: string;
-  echoedItem?: CodexTranscriptSegment;
 }
 
 export interface AgentServiceOptions {
@@ -303,6 +299,10 @@ export interface AgentServiceOptions {
 
 /** How long a user send's `clientMessageId` answers a retry. A retry follows a lost reply, not a day. */
 const USER_SEND_RETRY_WINDOW_MS = 24 * 60 * 60 * 1000;
+const LIVE_VOICE_SPOKEN_CONTEXT_MAX_SEGMENTS = 12;
+const LIVE_VOICE_SPOKEN_CONTEXT_MAX_CHARACTERS = 6_000;
+const LIVE_VOICE_TYPED_DISPATCH_INSTRUCTION =
+  "The latest user message was sent through the conversation composer and is already this thread's user turn. For a task request, first give a brief, natural acknowledgement in the user's language, then perform it with the available tools using the typed message and recent spoken context. For ordinary social chat, reply naturally without forcing a task acknowledgement. Do not ask the user to repeat the typed message or create a second Live handoff for it. Future spoken requests remain ordinary user intent.";
 
 export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly channels: ChannelService;
@@ -1280,17 +1280,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
               message: sourceText("error.liveVoice.unavailable"),
             });
           if (event.type === "item") {
-            if (event.item.role === "user") {
-              const submitted = session.pendingTextEchoes.find(
-                (candidate) => candidate.text === event.item.text && !candidate.echoedItem,
-              );
-              if (submitted) {
-                submitted.echoedItem = event.item;
-                // app-server exposes no append request id on transcript items, so only correlate
-                // an echo while its appendText request is still in flight.
-                return;
-              }
-            }
+            rememberLiveVoiceTranscript(session, event.item);
             if (session.startedAt === null) session.pendingTranscriptItems.push(event.item);
             else this.#persistLiveVoiceTranscript(agent.id, event.item, session.channel);
           }
@@ -1305,14 +1295,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         adapter: liveAdapter,
         client,
         releaseLease,
-        pendingTextEchoes: [],
         ...(input.channelId && channelActor ? { channel: { channelId: input.channelId, actor: channelActor } } : {}),
         pendingTranscriptItems: [],
+        spokenTranscriptContext: [],
         startedAt: null,
         finish: (status) => {
           if (session) finish(session, status);
         },
-        textSequence: 0,
       };
       this.#liveVoiceSessions.set(agent.id, session);
       this.#pendingLiveVoiceStart = undefined;
@@ -1418,16 +1407,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     );
     if (account.account?.type !== "chatgpt")
       throw new LiveVoiceRefusedError(sourceText("error.liveVoice.accountRequired"));
-    const submission: LiveVoiceTextEcho = {
-      text: input.text,
-      itemId: `typed-${session.sessionId}-${++session.textSequence}`,
-    };
-    let contextAccepted = false;
+    const providerItemId = randomUUID();
+    const clientUserMessageId = liveVoiceConversationMessageId(providerItemId);
     const persistSubmission = () =>
       this.#persistLiveVoiceTranscript(
         agent.id,
         {
-          id: submission.itemId,
+          id: providerItemId,
           realtimeSessionId: session.sessionId,
           type: "transcriptSegment",
           role: "user",
@@ -1435,25 +1421,38 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         },
         session.channel,
       );
-    const submitText = Effect.gen(function* () {
-      // Keep the exact composer text in the backing Codex thread first. The native API adds it to
-      // the active turn when one exists, or persists it for the next native handoff without a turn.
-      yield* session.adapter.injectUserText(session.providerThreadId, input.text);
-      contextAccepted = true;
-      // Correlate only an echo of the realtime append, not speech received while context is injected.
-      session.pendingTextEchoes.push(submission);
-      yield* session.adapter.appendText(session.providerThreadId, input.text);
-    }).pipe(
-      Effect.tapError(() =>
-        Effect.sync(() => {
-          // The worker already accepted the text. Preserve the canonical typed row as the failure
-          // fallback if Live append then fails.
-          if (contextAccepted) persistSubmission();
-        }),
-      ),
-      Effect.ensuring(Effect.sync(() => removeLiveVoiceTextEcho(session, submission))),
-    );
-    yield* submitText;
+    yield* session.adapter
+      .startOrSteerUserTurn(session.providerThreadId, {
+        clientUserMessageId,
+        text: input.text,
+        model: agent.model,
+        effort: agent.reasoningEffort,
+        cwd: agent.workspacePath,
+        runtimeWorkspaceRoots: workspaceWritableRoots(agent, this.#store.sharedRoot),
+        sandboxPolicy: codexSandboxPolicy(agent, this.#store.sharedRoot),
+        additionalContext: [
+          {
+            key: "openbot_live_voice_spoken_context",
+            kind: "untrusted",
+            text: liveVoiceSpokenContext(session),
+          },
+          {
+            key: "openbot_live_voice_typed_dispatch",
+            kind: "application",
+            text: LIVE_VOICE_TYPED_DISPATCH_INSTRUCTION,
+          },
+        ],
+      })
+      .pipe(
+        Effect.tapError((failure) =>
+          Effect.sync(() => {
+            // Only a JSON-RPC rejection proves the provider refused the turn. A timeout, stream close,
+            // or other transport failure may follow an accepted request, so keep its canonical row.
+            if (failure instanceof ProviderClientOperationError && !(failure.cause instanceof AppServerError))
+              persistSubmission();
+          }),
+        ),
+      );
     persistSubmission();
   }).bind(this);
 
@@ -3470,9 +3469,28 @@ function liveVoiceConversationMessageId(providerItemId: string): string {
   return `livevoice-${createHash("sha256").update(providerItemId).digest("hex").slice(0, 48)}`;
 }
 
-function removeLiveVoiceTextEcho(session: LiveVoiceSession, submission: LiveVoiceTextEcho): void {
-  const index = session.pendingTextEchoes.indexOf(submission);
-  if (index >= 0) session.pendingTextEchoes.splice(index, 1);
+function rememberLiveVoiceTranscript(session: LiveVoiceSession, item: CodexTranscriptSegment): void {
+  const duplicate = session.spokenTranscriptContext.findIndex(
+    (entry) => entry.id === item.id && entry.role === item.role,
+  );
+  if (duplicate >= 0) session.spokenTranscriptContext.splice(duplicate, 1);
+  session.spokenTranscriptContext.push({
+    ...item,
+    text: item.text.slice(-LIVE_VOICE_SPOKEN_CONTEXT_MAX_CHARACTERS),
+  });
+  const size = () => session.spokenTranscriptContext.reduce((total, entry) => total + entry.text.length, 0);
+  while (
+    session.spokenTranscriptContext.length > LIVE_VOICE_SPOKEN_CONTEXT_MAX_SEGMENTS ||
+    size() > LIVE_VOICE_SPOKEN_CONTEXT_MAX_CHARACTERS
+  ) {
+    session.spokenTranscriptContext.shift();
+  }
+}
+
+function liveVoiceSpokenContext(session: LiveVoiceSession): string {
+  const serialized = JSON.stringify(session.spokenTranscriptContext.map(({ role, text }) => ({ role, text })));
+  // Additional context is wrapped by the native API. Keep user transcript text from closing that wrapper.
+  return serialized.replace(/</gu, "\\u003c");
 }
 
 /** These tasks already run; stopping the service joins them without starting new work. */

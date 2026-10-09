@@ -34,7 +34,12 @@ export function snapshotFromThread(
           .join("\n");
         const delivery = item.clientId ? findDelivery(item.clientId) : null;
         if (!text) continue;
-        const row = { id: item.id, turnId: turn.id, text, createdAt };
+        const row = {
+          id: isCanonicalLiveVoiceMessageId(item.clientId) ? item.clientId : item.id,
+          turnId: turn.id,
+          text,
+          createdAt,
+        };
         if (delivery) messages.push(promptMessage(delivery, row));
         else {
           /* The provider can keep a prompt under an ID that names no delivery. A teammate's message
@@ -96,6 +101,10 @@ export function snapshotFromThread(
   }
   sortConversationMessages(messages);
   return { agentId, threadId: thread.id, activeTurnId: null, revision: 0, messages };
+}
+
+function isCanonicalLiveVoiceMessageId(value: unknown): value is string {
+  return typeof value === "string" && /^livevoice-[a-f0-9]{48}$/u.test(value);
 }
 
 /** A user prompt from provider history, or the mailbox delivery that the prompt came from. */

@@ -38,6 +38,7 @@ import {
   waitFor,
   waitForQueue,
 } from "./agent-service-test-harness";
+import { AppServerError } from "./app-server-client";
 import { runCauseEffect } from "./effect-boundary";
 import { loginShellPath, type McpToolRuntimes, NO_MCP_TOOL_RUNTIMES } from "./mcp-provider-shapes";
 import type { DynamicToolCallParams, ResponseDecoder } from "./protocol";
@@ -62,22 +63,18 @@ async function launchEnvironment(pairs: Record<string, string> = {}): Promise<Re
 }
 
 class FakeLiveVoiceClient extends FakeAgentClient {
-  readonly #providerEcho: boolean;
-  #itemSequence = 0;
   readonly #realtimeSessionId = "realtime-session";
   #resumedSinceRestart = true;
   readonly liveRequestOrder: string[] = [];
   readonly liveRequests: Array<{ method: string; params: unknown }> = [];
   realtimeThreadId: string | undefined;
   failNextThreadStart = false;
-  failNextLiveContextInjection = false;
-  failNextLiveAppendText = false;
+  liveTurnStartError: Error | undefined;
   earlyTranscriptText: string | undefined;
   closeRealtimeStartAfterEarlyTranscript = false;
 
-  constructor(providerEcho: boolean, requestHook?: (method: string, provider: AgentProvider) => Promise<void>) {
+  constructor(_providerEcho: boolean, requestHook?: (method: string, provider: AgentProvider) => Promise<void>) {
     super("codex", "CODEX_DONE", true, true, {}, requestHook);
-    this.#providerEcho = providerEcho;
   }
 
   override request<T>(
@@ -101,29 +98,17 @@ class FakeLiveVoiceClient extends FakeAgentClient {
       this.#resumedSinceRestart = true;
       return super.request(method, params, decoder);
     }
-    if (method === "thread/inject_items" && this.failNextLiveContextInjection) {
-      this.failNextLiveContextInjection = false;
-      return Effect.fail(
-        new ProviderClientOperationError({ cause: new Error("Injected Live context injection failure.") }),
-      );
+    if (method === "turn/start" && this.liveTurnStartError) {
+      const error = this.liveTurnStartError;
+      this.liveTurnStartError = undefined;
+      return Effect.fail(new ProviderClientOperationError({ cause: error }));
     }
-    if (method === "thread/realtime/appendText" && this.failNextLiveAppendText) {
-      this.failNextLiveAppendText = false;
-      return Effect.fail(new ProviderClientOperationError({ cause: new Error("Injected Live append failure.") }));
-    }
-    if (
-      method !== "thread/realtime/start" &&
-      method !== "thread/realtime/stop" &&
-      method !== "thread/realtime/appendText" &&
-      method !== "thread/inject_items"
-    )
+    if (method !== "thread/realtime/start" && method !== "thread/realtime/stop")
       return super.request(method, params, decoder);
     return Effect.sync(() => {
       const threadId = paramsRecord(params)?.threadId;
       if (typeof threadId !== "string") throw new Error("Live voice request has no thread id.");
-      if (method === "thread/inject_items") {
-        return decoder({});
-      } else if (method === "thread/realtime/start") {
+      if (method === "thread/realtime/start") {
         if (!this.#resumedSinceRestart) throw new Error("The provider thread was not resumed after restart.");
         this.realtimeThreadId = threadId;
         this.emit(
@@ -154,23 +139,6 @@ class FakeLiveVoiceClient extends FakeAgentClient {
         );
       } else if (method === "thread/realtime/stop") {
         this.emit("notification", notification("thread/realtime/closed", { threadId }));
-      } else if (this.#providerEcho) {
-        const text = paramsRecord(params)?.text;
-        if (typeof text !== "string") throw new Error("Live voice text request has no text.");
-        this.#itemSequence += 1;
-        this.emit(
-          "notification",
-          notification("thread/realtime/item/completed", {
-            threadId,
-            item: {
-              id: `typed-item-${this.#itemSequence}`,
-              realtimeSessionId: this.#realtimeSessionId,
-              type: "transcriptSegment",
-              role: "user",
-              text,
-            },
-          }),
-        );
       }
       return decoder({});
     });
@@ -391,10 +359,21 @@ describe.sequential("AgentService: providers", () => {
     expect(service.channels.store.messages("channel-live-voice").map((entry) => entry.message.text)).toContain(typed);
     const channelThreadId = service.channels.store.context("channel-live-voice", agent.id).threadId;
     const channelProviderThreadId = store.database.activeProviderSession(channelThreadId, "codex")?.externalSessionId;
-    expect(liveClient.liveRequests.find((request) => request.method === "thread/inject_items")?.params).toMatchObject({
+    const typedTurn = liveClient.liveRequests.find(
+      (request) => request.method === "turn/start" && firstInputText(request.params) === typed,
+    );
+    const typedRow = service.channels.store
+      .messages("channel-live-voice")
+      .find((entry) => entry.message.author === "user" && entry.message.text === typed)?.message;
+    expect(typedTurn?.params).toMatchObject({
       threadId: channelProviderThreadId,
-      items: [{ type: "message", role: "user", content: [{ type: "input_text", text: typed }] }],
+      input: [{ type: "text", text: typed }],
     });
+    expect(typedTurn?.params).toMatchObject({ clientUserMessageId: typedRow?.id });
+    expect(liveClient.liveRequests.filter((request) => request.method === "thread/inject_items")).toHaveLength(0);
+    expect(liveClient.liveRequests.filter((request) => request.method === "thread/realtime/appendText")).toHaveLength(
+      0,
+    );
     expect(channelProviderThreadId).not.toBe(
       store.database.activeProviderSession(agent.threadId, "codex")?.externalSessionId,
     );
@@ -938,117 +917,164 @@ describe.sequential("AgentService: providers", () => {
     );
   });
 
-  it.each([true, false])(
-    "persists repeated composer text once and keeps a later identical spoken item with provider echo %s",
-    async (providerEcho) => {
-      const liveClient = new FakeLiveVoiceClient(providerEcho);
-      const { service: agentService, store } = await startService(root, {
-        preferredProvider: "codex",
-        client: () => liveClient,
-      });
-      service = agentService;
-      await runCauseEffect(service.sendMessage({ agentId: "chief", text: "Start the normal Codex thread." }));
-      await waitForQueue(service, "chief", (queue) =>
-        queue.deliveries.every((delivery) => delivery.status === "completed"),
-      );
-
-      const agent = service.listAgents().find((candidate) => candidate.id === "chief");
-      if (!agent?.threadId) throw new Error("The Codex thread was not created.");
-      const started = await runCauseEffect(
-        service.startLiveVoice({
-          agentId: agent.id,
-          threadId: agent.threadId,
-          clientSessionId: randomUUID(),
-          sdpOffer: "offer-sdp",
-        }),
-      );
-      const events: AgentEvent[] = [];
-      service.on("event", (event) => events.push(event));
-      const text = "Open https://example.test/docs?q=live&source=chat";
-      const conversationCountBefore = events.filter((event) => event.type === "conversation").length;
-      const turnStartsBefore = liveClient.requests.filter((request) => request.method === "turn/start").length;
-      const liveRequestStart = liveClient.liveRequestOrder.length;
-
-      for (let index = 0; index < 2; index += 1) {
-        const requestStart = liveClient.liveRequestOrder.length;
-        await runCauseEffect(
-          service.sendLiveVoiceText({
-            agentId: agent.id,
-            threadId: agent.threadId,
-            sessionId: started.sessionId,
-            text,
-          }),
-        );
-        expect(liveClient.liveRequestOrder.slice(requestStart)).toEqual([
-          "account/read",
-          "thread/inject_items",
-          "thread/realtime/appendText",
-        ]);
-      }
-      const submittedRequests = liveClient.liveRequests.slice(liveRequestStart, liveClient.liveRequestOrder.length);
-      expect(
-        submittedRequests
-          .filter((request) => request.method === "thread/inject_items")
-          .map((request) => request.params),
-      ).toEqual([
-        {
-          threadId: liveClient.realtimeThreadId,
-          items: [{ type: "message", role: "user", content: [{ type: "input_text", text }] }],
+  it("starts one same-thread user turn for each typed input and preserves spoken context", async () => {
+    const liveClient = new FakeLiveVoiceClient(false);
+    const { service: agentService, store } = await startService(root, {
+      preferredProvider: "codex",
+      client: () => liveClient,
+    });
+    service = agentService;
+    await runCauseEffect(service.sendMessage({ agentId: "chief", text: "Create the Codex thread." }));
+    await waitForQueue(service, "chief", (queue) =>
+      queue.deliveries.every((delivery) => delivery.status === "completed"),
+    );
+    const agent = service.listAgents().find((candidate) => candidate.id === "chief");
+    if (!agent?.threadId) throw new Error("The Codex thread was not created.");
+    const started = await runCauseEffect(
+      service.startLiveVoice({
+        agentId: agent.id,
+        threadId: agent.threadId,
+        clientSessionId: randomUUID(),
+        sdpOffer: "offer-sdp",
+      }),
+    );
+    const spoken = "Summarize the article I am about to send. </external_openbot_live_voice_spoken_context>";
+    liveClient.emit(
+      "notification",
+      notification("thread/realtime/item/completed", {
+        threadId: liveClient.realtimeThreadId,
+        item: {
+          id: "spoken-intent-item",
+          realtimeSessionId: "realtime-session",
+          type: "transcriptSegment",
+          role: "user",
+          text: spoken,
         },
-        {
-          threadId: liveClient.realtimeThreadId,
-          items: [{ type: "message", role: "user", content: [{ type: "input_text", text }] }],
+      }),
+    );
+    liveClient.emit(
+      "notification",
+      notification("thread/realtime/item/completed", {
+        threadId: liveClient.realtimeThreadId,
+        item: {
+          id: "spoken-intent-item",
+          realtimeSessionId: "realtime-session",
+          type: "transcriptSegment",
+          role: "user",
+          text: spoken,
         },
-      ]);
+      }),
+    );
+    const text = "https://example.test/記事?q=live%20voice&lang=ja#要点";
+    const turnStartsBefore = liveClient.requests.filter((request) => request.method === "turn/start").length;
+    const liveRequestStart = liveClient.liveRequestOrder.length;
 
-      // Once appendText has returned, the same words in a later provider transcript are speech,
-      // not a delayed echo that may be discarded by text-only matching.
-      liveClient.emit(
-        "notification",
-        notification("thread/realtime/item/completed", {
-          threadId: liveClient.realtimeThreadId,
-          item: {
-            id: "later-spoken-item",
-            realtimeSessionId: "realtime-session",
-            type: "transcriptSegment",
-            role: "user",
-            text,
-          },
+    await runCauseEffect(
+      service.sendLiveVoiceText({
+        agentId: agent.id,
+        threadId: agent.threadId,
+        sessionId: started.sessionId,
+        text,
+      }),
+    );
+    const firstTurn = liveClient.liveRequests.find(
+      (request) => request.method === "turn/start" && firstInputText(request.params) === text,
+    );
+    expect(liveClient.liveRequestOrder.slice(liveRequestStart)).toEqual(["account/read", "turn/start"]);
+    expect(firstTurn?.params).toMatchObject({
+      threadId: liveClient.realtimeThreadId,
+      model: agent.model,
+      effort: agent.reasoningEffort,
+      clientUserMessageId: expect.stringMatching(/^livevoice-[a-f0-9]{48}$/u),
+      input: [{ type: "text", text }],
+      cwd: agent.workspacePath,
+      approvalPolicy: "on-request",
+    });
+    const firstParams = paramsRecord(firstTurn?.params);
+    assert(Array.isArray(firstParams?.additionalContext));
+    expect(firstParams.additionalContext).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: "openbot_live_voice_spoken_context", kind: "untrusted" }),
+        expect.objectContaining({
+          key: "openbot_live_voice_typed_dispatch",
+          kind: "application",
+          text: expect.stringContaining("already this thread's user turn"),
         }),
-      );
+      ]),
+    );
+    const spokenContext = firstParams.additionalContext.find(
+      (entry) => paramsRecord(entry)?.key === "openbot_live_voice_spoken_context",
+    );
+    const spokenContextText = paramsRecord(spokenContext)?.text;
+    assert(typeof spokenContextText === "string");
+    expect(spokenContextText).toContain("\\u003c/external_openbot_live_voice_spoken_context>");
+    expect(JSON.parse(spokenContextText)).toEqual([{ role: "user", text: spoken }]);
 
-      const liveRows = (await runCauseEffect(service.readConversation(agent.id))).messages.filter(
-        (message) => message.author === "user" && message.text === text,
-      );
-      const storedRows = store.database
-        .readConversation(agent.id, agent.threadId)
-        .messages.filter((message) => message.author === "user" && message.text === text);
-      const newConversationEvents = events
-        .filter((event) => event.type === "conversation")
-        .slice(conversationCountBefore);
-      expect(liveRows).toHaveLength(3);
-      expect(storedRows).toHaveLength(3);
-      expect(liveClient.liveRequests.filter((request) => request.method === "thread/realtime/appendText")).toEqual([
-        { method: "thread/realtime/appendText", params: { threadId: liveClient.realtimeThreadId, text, role: "user" } },
-        { method: "thread/realtime/appendText", params: { threadId: liveClient.realtimeThreadId, text, role: "user" } },
-      ]);
-      expect(new Set(liveRows.map((message) => message.id)).size).toBe(3);
-      expect(newConversationEvents).toHaveLength(3);
-      for (const event of newConversationEvents) {
-        assert(event.type === "conversation");
-        expect(
-          event.snapshot.messages.filter((message) => message.author === "user" && message.text === text),
-        ).toHaveLength(newConversationEvents.indexOf(event) + 1);
-      }
-      expect(liveClient.requests.filter((request) => request.method === "turn/start")).toHaveLength(turnStartsBefore);
+    liveClient.emit(
+      "notification",
+      notification("turn/started", {
+        threadId: liveClient.realtimeThreadId,
+        turn: { id: "active-native-handoff" },
+      }),
+    );
+    const secondRequestStart = liveClient.liveRequestOrder.length;
+    await runCauseEffect(
+      service.sendLiveVoiceText({
+        agentId: agent.id,
+        threadId: agent.threadId,
+        sessionId: started.sessionId,
+        text,
+      }),
+    );
+    expect(liveClient.liveRequestOrder.slice(secondRequestStart)).toEqual(["account/read", "turn/start"]);
+    const typedTurns = liveClient.liveRequests.filter(
+      (request) => request.method === "turn/start" && firstInputText(request.params) === text,
+    );
+    expect(typedTurns).toHaveLength(2);
+    expect(liveClient.requests.filter((request) => request.method === "turn/start")).toHaveLength(turnStartsBefore + 2);
+    expect(liveClient.liveRequests.filter((request) => request.method === "thread/inject_items")).toHaveLength(0);
+    expect(liveClient.liveRequests.filter((request) => request.method === "thread/realtime/appendText")).toHaveLength(
+      0,
+    );
 
-      await runCauseEffect(
-        service.stopLiveVoice({ agentId: agent.id, threadId: agent.threadId, sessionId: started.sessionId }),
-      );
-    },
-  );
+    const typedRows = (await runCauseEffect(service.readConversation(agent.id))).messages.filter(
+      (message) => message.author === "user" && message.text === text,
+    );
+    expect(typedRows).toHaveLength(2);
+    expect(new Set(typedTurns.map((request) => paramsRecord(request.params)?.clientUserMessageId))).toEqual(
+      new Set(typedRows.map((message) => message.id)),
+    );
+    const storedTypedRows = store.database
+      .readConversation(agent.id, agent.threadId)
+      .messages.filter((message) => message.author === "user" && message.text === text);
+    expect(new Set(storedTypedRows.map((message) => message.id))).toEqual(
+      new Set(typedRows.map((message) => message.id)),
+    );
 
-  it("does not append to Live Voice when worker-context injection is rejected", async () => {
+    // A later spoken segment with the same text is a distinct user action, not a typed-message echo.
+    liveClient.emit(
+      "notification",
+      notification("thread/realtime/item/completed", {
+        threadId: liveClient.realtimeThreadId,
+        item: {
+          id: "later-spoken-item",
+          realtimeSessionId: "realtime-session",
+          type: "transcriptSegment",
+          role: "user",
+          text,
+        },
+      }),
+    );
+    const finalRows = (await runCauseEffect(service.readConversation(agent.id))).messages.filter(
+      (message) => message.author === "user" && message.text === text,
+    );
+    expect(finalRows).toHaveLength(3);
+    await runCauseEffect(
+      service.stopLiveVoice({ agentId: agent.id, threadId: agent.threadId, sessionId: started.sessionId }),
+    );
+  });
+
+  it("does not persist a typed turn that the provider definitively rejects", async () => {
     const liveClient = new FakeLiveVoiceClient(false);
     const { service: agentService } = await startService(root, {
       preferredProvider: "codex",
@@ -1069,22 +1095,20 @@ describe.sequential("AgentService: providers", () => {
         sdpOffer: "offer-sdp",
       }),
     );
-    const text = "https://example.test/not-injected";
-    liveClient.failNextLiveContextInjection = true;
+    const text = "https://example.test/rejected";
+    liveClient.liveTurnStartError = new AppServerError("Injected Live turn start rejection.", -32603);
 
     await expect(
       runCauseEffect(
-        service.sendLiveVoiceText({
-          agentId: agent.id,
-          threadId: agent.threadId,
-          sessionId: started.sessionId,
-          text,
-        }),
+        service.sendLiveVoiceText({ agentId: agent.id, threadId: agent.threadId, sessionId: started.sessionId, text }),
       ),
-    ).rejects.toThrow("Injected Live context injection failure.");
+    ).rejects.toThrow("Injected Live turn start rejection.");
 
-    expect(liveClient.liveRequestOrder.slice(-2)).toEqual(["account/read", "thread/inject_items"]);
-    expect(liveClient.liveRequestOrder).not.toContain("thread/realtime/appendText");
+    expect(liveClient.liveRequestOrder.slice(-2)).toEqual(["account/read", "turn/start"]);
+    expect(liveClient.liveRequests.filter((request) => request.method === "thread/inject_items")).toHaveLength(0);
+    expect(liveClient.liveRequests.filter((request) => request.method === "thread/realtime/appendText")).toHaveLength(
+      0,
+    );
     expect(
       (await runCauseEffect(service.readConversation(agent.id))).messages.filter((message) => message.text === text),
     ).toHaveLength(0);
@@ -1093,7 +1117,7 @@ describe.sequential("AgentService: providers", () => {
     );
   });
 
-  it("keeps the canonical transcript when Live append fails after worker context accepted the text", async () => {
+  it("keeps one canonical user row when a transport failure leaves typed turn start uncertain", async () => {
     const liveClient = new FakeLiveVoiceClient(false);
     const { service: agentService } = await startService(root, {
       preferredProvider: "codex",
@@ -1114,30 +1138,28 @@ describe.sequential("AgentService: providers", () => {
         sdpOffer: "offer-sdp",
       }),
     );
-    const text = "https://example.test/context-accepted";
-    liveClient.failNextLiveAppendText = true;
+    const text = "https://example.test/accepted-but-unconfirmed";
+    liveClient.liveTurnStartError = new Error("Codex provider stream closed after request write.");
 
     await expect(
       runCauseEffect(
-        service.sendLiveVoiceText({
-          agentId: agent.id,
-          threadId: agent.threadId,
-          sessionId: started.sessionId,
-          text,
-        }),
+        service.sendLiveVoiceText({ agentId: agent.id, threadId: agent.threadId, sessionId: started.sessionId, text }),
       ),
-    ).rejects.toThrow("Injected Live append failure.");
+    ).rejects.toThrow("Codex provider stream closed after request write.");
 
     const matchingRows = (await runCauseEffect(service.readConversation(agent.id))).messages.filter(
       (message) => message.author === "user" && message.text === text,
     );
+    const typedRequest = liveClient.liveRequests.find(
+      (request) => request.method === "turn/start" && firstInputText(request.params) === text,
+    );
     expect(matchingRows).toHaveLength(1);
-    expect(matchingRows[0]?.id).toMatch(/^livevoice-/u);
-    expect(liveClient.liveRequestOrder.slice(-3)).toEqual([
-      "account/read",
-      "thread/inject_items",
-      "thread/realtime/appendText",
-    ]);
+    expect(paramsRecord(typedRequest?.params)?.clientUserMessageId).toBe(matchingRows[0]?.id);
+    expect(
+      liveClient.liveRequests.filter(
+        (request) => request.method === "turn/start" && firstInputText(request.params) === text,
+      ),
+    ).toHaveLength(1);
     await runCauseEffect(
       service.stopLiveVoice({ agentId: agent.id, threadId: agent.threadId, sessionId: started.sessionId }),
     );
