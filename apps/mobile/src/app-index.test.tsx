@@ -2,7 +2,7 @@ import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { SplashContentReadyContext } from "@/shared/lib/use-splash-gate";
-import IndexRoute from "./index";
+import IndexRoute from "./app/index";
 
 const state = vi.hoisted(() => ({ authenticated: false, replace: vi.fn(), reportLayout: (): void => {} }));
 vi.mock("expo-router", () => ({ router: { replace: state.replace } }));
