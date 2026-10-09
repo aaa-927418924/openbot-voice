@@ -549,8 +549,6 @@ export function ChatView({
               target={target}
               readOnly={readOnly}
               needsAction={needsAction}
-              canStartLiveVoice={Boolean(liveVoiceTarget && liveVoice.canStart(liveVoiceTarget))}
-              onStartLiveVoice={liveVoiceTarget ? () => liveVoice.start(liveVoiceTarget) : undefined}
               fallbackBackground={fieldBackground}
               foreground={foreground}
               liquidGlassAvailable={liquidGlassAvailable}
@@ -751,7 +749,9 @@ export function ChatView({
                       liveVoiceTarget && liveVoice.routesComposer(liveVoiceTarget) && liveVoice.state.phase !== "live",
                     )
                   }
-                  dictationEnabled={!(liveVoiceTarget && liveVoice.routesComposer(liveVoiceTarget))}
+                  dictationEnabled={!liveVoiceTarget}
+                  liveVoiceAvailable={liveVoiceTarget ? liveVoice.canStart(liveVoiceTarget) : undefined}
+                  onStartLiveVoice={liveVoiceTarget ? () => liveVoice.start(liveVoiceTarget) : undefined}
                   sending={sending || Boolean(pendingMessage)}
                   attachments={attachments}
                   draft={draft}

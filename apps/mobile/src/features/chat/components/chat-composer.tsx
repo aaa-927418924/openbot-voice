@@ -93,6 +93,9 @@ interface ChatComposerProps {
   disabled: boolean;
   /** Live Voice owns the microphone while its call is active. */
   dictationEnabled?: boolean;
+  /** Uses the existing composer microphone for Live Voice when the target supports it. */
+  liveVoiceAvailable?: boolean;
+  onStartLiveVoice?: () => void;
   draft: string;
   fallbackBackground: ViewStyle["backgroundColor"];
   foreground: ViewStyle["backgroundColor"];
@@ -136,6 +139,8 @@ export function ChatComposer({
   bottomInset,
   disabled,
   dictationEnabled = true,
+  liveVoiceAvailable,
+  onStartLiveVoice,
   draft,
   fallbackBackground,
   foreground,
@@ -467,7 +472,7 @@ export function ChatComposer({
     busy,
     canStop: Boolean(onStop),
     stopping,
-    voiceAvailable: dictation.available && dictationEnabled,
+    voiceAvailable: liveVoiceAvailable ?? (dictation.available && dictationEnabled),
     dictation: dictation.phase,
   });
 
@@ -484,6 +489,11 @@ export function ChatComposer({
         onStop?.();
         return;
       case "dictate":
+        if (onStartLiveVoice && liveVoiceAvailable) {
+          inputRef.current?.blur();
+          onStartLiveVoice();
+          return;
+        }
         // Close the keyboard first: typing and recognition must not edit the
         // draft at the same time, and the field is read-only until the mic stops.
         inputRef.current?.blur();
@@ -497,12 +507,15 @@ export function ChatComposer({
     }
   }
 
-  const controlLabel = {
-    send: sendLabel ?? t("mobile.chat.composer.send"),
-    stop: t("mobile.chat.composer.stop", { name: agentName }),
-    dictate: t("mobile.chat.composer.dictate"),
-    "finish-dictation": t("mobile.chat.composer.stopDictation"),
-  }[control.mode];
+  const controlLabel =
+    control.mode === "dictate" && onStartLiveVoice && liveVoiceAvailable
+      ? t("mobile.liveVoice.start")
+      : {
+          send: sendLabel ?? t("mobile.chat.composer.send"),
+          stop: t("mobile.chat.composer.stop", { name: agentName }),
+          dictate: t("mobile.chat.composer.dictate"),
+          "finish-dictation": t("mobile.chat.composer.stopDictation"),
+        }[control.mode];
 
   const focusInput = useCallback(() => {
     if (!disabled) inputRef.current?.focus();
