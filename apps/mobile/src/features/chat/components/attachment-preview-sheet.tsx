@@ -1,16 +1,22 @@
+import { File, Paths } from "expo-file-system";
 import { Image } from "expo-image";
+import { useVideoPlayer, VideoView } from "expo-video";
 import { Button, Typography } from "heroui-native";
-import { useRef } from "react";
-import { Modal, Platform, View } from "react-native";
+import { useEffect, useRef, useState } from "react";
+import { ActivityIndicator, Modal, Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { haptics } from "@/shared/lib/haptics";
 
 export interface AttachmentPreview {
   name: string;
-  /** The image to show. A file that is not an image shows its type and size instead. */
+  /** A local image or video URI. Other files show their type and size instead. */
   uri: string | null;
+  mimeType: string;
+  base64?: string;
   type: string;
   size: string;
+  loading?: boolean;
+  status?: string | null;
 }
 
 export interface AttachmentPreviewAction {
@@ -73,7 +79,21 @@ export function AttachmentPreviewSheet({
               {`${shown.type} · ${shown.size}`}
             </Typography.Paragraph>
           </View>
-          {shown.uri ? (
+          {shown.mimeType.startsWith("video/") ? (
+            shown.uri || shown.base64 ? (
+              <VideoPreview
+                key={shown.uri ?? shown.name}
+                uri={shown.uri}
+                base64={shown.base64}
+                active={preview !== null}
+              />
+            ) : (
+              <View className="flex-1 items-center justify-center gap-3">
+                {shown.loading ? <ActivityIndicator size="large" /> : null}
+                <Typography.Paragraph className="text-muted">{shown.status ?? shown.type}</Typography.Paragraph>
+              </View>
+            )
+          ) : shown.uri ? (
             <Image
               source={shown.uri}
               contentFit="contain"
@@ -107,4 +127,36 @@ export function AttachmentPreviewSheet({
       ) : null}
     </Modal>
   );
+}
+
+function VideoPreview({ uri, base64, active }: { uri: string | null; base64?: string; active: boolean }) {
+  const [resolvedUri, setResolvedUri] = useState<string | null>(uri);
+  const temporary = useRef<File | null>(null);
+  useEffect(() => {
+    if (uri) {
+      setResolvedUri(uri);
+      return;
+    }
+    if (!base64) {
+      setResolvedUri(null);
+      return;
+    }
+    const file = new File(Paths.cache, `openbot-video-preview-${Date.now()}.mp4`);
+    file.write(base64, { encoding: "base64" });
+    temporary.current = file;
+    setResolvedUri(file.uri);
+    return () => {
+      if (temporary.current === file && file.exists) file.delete();
+      if (temporary.current === file) temporary.current = null;
+    };
+  }, [uri, base64]);
+  return resolvedUri ? <VideoPlayer uri={resolvedUri} active={active} /> : <ActivityIndicator size="large" />;
+}
+
+function VideoPlayer({ uri, active }: { uri: string; active: boolean }) {
+  const player = useVideoPlayer(uri);
+  useEffect(() => {
+    if (!active) player.pause();
+  }, [active, player]);
+  return <VideoView player={player} contentFit="contain" nativeControls style={{ flex: 1 }} />;
 }

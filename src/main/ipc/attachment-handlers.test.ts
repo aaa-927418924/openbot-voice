@@ -3,6 +3,8 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { ATTACHMENT_LIMITS } from "@openbot/contracts/input-limits";
+import type { AttachmentSummary } from "@openbot/contracts/ipc";
+import { TEAM_VIDEO_ATTACHMENTS_CAPABILITY } from "@openbot/contracts/team-protocol/current";
 import { translateFor } from "@openbot/i18n";
 import { Effect } from "effect";
 import { strFromU8, unzipSync } from "fflate";
@@ -10,16 +12,17 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { runCauseEffect } from "../../backend/effect-boundary";
 
 type Invoke = (event: { senderFrame: { url: string } }, payload: unknown) => Promise<void>;
-const { bound, saveDialog, openPath, showItemInFolder, userData } = vi.hoisted(() => ({
+const { bound, saveDialog, showOpenDialog, openPath, showItemInFolder, userData } = vi.hoisted(() => ({
   bound: new Map<string, Invoke>(),
   saveDialog: vi.fn<(options?: unknown) => Promise<{ canceled: boolean; filePath?: string }>>(),
+  showOpenDialog: vi.fn<(options?: unknown) => Promise<{ canceled: boolean; filePaths: string[] }>>(),
   openPath: vi.fn(async (_path: string) => ""),
   showItemInFolder: vi.fn((_path: string) => undefined),
   userData: { path: "" },
 }));
 vi.mock("electron", () => ({
   app: { getPath: () => userData.path || tmpdir() },
-  dialog: { showSaveDialog: saveDialog },
+  dialog: { showSaveDialog: saveDialog, showOpenDialog },
   shell: { openPath, showItemInFolder },
   ipcMain: { handle: (channel: string, invoke: Invoke) => bound.set(channel, invoke) },
 }));
@@ -153,6 +156,76 @@ describe("ZIP attachment IPC", () => {
       invoke({ senderFrame: { url: "https://example.com" } }, { serverId: "local", payload: input }),
     ).toThrow("Rejected IPC request from an untrusted renderer.");
     expect(saveDialog).not.toHaveBeenCalled();
+  });
+});
+
+describe("video attachment capability", () => {
+  function register(supportsVideo: boolean) {
+    const uploadAttachment = vi.fn(() =>
+      Effect.succeed({
+        id: "uploaded-video",
+        name: "clip.mp4",
+        size: 1,
+        kind: "file",
+        mimeType: "video/mp4",
+        previewKind: "none",
+        previewUrl: null,
+      } satisfies AttachmentSummary),
+    );
+    const handlers = attachmentIpcHandlers({
+      getMainWindow: () => null,
+      translate: translateFor("en"),
+      service: {
+        prepareAttachments: vi.fn(),
+        prepareImportedAttachments: vi.fn(),
+        discardDraftAttachment: vi.fn(),
+        resolveSharedFile: vi.fn(),
+        resolveLocalWorkspaceFile: vi.fn(),
+        listLocalWorkspaceDirectory: vi.fn(),
+      },
+      mailbox: { resolveAttachment: vi.fn() },
+      remoteServers: {
+        supportsCapability: vi.fn(
+          (_serverId, capability) => capability === TEAM_VIDEO_ATTACHMENTS_CAPABILITY && supportsVideo,
+        ),
+        request: vi.fn(),
+        downloadSharedFile: vi.fn(),
+        downloadWorkspaceFile: vi.fn(),
+        uploadAttachment,
+        downloadAttachment: vi.fn(),
+      },
+    });
+    return { handlers, uploadAttachment };
+  }
+
+  it("offers MP4 in the picker only when the selected remote host supports it", async () => {
+    showOpenDialog.mockClear();
+    showOpenDialog.mockResolvedValue({ canceled: true, filePaths: [] });
+    const { handlers } = register(true);
+    handlers.agentAttachments.chooseAttachments("choose-video");
+    const invoke = bound.get("choose-video");
+    if (!invoke) throw new Error("Attachment picker handler was not registered.");
+    await invoke(
+      { senderFrame: { url: "openbot-app://app/index.html" } },
+      { serverId: "remote-host", payload: { filter: "all" } },
+    );
+    expect(showOpenDialog.mock.calls[0]?.[0]).toMatchObject({
+      filters: [{ extensions: expect.arrayContaining(["mp4"]) }],
+    });
+  });
+
+  it("refuses to upload an MP4 to an older remote host", async () => {
+    const { handlers, uploadAttachment } = register(false);
+    handlers.attachmentImports.importAttachments("import-video");
+    const invoke = bound.get("import-video");
+    if (!invoke) throw new Error("Attachment import handler was not registered.");
+    await expect(
+      invoke(
+        { senderFrame: { url: "openbot-app://app/index.html" } },
+        { serverId: "remote-host", payload: { paths: ["/tmp/clip.mp4"], data: [] } },
+      ),
+    ).rejects.toThrow();
+    expect(uploadAttachment).not.toHaveBeenCalled();
   });
 });
 

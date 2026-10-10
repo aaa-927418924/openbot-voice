@@ -8,7 +8,7 @@ import { Image } from "expo-image";
 import * as Sharing from "expo-sharing";
 import { useThemeColor } from "heroui-native/hooks";
 import { FileText } from "lucide-react-native";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Alert, View } from "react-native";
 import { useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
 import { haptics } from "@/shared/lib/haptics";
@@ -76,6 +76,7 @@ export function useAttachmentFile(serverId: string, attachment: AttachmentSummar
   const { t, sourceText } = useText();
   const [sharing, setSharing] = useState(false);
   const pending = attachment.id.startsWith("mobile-draft-attachment-");
+  const isVideo = attachment.mimeType.startsWith("video/");
   const local =
     attachment.previewUrl?.startsWith("data:image/") || (pending && attachment.previewUrl?.startsWith("file://"))
       ? attachment.previewUrl
@@ -92,6 +93,26 @@ export function useAttachmentFile(serverId: string, attachment: AttachmentSummar
     gcTime: 5 * 60 * 1000,
   });
   const data = query.data;
+  const [cachedVideoUri, setCachedVideoUri] = useState<string | null>(null);
+  const [videoCacheFailed, setVideoCacheFailed] = useState(false);
+  useEffect(() => {
+    if (!isVideo || !data) {
+      setCachedVideoUri(null);
+      setVideoCacheFailed(false);
+      return;
+    }
+    const safeId = attachment.id.replace(/[^a-z0-9_-]/giu, "_");
+    const file = new File(Paths.cache, `openbot-chat-video-${safeId}.mp4`);
+    try {
+      if (file.exists && file.size !== attachment.size) file.delete();
+      if (!file.exists) file.write(data.base64, { encoding: "base64" });
+      setCachedVideoUri(file.uri);
+      setVideoCacheFailed(false);
+    } catch {
+      setCachedVideoUri(null);
+      setVideoCacheFailed(true);
+    }
+  }, [attachment.id, attachment.size, data, isVideo]);
   const dimensions = useMemo(() => {
     const known = dimensionCache.get(attachment.id);
     if (known || !data?.mimeType.startsWith("image/")) return known ?? null;
@@ -101,6 +122,7 @@ export function useAttachmentFile(serverId: string, attachment: AttachmentSummar
   }, [attachment.id, data]);
   const localUri = local ?? query.data?.localUri;
   const uri = localUri ?? (query.data ? `data:${query.data.mimeType};base64,${query.data.base64}` : null);
+  const videoUri = isVideo ? (localUri ?? cachedVideoUri) : null;
   async function share() {
     setSharing(true);
     let file: File | null = null;
@@ -160,6 +182,8 @@ export function useAttachmentFile(serverId: string, attachment: AttachmentSummar
     pending,
     localUri,
     uri,
+    videoUri,
+    videoCacheFailed,
     dimensions,
     saveToPhotos,
     query,

@@ -10,6 +10,7 @@ import {
   IMAGE_ATTACHMENT_EXTENSIONS,
   MEDIA_ATTACHMENT_EXTENSIONS,
   supportedAttachmentExtensions,
+  VIDEO_ATTACHMENT_EXTENSIONS,
 } from "@openbot/contracts/attachment-files";
 import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import {
@@ -24,6 +25,7 @@ import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import {
   TEAM_EML_ATTACHMENTS_CAPABILITY,
   TEAM_MEDIA_ATTACHMENTS_CAPABILITY,
+  TEAM_VIDEO_ATTACHMENTS_CAPABILITY,
 } from "@openbot/contracts/team-protocol/current";
 import {
   WORKSPACE_DIRECTORY_CAPABILITY,
@@ -139,6 +141,8 @@ export function attachmentIpcHandlers({
           serverId === LOCAL_SERVER_ID || remoteServers.supportsCapability(serverId, TEAM_EML_ATTACHMENTS_CAPABILITY);
         const supportsMedia =
           serverId === LOCAL_SERVER_ID || remoteServers.supportsCapability(serverId, TEAM_MEDIA_ATTACHMENTS_CAPABILITY);
+        const supportsVideo =
+          serverId === LOCAL_SERVER_ID || remoteServers.supportsCapability(serverId, TEAM_VIDEO_ATTACHMENTS_CAPABILITY);
         const options: OpenDialogOptions = {
           properties: ["openFile", "multiSelections"],
           filters:
@@ -147,7 +151,11 @@ export function attachmentIpcHandlers({
               : [
                   {
                     name: translate("dialog.filter.supportedFiles"),
-                    extensions: supportedAttachmentExtensions({ eml: supportsEml, media: supportsMedia }),
+                    extensions: supportedAttachmentExtensions({
+                      eml: supportsEml,
+                      media: supportsMedia,
+                      video: supportsVideo,
+                    }),
                   },
                 ],
         };
@@ -457,6 +465,14 @@ function assertRemoteAttachmentSupport(
     !remoteServers.supportsCapability(serverId, TEAM_MEDIA_ATTACHMENTS_CAPABILITY)
   ) {
     throw new Error(sourceText("error.attachment.mediaUnsupported"));
+  }
+  if (
+    names.some((name) =>
+      VIDEO_ATTACHMENT_EXTENSIONS.some((extension) => extension === attachmentFileExtension(name)),
+    ) &&
+    !remoteServers.supportsCapability(serverId, TEAM_VIDEO_ATTACHMENTS_CAPABILITY)
+  ) {
+    throw new Error(sourceText("error.attachment.videoUnsupported"));
   }
   if (!names.some((name) => attachmentFileExtension(name) === "eml")) return;
   if (remoteServers.supportsCapability(serverId, TEAM_EML_ATTACHMENTS_CAPABILITY)) return;

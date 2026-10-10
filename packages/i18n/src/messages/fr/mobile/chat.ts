@@ -112,7 +112,7 @@ export const messages = {
   "mobile.chat.attachment.addFailed": "Impossible d’ajouter la pièce jointe",
   "mobile.chat.attachment.limit": "Vous pouvez joindre jusqu’à {limit} fichiers.",
   "mobile.chat.attachment.unsupported":
-    "{name} : choisissez des images, de l’audio MP3, de la vidéo MOV, des PDF, des documents Office, des EML, du texte, du Markdown, des données ou des fichiers source.",
+    "{name} : choisissez des images, de l’audio MP3, des vidéos MOV et MP4, des PDF, des documents Office, des EML, du texte, du Markdown, des données ou des fichiers source.",
   "mobile.chat.attachment.hostRejectsType":
     "{name} : l’ordinateur hôte n’accepte pas les fichiers {type}. Mettez OpenBot à jour sur cet ordinateur pour les joindre.",
   "mobile.chat.attachment.hostRejects":

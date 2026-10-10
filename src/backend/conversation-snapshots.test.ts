@@ -491,6 +491,33 @@ describe("teammate messages in provider history", () => {
   });
 });
 
+describe("attached local file prompt input", () => {
+  it("passes an MP4 as a saved file path for an ordinary task", () => {
+    const base = teammateDelivery("delivery-video", "message-video", "builder", "Summarize this clip", {});
+    const context: DeliveryContext = {
+      ...base,
+      delivery: { ...base.delivery, sender: { kind: "user" }, text: "Summarize this clip" },
+      managedAttachments: [
+        {
+          id: "attachment-video",
+          name: "clip.mp4",
+          size: 1024,
+          kind: "file",
+          mimeType: "video/mp4",
+          previewKind: "none",
+          previewUrl: null,
+          path: "/workspace/attachments/clip.mp4",
+        },
+      ],
+    };
+
+    expect(deliveryPromptInput(context, { agentNames: new Map(), snapshot: snapshot([]), routineRun: null })).toEqual([
+      { type: "text", text: expect.stringContaining("- clip.mp4: /workspace/attachments/clip.mp4") },
+      { type: "mention", name: "clip.mp4", path: "/workspace/attachments/clip.mp4" },
+    ]);
+  });
+});
+
 function userText(text: string): DeliveryInputItem[] {
   return [{ type: "text", text }];
 }

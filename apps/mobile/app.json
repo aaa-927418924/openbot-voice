@@ -39,6 +39,7 @@
     "plugins": [
       "./plugins/with-rocketsim",
       "expo-router",
+      "expo-video",
       [
         "expo-splash-screen",
         {

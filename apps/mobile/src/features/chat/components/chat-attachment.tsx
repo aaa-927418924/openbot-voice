@@ -11,6 +11,7 @@ import { haptics } from "@/shared/lib/haptics";
 import { useText } from "@/shared/lib/text";
 import type { ImageDimensions } from "../model/image-dimensions";
 import { attachmentTypeLabel, rememberImageDimensions, useAttachmentFile } from "./attachment-preview";
+import { AttachmentPreviewSheet } from "./attachment-preview-sheet";
 import { ImageViewer } from "./image-viewer";
 import { UPLOAD_BLUR_RADIUS, UPLOAD_SETTLE_MS, UploadProgressCircle, useUploadRevealStyle } from "./upload-progress";
 
@@ -82,11 +83,9 @@ export function ChatAttachmentView({
   const tooLarge = attachment.size > MOBILE_ATTACHMENT_BYTES;
   // An image above the transfer limit cannot be shown here, so it is a file the user opens on desktop.
   const image = attachment.kind === "image" && !tooLarge;
-  const { pending, localUri, uri, dimensions, query, sharing, share, saveToPhotos } = useAttachmentFile(
-    serverId,
-    attachment,
-    image,
-  );
+  const video = attachment.mimeType.startsWith("video/") && !tooLarge;
+  const { pending, localUri, uri, videoUri, videoCacheFailed, dimensions, query, sharing, share, saveToPhotos } =
+    useAttachmentFile(serverId, attachment, image || (video && viewing));
   const maxWidth = Math.min(MAX_IMAGE_WIDTH, width - 80);
   const shape = decoded ?? dimensions;
   const frame = imageFrame(shape, maxWidth);
@@ -225,6 +224,11 @@ export function ChatAttachmentView({
     );
 
   const typeLabel = attachmentTypeLabel(attachment.name, attachment.mimeType, t);
+  const videoStatus = query.error
+    ? sourceText(query.error.message)
+    : videoCacheFailed
+      ? t("mobile.chat.attachment.displayFailed")
+      : null;
   const detail = tooLarge
     ? t("mobile.chat.attachment.openOnDesktopDetail", { size: format.fileSize(attachment.size) })
     : upload !== undefined
@@ -239,13 +243,18 @@ export function ChatAttachmentView({
         className="h-auto flex-row justify-start gap-3 rounded-2xl border border-border bg-control p-3"
         style={{ width: maxWidth, maxWidth: "100%" }}
         isDisabled={pending || busy || tooLarge}
-        accessibilityLabel={t("mobile.chat.attachment.openOrSave", { name: attachment.name })}
+        accessibilityLabel={
+          video
+            ? t("mobile.chat.attachment.preview", { name: attachment.name })
+            : t("mobile.chat.attachment.openOrSave", { name: attachment.name })
+        }
         accessibilityHint={tooLarge ? t("mobile.chat.attachment.tooLargeHint") : undefined}
         // The card is one element to a screen reader, so the progress inside it is read from here.
         accessibilityValue={upload !== undefined ? { min: 0, max: 100, now: Math.round(upload * 100) } : undefined}
         onPress={() => {
           void haptics.impact("soft");
-          share();
+          if (video) setViewing(true);
+          else share();
         }}
       >
         <View className="size-11 items-center justify-center rounded-xl bg-success/15">
@@ -268,6 +277,27 @@ export function ChatAttachmentView({
           <ExternalLink size={18} color={muted} />
         )}
       </Button>
+      {video && viewing ? (
+        <AttachmentPreviewSheet
+          preview={{
+            name: attachment.name,
+            uri: videoUri,
+            mimeType: attachment.mimeType,
+            type: typeLabel,
+            size: format.fileSize(attachment.size),
+            loading: query.isFetching && !videoUri,
+            status: videoStatus,
+          }}
+          actions={[
+            ...(query.error || videoCacheFailed
+              ? [{ label: t("mobile.chat.tryAgain"), onPress: () => void query.refetch() }]
+              : []),
+            ...(videoUri ? [{ label: t("common.open"), onPress: share }] : []),
+            { label: t("common.close"), onPress: () => setViewing(false) },
+          ]}
+          onClose={() => setViewing(false)}
+        />
+      ) : null}
     </View>
   );
 }

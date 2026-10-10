@@ -32,6 +32,10 @@ export function localPreviewUri(item: Pick<ChatAttachment, "mimeType" | "uri" | 
   return item.uri ?? `data:${item.mimeType};base64,${item.base64}`;
 }
 
+export function localVideoPreviewUri(item: Pick<ChatAttachment, "mimeType" | "uri">): string | null {
+  return item.mimeType.startsWith("video/") ? (item.uri ?? null) : null;
+}
+
 /**
  * One file waiting in the composer. Tapping it opens its preview, where it can be replaced or
  * removed on its own. No native menu here: a SwiftUI menu inside the composer's glass makes iOS

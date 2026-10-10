@@ -41,7 +41,7 @@ import { createComposerSendGate } from "../model/composer-send";
 import { composerAction } from "../model/voice-dictation";
 import { attachmentTypeLabel, shareLocalAttachment } from "./attachment-preview";
 import { AttachmentPreviewSheet } from "./attachment-preview-sheet";
-import { ComposerAttachmentTile, localPreviewUri } from "./composer-attachment-tile";
+import { ComposerAttachmentTile, localPreviewUri, localVideoPreviewUri } from "./composer-attachment-tile";
 import type { ChatAttachments } from "./use-chat-attachments";
 import { useVoiceDictation } from "./use-voice-dictation";
 
@@ -956,7 +956,9 @@ export function ChatComposer({
           previewItem
             ? {
                 name: previewItem.name,
-                uri: localPreviewUri(previewItem),
+                uri: localPreviewUri(previewItem) ?? localVideoPreviewUri(previewItem),
+                mimeType: previewItem.mimeType,
+                base64: previewItem.base64,
                 type: attachmentTypeLabel(previewItem.name, previewItem.mimeType, t),
                 size: format.fileSize(previewItem.size),
               }
@@ -965,7 +967,9 @@ export function ChatComposer({
         actions={
           previewItem
             ? [
-                ...(localPreviewUri(previewItem)
+                ...(localPreviewUri(previewItem) ||
+                localVideoPreviewUri(previewItem) ||
+                (previewItem.mimeType.startsWith("video/") && previewItem.base64)
                   ? []
                   : [{ label: t("common.open"), onPress: () => void shareLocalAttachment(previewItem) }]),
                 {

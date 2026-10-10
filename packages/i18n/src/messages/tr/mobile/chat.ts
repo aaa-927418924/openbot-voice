@@ -110,7 +110,7 @@ export const messages = {
   "mobile.chat.attachment.addFailed": "Ek eklenemedi",
   "mobile.chat.attachment.limit": "En fazla {limit} dosya ekleyebilirsiniz.",
   "mobile.chat.attachment.unsupported":
-    "{name}: görsel, MP3 ses, MOV video, PDF, Office belgeleri, EML, metin, Markdown, veri veya kaynak dosyaları seçin.",
+    "{name}: görsel, MP3 ses, MOV ve MP4 video, PDF, Office belgeleri, EML, metin, Markdown, veri veya kaynak dosyaları seçin.",
   "mobile.chat.attachment.hostRejectsType":
     "{name}: ana makine bilgisayarı {type} dosyalarını kabul etmiyor. Bunları eklemek için oradaki OpenBot'u güncelleyin.",
   "mobile.chat.attachment.hostRejects":

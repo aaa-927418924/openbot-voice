@@ -62,7 +62,10 @@ import {
   decodeBrowserViewInputValue,
   TEAM_BROWSER_VIEW_FRAME_POINT_CAPABILITY,
 } from "@openbot/contracts/team-protocol/browser-view-v1";
-import { TEAM_BROWSER_NAVIGATION_CAPABILITY } from "@openbot/contracts/team-protocol/current";
+import {
+  TEAM_BROWSER_NAVIGATION_CAPABILITY,
+  TEAM_VIDEO_ATTACHMENTS_CAPABILITY,
+} from "@openbot/contracts/team-protocol/current";
 import {
   decodeTeamProtocolSupportV1,
   type TeamProtocolSupportV1,
@@ -773,6 +776,7 @@ export function createWebWorkspaceRuntime(
       const supported = supportedAttachmentExtensions({
         eml: capabilities.includes("eml-attachments"),
         media: capabilities.includes("media-attachments"),
+        video: capabilities.includes(TEAM_VIDEO_ATTACHMENTS_CAPABILITY),
       });
       if (extension && !supported.includes(extension)) throw new Error(currentText().t("webClient.error.fileType"));
       if (file.size > MOBILE_ATTACHMENT_BYTES) throw new Error(currentText().t("error.remote.attachmentTooLarge"));

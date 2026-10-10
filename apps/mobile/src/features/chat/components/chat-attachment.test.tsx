@@ -40,8 +40,14 @@ vi.mock("react-native", () => ({
     </button>
   ),
   Alert: { alert: native.alert },
+  ActivityIndicator: () => <span role="progressbar" />,
+  Modal: ({ children, visible }: PropsWithChildren<{ visible: boolean }>) =>
+    visible ? <div role="dialog">{children}</div> : null,
   useWindowDimensions: () => ({ width: 390 }),
   Platform: { OS: "ios" },
+}));
+vi.mock("react-native-safe-area-context", () => ({
+  useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
 }));
 vi.mock("heroui-native/hooks", () => ({ useThemeColor: () => ["green", "gray"] }));
 vi.mock("lucide-react-native", () => ({ ExternalLink: () => null, ImageOff: () => null }));
@@ -121,11 +127,18 @@ vi.mock("expo-media-library", () => ({
   Asset: { create: native.photos },
 }));
 vi.mock("expo-sharing", () => ({ isAvailableAsync: async () => true, shareAsync: native.share }));
+vi.mock("expo-video", () => ({
+  useVideoPlayer: (uri: string) => ({ uri, pause: vi.fn() }),
+  VideoView: ({ player }: { player: { uri: string } }) => (
+    <div role="img" aria-label="video player" data-source={player.uri} />
+  ),
+}));
 vi.mock("expo-file-system", () => ({
   Paths: { cache: "file:///cache" },
   File: class {
     uri: string;
     exists = true;
+    size = 5;
     constructor(directory: string, name: string) {
       this.uri = `${directory}/${name}`;
     }
@@ -219,6 +232,19 @@ it("retries a failed image download from the correct host and displays the image
   });
   await waitFor(() => expect(screen.getByRole("img", { name: "photo.png" })).toBeTruthy());
   expect(native.download).toHaveBeenLastCalledWith("selected-host", "stored-file");
+});
+
+it("downloads an MP4 to a local cache file and previews it with the native player", async () => {
+  native.download.mockResolvedValue({ name: "clip.mp4", mimeType: "video/mp4", base64: "aGVsbG8=" });
+  mount({ ...attachment, name: "clip.mp4", mimeType: "video/mp4", size: 5 });
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Preview clip.mp4" }));
+  });
+  await waitFor(() => expect(native.download).toHaveBeenCalledWith("selected-host", "stored-file"));
+  await waitFor(() => expect(screen.getByRole("img", { name: "video player" })).toBeTruthy());
+  expect(screen.getByRole("img", { name: "video player" }).getAttribute("data-source")).toBe(
+    "file:///cache/openbot-chat-video-stored-file.mp4",
+  );
 });
 
 it("opens a message image from its place in the chat, then shares it and saves it to Photos", async () => {

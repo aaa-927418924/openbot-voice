@@ -38,6 +38,10 @@ describe("file previews", () => {
       mimeType: "video/quicktime",
       previewKind: "video",
     });
+    expect(filePreviewFromBytes("demo.mp4", new Uint8Array([1]))).toMatchObject({
+      mimeType: "video/mp4",
+      previewKind: "video",
+    });
     expect(filePreviewFromBytes("diagram.svg", new Uint8Array([1]))).toMatchObject({
       mimeType: "image/svg+xml",
       previewKind: "image",

@@ -110,7 +110,7 @@ export const messages = {
   "mobile.chat.attachment.addFailed": "添付ファイルを追加できませんでした",
   "mobile.chat.attachment.limit": "添付できるファイルは {limit} 件までです。",
   "mobile.chat.attachment.unsupported":
-    "{name}: 画像、MP3 音声、MOV 動画、PDF、Office 文書、EML、テキスト、Markdown、データ、またはソースファイルを選択してください。",
+    "{name}: 画像、MP3 音声、MOV 動画、MP4 動画、PDF、Office 文書、EML、テキスト、Markdown、データ、またはソースファイルを選択してください。",
   "mobile.chat.attachment.hostRejectsType":
     "{name}: ホストのコンピューターは {type} ファイルを受け付けません。添付するには、そのコンピューターの OpenBot を更新してください。",
   "mobile.chat.attachment.hostRejects":

@@ -12,6 +12,7 @@ import {
   TEAM_EML_ATTACHMENTS_CAPABILITY,
   TEAM_MEDIA_ATTACHMENTS_CAPABILITY,
   TEAM_MODEL_SCOPED_USAGE_CAPABILITY,
+  TEAM_VIDEO_ATTACHMENTS_CAPABILITY,
 } from "./current";
 import requestFixture from "./fixtures/v3/client-http-request.json";
 import responseFixture from "./fixtures/v3/host-http-response.json";
@@ -264,6 +265,9 @@ describe("Team protocol v3", () => {
     expect(TEAM_PROTOCOL_V1_CAPABILITIES).not.toContain(TEAM_MEDIA_ATTACHMENTS_CAPABILITY);
     expect(TEAM_PROTOCOL_V3_CAPABILITIES).not.toContain(TEAM_MEDIA_ATTACHMENTS_CAPABILITY);
     expect(TEAM_CURRENT_CAPABILITIES).toContain(TEAM_MEDIA_ATTACHMENTS_CAPABILITY);
+    expect(TEAM_CURRENT_CAPABILITIES).toContain(TEAM_VIDEO_ATTACHMENTS_CAPABILITY);
+    expect(TEAM_PROTOCOL_V1_CAPABILITIES).not.toContain(TEAM_VIDEO_ATTACHMENTS_CAPABILITY);
+    expect(TEAM_PROTOCOL_V3_CAPABILITIES).not.toContain(TEAM_VIDEO_ATTACHMENTS_CAPABILITY);
   });
 
   it("adds model-scoped usage only to the current adapter", () => {

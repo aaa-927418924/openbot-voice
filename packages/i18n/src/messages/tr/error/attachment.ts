@@ -12,5 +12,7 @@ export const messages = {
     "Bu sunucu MP3 veya MOV eklerini desteklemiyor. Ana makinedeki OpenBot'u güncelleyin ve tekrar deneyin.",
   "error.attachment.emlUnsupported":
     "Bu sunucu EML eklerini desteklemiyor. Ana makinedeki OpenBot'u güncelleyin ve tekrar deneyin.",
+  "error.attachment.videoUnsupported":
+    "Bu sunucu MP4 eklerini desteklemiyor. Ana makinedeki OpenBot'u güncelleyip yeniden deneyin.",
   "error.attachment.previewTooLarge": "Dosya 100 MB sınırını aşıyor.",
 } as const satisfies PartialTranslation<typeof source>;

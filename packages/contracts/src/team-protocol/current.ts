@@ -43,6 +43,8 @@ export const TEAM_AGENT_CREATE_MODEL_CAPABILITY = "agent-create-model";
 /** A host accepts and returns the optional GPT Live voice preference on agent summaries. */
 export const AGENT_LIVE_VOICE_SETTINGS_CAPABILITY = "agent-live-voice-settings-v1";
 export const TEAM_MEDIA_ATTACHMENTS_CAPABILITY = "media-attachments";
+/** An additive capability for MP4 attachments; older media support remains unchanged. */
+export const TEAM_VIDEO_ATTACHMENTS_CAPABILITY = "video-attachments";
 export const TEAM_EML_ATTACHMENTS_CAPABILITY = "eml-attachments";
 /**
  * Frozen optional member-leave-v1 contract: a bodyless `POST /v1/team/leave` answered with 204. The
@@ -103,6 +105,7 @@ export const TEAM_CURRENT_CAPABILITIES = [
   AGENT_LIVE_VOICE_SETTINGS_CAPABILITY,
   TEAM_EML_ATTACHMENTS_CAPABILITY,
   TEAM_MEDIA_ATTACHMENTS_CAPABILITY,
+  TEAM_VIDEO_ATTACHMENTS_CAPABILITY,
   "channel-chats-v1",
   CHANNEL_DELETE_CAPABILITY,
   MCP_SERVERS_CAPABILITY,

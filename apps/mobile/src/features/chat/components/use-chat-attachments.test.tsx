@@ -229,7 +229,7 @@ it("keeps preparing true while later files of one selection are still reading", 
 });
 
 it("rejects formats the selected host does not accept, with the file name, and keeps the others", async () => {
-  const state = mount(undefined, () => ({ eml: false, media: false }));
+  const state = mount(undefined, () => ({ eml: false, media: false, video: false }));
   native.documents.mockResolvedValue({
     canceled: false,
     assets: [
@@ -246,6 +246,16 @@ it("rejects formats the selected host does not accept, with the file name, and k
     "Could not add attachment",
     "clip.mov: the host computer does not accept MOV files. Update OpenBot there to attach them.",
   );
+});
+
+it("accepts MP4 only when the selected host advertises video support", async () => {
+  const state = mount(undefined, () => ({ eml: false, media: false, video: true }));
+  native.documents.mockResolvedValue({ canceled: false, assets: [{ name: "clip.mp4", uri: "file:///clip.mp4" }] });
+  await act(async () => {
+    await state().chooseFiles();
+  });
+  expect(state().items.map((item) => item.name)).toEqual(["clip.mp4"]);
+  expect(state().items[0]?.mimeType).toBe("video/mp4");
 });
 
 it("replaces one file in place, keeps the order, and changes nothing when the picker is cancelled", async () => {

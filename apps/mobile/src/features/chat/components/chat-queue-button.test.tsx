@@ -66,7 +66,7 @@ function stubQueue(
     serverId: "host",
     attachments: [],
     changeAttachments: async () => {},
-    attachmentSupport: () => ({ eml: true, media: true }),
+    attachmentSupport: () => ({ eml: true, media: true, video: true }),
     queued,
     replies: [],
     waiting: [],

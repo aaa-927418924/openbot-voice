@@ -3,6 +3,7 @@ import { accountUsageCoversModel, canPreviewAttachment } from "@openbot/contract
 import {
   TEAM_EML_ATTACHMENTS_CAPABILITY,
   TEAM_MEDIA_ATTACHMENTS_CAPABILITY,
+  TEAM_VIDEO_ATTACHMENTS_CAPABILITY,
 } from "@openbot/contracts/team-protocol/current";
 import { LIVE_VOICE_CAPABILITY } from "@openbot/contracts/team-protocol/live-voice-v1";
 import {
@@ -184,6 +185,7 @@ export function ConversationComposer() {
     return supportedAttachmentExtensions({
       eml: local || capabilities.includes(TEAM_EML_ATTACHMENTS_CAPABILITY),
       media: local || capabilities.includes(TEAM_MEDIA_ATTACHMENTS_CAPABILITY),
+      video: local || capabilities.includes(TEAM_VIDEO_ATTACHMENTS_CAPABILITY),
     })
       .map((extension) => `.${extension}`)
       .join(",");
@@ -300,7 +302,24 @@ export function ConversationComposer() {
                         class="composer-attachment-preview"
                         data-file-tone={chip() === "file" ? attachmentReferenceTone(attachment.name) : undefined}
                       >
-                        <Show when={chip() === "image"} fallback={fileBadge(attachment)}>
+                        <Show
+                          when={chip() === "image"}
+                          fallback={
+                            attachment.mimeType === "video/mp4" ? (
+                              <Button
+                                class="composer-attachment-video-preview"
+                                type="button"
+                                variant="ghost"
+                                aria-label={t("attachment.preview", { name: attachment.name })}
+                                onClick={() => void previewAttachment(attachment)}
+                              >
+                                {fileBadge(attachment)}
+                              </Button>
+                            ) : (
+                              fileBadge(attachment)
+                            )
+                          }
+                        >
                           <img src={attachment.previewUrl ?? ""} alt="" />
                         </Show>
                       </span>

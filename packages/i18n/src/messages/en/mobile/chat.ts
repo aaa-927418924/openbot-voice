@@ -108,7 +108,7 @@ export const messages = defineMessages("mobile.chat", {
   "mobile.chat.attachment.addFailed": "Could not add attachment",
   "mobile.chat.attachment.limit": "You can attach up to {limit} files.",
   "mobile.chat.attachment.unsupported":
-    "{name}: choose images, MP3 audio, MOV video, PDF, Office documents, EML, text, Markdown, data, or source files.",
+    "{name}: choose images, MP3 audio, MOV video, MP4 video, PDF, Office documents, EML, text, Markdown, data, or source files.",
   "mobile.chat.attachment.hostRejectsType":
     "{name}: the host computer does not accept {type} files. Update OpenBot there to attach them.",
   "mobile.chat.attachment.hostRejects":

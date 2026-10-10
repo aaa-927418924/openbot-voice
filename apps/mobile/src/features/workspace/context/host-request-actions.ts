@@ -25,6 +25,7 @@ import {
   TEAM_EML_ATTACHMENTS_CAPABILITY,
   TEAM_MEDIA_ATTACHMENTS_CAPABILITY,
   TEAM_SEMANTIC_TAGS_CAPABILITY,
+  TEAM_VIDEO_ATTACHMENTS_CAPABILITY,
 } from "@openbot/contracts/team-protocol/current";
 import { TEAM_QUEUE_EDIT_CAPABILITY } from "@openbot/contracts/team-protocol/queue-edit-v1";
 import { SKILLS_ADMIN_CAPABILITY } from "@openbot/contracts/team-protocol/skills-admin-v1";
@@ -321,6 +322,7 @@ export function createHostRequestActions({
       return {
         eml: advertised.includes(TEAM_EML_ATTACHMENTS_CAPABILITY),
         media: advertised.includes(TEAM_MEDIA_ATTACHMENTS_CAPABILITY),
+        video: advertised.includes(TEAM_VIDEO_ATTACHMENTS_CAPABILITY),
       };
     },
     editQueue: async (agentId, serverId, input) => {

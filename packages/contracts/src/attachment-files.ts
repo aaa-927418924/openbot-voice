@@ -1,6 +1,7 @@
 export const IMAGE_ATTACHMENT_EXTENSIONS = ["png", "jpg", "jpeg", "gif", "webp", "avif"] as const;
 
 export const MEDIA_ATTACHMENT_EXTENSIONS = ["mp3", "mov"] as const;
+export const VIDEO_ATTACHMENT_EXTENSIONS = ["mp4"] as const;
 
 export const CONTEXT_ATTACHMENT_EXTENSIONS = [
   "pdf",
@@ -73,6 +74,7 @@ export const CONTEXT_ATTACHMENT_EXTENSIONS = [
 export const ATTACHMENT_FILE_EXTENSIONS = [
   ...IMAGE_ATTACHMENT_EXTENSIONS,
   ...MEDIA_ATTACHMENT_EXTENSIONS,
+  ...VIDEO_ATTACHMENT_EXTENSIONS,
   ...CONTEXT_ATTACHMENT_EXTENSIONS,
 ] as const;
 
@@ -80,19 +82,21 @@ export const ATTACHMENT_FILE_EXTENSIONS = [
 export interface AttachmentSupport {
   eml: boolean;
   media: boolean;
+  video: boolean;
 }
 
 export function supportedAttachmentExtensions(support: AttachmentSupport): string[] {
   return ATTACHMENT_FILE_EXTENSIONS.filter(
     (extension) =>
       (support.eml || extension !== "eml") &&
-      (support.media || !MEDIA_ATTACHMENT_EXTENSIONS.some((media) => media === extension)),
+      (support.media || !MEDIA_ATTACHMENT_EXTENSIONS.some((media) => media === extension)) &&
+      (support.video || !VIDEO_ATTACHMENT_EXTENSIONS.some((video) => video === extension)),
   );
 }
 
 export const ATTACHMENT_FILE_ACCEPT = ATTACHMENT_FILE_EXTENSIONS.map((extension) => `.${extension}`).join(",");
 export const SUPPORTED_ATTACHMENT_DESCRIPTION =
-  "images, MP3 audio, MOV video, PDF, Office documents, EML, text, Markdown, data, or source files";
+  "images, MP3 audio, MOV video, MP4 video, PDF, Office documents, EML, text, Markdown, data, or source files";
 
 export const XLSX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
@@ -120,6 +124,7 @@ export function isSupportedAttachmentNameFor(name: string, support: AttachmentSu
   const extension = attachmentFileExtension(name);
   if (extension === "eml") return support.eml;
   if (MEDIA_ATTACHMENT_EXTENSIONS.some((media) => media === extension)) return support.media;
+  if (VIDEO_ATTACHMENT_EXTENSIONS.some((video) => video === extension)) return support.video;
   return true;
 }
 
@@ -153,6 +158,8 @@ export function attachmentMimeTypeForName(name: string) {
       return "audio/mpeg";
     case "mov":
       return "video/quicktime";
+    case "mp4":
+      return "video/mp4";
     case "pdf":
       return "application/pdf";
     // SVG is not in ATTACHMENT_FILE_EXTENSIONS, so it cannot be attached: an attachment with an
