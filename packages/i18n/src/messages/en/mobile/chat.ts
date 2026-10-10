@@ -103,6 +103,7 @@ export const messages = defineMessages("mobile.chat", {
   "mobile.chat.attachment.remove": "Remove {name}",
   "mobile.chat.attachment.replace": "Replace",
   "mobile.chat.attachment.files": "Files",
+  "mobile.chat.attachment.photosAndVideos": "Photos & videos",
   "mobile.chat.attachment.photos": "Photos",
   "mobile.chat.attachment.camera": "Camera",
   "mobile.chat.attachment.addFailed": "Could not add attachment",
@@ -282,5 +283,6 @@ export const messages = defineMessages("mobile.chat", {
   "mobile.chat.queue.uploadingFiles": "Uploading {progress} of {total} files…",
   "mobile.chat.queue.addedOnPhone": "Added on this phone",
   "mobile.chat.queue.addFiles": "Add files",
+  "mobile.chat.queue.addPhotosAndVideos": "Add photos & videos",
   "mobile.chat.queue.addPhotos": "Add photos",
 });

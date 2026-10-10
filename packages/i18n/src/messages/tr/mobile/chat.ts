@@ -105,6 +105,7 @@ export const messages = {
   "mobile.chat.attachment.remove": "{name} adlı eki kaldır",
   "mobile.chat.attachment.replace": "Değiştir",
   "mobile.chat.attachment.files": "Dosyalar",
+  "mobile.chat.attachment.photosAndVideos": "Fotoğraflar ve videolar",
   "mobile.chat.attachment.photos": "Fotoğraflar",
   "mobile.chat.attachment.camera": "Kamera",
   "mobile.chat.attachment.addFailed": "Ek eklenemedi",
@@ -287,5 +288,6 @@ export const messages = {
   "mobile.chat.queue.uploadingFiles": "{progress} / {total} dosya yükleniyor…",
   "mobile.chat.queue.addedOnPhone": "Bu telefonda eklendi",
   "mobile.chat.queue.addFiles": "Dosya ekle",
+  "mobile.chat.queue.addPhotosAndVideos": "Fotoğraf ve video ekle",
   "mobile.chat.queue.addPhotos": "Fotoğraf ekle",
 } as const satisfies PartialTranslation<typeof source>;

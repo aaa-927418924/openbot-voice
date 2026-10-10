@@ -2,7 +2,16 @@ import { GlassView } from "expo-glass-effect";
 import { Typography } from "heroui-native";
 import { Camera, Images, type LucideIcon, Paperclip } from "lucide-react-native";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { BackHandler, Keyboard, Pressable, StyleSheet, useWindowDimensions, View, type ViewStyle } from "react-native";
+import {
+  BackHandler,
+  Keyboard,
+  Platform,
+  Pressable,
+  StyleSheet,
+  useWindowDimensions,
+  View,
+  type ViewStyle,
+} from "react-native";
 import Animated, {
   cubicBezier,
   Extrapolation,
@@ -323,7 +332,9 @@ export function ChatAttachmentPanel({
             <AttachmentOption
               index={1}
               icon={Images}
-              label={t("mobile.chat.attachment.photos")}
+              label={t(
+                Platform.OS === "android" ? "mobile.chat.attachment.photosAndVideos" : "mobile.chat.attachment.photos",
+              )}
               foreground={foreground}
               progress={progress}
               disabled={attachments.preparing}

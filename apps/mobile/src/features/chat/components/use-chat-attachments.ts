@@ -12,7 +12,7 @@ import * as DocumentPicker from "expo-document-picker";
 import { File } from "expo-file-system";
 import * as ImagePicker from "expo-image-picker";
 import { useRef, useState } from "react";
-import { Alert } from "react-native";
+import { Alert, Platform } from "react-native";
 import { attachmentSizeBucket } from "@/features/analytics/events";
 import { mobileAnalytics } from "@/features/analytics/mobile-analytics";
 import { haptics } from "@/shared/lib/haptics";
@@ -211,7 +211,7 @@ export function useChatAttachments(
   async function choosePhotos() {
     if (itemsRef.current.length >= INPUT_LIMITS.attachments) throw new Error(limitMessage());
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ["images"],
+      mediaTypes: Platform.OS === "android" ? ["images", "videos"] : ["images"],
       allowsMultipleSelection: true,
       quality: 1,
       preferredAssetRepresentationMode: ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Compatible,

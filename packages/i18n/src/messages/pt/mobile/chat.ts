@@ -106,6 +106,7 @@ export const messages = {
   "mobile.chat.attachment.remove": "Remover {name}",
   "mobile.chat.attachment.replace": "Substituir",
   "mobile.chat.attachment.files": "Arquivos",
+  "mobile.chat.attachment.photosAndVideos": "Fotos e vídeos",
   "mobile.chat.attachment.photos": "Fotos",
   "mobile.chat.attachment.camera": "Câmera",
   "mobile.chat.attachment.addFailed": "Não foi possível adicionar o anexo",
@@ -288,5 +289,6 @@ export const messages = {
   "mobile.chat.queue.uploadingFiles": "Enviando {progress} de {total} arquivos…",
   "mobile.chat.queue.addedOnPhone": "Adicionado neste celular",
   "mobile.chat.queue.addFiles": "Adicionar arquivos",
+  "mobile.chat.queue.addPhotosAndVideos": "Adicionar fotos e vídeos",
   "mobile.chat.queue.addPhotos": "Adicionar fotos",
 } as const satisfies PartialTranslation<typeof source>;

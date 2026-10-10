@@ -105,6 +105,7 @@ export const messages = {
   "mobile.chat.attachment.remove": "{name} を削除",
   "mobile.chat.attachment.replace": "置き換え",
   "mobile.chat.attachment.files": "ファイル",
+  "mobile.chat.attachment.photosAndVideos": "写真・動画",
   "mobile.chat.attachment.photos": "写真",
   "mobile.chat.attachment.camera": "カメラ",
   "mobile.chat.attachment.addFailed": "添付ファイルを追加できませんでした",
@@ -285,5 +286,6 @@ export const messages = {
   "mobile.chat.queue.uploadingFiles": "{total} 件中 {progress} 件のファイルをアップロード中…",
   "mobile.chat.queue.addedOnPhone": "この電話で追加",
   "mobile.chat.queue.addFiles": "ファイルを追加",
+  "mobile.chat.queue.addPhotosAndVideos": "写真・動画を追加",
   "mobile.chat.queue.addPhotos": "写真を追加",
 } as const satisfies PartialTranslation<typeof source>;

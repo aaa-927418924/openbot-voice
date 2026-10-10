@@ -17,7 +17,11 @@ const native = vi.hoisted(() => ({
 vi.mock("@/shared/lib/haptics", () => ({
   haptics: { selection: vi.fn(async () => {}), impact: vi.fn(async () => {}), notification: vi.fn(async () => {}) },
 }));
-vi.mock("react-native", () => ({ Alert: { alert: native.alert }, Keyboard: { dismiss: () => {} } }));
+vi.mock("react-native", () => ({
+  Alert: { alert: native.alert },
+  Keyboard: { dismiss: () => {} },
+  Platform: { OS: "android" },
+}));
 vi.mock("expo-document-picker", () => ({ getDocumentAsync: native.documents }));
 vi.mock("expo-image-picker", () => ({
   launchCameraAsync: native.camera,
@@ -61,6 +65,22 @@ function mount(persist?: Parameters<typeof useChatAttachments>[1], support?: Par
 }
 
 describe("mobile attachment selection", () => {
+  it("includes videos in the Android photo picker and accepts MP4 selections", async () => {
+    const state = mount(undefined, () => ({ eml: false, media: false, video: true }));
+    native.photos.mockResolvedValue({
+      canceled: false,
+      assets: [{ uri: "content://media/external/video/media/7", fileName: "clip.mp4" }],
+    });
+    await act(async () => {
+      await state().choosePhotos();
+    });
+    expect(native.photos).toHaveBeenCalledWith(
+      expect.objectContaining({ mediaTypes: ["images", "videos"], allowsMultipleSelection: true }),
+    );
+    expect(state().items.map((item) => item.name)).toEqual(["clip.mp4"]);
+    expect(state().items[0]?.mimeType).toBe("video/mp4");
+  });
+
   it("accepts the shared desktop formats, including extensionless text files, in selection order", async () => {
     const state = mount();
     const names = [...ATTACHMENT_FILE_EXTENSIONS.map((extension) => `file.${extension}`), "Dockerfile", ".env"];

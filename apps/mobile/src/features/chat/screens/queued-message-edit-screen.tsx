@@ -6,7 +6,7 @@ import { Button, Typography } from "heroui-native";
 import { useThemeColor } from "heroui-native/hooks";
 import { ImagePlus, Paperclip, X } from "lucide-react-native";
 import { type PropsWithChildren, useCallback, useEffect, useRef, useState } from "react";
-import { Alert, View } from "react-native";
+import { Alert, Platform, View } from "react-native";
 import {
   SettingsContent,
   SettingsNote,
@@ -315,7 +315,9 @@ function QueuedEditAttachments({
         leading={<AddIcon>{<ImagePlus color={String(muted)} size={22} />}</AddIcon>}
         onPress={() => void attachments.choosePhotos()}
       >
-        <Typography>{t("mobile.chat.queue.addPhotos")}</Typography>
+        <Typography>
+          {t(Platform.OS === "android" ? "mobile.chat.queue.addPhotosAndVideos" : "mobile.chat.queue.addPhotos")}
+        </Typography>
       </SettingsRow>
     </SettingsSection>
   );
