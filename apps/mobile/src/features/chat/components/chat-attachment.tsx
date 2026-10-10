@@ -1,9 +1,10 @@
 import type { AttachmentSummary } from "@openbot/contracts/ipc";
 import { MOBILE_ATTACHMENT_BYTES } from "@openbot/team-client/remote-peer";
 import { Image } from "expo-image";
+import { useVideoPlayer, VideoView } from "expo-video";
 import { Button, Skeleton, Typography } from "heroui-native";
 import { useThemeColor } from "heroui-native/hooks";
-import { ExternalLink, ImageOff } from "lucide-react-native";
+import { Download, ExternalLink, ImageOff } from "lucide-react-native";
 import { useEffect, useRef, useState } from "react";
 import { Pressable, useWindowDimensions, View } from "react-native";
 import Animated from "react-native-reanimated";
@@ -11,7 +12,6 @@ import { haptics } from "@/shared/lib/haptics";
 import { useText } from "@/shared/lib/text";
 import type { ImageDimensions } from "../model/image-dimensions";
 import { attachmentTypeLabel, rememberImageDimensions, useAttachmentFile } from "./attachment-preview";
-import { AttachmentPreviewSheet } from "./attachment-preview-sheet";
 import { ImageViewer } from "./image-viewer";
 import { UPLOAD_BLUR_RADIUS, UPLOAD_SETTLE_MS, UploadProgressCircle, useUploadRevealStyle } from "./upload-progress";
 
@@ -84,8 +84,19 @@ export function ChatAttachmentView({
   // An image above the transfer limit cannot be shown here, so it is a file the user opens on desktop.
   const image = attachment.kind === "image" && !tooLarge;
   const video = attachment.mimeType.startsWith("video/") && !tooLarge;
-  const { pending, localUri, uri, videoUri, videoCacheFailed, dimensions, query, sharing, share, saveToPhotos } =
-    useAttachmentFile(serverId, attachment, image || (video && viewing));
+  const {
+    pending,
+    localUri,
+    uri,
+    videoUri,
+    videoCacheFailed,
+    dimensions,
+    query,
+    sharing,
+    share,
+    saveToPhotos,
+    saveToDownloads,
+  } = useAttachmentFile(serverId, attachment, image || video);
   const maxWidth = Math.min(MAX_IMAGE_WIDTH, width - 80);
   const shape = decoded ?? dimensions;
   const frame = imageFrame(shape, maxWidth);
@@ -227,7 +238,7 @@ export function ChatAttachmentView({
   const videoStatus = query.error
     ? sourceText(query.error.message)
     : videoCacheFailed
-      ? t("mobile.chat.attachment.displayFailed")
+      ? t("mobile.chat.attachment.unavailable")
       : null;
   const detail = tooLarge
     ? t("mobile.chat.attachment.openOnDesktopDetail", { size: format.fileSize(attachment.size) })
@@ -236,6 +247,72 @@ export function ChatAttachmentView({
       : busy
         ? t("mobile.chat.attachment.downloading")
         : `${typeLabel} · ${format.fileSize(attachment.size)}`;
+  if (video)
+    return (
+      <View className={`max-w-full gap-2 ${alignment === "right" ? "items-end" : "items-start"}`}>
+        <View
+          style={{
+            width: maxWidth,
+            maxWidth: "100%",
+            aspectRatio: 16 / 9,
+            overflow: "hidden",
+            borderRadius: 18,
+            borderCurve: "continuous",
+            backgroundColor: "#000",
+          }}
+        >
+          {videoUri ? (
+            <InlineVideo uri={videoUri} />
+          ) : (
+            <View className="flex-1 items-center justify-center gap-2 p-3">
+              {busy ? (
+                <Skeleton isLoading accessible accessibilityLabel={t("mobile.chat.attachment.downloading")} />
+              ) : null}
+              <Typography.Paragraph type="body-xs" align="center" className="text-white">
+                {videoStatus ?? t("mobile.chat.attachment.downloading")}
+              </Typography.Paragraph>
+            </View>
+          )}
+          {shownUpload !== undefined ? (
+            <View
+              pointerEvents="none"
+              accessible
+              accessibilityRole="progressbar"
+              accessibilityLabel={t("mobile.chat.attachment.uploading", { name: attachment.name })}
+              accessibilityValue={{ min: 0, max: 100, now: Math.round(shownUpload * 100) }}
+              style={{ position: "absolute", top: 8, right: 8 }}
+            >
+              <UploadProgressCircle progress={shownUpload} />
+            </View>
+          ) : null}
+        </View>
+        <View className="w-full flex-row items-center gap-2" style={{ maxWidth }}>
+          <View className="min-w-0 flex-1 gap-0.5">
+            <Typography.Paragraph type="body-sm" numberOfLines={1} className="font-semibold text-foreground">
+              {attachment.name}
+            </Typography.Paragraph>
+            <Typography.Paragraph type="body-xs" className="text-muted">
+              {detail}
+            </Typography.Paragraph>
+          </View>
+          <Button
+            variant="secondary"
+            size="sm"
+            isDisabled={busy || !query.data}
+            accessibilityLabel={t("common.download")}
+            onPress={() => void saveToDownloads()}
+          >
+            <Download size={16} />
+            <Button.Label>{t("common.download")}</Button.Label>
+          </Button>
+        </View>
+        {query.error || videoCacheFailed ? (
+          <Button variant="ghost" size="sm" onPress={() => void query.refetch()}>
+            <Button.Label>{t("mobile.chat.tryAgain")}</Button.Label>
+          </Button>
+        ) : null}
+      </View>
+    );
   return (
     <View className={`max-w-full ${alignment === "right" ? "items-end" : "items-start"}`}>
       <Button
@@ -243,18 +320,13 @@ export function ChatAttachmentView({
         className="h-auto flex-row justify-start gap-3 rounded-2xl border border-border bg-control p-3"
         style={{ width: maxWidth, maxWidth: "100%" }}
         isDisabled={pending || busy || tooLarge}
-        accessibilityLabel={
-          video
-            ? t("mobile.chat.attachment.preview", { name: attachment.name })
-            : t("mobile.chat.attachment.openOrSave", { name: attachment.name })
-        }
+        accessibilityLabel={t("mobile.chat.attachment.openOrSave", { name: attachment.name })}
         accessibilityHint={tooLarge ? t("mobile.chat.attachment.tooLargeHint") : undefined}
         // The card is one element to a screen reader, so the progress inside it is read from here.
         accessibilityValue={upload !== undefined ? { min: 0, max: 100, now: Math.round(upload * 100) } : undefined}
         onPress={() => {
           void haptics.impact("soft");
-          if (video) setViewing(true);
-          else share();
+          share();
         }}
       >
         <View className="size-11 items-center justify-center rounded-xl bg-success/15">
@@ -277,27 +349,11 @@ export function ChatAttachmentView({
           <ExternalLink size={18} color={muted} />
         )}
       </Button>
-      {video && viewing ? (
-        <AttachmentPreviewSheet
-          preview={{
-            name: attachment.name,
-            uri: videoUri,
-            mimeType: attachment.mimeType,
-            type: typeLabel,
-            size: format.fileSize(attachment.size),
-            loading: query.isFetching && !videoUri,
-            status: videoStatus,
-          }}
-          actions={[
-            ...(query.error || videoCacheFailed
-              ? [{ label: t("mobile.chat.tryAgain"), onPress: () => void query.refetch() }]
-              : []),
-            ...(videoUri ? [{ label: t("common.open"), onPress: share }] : []),
-            { label: t("common.close"), onPress: () => setViewing(false) },
-          ]}
-          onClose={() => setViewing(false)}
-        />
-      ) : null}
     </View>
   );
+}
+
+function InlineVideo({ uri }: { uri: string }) {
+  const player = useVideoPlayer(uri);
+  return <VideoView player={player} contentFit="contain" nativeControls style={{ flex: 1 }} />;
 }

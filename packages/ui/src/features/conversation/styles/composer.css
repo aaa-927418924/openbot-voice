@@ -551,7 +551,8 @@
   align-items: center;
 }
 
-.composer-attachment[data-kind="image"] {
+.composer-attachment[data-kind="image"],
+.composer-attachment[data-kind="video"] {
   width: 52px;
   height: 52px;
   flex: 0 0 auto;
@@ -620,6 +621,12 @@
   border-radius: var(--openbot-radius-media-preview);
 }
 
+.composer-attachment[data-kind="video"] .composer-attachment-preview {
+  width: 100%;
+  height: 100%;
+  border-radius: var(--openbot-radius-media-preview);
+}
+
 .composer-attachment-preview img {
   display: block;
   width: 100%;
@@ -628,6 +635,7 @@
 }
 
 .composer-attachment-video-preview {
+  position: relative;
   display: grid;
   width: 100%;
   height: 100%;
@@ -638,6 +646,36 @@
   color: inherit;
   font: inherit;
   cursor: pointer;
+}
+
+.composer-attachment-video-preview video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--openbot-bg-root);
+  object-fit: cover;
+  pointer-events: none;
+}
+
+.composer-attachment-video-play {
+  z-index: 1;
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border-radius: var(--openbot-radius-pill);
+  background: var(--openbot-bg-surface-raised);
+  box-shadow: 0 1px 3px var(--openbot-shadow-popover-ambient);
+  color: var(--openbot-text-primary);
+}
+
+.composer-attachment-video-play svg {
+  width: 13px;
+  height: 13px;
+  fill: currentColor;
+  stroke: currentColor;
 }
 
 .composer-attachment-video-preview:focus-visible {

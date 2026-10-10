@@ -1,3 +1,4 @@
+import { playableMediaKind } from "@openbot/contracts/attachment-files";
 import { type AttachmentSummary, canPreviewAttachment } from "@openbot/contracts/ipc";
 import { Button, Download, Spinner } from "@openbot/ui";
 import { createSignal, createUniqueId, For, Show } from "solid-js";
@@ -81,47 +82,83 @@ export function AttachmentCards(props: {
       <div class="message-attachments">
         <For each={props.attachments}>
           {(attachment) => (
-            <div class="message-attachment" data-status={isMissing(attachment) ? "missing" : undefined}>
-              <Button
-                variant="ghost"
-                type="button"
-                class="attachment-preview-button"
-                disabled={isMissing(attachment) || !canPreviewAttachment(attachment)}
-                aria-label={t("attachment.preview", { name: attachment.name })}
-                data-attachment-id={attachment.id}
-                data-cuelume-tap="open"
-                onClick={(event) => props.onPreview(attachment, event.currentTarget)}
+            <div
+              class="message-attachment"
+              data-kind={playableMediaKind(attachment.mimeType) === "video" ? "video" : undefined}
+              data-status={isMissing(attachment) ? "missing" : undefined}
+            >
+              <Show
+                when={playableMediaKind(attachment.mimeType) === "video"}
+                fallback={
+                  <Button
+                    variant="ghost"
+                    type="button"
+                    class="attachment-preview-button"
+                    disabled={isMissing(attachment) || !canPreviewAttachment(attachment)}
+                    aria-label={t("attachment.preview", { name: attachment.name })}
+                    data-attachment-id={attachment.id}
+                    data-cuelume-tap="open"
+                    onClick={(event) => props.onPreview(attachment, event.currentTarget)}
+                  >
+                    <Show
+                      when={attachment.previewKind === "image" && attachment.previewUrl && !isMissing(attachment)}
+                      fallback={
+                        <span
+                          class="attachment-file-visual"
+                          data-file-tone={attachmentReferenceTone(attachment.name)}
+                          aria-hidden="true"
+                        >
+                          <AttachmentFileIcon />
+                        </span>
+                      }
+                    >
+                      <span
+                        class="attachment-file-visual attachment-file-image"
+                        data-file-tone={attachmentReferenceTone(attachment.name)}
+                      >
+                        <img
+                          src={attachment.previewUrl ?? ""}
+                          alt=""
+                          loading="lazy"
+                          decoding="async"
+                          onError={() => markMissing(attachment)}
+                        />
+                      </span>
+                    </Show>
+                    <span class="attachment-file-copy">
+                      <strong>{attachment.name}</strong>
+                      <small>
+                        {isMissing(attachment) ? t("attachment.notFound") : format.fileSize(attachment.size)}
+                      </small>
+                    </span>
+                  </Button>
+                }
               >
                 <Show
-                  when={attachment.previewKind === "image" && attachment.previewUrl && !isMissing(attachment)}
+                  when={attachment.previewUrl}
                   fallback={
-                    <span
-                      class="attachment-file-visual"
-                      data-file-tone={attachmentReferenceTone(attachment.name)}
-                      aria-hidden="true"
-                    >
-                      <AttachmentFileIcon />
-                    </span>
+                    <div class="attachment-video-metadata">
+                      <strong>{attachment.name}</strong>
+                      <small>{format.fileSize(attachment.size)}</small>
+                    </div>
                   }
                 >
-                  <span
-                    class="attachment-file-visual attachment-file-image"
-                    data-file-tone={attachmentReferenceTone(attachment.name)}
+                  <video
+                    class="message-video-preview"
+                    aria-label={t("attachment.preview", { name: attachment.name })}
+                    controls
+                    playsinline
+                    preload="metadata"
+                    src={attachment.previewUrl ?? ""}
                   >
-                    <img
-                      src={attachment.previewUrl ?? ""}
-                      alt=""
-                      loading="lazy"
-                      decoding="async"
-                      onError={() => markMissing(attachment)}
-                    />
-                  </span>
+                    <track kind="captions" />
+                  </video>
+                  <div class="attachment-video-metadata">
+                    <strong>{attachment.name}</strong>
+                    <small>{format.fileSize(attachment.size)}</small>
+                  </div>
                 </Show>
-                <span class="attachment-file-copy">
-                  <strong>{attachment.name}</strong>
-                  <small>{isMissing(attachment) ? t("attachment.notFound") : format.fileSize(attachment.size)}</small>
-                </span>
-              </Button>
+              </Show>
               <Show when={!isMissing(attachment)}>
                 <Button
                   variant="ghost"
@@ -135,26 +172,28 @@ export function AttachmentCards(props: {
                 >
                   <Download />
                 </Button>
-                <Button
-                  variant="ghost"
-                  type="button"
-                  class="attachment-open-button"
-                  aria-label={t("attachment.open", { name: attachment.name })}
-                  aria-describedby={tooltipId}
-                  onPointerEnter={(event) => openTooltip(event.currentTarget)}
-                  onMouseEnter={(event) => openTooltip(event.currentTarget)}
-                  onPointerLeave={(event) => closeTooltip(event.currentTarget)}
-                  onMouseLeave={(event) => closeTooltip(event.currentTarget)}
-                  onFocus={(event) => openTooltip(event.currentTarget)}
-                  onBlur={(event) => closeTooltip(event.currentTarget)}
-                  onKeyDown={closeTooltipOnEscape}
-                  onClick={() => {
-                    setTooltip(null);
-                    props.onAction(attachment, "open");
-                  }}
-                >
-                  <AttachmentOpenIcon />
-                </Button>
+                <Show when={playableMediaKind(attachment.mimeType) !== "video"}>
+                  <Button
+                    variant="ghost"
+                    type="button"
+                    class="attachment-open-button"
+                    aria-label={t("attachment.open", { name: attachment.name })}
+                    aria-describedby={tooltipId}
+                    onPointerEnter={(event) => openTooltip(event.currentTarget)}
+                    onMouseEnter={(event) => openTooltip(event.currentTarget)}
+                    onPointerLeave={(event) => closeTooltip(event.currentTarget)}
+                    onMouseLeave={(event) => closeTooltip(event.currentTarget)}
+                    onFocus={(event) => openTooltip(event.currentTarget)}
+                    onBlur={(event) => closeTooltip(event.currentTarget)}
+                    onKeyDown={closeTooltipOnEscape}
+                    onClick={() => {
+                      setTooltip(null);
+                      props.onAction(attachment, "open");
+                    }}
+                  >
+                    <AttachmentOpenIcon />
+                  </Button>
+                </Show>
               </Show>
             </div>
           )}

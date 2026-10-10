@@ -14,6 +14,10 @@ const native = vi.hoisted(() => ({
   write: vi.fn(),
   remove: vi.fn(),
   alert: vi.fn(),
+  platform: "ios",
+  requestDirectory: vi.fn(),
+  createSafFile: vi.fn(),
+  writeSafFile: vi.fn(),
 }));
 vi.mock("@/shared/lib/haptics", () => ({
   haptics: { selection: vi.fn(async () => {}), impact: vi.fn(async () => {}), notification: vi.fn(async () => {}) },
@@ -44,13 +48,17 @@ vi.mock("react-native", () => ({
   Modal: ({ children, visible }: PropsWithChildren<{ visible: boolean }>) =>
     visible ? <div role="dialog">{children}</div> : null,
   useWindowDimensions: () => ({ width: 390 }),
-  Platform: { OS: "ios" },
+  Platform: {
+    get OS() {
+      return native.platform;
+    },
+  },
 }));
 vi.mock("react-native-safe-area-context", () => ({
   useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
 }));
 vi.mock("heroui-native/hooks", () => ({ useThemeColor: () => ["green", "gray"] }));
-vi.mock("lucide-react-native", () => ({ ExternalLink: () => null, ImageOff: () => null }));
+vi.mock("lucide-react-native", () => ({ Download: () => null, ExternalLink: () => null, ImageOff: () => null }));
 vi.mock("react-native-reanimated", () => ({
   default: {
     View: ({ children }: PropsWithChildren) => <div>{children}</div>,
@@ -146,6 +154,15 @@ vi.mock("expo-file-system", () => ({
     delete = native.remove;
   },
 }));
+vi.mock("expo-file-system/legacy", () => ({
+  EncodingType: { Base64: "base64" },
+  StorageAccessFramework: {
+    getUriForDirectoryInRoot: (folder: string) => `content://storage/${folder}`,
+    requestDirectoryPermissionsAsync: native.requestDirectory,
+    createFileAsync: native.createSafFile,
+    writeAsStringAsync: native.writeSafFile,
+  },
+}));
 vi.mock("heroui-native", () => {
   const Label = ({ children }: PropsWithChildren) => <span>{children}</span>;
   const Button = Object.assign(
@@ -169,6 +186,7 @@ const cleanups: (() => void)[] = [];
 afterEach(() => {
   for (const cleanup of cleanups.splice(0)) cleanup();
   vi.resetAllMocks();
+  native.platform = "ios";
 });
 function mount(
   attachment: AttachmentSummary,
@@ -234,17 +252,26 @@ it("retries a failed image download from the correct host and displays the image
   expect(native.download).toHaveBeenLastCalledWith("selected-host", "stored-file");
 });
 
-it("downloads an MP4 to a local cache file and previews it with the native player", async () => {
+it("embeds a downloaded MP4 in the message and offers only a save-location download", async () => {
   native.download.mockResolvedValue({ name: "clip.mp4", mimeType: "video/mp4", base64: "aGVsbG8=" });
   mount({ ...attachment, name: "clip.mp4", mimeType: "video/mp4", size: 5 });
-  await act(async () => {
-    fireEvent.click(screen.getByRole("button", { name: "Preview clip.mp4" }));
-  });
   await waitFor(() => expect(native.download).toHaveBeenCalledWith("selected-host", "stored-file"));
   await waitFor(() => expect(screen.getByRole("img", { name: "video player" })).toBeTruthy());
   expect(screen.getByRole("img", { name: "video player" }).getAttribute("data-source")).toBe(
     "file:///cache/openbot-chat-video-stored-file.mp4",
   );
+  expect(screen.getByRole("button", { name: "Download" })).toBeTruthy();
+  native.platform = "android";
+  native.requestDirectory.mockResolvedValue({ granted: true, directoryUri: "content://storage/selected" });
+  native.createSafFile.mockResolvedValue("content://storage/selected/clip.mp4");
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Download" }));
+  });
+  await waitFor(() => expect(native.requestDirectory).toHaveBeenCalledWith("content://storage/Download"));
+  expect(native.createSafFile).toHaveBeenCalledWith("content://storage/selected", "clip", "video/mp4");
+  expect(native.writeSafFile).toHaveBeenCalledWith("content://storage/selected/clip.mp4", "aGVsbG8=", {
+    encoding: "base64",
+  });
 });
 
 it("opens a message image from its place in the chat, then shares it and saves it to Photos", async () => {

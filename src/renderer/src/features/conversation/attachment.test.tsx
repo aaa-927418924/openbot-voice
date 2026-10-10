@@ -119,4 +119,27 @@ describe("AttachmentCards download", () => {
     expect(onAction).toHaveBeenCalledOnce();
     expect(onAction).toHaveBeenCalledWith(card, "download");
   });
+
+  it("embeds MP4 playback in the message and keeps only the download action", async () => {
+    const video = {
+      id: "clip",
+      name: "clip.mp4",
+      size: 2_048,
+      kind: "file" as const,
+      mimeType: "video/mp4",
+      previewKind: "none" as const,
+      previewUrl: "openbot-attachment://file/clip",
+    };
+    const onPreview = vi.fn();
+    const onAction = vi.fn();
+    render(() => <AttachmentCards attachments={[video]} onPreview={onPreview} onAction={onAction} />);
+
+    expect(screen.getByLabelText("Preview clip.mp4").tagName).toBe("VIDEO");
+    expect(screen.queryByRole("button", { name: "Open clip.mp4" })).toBeNull();
+    const download = screen.getByRole("button", { name: "Download clip.mp4" });
+    await fireEvent.click(download);
+
+    expect(onAction).toHaveBeenCalledWith(video, "download");
+    expect(onPreview).not.toHaveBeenCalled();
+  });
 });

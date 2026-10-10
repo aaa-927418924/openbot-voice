@@ -1,6 +1,7 @@
 import { Image } from "expo-image";
+import { useVideoPlayer, VideoView } from "expo-video";
 import { Typography } from "heroui-native";
-import { X } from "lucide-react-native";
+import { Play, X } from "lucide-react-native";
 import { useState } from "react";
 import { Pressable, View, type ViewStyle } from "react-native";
 import Animated, { cubicBezier, Easing, Keyframe, LinearTransition, ReduceMotion } from "react-native-reanimated";
@@ -102,6 +103,8 @@ export function ComposerAttachmentTile({
               accessibilityLabel={item.name}
               style={{ position: "absolute", inset: 0 }}
             />
+          ) : localVideoPreviewUri(item) ? (
+            <VideoAttachmentThumbnail name={item.name} uri={localVideoPreviewUri(item) ?? ""} />
           ) : (
             <>
               <View className="self-start rounded-md bg-success/15 px-1.5 py-0.5">
@@ -134,5 +137,28 @@ export function ComposerAttachmentTile({
         <X color={String(foreground)} size={15} strokeWidth={2.4} />
       </Pressable>
     </Animated.View>
+  );
+}
+
+function VideoAttachmentThumbnail({ name, uri }: { name: string; uri: string }) {
+  const player = useVideoPlayer(uri, (current) => {
+    current.muted = true;
+    current.pause();
+  });
+  return (
+    <View pointerEvents="none" style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 0 }}>
+      <VideoView
+        player={player}
+        contentFit="cover"
+        nativeControls={false}
+        accessibilityLabel={name}
+        style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 0 }}
+      />
+      <View className="absolute inset-0 items-center justify-center">
+        <View className="size-9 items-center justify-center rounded-full bg-black/60">
+          <Play color="white" size={18} fill="white" strokeWidth={1.5} />
+        </View>
+      </View>
+    </View>
   );
 }

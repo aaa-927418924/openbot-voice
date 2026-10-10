@@ -4,12 +4,13 @@ import type { MobileTranslate } from "@openbot/i18n/mobile";
 import { MOBILE_ATTACHMENT_BYTES, type RemoteFileUpload } from "@openbot/team-client/remote-peer";
 import { useQuery } from "@tanstack/react-query";
 import { File, Paths } from "expo-file-system";
+import * as FileSystemLegacy from "expo-file-system/legacy";
 import { Image } from "expo-image";
 import * as Sharing from "expo-sharing";
 import { useThemeColor } from "heroui-native/hooks";
 import { FileText } from "lucide-react-native";
 import { useEffect, useMemo, useState } from "react";
-import { Alert, View } from "react-native";
+import { Alert, Platform, View } from "react-native";
 import { useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
 import { haptics } from "@/shared/lib/haptics";
 import { currentText, useText } from "@/shared/lib/text";
@@ -178,6 +179,45 @@ export function useAttachmentFile(serverId: string, attachment: AttachmentSummar
       setSharing(false);
     }
   }
+  /** Opens Android's folder picker at Downloads and writes the video to the chosen location. */
+  async function saveToDownloads(): Promise<boolean> {
+    if (Platform.OS !== "android") {
+      await share();
+      return false;
+    }
+    setSharing(true);
+    try {
+      const result = query.data ? { data: query.data, error: null } : await query.refetch();
+      if (result.error) throw result.error;
+      if (!result.data) throw new Error(t("mobile.chat.attachment.unavailable"));
+
+      const downloads = FileSystemLegacy.StorageAccessFramework.getUriForDirectoryInRoot("Download");
+      const selected = await FileSystemLegacy.StorageAccessFramework.requestDirectoryPermissionsAsync(downloads);
+      if (!selected.granted) return false;
+
+      const safeName = attachment.name.replace(/[/\\\p{Cc}]/gu, "_");
+      const extension = attachmentFileExtension(safeName);
+      const nameWithoutExtension = extension ? safeName.slice(0, -(extension.length + 1)) : safeName;
+      const target = await FileSystemLegacy.StorageAccessFramework.createFileAsync(
+        selected.directoryUri,
+        nameWithoutExtension || "video",
+        result.data.mimeType || attachment.mimeType || "video/mp4",
+      );
+      await FileSystemLegacy.StorageAccessFramework.writeAsStringAsync(target, result.data.base64, {
+        encoding: FileSystemLegacy.EncodingType.Base64,
+      });
+      return true;
+    } catch (error) {
+      void haptics.notification("error");
+      Alert.alert(
+        t("mobile.chat.attachment.openFailed"),
+        error instanceof Error ? sourceText(error.message) : t("mobile.chat.tryAgain"),
+      );
+      return false;
+    } finally {
+      setSharing(false);
+    }
+  }
   return {
     pending,
     localUri,
@@ -186,6 +226,7 @@ export function useAttachmentFile(serverId: string, attachment: AttachmentSummar
     videoCacheFailed,
     dimensions,
     saveToPhotos,
+    saveToDownloads,
     query,
     sharing,
     busy: sharing || query.isFetching,

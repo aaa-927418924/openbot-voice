@@ -16,6 +16,7 @@ import {
   Input,
   LoaderCircle,
   Mic,
+  Play,
   Plus,
   Puzzle,
 } from "@openbot/ui";
@@ -295,7 +296,12 @@ export function ConversationComposer() {
               <For each={unreferencedDraftAttachments()}>
                 {(attachment) => {
                   // An image with no preview (the web client) shows as a file, with its name.
-                  const chip = () => (attachment.kind === "image" && attachment.previewUrl ? "image" : "file");
+                  const chip = () =>
+                    attachment.kind === "image" && attachment.previewUrl
+                      ? "image"
+                      : attachment.mimeType.startsWith("video/") && attachment.previewUrl
+                        ? "video"
+                        : "file";
                   return (
                     <div class="composer-attachment ui-removable-image" data-kind={chip()}>
                       <span
@@ -305,7 +311,7 @@ export function ConversationComposer() {
                         <Show
                           when={chip() === "image"}
                           fallback={
-                            attachment.mimeType === "video/mp4" ? (
+                            <Show when={chip() === "video"} fallback={fileBadge(attachment)}>
                               <Button
                                 class="composer-attachment-video-preview"
                                 type="button"
@@ -313,11 +319,14 @@ export function ConversationComposer() {
                                 aria-label={t("attachment.preview", { name: attachment.name })}
                                 onClick={() => void previewAttachment(attachment)}
                               >
-                                {fileBadge(attachment)}
+                                <video muted playsinline preload="metadata" src={attachment.previewUrl ?? ""}>
+                                  <track kind="captions" />
+                                </video>
+                                <span class="composer-attachment-video-play" aria-hidden="true">
+                                  <Play />
+                                </span>
                               </Button>
-                            ) : (
-                              fileBadge(attachment)
-                            )
+                            </Show>
                           }
                         >
                           <img src={attachment.previewUrl ?? ""} alt="" />

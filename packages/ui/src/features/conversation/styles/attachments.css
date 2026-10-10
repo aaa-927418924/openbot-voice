@@ -21,6 +21,33 @@
     border-color var(--openbot-duration-hover) ease;
 }
 
+.message-attachments-group:has(.message-attachment[data-kind="video"]) {
+  width: min(100%, 480px);
+}
+
+.message-attachment[data-kind="video"] {
+  grid-template-columns: minmax(0, 1fr) 40px;
+}
+
+.message-video-preview {
+  display: block;
+  width: 100%;
+  max-height: 320px;
+  grid-column: 1 / -1;
+  aspect-ratio: 16 / 9;
+  border: 1px solid var(--openbot-border);
+  border-radius: var(--openbot-radius-media-preview);
+  background: var(--openbot-bg-root);
+  object-fit: contain;
+}
+
+.attachment-video-metadata {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+  grid-column: 1;
+}
+
 [data-slot="bubble"]:not([data-variant="ghost"]) > [data-slot="bubble-content"] > .message-attachments:last-child {
   margin-bottom: var(--openbot-space-1);
 }
@@ -294,7 +321,7 @@
     transform var(--openbot-duration-normal) cubic-bezier(0.23, 1, 0.32, 1);
 }
 
-.attachment-open-button svg {
+.message-attachment .attachment-open-button svg {
   width: 18px;
   height: 18px;
   fill: none;
