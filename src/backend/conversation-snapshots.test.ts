@@ -60,6 +60,64 @@ describe("provider conversation history", () => {
     expect(mergeProviderHistory(stored, imported).messages.map((item) => item.id)).toEqual(["user-1", "msg-canonical"]);
   });
 
+  it("restores provider messages in turn-start order when thread turns arrive newest first", () => {
+    const decoded = decodeThreadResponse({
+      thread: {
+        id: "thread-ordered",
+        turns: [providerTurn("new", 1_760_000_120), providerTurn("old", 1_760_000_000)],
+      },
+    });
+
+    const restored = snapshotFromThread(
+      "chief",
+      decoded.thread,
+      () => null,
+      () => null,
+    );
+
+    expect(restored.messages.map((item) => item.id)).toEqual(["user-old", "answer-old", "user-new", "answer-new"]);
+    expect(restored.messages[0]?.createdAt).toBe("2025-10-09T08:53:20.000Z");
+  });
+
+  it("keeps saved Live Voice transcription out of restored Codex handoff history", () => {
+    const messageId = `livevoice-${"a".repeat(48)}`;
+    const transcript = {
+      ...message(messageId, "assistant", "こんにちは。こちらが要約です。", "realtime-transcript"),
+      createdAt: "2026-10-09T08:00:00.000Z",
+    };
+    const internalHandoff = `<realtime_delegation>\n<source>transcript_tail_flush</source>\n<transcript_delta>assistant: こんにちは。こちらが要約です。</transcript_delta>\n</realtime_delegation>`;
+    const imported = snapshotFromThread(
+      "chief",
+      decodeThreadResponse({
+        thread: {
+          id: "thread-1",
+          turns: [
+            {
+              id: "turn-live-voice",
+              startedAt: 1_760_000_000,
+              status: "completed",
+              items: [
+                {
+                  id: "provider-user-item",
+                  clientId: messageId,
+                  type: "userMessage",
+                  content: [{ type: "text", text: internalHandoff }],
+                },
+                { id: "provider-assistant-item", type: "agentMessage", text: internalHandoff },
+              ],
+            },
+          ],
+        },
+      }).thread,
+      () => null,
+      () => null,
+    );
+
+    const restored = mergeProviderHistory(snapshot([transcript]), imported, "codex");
+
+    expect(restored.messages).toEqual([transcript]);
+  });
+
   it("keeps repeated messages when both canonical IDs exist in provider history", () => {
     const imported = snapshot([
       message("msg-1", "assistant", "Same reply", "final_answer"),
@@ -435,6 +493,18 @@ describe("teammate messages in provider history", () => {
 
 function userText(text: string): DeliveryInputItem[] {
   return [{ type: "text", text }];
+}
+
+function providerTurn(id: string, startedAt: number) {
+  return {
+    id: `turn-${id}`,
+    startedAt,
+    status: "completed",
+    items: [
+      { id: `user-${id}`, type: "userMessage", content: [{ type: "text", text: `Question ${id}` }] },
+      { id: `answer-${id}`, type: "agentMessage", phase: "final_answer", text: `Answer ${id}` },
+    ],
+  };
 }
 
 function teammateDelivery(

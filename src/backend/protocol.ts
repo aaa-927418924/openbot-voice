@@ -277,9 +277,11 @@ function decodeTurnRecord(value: unknown): TurnRecord {
   const record = decodeRecord(value, "thread turn");
   const items = Array.isArray(record.items) ? record.items.map(decodeThreadItem) : undefined;
   const status = optionalString(record, "status");
+  const startedAt = optionalNumber(record, "startedAt");
   return {
     id: requiredString(record, "id"),
     ...(status !== undefined && status !== null ? { status } : {}),
+    ...(startedAt !== undefined && startedAt !== null ? { startedAt } : {}),
     ...(items ? { items } : {}),
   };
 }

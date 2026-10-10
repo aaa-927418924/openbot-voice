@@ -2,6 +2,7 @@ import { sortConversationMessages } from "@openbot/contracts/conversation-order"
 import type { AgentProviderId, ConversationMessage, ConversationSnapshot } from "@openbot/contracts/ipc";
 import { isImageGenerationAspectRatio } from "@openbot/contracts/ipc";
 import { isString } from "@openbot/contracts/runtime-values";
+import { isInternalRealtimeDelegationMessage } from "@openbot/team-client/agent-message-text";
 import { displayMessageReferences, type TeammatePrompt, teammatePrompts } from "./agent/delivery-content";
 import { imageGenerationFailure, isImageGenerationItem } from "./agent/image-generation";
 import type { DeliveryContext } from "./mailbox-store";
@@ -19,7 +20,8 @@ export function snapshotFromThread(
     const firstUserItem = items.find((item) => item.type === "userMessage" && isString(item.clientId));
     const firstDelivery = firstUserItem?.clientId ? findDelivery(firstUserItem.clientId) : null;
     const deliveryTime = firstDelivery ? Date.parse(firstDelivery.delivery.createdAt) : Number.NaN;
-    const turnStartedAt = turn.startedAt ? turn.startedAt * 1_000 : Number.NaN;
+    const turnStartedAt =
+      typeof turn.startedAt === "number" && Number.isFinite(turn.startedAt) ? turn.startedAt * 1_000 : Number.NaN;
     const baseTime = Number.isFinite(deliveryTime)
       ? deliveryTime
       : Number.isFinite(turnStartedAt)
@@ -33,7 +35,7 @@ export function snapshotFromThread(
           .map((part) => part.text)
           .join("\n");
         const delivery = item.clientId ? findDelivery(item.clientId) : null;
-        if (!text) continue;
+        if (!text || isInternalRealtimeDelegationMessage(text)) continue;
         const row = {
           id: isCanonicalLiveVoiceMessageId(item.clientId) ? item.clientId : item.id,
           turnId: turn.id,
@@ -66,7 +68,12 @@ export function snapshotFromThread(
               );
         }
       }
-      if (item.type === "agentMessage" && isString(item.id) && item.text) {
+      if (
+        item.type === "agentMessage" &&
+        isString(item.id) &&
+        item.text &&
+        !isInternalRealtimeDelegationMessage(item.text)
+      ) {
         messages.push({
           id: item.id,
           turnId: turn.id,

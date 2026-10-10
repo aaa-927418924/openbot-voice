@@ -5,11 +5,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { ConversationSnapshot } from "@openbot/contracts/ipc";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConversationReadStore } from "./conversation-read-store";
+import { mergeProviderHistory, snapshotFromThread } from "./conversation-snapshots";
 import { runCauseEffect } from "./effect-boundary";
 import { OpenBotDatabase } from "./openbot-database";
 import { migrateOpenBotDatabase } from "./openbot-database-schema";
+import { decodeThreadResponse } from "./protocol";
 import { directThreadId, TeamChatStore } from "./team-chat-store";
 
 const roots: string[] = [];
@@ -19,6 +21,77 @@ afterEach(async () => {
 });
 
 describe("ConversationReadStore", () => {
+  it("keeps the durable unread boundary on the same messages after provider history recovery", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-conversation-read-recovery-"));
+    roots.push(root);
+    const database = new OpenBotDatabase(root);
+    await runCauseEffect(database.initialize());
+    database.connection
+      .prepare(
+        `INSERT INTO projection_threads (
+          thread_id, agent_id, title, active_turn_id, created_at, updated_at, last_event_sequence
+        ) VALUES (?, ?, ?, NULL, ?, ?, ?)`,
+      )
+      .run("thread-chief", "chief", "Chief", "2026-08-19T09:00:00.000Z", "2026-08-19T09:00:00.000Z", 1);
+
+    const providerTurn = (name: string, startedAt: number) => ({
+      id: `turn-${name}`,
+      startedAt,
+      status: "completed",
+      items: [
+        { id: `user-${name}`, type: "userMessage", content: [{ type: "text", text: `Question ${name}` }] },
+        { id: `answer-${name}`, type: "agentMessage", phase: "final_answer", text: `Answer ${name}` },
+      ],
+    });
+    const restore = (turns: ReturnType<typeof providerTurn>[]) =>
+      snapshotFromThread(
+        "chief",
+        decodeThreadResponse({ thread: { id: "thread-chief", turns } }).thread,
+        () => null,
+        () => null,
+      );
+    const saved = restore([
+      providerTurn("old", 1_760_000_000),
+      providerTurn("read", 1_760_000_060),
+      providerTurn("new", 1_760_000_120),
+    ]);
+    const reads = new ConversationReadStore(database);
+    reads.markRead("member-a", saved, "answer-read");
+    database.close();
+
+    const restartedDatabase = new OpenBotDatabase(root);
+    await runCauseEffect(restartedDatabase.initialize());
+    let now = 1_800_000_000_000;
+    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => (now += 1_000));
+    let imported: ReturnType<typeof restore>;
+    try {
+      imported = restore([
+        providerTurn("new", 1_760_000_120),
+        providerTurn("read", 1_760_000_060),
+        providerTurn("old", 1_760_000_000),
+      ]);
+    } finally {
+      nowSpy.mockRestore();
+    }
+    const recovered = mergeProviderHistory(saved, imported, "codex");
+    const restoredReadState = new ConversationReadStore(restartedDatabase).readState("member-a", recovered);
+
+    expect(recovered.messages.map((item) => item.id)).toEqual([
+      "user-old",
+      "answer-old",
+      "user-read",
+      "answer-read",
+      "user-new",
+      "answer-new",
+    ]);
+    expect(restoredReadState).toEqual({
+      unreadCount: 1,
+      firstUnreadMessageId: "answer-new",
+      throughMessageId: "answer-read",
+    });
+    restartedDatabase.close();
+  });
+
   it("keeps durable monotonic read boundaries per team member", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-conversation-read-"));
     roots.push(root);
