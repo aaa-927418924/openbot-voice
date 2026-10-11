@@ -6,6 +6,10 @@ plugins {
 group = 'run.openbot.mobile.livevoice'
 version = '1.0.0'
 
+expoModule {
+  canBePublished false
+}
+
 android {
   namespace 'run.openbot.mobile.livevoice'
 }
