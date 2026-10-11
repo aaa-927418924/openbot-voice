@@ -61,6 +61,25 @@ export const EMPTY_LIVE_VOICE_STATE: MobileLiveVoiceState = {
   elapsedMs: 0,
 };
 
+export interface MobileLiveVoiceContextAvailability {
+  foreground: boolean;
+  backgroundSupported: boolean;
+  activeServerId: string;
+  serverOnline: boolean;
+}
+
+export function isMobileLiveVoiceContextAvailable(
+  origin: MobileLiveVoiceOrigin | null,
+  context: MobileLiveVoiceContextAvailability,
+): boolean {
+  return Boolean(
+    origin &&
+      (context.foreground || context.backgroundSupported) &&
+      context.activeServerId === origin.target.serverId &&
+      context.serverOnline,
+  );
+}
+
 export function isLiveVoiceBusy(state: Pick<MobileLiveVoiceState, "phase" | "hostSessionActive">): boolean {
   return (
     state.hostSessionActive || state.phase === "connecting" || state.phase === "live" || state.phase === "stopping"

@@ -9,7 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { View } from "react-native";
+import { Platform, View } from "react-native";
 import { supportLog } from "@/features/support/model/support-log";
 import { expoGoDomOptions } from "@/shared/lib/expo-go-dom";
 import { useAppForeground } from "@/shared/lib/use-app-foreground";
@@ -18,12 +18,18 @@ import {
   EMPTY_LIVE_VOICE_STATE,
   isCurrentLiveVoiceStartAction,
   isLiveVoiceBusy,
+  isMobileLiveVoiceContextAvailable,
   type MobileLiveVoiceOrigin,
   type MobileLiveVoiceState,
   type MobileLiveVoiceTarget,
   matchesLiveVoiceHostEvent,
   routesComposerToLiveVoice,
 } from "../model/live-voice";
+import {
+  isLiveVoiceBackgroundServiceAvailable,
+  startLiveVoiceBackgroundService,
+  stopLiveVoiceBackgroundService,
+} from "../model/live-voice-background-service";
 import {
   createMobileLiveVoiceCommandMailbox,
   type MobileLiveVoiceCommand,
@@ -61,6 +67,10 @@ const MobileLiveVoiceContext = createContext<MobileLiveVoiceContextValue | null>
 
 type ServerSummary = { id: string; state: string };
 
+function isVoiceStopping(state: MobileLiveVoiceState): boolean {
+  return state.phase === "stopping";
+}
+
 export function MobileLiveVoiceProvider({
   children,
   host,
@@ -84,31 +94,55 @@ export function MobileLiveVoiceProvider({
   hostRef.current = host;
   const mountedRef = useRef(true);
   const errorTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const foregroundStartSessionIdRef = useRef<string | null>(null);
+  const backgroundServiceSessionIdRef = useRef<string | null>(null);
+
+  const stopBackgroundService = useCallback((expectedSessionId?: string) => {
+    const currentSessionId = backgroundServiceSessionIdRef.current;
+    if (!currentSessionId || (expectedSessionId && currentSessionId !== expectedSessionId)) return;
+    backgroundServiceSessionIdRef.current = null;
+    void stopLiveVoiceBackgroundService().catch(() => {
+      supportLog.add("warn", "connection", "Live Voice Android microphone service could not stop cleanly");
+    });
+  }, []);
+
+  const startBackgroundService = useCallback(async (sessionId: string) => {
+    if (!isLiveVoiceBackgroundServiceAvailable()) return;
+    backgroundServiceSessionIdRef.current = sessionId;
+    await startLiveVoiceBackgroundService();
+  }, []);
   const [commands, setCommands] = useState<MobileLiveVoiceCommand[]>([]);
   const mailboxRef = useRef<ReturnType<typeof createMobileLiveVoiceCommandMailbox> | null>(null);
   if (!mailboxRef.current) mailboxRef.current = createMobileLiveVoiceCommandMailbox(setCommands);
   const mailbox = mailboxRef.current;
 
-  const publish = useCallback((next: MobileLiveVoiceState) => {
-    stateRef.current = next;
-    setState(next);
-    if (next.phase === "idle" && !next.hostSessionActive) {
-      originRef.current = null;
-      setOrigin(null);
-      if (errorTimer.current) clearTimeout(errorTimer.current);
-      errorTimer.current = undefined;
-      return;
-    }
-    if (next.phase === "error" && !next.hostSessionActive) {
-      if (errorTimer.current) clearTimeout(errorTimer.current);
-      errorTimer.current = setTimeout(() => {
-        if (stateRef.current.sessionId !== next.sessionId || stateRef.current.hostSessionActive) return;
+  const publish = useCallback(
+    (next: MobileLiveVoiceState) => {
+      stateRef.current = next;
+      setState(next);
+      if (next.phase === "idle" && !next.hostSessionActive) {
         originRef.current = null;
+        foregroundStartSessionIdRef.current = null;
+        stopBackgroundService();
         setOrigin(null);
-        publish(EMPTY_LIVE_VOICE_STATE);
-      }, 5_000);
-    }
-  }, []);
+        if (errorTimer.current) clearTimeout(errorTimer.current);
+        errorTimer.current = undefined;
+        return;
+      }
+      if (next.phase === "error" && !next.hostSessionActive) {
+        foregroundStartSessionIdRef.current = null;
+        stopBackgroundService(next.sessionId ?? undefined);
+        if (errorTimer.current) clearTimeout(errorTimer.current);
+        errorTimer.current = setTimeout(() => {
+          if (stateRef.current.sessionId !== next.sessionId || stateRef.current.hostSessionActive) return;
+          originRef.current = null;
+          setOrigin(null);
+          publish(EMPTY_LIVE_VOICE_STATE);
+        }, 5_000);
+      }
+    },
+    [stopBackgroundService],
+  );
 
   const canStart = useCallback(
     (target: MobileLiveVoiceTarget) =>
@@ -123,12 +157,9 @@ export function MobileLiveVoiceProvider({
   const start = useCallback(
     (target: MobileLiveVoiceTarget) => {
       if (!canStart(target)) return;
-      supportLog.add(
-        "info",
-        "connection",
-        `Live Voice probe [${LIVE_VOICE_DIAGNOSTIC_BUILD_ID}]: native start accepted`,
-      );
+      supportLog.add("info", "connection", "Live Voice start accepted");
       const nextOrigin = { target, sessionId: Crypto.randomUUID() };
+      foregroundStartSessionIdRef.current = nextOrigin.sessionId;
       originRef.current = nextOrigin;
       setOrigin(nextOrigin);
       publish({
@@ -141,28 +172,65 @@ export function MobileLiveVoiceProvider({
         type: "start",
         origin: nextOrigin,
       };
-      void mailbox.send(command).then((result) => {
-        supportLog.add(
-          "info",
-          "connection",
-          `Live Voice probe [${LIVE_VOICE_DIAGNOSTIC_BUILD_ID}]: command ${result.ok ? "acknowledged" : (result.error ?? "failed")}`,
-        );
-        if (result.ok || originRef.current?.sessionId !== nextOrigin.sessionId) return;
-        if (result.error === "timeout") {
-          // Best effort: the bridge may have started the provider request before its reply stalled.
-          void mailbox.send({ id: Crypto.randomUUID(), type: "stop" });
+
+      void (async () => {
+        try {
+          await startBackgroundService(nextOrigin.sessionId);
+          if (
+            originRef.current?.sessionId !== nextOrigin.sessionId ||
+            stateRef.current.phase === "stopping" ||
+            stateRef.current.phase === "idle"
+          ) {
+            stopBackgroundService(nextOrigin.sessionId);
+            return;
+          }
+
+          const result = await mailbox.send(command);
+          supportLog.add(
+            "info",
+            "connection",
+            "Live Voice probe [" +
+              LIVE_VOICE_DIAGNOSTIC_BUILD_ID +
+              "]: command " +
+              (result.ok ? "acknowledged" : (result.error ?? "failed")),
+          );
+          if (result.ok || originRef.current?.sessionId !== nextOrigin.sessionId) return;
+          if (result.error === "timeout") {
+            // Best effort: the bridge may have started the provider request before its reply stalled.
+            void mailbox.send({ id: Crypto.randomUUID(), type: "stop" });
+          }
+          if (isVoiceStopping(stateRef.current) || stateRef.current.hostSessionActive) return;
+          publish({
+            ...EMPTY_LIVE_VOICE_STATE,
+            phase: "error",
+            sessionId: nextOrigin.sessionId,
+            error: "unavailable",
+          });
+        } catch (error) {
+          stopBackgroundService(nextOrigin.sessionId);
+          if (
+            originRef.current?.sessionId !== nextOrigin.sessionId ||
+            stateRef.current.phase === "stopping" ||
+            stateRef.current.hostSessionActive
+          ) {
+            return;
+          }
+          supportLog.add(
+            "warn",
+            "connection",
+            "Live Voice Android microphone service could not start: " +
+              (error instanceof Error ? error.message : "Unknown error"),
+          );
+          publish({
+            ...EMPTY_LIVE_VOICE_STATE,
+            phase: "error",
+            sessionId: nextOrigin.sessionId,
+            error: "unavailable",
+          });
         }
-        if (stateRef.current.phase === "stopping") return;
-        if (stateRef.current.hostSessionActive) return;
-        publish({
-          ...EMPTY_LIVE_VOICE_STATE,
-          phase: "error",
-          sessionId: nextOrigin.sessionId,
-          error: "unavailable",
-        });
-      });
+      })();
     },
-    [canStart, mailbox, publish],
+    [canStart, mailbox, publish, startBackgroundService, stopBackgroundService],
   );
 
   const stop = useCallback(() => {
@@ -247,16 +315,19 @@ export function MobileLiveVoiceProvider({
         currentOrigin.target.threadId === input.threadId &&
         currentOrigin.target.channelId === input.channelId,
     );
+    const foregroundAuthorized =
+      actionContext.foreground ||
+      (Platform.OS === "android" && foregroundStartSessionIdRef.current === input.clientSessionId);
     const supported = Boolean(
       originMatches &&
-        actionContext.foreground &&
+        foregroundAuthorized &&
         actionContext.activeServerId === input.serverId &&
         serverOnline &&
         hostRef.current.supportsLiveVoice(input.serverId, Boolean(input.channelId)),
     );
     const allowed = isCurrentLiveVoiceStartAction(currentOrigin, input, {
       mounted: mountedRef.current,
-      foreground: actionContext.foreground,
+      foreground: foregroundAuthorized,
       activeServerId: actionContext.activeServerId,
       serverOnline,
       sessionPhase: stateRef.current.phase,
@@ -296,18 +367,25 @@ export function MobileLiveVoiceProvider({
   );
 
   const originServer = origin ? servers.find((server) => server.id === origin.target.serverId) : undefined;
+  const liveVoiceContextAvailable = isMobileLiveVoiceContextAvailable(origin, {
+    foreground,
+    backgroundSupported: isLiveVoiceBackgroundServiceAvailable(),
+    activeServerId,
+    serverOnline: originServer?.state === "online",
+  });
   useEffect(() => {
-    if (!origin) return;
-    if (!foreground || activeServerId !== origin.target.serverId || originServer?.state !== "online") stop();
-  }, [activeServerId, foreground, origin, originServer?.state, stop]);
+    if (origin && !liveVoiceContextAvailable) stop();
+  }, [liveVoiceContextAvailable, origin, stop]);
 
   useEffect(
     () => () => {
       mountedRef.current = false;
       if (errorTimer.current) clearTimeout(errorTimer.current);
+      foregroundStartSessionIdRef.current = null;
+      stopBackgroundService();
       mailbox.dispose();
     },
-    [mailbox],
+    [mailbox, stopBackgroundService],
   );
 
   const value = useMemo<MobileLiveVoiceContextValue>(
@@ -325,7 +403,7 @@ export function MobileLiveVoiceProvider({
     [canStart, origin, resumeAudio, sendText, start, state, stop, toggleMute],
   );
 
-  const bridgeActive = foreground && Boolean(origin) && activeServerId === origin?.target.serverId;
+  const bridgeActive = liveVoiceContextAvailable;
   return (
     <MobileLiveVoiceContext.Provider value={value}>
       <View className="flex-1">

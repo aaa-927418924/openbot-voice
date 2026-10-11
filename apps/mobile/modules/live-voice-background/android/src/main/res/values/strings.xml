@@ -1,0 +1,5 @@
+<resources>
+  <string name="live_voice_notification_channel_name">Live Voice</string>
+  <string name="live_voice_notification_title">Live Voice is active</string>
+  <string name="live_voice_notification_text">Microphone in use for a voice conversation.</string>
+</resources>

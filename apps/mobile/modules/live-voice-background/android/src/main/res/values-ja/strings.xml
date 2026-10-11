@@ -1,0 +1,5 @@
+<resources>
+  <string name="live_voice_notification_channel_name">Live Voice</string>
+  <string name="live_voice_notification_title">Live Voice通話中</string>
+  <string name="live_voice_notification_text">音声会話のためマイクを使用しています。</string>
+</resources>

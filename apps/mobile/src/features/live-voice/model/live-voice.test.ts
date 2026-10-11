@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   EMPTY_LIVE_VOICE_STATE,
   isCurrentLiveVoiceStartAction,
+  isMobileLiveVoiceContextAvailable,
   type MobileLiveVoiceOrigin,
   type MobileLiveVoiceTarget,
   matchesLiveVoiceHostEvent,
@@ -25,6 +26,28 @@ const event = {
   sessionId: origin.sessionId,
   status: "closed" as const,
 };
+
+describe("mobile Live Voice context availability", () => {
+  const context = {
+    foreground: false,
+    backgroundSupported: true,
+    activeServerId: target.serverId,
+    serverOnline: true,
+  };
+
+  it("keeps an Android call active when the app moves to the background", () => {
+    expect(isMobileLiveVoiceContextAvailable(origin, context)).toBe(true);
+  });
+
+  it("stops an iOS call when the app moves to the background", () => {
+    expect(isMobileLiveVoiceContextAvailable(origin, { ...context, backgroundSupported: false })).toBe(false);
+  });
+
+  it("stops when the selected server changes or goes offline", () => {
+    expect(isMobileLiveVoiceContextAvailable(origin, { ...context, activeServerId: "server-b" })).toBe(false);
+    expect(isMobileLiveVoiceContextAvailable(origin, { ...context, serverOnline: false })).toBe(false);
+  });
+});
 
 describe("mobile Live Voice conversation ownership", () => {
   it("routes only the exact active direct conversation", () => {
