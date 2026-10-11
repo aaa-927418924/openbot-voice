@@ -25,6 +25,8 @@ class LiveVoiceBackgroundModule : Module() {
       } else {
         context.startService(intent)
       }
+      // startService returns ComponentName, which Expo cannot marshal across its JS bridge.
+      null
     }
 
     AsyncFunction("stop") {
