@@ -36,6 +36,7 @@
         "katex": "catalog:",
         "lucide-solid": "catalog:",
         "marked": "catalog:",
+        "node-forge": "1.4.0",
         "qrcode": "catalog:",
         "solid-js": "2.0.0-rc.0",
         "solid-recharts": "catalog:",
@@ -55,6 +56,7 @@
         "@tailwindcss/vite": "catalog:",
         "@testing-library/jest-dom": "catalog:",
         "@types/node": "catalog:",
+        "@types/node-forge": "1.3.14",
         "@types/qrcode": "^1.5.6",
         "@types/ws": "8.18.1",
         "electron": "44.0.0",
@@ -1457,6 +1459,8 @@
     "@types/ms": ["@types/ms@2.1.0", "", {}, "sha512-GsCCIZDE/p3i96vtEqx+7dBUGXrc7zeSK3wwPHIaRThS+9OhWIXRqzs4d6k1SVU8g91DrNRWxWUGhp5KXQb2VA=="],
 
     "@types/node": ["@types/node@24.13.3", "", { "dependencies": { "undici-types": "~7.18.0" } }, "sha512-Dh8vAsV36ig5wa9OX4pXvMc9D3Veibfw2wix0CUwYODLD8nkj9UsLjASr49nPg+2eKzxhBV+v7L8pXvT4e639Q=="],
+
+    "@types/node-forge": ["@types/node-forge@1.3.14", "", { "dependencies": { "@types/node": "*" } }, "sha512-mhVF2BnD4BO+jtOp7z1CdzaK4mbuK0LLQYAvdOLqHTavxFNq4zA1EmYkpnFjP8HOUzedfQkRnp0E2ulSAYSzAw=="],
 
     "@types/qrcode": ["@types/qrcode@1.5.6", "", { "dependencies": { "@types/node": "*" } }, "sha512-te7NQcV2BOvdj2b1hCAHzAoMNuj65kNBMz0KBaxM6c3VGBOhU0dURQKOtH8CFNI/dsKkwlv32p26qYQTWoB5bw=="],
 
