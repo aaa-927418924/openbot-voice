@@ -99,7 +99,9 @@ Local tests use a temporary HTTP listener bound to `127.0.0.1`, without publishi
 
 A local video-only test can run without native diagnostics. Its viewer iframe is inert and excluded from keyboard focus; it does not start a native input test or report input success. Local loopback test cookies use HttpOnly, Secure and SameSite=None so the embedded viewer works across the app origin.
 
-On Linux, the gateway accepts only an X11 session (`DISPLAY` set, no `WAYLAND_DISPLAY`, and
-`XDG_SESSION_TYPE` not `wayland`). Sunshine then runs with X11 capture and software encoding, and
-sends input through XTest, so a hosted server under Xvfb needs no uinput device and no extra
-capability. Linux has no permission checks: an X11 session is ready.
+On Linux, the gateway accepts an active X11 or Wayland session. Sunshine uses X11 capture and XTest
+input for X11, and XDG Desktop Portal with PipeWire capture for Wayland. The first Wayland capture
+may ask the host user to approve screen sharing, and Sunshine saves that approval for later starts.
+Wayland mouse and keyboard input still use Linux's
+virtual input device and require access to `/dev/uinput`. Hosted Xvfb sessions keep using X11 and
+need no uinput device or extra capability.

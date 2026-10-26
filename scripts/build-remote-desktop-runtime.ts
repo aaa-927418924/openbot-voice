@@ -20,16 +20,15 @@ const tarExecutable =
   process.platform === "win32" ? join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe") : "tar";
 
 /**
- * The Linux build captures an X11 display, such as the Xvfb display of a hosted server, and encodes
- * in software. The other capture and encoder paths need a GPU, a Wayland compositor or elevated
- * capabilities, and each would add libraries that such a computer does not have. With no tray, the
- * binary also loads no GTK modules.
+ * Linux captures X11 and Xvfb through X11, and Wayland desktops through XDG Portal and PipeWire.
+ * Both use software encoding. Other capture and encoder paths need a GPU or elevated capabilities.
+ * With no tray, the binary also loads no GTK modules.
  */
 const LINUX_SUNSHINE_OPTIONS = [
   "-DSUNSHINE_ENABLE_CUDA=OFF",
   "-DSUNSHINE_ENABLE_DRM=OFF",
   "-DSUNSHINE_ENABLE_KWIN=OFF",
-  "-DSUNSHINE_ENABLE_PORTAL=OFF",
+  "-DSUNSHINE_ENABLE_PORTAL=ON",
   "-DSUNSHINE_ENABLE_TRAY=OFF",
   "-DSUNSHINE_ENABLE_VAAPI=OFF",
   "-DSUNSHINE_ENABLE_VULKAN=OFF",

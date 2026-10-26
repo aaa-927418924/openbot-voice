@@ -293,7 +293,7 @@
     }
   },
   "remoteDesktop": {
-    "recipeVersion": 14,
+    "recipeVersion": 15,
     "sunshine": {
       "sourceMode": "upstream-with-patch",
       "repository": "https://github.com/LizardByte/Sunshine.git",
@@ -362,31 +362,7 @@
       "win32-x64": ["sunshine.exe", "web-server.exe", "streamer.exe"],
       "linux-x64": ["sunshine", "web-server", "streamer"]
     },
-    "releaseArtifacts": {
-      "darwin-arm64": {
-        "asset": "remote-desktop-runtime-darwin-arm64.tar.gz",
-        "sha256": "f0d71114add31970a72134b36723534ae5349839b927903d6c3685dd19449c97"
-      },
-      "darwin-x64": {
-        "asset": "remote-desktop-runtime-darwin-x64.tar.gz",
-        "sha256": "605bc2121520d21710d767b3027caf84c176a093997695446b9f827f17cc908f"
-      },
-      "win32-x64": {
-        "asset": "remote-desktop-runtime-win32-x64.tar.gz",
-        "sha256": "ba225e8967d861a8412606640693e22dd7705120177d758ec93d747cd9549682"
-      },
-      "linux-x64": {
-        "asset": "remote-desktop-runtime-linux-x64.tar.gz",
-        "sha256": "3d1325700b25296fb02db95c61888a6af59f54d8c84d069a3baa2a6b2567e42d"
-      }
-    },
-    "artifactRelease": {
-      "repository": "nightly-labs/openbot",
-      "tag": "remote-desktop-runtime-f4354fbf4cb43ae955fe388107834fd80c5f97fa17c7fc04e4c2b4f329475816",
-      "inputDigest": "f4354fbf4cb43ae955fe388107834fd80c5f97fa17c7fc04e4c2b4f329475816",
-      "manifestAsset": "remote-desktop-runtime-manifest.json",
-      "manifestSha256": "189d91a6d5d1912f3123ff770b468335397ad53ddbb93c88d28cf63209149b22"
-    }
+    "releaseArtifacts": {}
   },
   "bun": {
     "registry": "https://registry.npmjs.org",

@@ -335,6 +335,7 @@ interface SunshineMoonlightRuntimeOptions {
   paths: RemoteDesktopRuntimePaths;
   stateDirectory: string;
   platform: "darwin" | "win32" | "linux";
+  linuxCaptureMethod?: "portal" | "x11";
   credentials: { username: string; password: string };
   getDisplays: () => RemoteDesktopDisplay[];
   getIceServers: () => Effect.Effect<RemoteDesktopIceServer[], RemoteDesktopOperationError>;
@@ -658,9 +659,10 @@ export class SunshineMoonlightRuntime {
       `cert = ${join(this.#options.stateDirectory, "sunshine-cert.pem")}`,
       `log_path = ${join(this.#options.stateDirectory, "sunshine.log")}`,
       ...(this.#selectedDisplayId ? [`output_name = ${this.#selectedDisplayId}`] : []),
-      // The Linux runtime is built with X11 capture and no hardware encoder, so Sunshine does not
-      // probe the others.
-      ...(this.#options.platform === "linux" ? ["capture = x11", "encoder = software"] : []),
+      // Keep hosted Xvfb on X11 while using the desktop portal for a Wayland session.
+      ...(this.#options.platform === "linux"
+        ? [`capture = ${this.#options.linuxCaptureMethod ?? "x11"}`, "encoder = software"]
+        : []),
     ];
     yield* desktopCall(() =>
       Promise.all([

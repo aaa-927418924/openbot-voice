@@ -173,14 +173,18 @@ The published runtime uses a new recipe/input digest; no existing release assets
 The Linux GUI capability advisory GHSA-fp6g-27w5-489j does not apply: the Linux runtime is built
 with the tray off, and OpenBot gives Sunshine no file capabilities.
 
-### Linux runtime (recipe 14)
+### Linux runtime (recipe 15)
 
-The `linux-x64` target builds on Ubuntu 24.04 with GCC 14, X11 capture and software encoding only
-(CUDA, DRM, KWin, VAAPI, Vulkan, Wayland, portal and tray are off). The OpenBot patch adds an XTest
-input backend, because Xvfb does not read uinput devices. It also links libcap when DRM is off and
-adds a `vaMapBuffer2` shim, because the prebuilt FFmpeg needs libva 2.21 and Ubuntu 24.04 has 2.20.
-The runtime uses the system libraries of Ubuntu 24.04; the hosted server template installs them.
-Linux arm64 builds only for local development and has no release artifact.
+The `linux-x64` target builds on Ubuntu 24.04 with GCC 14, X11 and XDG Portal/PipeWire capture, and
+software encoding. CUDA, DRM, KWin, VAAPI, Vulkan, the direct wlroots backend, and the tray stay off.
+The OpenBot patch adds XTest input for X11 and Xvfb, because Xvfb does not read uinput devices; Wayland
+input continues to use uinput. It also links libcap when DRM is off and adds a `vaMapBuffer2` shim,
+because the prebuilt FFmpeg needs libva 2.21 and Ubuntu 24.04 has 2.20. The runtime uses system
+libraries; the hosted server package list includes PipeWire for the Portal-enabled binary. Linux
+arm64 builds only for local development and has no release artifact. Recipe 15 changes the shared
+runtime input digest and clears the old release pin. Publish and pin a complete runtime prerelease
+for all supported targets before normal desktop release builds; local Linux builds can source-build
+the runtime with `OPENBOT_ALLOW_RUNTIME_SOURCE_BUILD=1`.
 
 ## Pin the Gemini server
 

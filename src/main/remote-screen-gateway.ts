@@ -161,7 +161,7 @@ export class RemoteScreenGateway {
   // nothing would be left to ask by the time the host owner looks.
   #screenRecordingDenied = false;
   #activeStreamStart: { sessionId: string; timeout: ReturnType<typeof setTimeout> } | null = null;
-  #linuxWithoutX11: boolean;
+  #linuxWithoutDesktopSession: boolean;
 
   constructor(options: RemoteScreenGatewayOptions) {
     this.#options = {
@@ -171,7 +171,8 @@ export class RemoteScreenGateway {
       now: options.now ?? Date.now,
     };
     this.#layer = ScreenDependencies.layer(options);
-    this.#linuxWithoutX11 = options.platform === "linux" && !isX11Session(options.sessionEnvironment ?? process.env);
+    this.#linuxWithoutDesktopSession =
+      options.platform === "linux" && !hasSupportedLinuxDesktopSession(options.sessionEnvironment ?? process.env);
     const displays = this.#options.getDisplays?.() ?? [];
     this.#selectedDisplayId = displays.find((display) => display.primary)?.id ?? displays[0]?.id ?? null;
   }
@@ -193,7 +194,7 @@ export class RemoteScreenGateway {
 
   readonly recheckScreenRecording = Effect.fn("RemoteScreenGateway.recheckScreenRecording")(
     function* (this: RemoteScreenGateway): Effect.fn.Return<boolean, RemoteWorkflowError> {
-      if (this.#linuxWithoutX11 || !this.#options.runtimePaths) return this.#screenRecordingDenied;
+      if (this.#linuxWithoutDesktopSession || !this.#options.runtimePaths) return this.#screenRecordingDenied;
       yield* this.#ensureRuntime();
       const denied = Boolean(this.#runtime?.screenCaptureDenied?.());
       this.#reportScreenRecordingDenied(denied);
@@ -389,7 +390,7 @@ export class RemoteScreenGateway {
   capabilities(): RemoteDesktopCapabilities {
     const displays = this.#availableDisplays();
     return {
-      ready: !this.#linuxWithoutX11 && Boolean(this.#options.runtimePaths),
+      ready: !this.#linuxWithoutDesktopSession && Boolean(this.#options.runtimePaths),
       platform: this.#options.platform,
       unattended: this.#options.unattended,
       runtime: "sunshine-moonlight",
@@ -526,7 +527,7 @@ export class RemoteScreenGateway {
         cause: new RemoteScreenError(429, "session_capacity_reached", sourceText("error.remote.sessionCapacity")),
       });
     }
-    if (this.#linuxWithoutX11) {
+    if (this.#linuxWithoutDesktopSession) {
       return yield* new RemoteWorkflowError({
         cause: new RemoteScreenError(503, "host_unavailable", sourceText("error.remote.linuxNeedsX11")),
       });
@@ -1024,7 +1025,7 @@ export class RemoteScreenGateway {
     if (stopping) yield* Fiber.join(stopping);
     if (this.#runtimeState) return this.#runtimeState;
     const paths = this.#options.runtimePaths;
-    if (!paths || this.#linuxWithoutX11)
+    if (!paths || this.#linuxWithoutDesktopSession)
       return yield* new RemoteWorkflowError({ cause: new Error(sourceText("error.remote.runtimeUnavailable")) });
     const dependencies = yield* ScreenDependencies;
     if (!this.#runtime) {
@@ -1032,6 +1033,9 @@ export class RemoteScreenGateway {
         paths,
         stateDirectory: this.#options.runtimeStateDirectory,
         platform: this.#options.platform,
+        ...(this.#options.platform === "linux"
+          ? { linuxCaptureMethod: linuxCaptureMethod(this.#options.sessionEnvironment ?? process.env) }
+          : {}),
         credentials: yield* dependencies.credentials(),
         getDisplays: () => this.#options.getDisplays?.() ?? [],
         getIceServers: () =>
@@ -1229,8 +1233,16 @@ function describeCause(cause: unknown): string {
   return parts.join(": ");
 }
 
-function isX11Session(environment: Readonly<Record<string, string | undefined>>): boolean {
-  return Boolean(environment.DISPLAY) && !environment.WAYLAND_DISPLAY && environment.XDG_SESSION_TYPE !== "wayland";
+function isWaylandSession(environment: Readonly<Record<string, string | undefined>>): boolean {
+  return environment.XDG_SESSION_TYPE === "wayland" || Boolean(environment.WAYLAND_DISPLAY);
+}
+
+function hasSupportedLinuxDesktopSession(environment: Readonly<Record<string, string | undefined>>): boolean {
+  return isWaylandSession(environment) || Boolean(environment.DISPLAY);
+}
+
+function linuxCaptureMethod(environment: Readonly<Record<string, string | undefined>>): "portal" | "x11" {
+  return isWaylandSession(environment) ? "portal" : "x11";
 }
 
 function sendViewer(

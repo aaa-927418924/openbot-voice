@@ -39,6 +39,32 @@ describe("RemoteScreenGateway", () => {
     },
   );
 
+  it("allows Wayland and selects XDG Portal capture", async () => {
+    const onRuntimeCapture = vi.fn();
+    const gateway = createGateway({
+      platform: "linux",
+      sessionEnvironment: { XDG_SESSION_TYPE: "wayland", WAYLAND_DISPLAY: "wayland-0", DISPLAY: ":0" },
+      onRuntimeCapture,
+    });
+    expect(gateway.capabilities().ready).toBe(true);
+    const session = await createSession(gateway, "http://127.0.0.1:9");
+    expect(session.phase).toBe("connecting");
+    expect(onRuntimeCapture).toHaveBeenCalledExactlyOnceWith("portal");
+    await runCauseEffect(gateway.stop());
+  });
+
+  it("keeps X11 capture for an X11 Linux session", async () => {
+    const onRuntimeCapture = vi.fn();
+    const gateway = createGateway({
+      platform: "linux",
+      sessionEnvironment: { XDG_SESSION_TYPE: "x11", DISPLAY: ":0" },
+      onRuntimeCapture,
+    });
+    await createSession(gateway, "http://127.0.0.1:9");
+    expect(onRuntimeCapture).toHaveBeenCalledExactlyOnceWith("x11");
+    await runCauseEffect(gateway.stop());
+  });
+
   it.each(["darwin", "win32", "linux"] as const)(
     "reports the setup failure for an unavailable %s host",
     async (platform) => {
@@ -54,14 +80,14 @@ describe("RemoteScreenGateway", () => {
     },
   );
 
-  it.each([{ XDG_SESSION_TYPE: "wayland", WAYLAND_DISPLAY: "wayland-0", DISPLAY: ":0" }, { XDG_SESSION_TYPE: "tty" }])(
-    "refuses a Linux host with no X11 session (%o)",
+  it.each([{ XDG_SESSION_TYPE: "tty" }, {}])(
+    "refuses a Linux host with no active desktop session (%o)",
     async (sessionEnvironment) => {
       const gateway = createGateway({ platform: "linux", sessionEnvironment });
       expect(gateway.capabilities().ready).toBe(false);
       await expect(createSession(gateway, "http://127.0.0.1:9")).rejects.toMatchObject({
         code: "host_unavailable",
-        message: "Remote desktop on Linux needs an X11 session. Wayland is not supported.",
+        message: "Remote desktop on Linux needs an active X11 or Wayland desktop session.",
       });
       await runCauseEffect(gateway.stop());
     },
@@ -671,6 +697,7 @@ function createGateway(
     selectDisplay?: (displayId: string) => Promise<void>;
     screenCaptureDenied?: () => boolean;
     onScreenRecordingDenied?: (denied: boolean) => void;
+    onRuntimeCapture?: (method: "portal" | "x11" | undefined) => void;
   } = {},
 ): RemoteScreenGateway {
   return new RemoteScreenGateway({
@@ -687,7 +714,8 @@ function createGateway(
     getIceServers: () => remoteCall(options.getIceServers ?? (async () => [{ urls: "stun:127.0.0.1:3478" }])),
     ...(options.onScreenRecordingDenied ? { onScreenRecordingDenied: options.onScreenRecordingDenied } : {}),
     ...(options.now ? { now: options.now } : {}),
-    createRuntime: ({ getIceServers }) => {
+    createRuntime: ({ getIceServers, linuxCaptureMethod }) => {
+      options.onRuntimeCapture?.(linuxCaptureMethod);
       const runtime = new FakeRuntime(options.runtimeBaseUrl, options.selectDisplay, options.screenCaptureDenied?.());
       runtime.getIceServers = getIceServers;
       runtime.checkSetup = options.checkSetup;

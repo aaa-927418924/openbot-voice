@@ -395,6 +395,7 @@ function createHarness(stateDirectory: string): Harness {
 async function createStartedRuntime(
   getIceServers: () => Promise<RemoteDesktopIceServer[]> = async () => [{ urls: "stun:127.0.0.1:3478" }],
   configureHarness?: (harness: Harness) => void,
+  runtimeOptions: { platform?: "darwin" | "win32" | "linux"; linuxCaptureMethod?: "portal" | "x11" } = {},
 ): Promise<{
   runtime: SunshineMoonlightRuntime;
   harness: Harness;
@@ -405,7 +406,8 @@ async function createStartedRuntime(
   const runtime = new SunshineMoonlightRuntime({
     paths: TEST_PATHS,
     stateDirectory,
-    platform: "darwin",
+    platform: runtimeOptions.platform ?? "darwin",
+    ...(runtimeOptions.linuxCaptureMethod ? { linuxCaptureMethod: runtimeOptions.linuxCaptureMethod } : {}),
     credentials: { username: "openbot-test", password: "test-password" },
     getDisplays: () => structuredClone(TEST_DISPLAYS),
     getIceServers: () => desktopCall(getIceServers),
@@ -427,6 +429,22 @@ async function disposeRuntime(runtime: SunshineMoonlightRuntime, harness: Harnes
   await harness.closeAll();
   await rm(harness.stateDirectory, { recursive: true, force: true });
 }
+
+describe("Sunshine capture configuration", () => {
+  it("writes Portal capture for a Wayland Linux runtime", async () => {
+    const { runtime, harness } = await createStartedRuntime(undefined, undefined, {
+      platform: "linux",
+      linuxCaptureMethod: "portal",
+    });
+    try {
+      const sunshineConfig = await readFile(join(harness.stateDirectory, "sunshine.conf"), "utf8");
+      expect(sunshineConfig).toContain("capture = portal");
+      expect(sunshineConfig).toContain("encoder = software");
+    } finally {
+      await disposeRuntime(runtime, harness);
+    }
+  });
+});
 
 async function blockTcp(port: number): Promise<TcpServer> {
   const server = createTcpServer();

@@ -13,7 +13,7 @@ export const messages = defineMessages("error.remote", {
   "error.remote.controlSessionEnded": "Remote control session ended.",
   "error.remote.testPanelFailed": "The host could not open the test panel.",
   "error.remote.sessionCapacity": "The host already has four active sessions.",
-  "error.remote.linuxNeedsX11": "Remote desktop on Linux needs an X11 session. Wayland is not supported.",
+  "error.remote.linuxNeedsX11": "Remote desktop on Linux needs an active X11 or Wayland desktop session.",
   "error.remote.runtimeMissing":
     "The Sunshine and Moonlight Web runtime is missing or is not supported on this host. Install the full OpenBot release on a Mac, a Windows x64 host or a Linux x64 host, then restart OpenBot.",
   "error.remote.testActive": "A remote desktop test is active. Try again when it ends.",

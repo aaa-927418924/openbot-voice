@@ -56,10 +56,11 @@ Local Whisper dictation is disabled in every build. The Linux composer therefore
 control; on Windows, the composer microphone starts Live Voice only when the selected Codex host
 advertises support.
 
-Remote desktop on Linux needs the x64 AppImage and an X11 session. Sunshine captures the X11 screen
-and sends mouse and keyboard input through the XTest extension. Under Wayland, or with no `DISPLAY`,
-remote desktop reports that it needs an X11 session. Log in with an Xorg session, or start OpenBot
-under `xvfb-run` on a server. The arm64 AppImage does not include the runtime.
+Remote desktop on Linux needs the x64 AppImage and an active X11 or Wayland session. Sunshine uses
+X11 capture and XTest input on X11. On Wayland, it captures through XDG Desktop Portal and PipeWire;
+approve the host's screen-sharing prompt on first use. Wayland mouse and keyboard input require
+access to `/dev/uinput` (normally through the system's input-device permissions). Hosted servers
+under `xvfb-run` continue to use X11. The arm64 AppImage does not include the runtime.
 
 ## Computer Use is unavailable
 
