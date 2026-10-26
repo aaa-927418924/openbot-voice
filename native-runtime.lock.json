@@ -293,7 +293,7 @@
     }
   },
   "remoteDesktop": {
-    "recipeVersion": 15,
+    "recipeVersion": 16,
     "sunshine": {
       "sourceMode": "upstream-with-patch",
       "repository": "https://github.com/LizardByte/Sunshine.git",
@@ -309,7 +309,7 @@
       "licenseSha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
       "patch": {
         "path": "vendor/remote-desktop/patches/sunshine-v2026.516.143833-openbot.patch",
-        "sha256": "db586815acf867522687b268318d081076ad5192569b745057a3b705d2e79e04"
+        "sha256": "12396c0191098079b115fa912564d95a4403e0b529539cab51cc0aeb5174dbe4"
       },
       "overrides": [],
       "submodules": {
