@@ -32,7 +32,7 @@ const LINUX_SUNSHINE_OPTIONS = [
   "-DSUNSHINE_ENABLE_TRAY=OFF",
   "-DSUNSHINE_ENABLE_VAAPI=OFF",
   "-DSUNSHINE_ENABLE_VULKAN=OFF",
-  "-DSUNSHINE_ENABLE_WAYLAND=OFF",
+  "-DSUNSHINE_ENABLE_WAYLAND=ON",
   "-DSUNSHINE_ENABLE_X11=ON",
 ];
 
@@ -225,7 +225,15 @@ function requiredSunshineSubmodules(targetPlatform: "darwin" | "win32" | "linux"
     "third-party/tray",
   ];
   if (targetPlatform === "darwin") return [...common, "third-party/TPCircularBuffer"];
-  if (targetPlatform === "linux") return [...common, "third-party/glad", "third-party/inputtino"];
+  if (targetPlatform === "linux") {
+    return [
+      ...common,
+      "third-party/glad",
+      "third-party/inputtino",
+      "third-party/wayland-protocols",
+      "third-party/wlr-protocols",
+    ];
+  }
   return [...common, "third-party/ViGEmClient", "third-party/glad", "third-party/nvapi"];
 }
 
