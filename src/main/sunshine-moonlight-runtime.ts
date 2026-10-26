@@ -22,6 +22,7 @@ import { listenLoopback } from "./listen-loopback";
 import { desktopCall, desktopFailure, desktopSync, type RemoteDesktopOperationError } from "./remote-desktop-effects";
 import type { RemoteDesktopRuntimePaths } from "./remote-desktop-runtime-artifact";
 import { forwardDiagnosticLines, stopRemoteProcess } from "./remote-diagnostics";
+import { ensureSunshineCertificate } from "./sunshine-certificate";
 
 export class SunshineApiError extends Schema.TaggedError<SunshineApiError>()("SunshineApiError", {
   status: Schema.Int,
@@ -641,6 +642,7 @@ export class SunshineMoonlightRuntime {
   ): Effect.fn.Return<void, RemoteDesktopOperationError> {
     const basePort = this.#sunshineBasePort;
     if (basePort === null) return yield* desktopFailure(new Error("Sunshine ports have not been allocated yet."));
+    yield* desktopCall(() => ensureSunshineCertificate(this.#options.stateDirectory));
     const values = [
       "sunshine_name = OpenBot Remote Desktop",
       // The base port: every other Sunshine port (GameStream HTTP/HTTPS, Web UI HTTPS, video,

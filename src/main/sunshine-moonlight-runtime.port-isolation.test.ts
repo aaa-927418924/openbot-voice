@@ -128,36 +128,6 @@ interface Harness {
   closeAll(): Promise<void>;
 }
 
-function generateSunshineCert(certPath: string, keyPath: string): void {
-  try {
-    execFileSync(
-      "openssl",
-      [
-        "req",
-        "-x509",
-        "-newkey",
-        "ec",
-        "-pkeyopt",
-        "ec_paramgen_curve:prime256v1",
-        "-keyout",
-        keyPath,
-        "-out",
-        certPath,
-        "-days",
-        "2",
-        "-nodes",
-        "-subj",
-        "/CN=127.0.0.1",
-      ],
-      { stdio: "pipe" },
-    );
-  } catch (error) {
-    throw new Error(
-      `Fake Sunshine needs openssl to mint a test certificate: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-}
-
 async function listenOn(server: TcpServer | HttpServer | HttpsServer, port: number): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
@@ -334,7 +304,6 @@ function createHarness(stateDirectory: string): Harness {
         const config = readFileSync(args[0] ?? "", "utf8");
         const base = Number(/^\s*port\s*=\s*(\d+)\s*$/m.exec(config)?.[1]);
         if (!Number.isInteger(base)) throw new Error("Fake Sunshine did not receive a base port in sunshine.conf.");
-        generateSunshineCert(join(stateDirectory, "sunshine-cert.pem"), join(stateDirectory, "sunshine-key.pem"));
         let server: HttpsServer | null = null;
         const child = new FakeChild(() => {
           void closeServer(server);
