@@ -70,6 +70,17 @@
   flex: 0 0 auto;
 }
 
+.remote-desktop-back-button {
+  display: grid;
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  margin-left: 8px;
+  padding: 0;
+  place-items: center;
+  border-radius: var(--openbot-radius-pill);
+}
+
 .remote-desktop-disconnect-button {
   color: var(--openbot-text-muted);
 }

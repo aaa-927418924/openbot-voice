@@ -211,17 +211,6 @@ export function RemoteDesktopWorkspace(props: RemoteDesktopWorkspaceProps) {
             <div class="no-drag remote-desktop-actions">
               <Button
                 type="button"
-                class="remote-desktop-back-button"
-                size="sm"
-                variant="ghost"
-                data-cuelume-tap="navigate"
-                onClick={props.onHide}
-              >
-                <ArrowLeft size={14} aria-hidden="true" />
-                {t("remoteDesktop.backToOpenBot")}
-              </Button>
-              <Button
-                type="button"
                 class="remote-desktop-disconnect-button"
                 size="sm"
                 variant="ghost"
@@ -235,6 +224,20 @@ export function RemoteDesktopWorkspace(props: RemoteDesktopWorkspaceProps) {
           </Show>
           <Show when={props.testControls}>
             <div class="no-drag remote-desktop-actions">{props.testControls}</div>
+          </Show>
+          <Show when={!props.testControls}>
+            <Button
+              type="button"
+              class="no-drag remote-desktop-back-button"
+              size="sm"
+              variant="ghost"
+              aria-label={t("remoteDesktop.backToOpenBot")}
+              title={t("remoteDesktop.backToOpenBot")}
+              data-cuelume-tap="navigate"
+              onClick={props.onHide}
+            >
+              <ArrowLeft size={17} aria-hidden="true" />
+            </Button>
           </Show>
         </header>
         <div class="remote-desktop-stage">

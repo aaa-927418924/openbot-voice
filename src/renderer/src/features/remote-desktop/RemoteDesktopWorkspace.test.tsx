@@ -88,6 +88,14 @@ describe("RemoteDesktopWorkspace", () => {
     expect(screen.getByTitle("Sunshine remote desktop")).toBe(frame);
   });
 
+  it("shows the back button while the host is still connecting", async () => {
+    const { onHide } = renderWorkspace();
+    const back = screen.getByRole("button", { name: "Back to OpenBot" });
+    expect(back).toBeVisible();
+    await fireEvent.click(back);
+    expect(onHide).toHaveBeenCalledOnce();
+  });
+
   it("keeps the header minimal and supports selecting a shared monitor", async () => {
     const { onSelectDisplay, onDisconnect } = renderWorkspace({ session });
     const frame = screen.getByTitle("Sunshine remote desktop");
@@ -135,6 +143,21 @@ describe("RemoteDesktopWorkspace", () => {
     await waitFor(() => expect(onRetry).toHaveBeenCalledOnce());
     expect(screen.getByRole("alert")).toHaveTextContent("The WebRTC connection failed.");
     expect(screen.getByRole("alert")).not.toHaveTextContent("Screen Recording");
+  });
+
+  it("keeps the back button available on a connection error", async () => {
+    const failed = {
+      ...session,
+      phase: "error" as const,
+      errorCode: "connection_failed" as const,
+      message: "The WebRTC connection failed.",
+    };
+    const { onHide } = renderWorkspace({ session: failed });
+
+    const back = screen.getByRole("button", { name: "Back to OpenBot" });
+    expect(back).toBeVisible();
+    await fireEvent.click(back);
+    expect(onHide).toHaveBeenCalledOnce();
   });
 
   it("names the host and the repair step when the host may not record its screen", async () => {
