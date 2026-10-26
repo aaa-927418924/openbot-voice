@@ -1,6 +1,6 @@
 import type { createWorkspacePreferences, RemoteWorkspacePreferences } from "@openbot/team-client";
 
-const MAX_PINNED_AGENTS = 16;
+const MAX_PINNED_AGENTS = 6;
 
 export function canToggleAgentPin(pinned: readonly string[], agentId: string): boolean {
   return pinned.includes(agentId) || pinned.length < MAX_PINNED_AGENTS;

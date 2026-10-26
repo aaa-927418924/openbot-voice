@@ -16,7 +16,6 @@ import { useChatSectionMenu } from "@/features/agents/components/use-chat-sectio
 import { useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
 import { canToggleAgentPin } from "@/features/workspace/model/agent-pins";
 import type { MobileAgent } from "@/features/workspace/model/workspace-types";
-import { formatUpdatedAt } from "@/shared/lib/format-updated-at";
 import { haptics } from "@/shared/lib/haptics";
 import { isAndroid } from "@/shared/lib/platform";
 import { currentText, useText } from "@/shared/lib/text";
@@ -33,7 +32,7 @@ export const ChannelListRow = memo(function ChannelListRow({
   agents: ReadonlyMap<string, MobileAgent>;
   pinned?: boolean;
 }) {
-  const { t, format } = useText();
+  const { t } = useText();
   const { pinnedAgentIds, pinnedChannelIds, hideChannel, servers, channelStore } = useMobileWorkspace();
   const { toggleChannelPinAnimated } = useAgentPinTransition();
   const { theme } = useUniwind();
@@ -146,16 +145,16 @@ export const ChannelListRow = memo(function ChannelListRow({
               className={
                 pinned
                   ? "w-full items-center gap-2 px-1"
-                  : "min-h-20 w-full flex-row items-center gap-3 bg-background py-1"
+                  : "min-h-[72px] w-full flex-row items-center gap-3 bg-background py-1"
               }
               style={{ paddingLeft: pinned ? 4 : 15, paddingRight: pinned ? 4 : 24, opacity: pressed ? 0.58 : 1 }}
             >
               <Link.AppleZoom>
-                <AgentPinAvatar agentId={channel.id} location={pinned ? "pinned" : "row"} size={pinned ? 64 : 54}>
+                <AgentPinAvatar agentId={channel.id} location={pinned ? "pinned" : "row"} size={pinned ? 72 : 60}>
                   <ChannelAvatar
                     channel={channel}
                     agents={agents}
-                    size={pinned ? 64 : 54}
+                    size={pinned ? 72 : 60}
                     disconnected={disconnected}
                   />
                   {pinned && channel.unreadCount > 0 ? (
@@ -187,9 +186,6 @@ export const ChannelListRow = memo(function ChannelListRow({
                       <Typography.Paragraph className="min-w-0 flex-1" weight="semibold" numberOfLines={2}>
                         {channel.name}
                       </Typography.Paragraph>
-                      <Typography.Paragraph type="body-xs" className="text-muted">
-                        {formatUpdatedAt(channel.lastMessage?.at ?? channel.createdAt, format)}
-                      </Typography.Paragraph>
                     </View>
                     {channel.title.trim() ? (
                       <Typography.Paragraph type="body-xs" className="-mt-1.5 text-muted" numberOfLines={2}>
@@ -197,9 +193,16 @@ export const ChannelListRow = memo(function ChannelListRow({
                       </Typography.Paragraph>
                     ) : null}
                   </View>
-                  <Typography.Paragraph type="body-xs" className="text-text-secondary -mt-1" numberOfLines={1}>
-                    {channel.lastMessage?.text ?? t("mobile.channel.list.noMessages")}
-                  </Typography.Paragraph>
+                  <View className="mx-1 min-w-0">
+                    <Typography.Paragraph
+                      type="body-xs"
+                      className="text-text-secondary -mt-1"
+                      numberOfLines={1}
+                      ellipsizeMode="tail"
+                    >
+                      {channel.lastMessage?.text ?? t("mobile.channel.list.noMessages")}
+                    </Typography.Paragraph>
+                  </View>
                 </View>
               )}
             </View>

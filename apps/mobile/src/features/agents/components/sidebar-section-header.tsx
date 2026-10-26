@@ -3,10 +3,9 @@ import type { SidebarLayoutAction } from "@openbot/contracts/ipc";
 import { router } from "expo-router";
 import { Typography } from "heroui-native";
 import { useThemeColor } from "heroui-native/hooks";
-import { ChevronRight, Ellipsis } from "lucide-react-native";
+import { Ellipsis } from "lucide-react-native";
 import { useRef, useState } from "react";
 import { Alert, Pressable, View } from "react-native";
-import Animated, { cubicBezier, useReducedMotion } from "react-native-reanimated";
 import { useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
 import { haptics } from "@/shared/lib/haptics";
 import { currentText, useText } from "@/shared/lib/text";
@@ -29,7 +28,6 @@ export function SidebarSectionHeader({
   const { t } = useText();
   const { activeServer, sidebarByServer, mutateSidebarLayout } = useMobileWorkspace();
   const muted = String(useThemeColor("muted"));
-  const reducedMotion = useReducedMotion();
   const layout = sidebarByServer[activeServer.id]?.layout;
   const pending = useRef(false);
   const [saving, setSaving] = useState(false);
@@ -71,7 +69,7 @@ export function SidebarSectionHeader({
       : []),
   ];
   return (
-    <View className="px-4 pt-5 pb-2">
+    <View className="px-4 pt-3 pb-1">
       <View className="flex-row items-center">
         <Pressable
           accessibilityRole="button"
@@ -81,19 +79,9 @@ export function SidebarSectionHeader({
             void haptics.selection();
             onToggle();
           }}
-          className="min-h-12 flex-1 flex-row items-center gap-2"
+          className="min-h-10 flex-1 flex-row items-center"
           style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
         >
-          <Animated.View
-            style={{
-              transform: [{ rotate: collapsed ? "0deg" : "90deg" }],
-              transitionProperty: "transform",
-              transitionDuration: reducedMotion ? 0 : 120,
-              transitionTimingFunction: cubicBezier(0.23, 1, 0.32, 1),
-            }}
-          >
-            <ChevronRight size={16} color={muted} />
-          </Animated.View>
           <Typography.Paragraph className="flex-1 text-muted">{name}</Typography.Paragraph>
         </Pressable>
         <MenuView

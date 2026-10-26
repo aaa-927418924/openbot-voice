@@ -31,7 +31,7 @@ const PINNED_ITEM_LAYOUT = CurvedTransition.duration(240)
   .reduceMotion(ReduceMotion.System);
 const PINNED_ENTER = FadeIn.duration(180).easing(EASE_OUT).reduceMotion(ReduceMotion.System);
 const PINNED_EXIT = FadeOut.duration(140).easing(EASE_OUT).reduceMotion(ReduceMotion.System);
-const PINNED_COLUMNS = 4;
+const PINNED_COLUMNS = 3;
 const PINNED_PADDING_X = 12;
 
 // The Android menu sizes its child to the child's content, so a full-width label does not truncate.
@@ -56,6 +56,7 @@ export function PinnedAgentsGrid({ agents, children }: PropsWithChildren<{ agent
             style={{
               flexDirection: "row",
               flexWrap: "wrap",
+              justifyContent: "center",
               rowGap: 18,
               paddingHorizontal: PINNED_PADDING_X,
               paddingVertical: 22,
@@ -100,13 +101,13 @@ function PinnedAgentItem({ agent }: { agent: MobileAgent }) {
           style={({ pressed }) => ({ opacity: pressed ? 0.58 : 1 })}
         >
           <Link.AppleZoom>
-            <AgentPinAvatar agentId={agent.id} location="pinned" size={64}>
+            <AgentPinAvatar agentId={agent.id} location="pinned" size={72}>
               <BloubAvatar
                 agentId={agent.id}
                 serverId={agent.serverId}
                 hue={agent.avatarHue}
                 seed={agent.avatarSeed}
-                size={64}
+                size={72}
                 animateIdle={false}
               />
               {isUnread ? (

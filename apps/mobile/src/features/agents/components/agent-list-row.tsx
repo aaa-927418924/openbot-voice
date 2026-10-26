@@ -120,7 +120,7 @@ export function AgentListRow({
       serverId={agent.serverId}
       hue={agent.avatarHue}
       seed={agent.avatarSeed}
-      size={54}
+      size={60}
       animateIdle={false}
     />
   );
@@ -128,7 +128,7 @@ export function AgentListRow({
     bloub
   ) : (
     <Link.AppleZoom>
-      <AgentPinAvatar agentId={agent.id} location="row" size={54}>
+      <AgentPinAvatar agentId={agent.id} location="row" size={60}>
         {bloub}
       </AgentPinAvatar>
     </Link.AppleZoom>
@@ -160,7 +160,7 @@ export function AgentListRow({
     >
       {({ pressed }) => (
         <View
-          className="min-h-20 w-full flex-row items-center gap-3 py-1"
+          className="min-h-[72px] w-full flex-row items-center gap-3 py-1"
           style={{
             // In the Android search sheet the row shows the sheet color, not the home list color.
             backgroundColor: onOpen && isAndroid ? "transparent" : background,
@@ -178,9 +178,6 @@ export function AgentListRow({
                   <Typography.Paragraph className="min-w-0 flex-1" weight="semibold" numberOfLines={2}>
                     {agent.name}
                   </Typography.Paragraph>
-                  <Typography.Paragraph type="body-xs" className="text-muted">
-                    {agent.updatedLabel}
-                  </Typography.Paragraph>
                 </View>
                 {agent.title.trim() ? (
                   <Typography.Paragraph type="body-xs" className="-mt-1.5 text-muted" numberOfLines={2}>
@@ -188,9 +185,16 @@ export function AgentListRow({
                   </Typography.Paragraph>
                 ) : null}
               </View>
-              <Typography.Paragraph type="body-xs" className="text-text-secondary -mt-1" numberOfLines={1}>
-                {previewLine}
-              </Typography.Paragraph>
+              <View className="mx-1 min-w-0">
+                <Typography.Paragraph
+                  type="body-xs"
+                  className="text-text-secondary -mt-1"
+                  numberOfLines={1}
+                  ellipsizeMode="tail"
+                >
+                  {previewLine}
+                </Typography.Paragraph>
+              </View>
             </View>
           </AgentRowTextReveal>
           {enableActions ? agentChatPreview.measurer : null}
