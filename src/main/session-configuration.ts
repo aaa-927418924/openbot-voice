@@ -18,7 +18,7 @@ import type { AgentService } from "../backend/agent-service";
 import { runCauseEffect } from "../backend/effect-boundary";
 import type { MailboxStore } from "../backend/mailbox-store";
 import { buildContentSecurityPolicy, readSelfHostedSignalOrigin } from "./content-security-policy";
-import { fileResponse } from "./file-response";
+import { byteRangeResponse, fileResponse } from "./file-response";
 import type { RemoteServerManager } from "./remote-server-manager";
 import { canCheckRendererPermission, canRequestRendererPermission } from "./renderer-permissions";
 import type { TeamStore } from "./team-store";
@@ -69,14 +69,18 @@ export function configureAttachmentProtocol({ mailbox, agents, remoteServers }: 
       const attachment = id ? await runCauseEffect(mailbox.resolveAttachment(id)) : null;
       if (!attachment) return new Response("Not found", { status: 404 });
       return await runCauseEffect(
-        fileResponse(attachment.path, {
-          "Content-Type": attachment.mimeType,
-          "Cache-Control": "no-store",
-          "Access-Control-Allow-Origin": request.headers.get("Origin") ?? "*",
-          Vary: "Origin",
-          "X-Content-Type-Options": "nosniff",
-          "Content-Disposition": "inline",
-        }),
+        fileResponse(
+          attachment.path,
+          {
+            "Content-Type": attachment.mimeType,
+            "Cache-Control": "no-store",
+            "Access-Control-Allow-Origin": request.headers.get("Origin") ?? "*",
+            Vary: "Origin",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Disposition": "inline",
+          },
+          request.headers.get("Range"),
+        ),
       );
     } catch {
       return new Response("Not found", { status: 404 });
@@ -89,8 +93,9 @@ export function configureAttachmentProtocol({ mailbox, agents, remoteServers }: 
       const attachmentId = decodeURIComponent(url.pathname.split("/").filter(Boolean)[0] ?? "");
       if (!serverId || !attachmentId) return new Response("Not found", { status: 404 });
       const attachment = await runCauseEffect(remoteServers.downloadAttachment(attachmentId, serverId));
-      return new Response(Buffer.from(attachment.bytes), {
-        headers: {
+      return byteRangeResponse(
+        Buffer.from(attachment.bytes),
+        {
           "Content-Type": attachment.mimeType,
           "Cache-Control": "no-store",
           "Access-Control-Allow-Origin": request.headers.get("Origin") ?? "*",
@@ -98,7 +103,8 @@ export function configureAttachmentProtocol({ mailbox, agents, remoteServers }: 
           "X-Content-Type-Options": "nosniff",
           "Content-Disposition": "inline",
         },
-      });
+        request.headers.get("Range"),
+      );
     } catch {
       return new Response("Not found", { status: 404 });
     }

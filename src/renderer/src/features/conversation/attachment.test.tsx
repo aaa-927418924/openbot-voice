@@ -142,4 +142,24 @@ describe("AttachmentCards download", () => {
     expect(onAction).toHaveBeenCalledWith(video, "download");
     expect(onPreview).not.toHaveBeenCalled();
   });
+
+  it("opens the video in an expanded preview inside the app dialog", async () => {
+    const video = {
+      id: "clip",
+      name: "clip.mp4",
+      size: 2_048,
+      kind: "file" as const,
+      mimeType: "video/mp4",
+      previewKind: "none" as const,
+      previewUrl: "openbot-attachment://file/clip",
+    };
+    render(() => <AttachmentCards attachments={[video]} onPreview={vi.fn()} onAction={vi.fn()} />);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Expand" }));
+
+    const expandedPlayer = await screen.findByRole("dialog");
+    expect(expandedPlayer).toBeTruthy();
+    expect(expandedPlayer.querySelector("video")?.getAttribute("controlslist")).toBe("nofullscreen");
+    expect(screen.getAllByLabelText("Preview clip.mp4")).toHaveLength(2);
+  });
 });

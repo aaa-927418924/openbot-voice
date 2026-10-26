@@ -1,7 +1,7 @@
 import { playableMediaKind } from "@openbot/contracts/attachment-files";
 import { type AttachmentSummary, canPreviewAttachment } from "@openbot/contracts/ipc";
-import { Button, Download, Spinner } from "@openbot/ui";
-import { createSignal, createUniqueId, For, Show } from "solid-js";
+import { Button, Dialog, Download, Maximize2, Spinner, X } from "@openbot/ui";
+import { createSignal, createUniqueId, For, onCleanup, Show } from "solid-js";
 import { useText } from "../../text";
 import { AnchoredTooltip } from "./AnchoredTooltip";
 import { attachmentReferenceTone } from "./AttachmentReference";
@@ -64,6 +64,12 @@ export function AttachmentCards(props: {
   // An image whose preview does not load was deleted from the host, or never arrived. The card
   // keeps its place in the message and says so, instead of an empty frame.
   const [missing, setMissing] = createSignal<ReadonlySet<string>>(new Set());
+  const [expandedVideo, setExpandedVideo] = createSignal<{
+    attachment: AttachmentSummary;
+    currentTime: number;
+    wasPlaying: boolean;
+  } | null>(null);
+  const videoElements = new Map<string, HTMLVideoElement>();
   const isMissing = (attachment: AttachmentSummary) => missing().has(attachment.id);
   const markMissing = (attachment: AttachmentSummary) => setMissing((current) => new Set(current).add(attachment.id));
 
@@ -81,128 +87,237 @@ export function AttachmentCards(props: {
     <>
       <div class="message-attachments">
         <For each={props.attachments}>
-          {(attachment) => (
-            <div
-              class="message-attachment"
-              data-kind={playableMediaKind(attachment.mimeType) === "video" ? "video" : undefined}
-              data-status={isMissing(attachment) ? "missing" : undefined}
-            >
-              <Show
-                when={playableMediaKind(attachment.mimeType) === "video"}
-                fallback={
-                  <Button
-                    variant="ghost"
-                    type="button"
-                    class="attachment-preview-button"
-                    disabled={isMissing(attachment) || !canPreviewAttachment(attachment)}
-                    aria-label={t("attachment.preview", { name: attachment.name })}
-                    data-attachment-id={attachment.id}
-                    data-cuelume-tap="open"
-                    onClick={(event) => props.onPreview(attachment, event.currentTarget)}
-                  >
-                    <Show
-                      when={attachment.previewKind === "image" && attachment.previewUrl && !isMissing(attachment)}
-                      fallback={
-                        <span
-                          class="attachment-file-visual"
-                          data-file-tone={attachmentReferenceTone(attachment.name)}
-                          aria-hidden="true"
-                        >
-                          <AttachmentFileIcon />
-                        </span>
-                      }
-                    >
-                      <span
-                        class="attachment-file-visual attachment-file-image"
-                        data-file-tone={attachmentReferenceTone(attachment.name)}
-                      >
-                        <img
-                          src={attachment.previewUrl ?? ""}
-                          alt=""
-                          loading="lazy"
-                          decoding="async"
-                          onError={() => markMissing(attachment)}
-                        />
-                      </span>
-                    </Show>
-                    <span class="attachment-file-copy">
-                      <strong>{attachment.name}</strong>
-                      <small>
-                        {isMissing(attachment) ? t("attachment.notFound") : format.fileSize(attachment.size)}
-                      </small>
-                    </span>
-                  </Button>
-                }
+          {(attachment) => {
+            let inlineVideo: HTMLVideoElement | undefined;
+            onCleanup(() => {
+              if (videoElements.get(attachment.id) === inlineVideo) videoElements.delete(attachment.id);
+            });
+            const openExpandedVideo = () => {
+              if (!inlineVideo) return;
+              const wasPlaying = !inlineVideo.paused;
+              const currentTime = inlineVideo.currentTime;
+              inlineVideo.pause();
+              setExpandedVideo({ attachment, currentTime, wasPlaying });
+            };
+            return (
+              <div
+                class="message-attachment"
+                data-kind={playableMediaKind(attachment.mimeType) === "video" ? "video" : undefined}
+                data-status={isMissing(attachment) ? "missing" : undefined}
               >
                 <Show
-                  when={attachment.previewUrl}
+                  when={playableMediaKind(attachment.mimeType) === "video"}
                   fallback={
+                    <Button
+                      variant="ghost"
+                      type="button"
+                      class="attachment-preview-button"
+                      disabled={isMissing(attachment) || !canPreviewAttachment(attachment)}
+                      aria-label={t("attachment.preview", { name: attachment.name })}
+                      data-attachment-id={attachment.id}
+                      data-cuelume-tap="open"
+                      onClick={(event) => props.onPreview(attachment, event.currentTarget)}
+                    >
+                      <Show
+                        when={attachment.previewKind === "image" && attachment.previewUrl && !isMissing(attachment)}
+                        fallback={
+                          <span
+                            class="attachment-file-visual"
+                            data-file-tone={attachmentReferenceTone(attachment.name)}
+                            aria-hidden="true"
+                          >
+                            <AttachmentFileIcon />
+                          </span>
+                        }
+                      >
+                        <span
+                          class="attachment-file-visual attachment-file-image"
+                          data-file-tone={attachmentReferenceTone(attachment.name)}
+                        >
+                          <img
+                            src={attachment.previewUrl ?? ""}
+                            alt=""
+                            loading="lazy"
+                            decoding="async"
+                            onError={() => markMissing(attachment)}
+                          />
+                        </span>
+                      </Show>
+                      <span class="attachment-file-copy">
+                        <strong>{attachment.name}</strong>
+                        <small>
+                          {isMissing(attachment) ? t("attachment.notFound") : format.fileSize(attachment.size)}
+                        </small>
+                      </span>
+                    </Button>
+                  }
+                >
+                  <Show
+                    when={attachment.previewUrl}
+                    fallback={
+                      <div class="attachment-video-metadata">
+                        <strong>{attachment.name}</strong>
+                        <small>{format.fileSize(attachment.size)}</small>
+                      </div>
+                    }
+                  >
+                    <div class="message-video-player">
+                      <video
+                        ref={(element) => {
+                          inlineVideo = element;
+                          videoElements.set(attachment.id, element);
+                        }}
+                        class="message-video-preview"
+                        aria-label={t("attachment.preview", { name: attachment.name })}
+                        controls
+                        controlslist="nofullscreen"
+                        playsinline
+                        preload="metadata"
+                        src={attachment.previewUrl ?? ""}
+                      >
+                        <track kind="captions" />
+                      </video>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        type="button"
+                        class="message-video-expand"
+                        aria-label={t("chat.preview.expandLabel")}
+                        title={t("chat.preview.expandLabel")}
+                        onClick={openExpandedVideo}
+                      >
+                        <Maximize2 aria-hidden="true" />
+                      </Button>
+                    </div>
                     <div class="attachment-video-metadata">
                       <strong>{attachment.name}</strong>
                       <small>{format.fileSize(attachment.size)}</small>
                     </div>
-                  }
-                >
-                  <video
-                    class="message-video-preview"
-                    aria-label={t("attachment.preview", { name: attachment.name })}
-                    controls
-                    playsinline
-                    preload="metadata"
-                    src={attachment.previewUrl ?? ""}
-                  >
-                    <track kind="captions" />
-                  </video>
-                  <div class="attachment-video-metadata">
-                    <strong>{attachment.name}</strong>
-                    <small>{format.fileSize(attachment.size)}</small>
-                  </div>
+                  </Show>
                 </Show>
-              </Show>
-              <Show when={!isMissing(attachment)}>
-                <Button
-                  variant="ghost"
-                  type="button"
-                  class="attachment-open-button"
-                  aria-label={t("attachment.download", { name: attachment.name })}
-                  onClick={() => {
-                    setTooltip(null);
-                    props.onAction(attachment, "download");
-                  }}
-                >
-                  <Download />
-                </Button>
-                <Show when={playableMediaKind(attachment.mimeType) !== "video"}>
+                <Show when={!isMissing(attachment)}>
                   <Button
                     variant="ghost"
                     type="button"
                     class="attachment-open-button"
-                    aria-label={t("attachment.open", { name: attachment.name })}
-                    aria-describedby={tooltipId}
-                    onPointerEnter={(event) => openTooltip(event.currentTarget)}
-                    onMouseEnter={(event) => openTooltip(event.currentTarget)}
-                    onPointerLeave={(event) => closeTooltip(event.currentTarget)}
-                    onMouseLeave={(event) => closeTooltip(event.currentTarget)}
-                    onFocus={(event) => openTooltip(event.currentTarget)}
-                    onBlur={(event) => closeTooltip(event.currentTarget)}
-                    onKeyDown={closeTooltipOnEscape}
+                    aria-label={t("attachment.download", { name: attachment.name })}
                     onClick={() => {
                       setTooltip(null);
-                      props.onAction(attachment, "open");
+                      props.onAction(attachment, "download");
                     }}
                   >
-                    <AttachmentOpenIcon />
+                    <Download />
                   </Button>
+                  <Show when={playableMediaKind(attachment.mimeType) !== "video"}>
+                    <Button
+                      variant="ghost"
+                      type="button"
+                      class="attachment-open-button"
+                      aria-label={t("attachment.open", { name: attachment.name })}
+                      aria-describedby={tooltipId}
+                      onPointerEnter={(event) => openTooltip(event.currentTarget)}
+                      onMouseEnter={(event) => openTooltip(event.currentTarget)}
+                      onPointerLeave={(event) => closeTooltip(event.currentTarget)}
+                      onMouseLeave={(event) => closeTooltip(event.currentTarget)}
+                      onFocus={(event) => openTooltip(event.currentTarget)}
+                      onBlur={(event) => closeTooltip(event.currentTarget)}
+                      onKeyDown={closeTooltipOnEscape}
+                      onClick={() => {
+                        setTooltip(null);
+                        props.onAction(attachment, "open");
+                      }}
+                    >
+                      <AttachmentOpenIcon />
+                    </Button>
+                  </Show>
                 </Show>
-              </Show>
-            </div>
-          )}
+              </div>
+            );
+          }}
         </For>
       </div>
+      <Show when={expandedVideo()}>
+        {(current) => (
+          <ExpandedVideoPreview
+            attachment={current().attachment}
+            currentTime={current().currentTime}
+            wasPlaying={current().wasPlaying}
+            onClose={(currentTime, shouldResume) => {
+              const attachment = current().attachment;
+              setExpandedVideo(null);
+              const inline = videoElements.get(attachment.id);
+              if (!inline) return;
+              inline.currentTime = currentTime;
+              if (shouldResume) void inline.play().catch(() => undefined);
+            }}
+          />
+        )}
+      </Show>
       <Show when={tooltip()}>
         {(current) => <AnchoredTooltip id={tooltipId} anchor={current().anchor} content={current().content} />}
       </Show>
     </>
+  );
+}
+
+function ExpandedVideoPreview(props: {
+  attachment: AttachmentSummary;
+  currentTime: number;
+  wasPlaying: boolean;
+  onClose: (currentTime: number, shouldResume: boolean) => void;
+}) {
+  const { t } = useText();
+  let video: HTMLVideoElement | undefined;
+  let closed = false;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    props.onClose(video?.currentTime ?? props.currentTime, video ? !video.paused : props.wasPlaying);
+  };
+
+  return (
+    <Dialog.Root open onOpenChange={(open) => !open && close()}>
+      <Dialog.Portal>
+        <Dialog.Overlay class="message-preview-backdrop">
+          <Dialog.Content class="message-video-preview-dialog" as="section">
+            <header class="message-preview-dialog-header">
+              <Dialog.Title class="message-preview-dialog-title">{props.attachment.name}</Dialog.Title>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                type="button"
+                aria-label={t("common.close")}
+                title={t("common.close")}
+                onClick={close}
+              >
+                <X aria-hidden="true" />
+              </Button>
+            </header>
+            <div class="message-video-preview-dialog-body">
+              <video
+                ref={(element) => (video = element)}
+                class="message-video-preview-expanded"
+                aria-label={t("attachment.preview", { name: props.attachment.name })}
+                controls
+                controlslist="nofullscreen"
+                playsinline
+                preload="metadata"
+                src={props.attachment.previewUrl ?? ""}
+                onLoadedMetadata={(event) => {
+                  const element = event.currentTarget;
+                  if (props.currentTime > 0 && props.currentTime < element.duration) {
+                    element.currentTime = props.currentTime;
+                  }
+                  if (props.wasPlaying) void element.play().catch(() => undefined);
+                }}
+              >
+                <track kind="captions" />
+              </video>
+            </div>
+          </Dialog.Content>
+        </Dialog.Overlay>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }
 
