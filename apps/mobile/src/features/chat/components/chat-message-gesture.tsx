@@ -11,10 +11,12 @@ import { useText } from "@/shared/lib/text";
 
 export function ChatMessageGesture({
   children,
+  className = "max-w-[88%] self-start",
   screenReaderEnabled,
   onReply,
   onOpenActions,
 }: PropsWithChildren<{
+  className?: string;
   screenReaderEnabled: boolean;
   onReply?: () => void;
   onOpenActions: () => void;
@@ -57,7 +59,7 @@ export function ChatMessageGesture({
   }, [canReply, offset]);
 
   return (
-    <View className="max-w-[88%] self-start">
+    <View className={className}>
       <Animated.View pointerEvents="none" className="absolute bottom-0 left-0 top-0 justify-center" style={iconStyle}>
         <Reply color={muted} size={22} />
       </Animated.View>

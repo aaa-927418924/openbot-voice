@@ -594,7 +594,7 @@ const MessageRow = memo(function MessageRow({
             <ChatMarkdown
               agents={agents}
               body={message.body}
-              selectable={message.author === "user"}
+              selectable={false}
               color={message.author === "user" && userBubbleStyle && !memberColor ? userForeground : foreground}
               playback={playback}
               animationEnabled={shared.animationActive && arrivals.has(message.id)}
@@ -633,10 +633,11 @@ const MessageRow = memo(function MessageRow({
           </Typography.Paragraph>
         </View>
       ) : null}
-      {message.author === "agent" ? (
+      {message.author === "agent" || message.author === "user" ? (
         <ChatMessageGesture
+          className={message.author === "user" ? "max-w-full self-end" : "max-w-[88%] self-start"}
           screenReaderEnabled={screenReaderEnabled}
-          onReply={shared.canReply ? () => actions.reply(message) : undefined}
+          onReply={message.author === "agent" && shared.canReply ? () => actions.reply(message) : undefined}
           onOpenActions={() => actions.openActions(message)}
         >
           {rendered}
