@@ -49,7 +49,6 @@ function renderWorkspace(
   const onHide = vi.fn(() => setVisible(false));
   const onRetry = vi.fn(async () => undefined);
   const onSelectDisplay = vi.fn(async () => undefined);
-  const onDisconnect = vi.fn(async () => undefined);
   render(() => (
     <RemoteDesktopWorkspace
       visible={visible()}
@@ -62,15 +61,14 @@ function renderWorkspace(
       onHide={onHide}
       onRetry={onRetry}
       onSelectDisplay={onSelectDisplay}
-      onDisconnect={onDisconnect}
     />
   ));
-  return { onHide, onRetry, onSelectDisplay, onDisconnect, setVisible };
+  return { onHide, onRetry, onSelectDisplay, setVisible };
 }
 
 describe("RemoteDesktopWorkspace", () => {
   it("keeps the Moonlight iframe mounted when the workspace is hidden", async () => {
-    const { onHide, onDisconnect, setVisible } = renderWorkspace({ session });
+    const { onHide, setVisible } = renderWorkspace({ session });
     const frame = screen.getByTitle("Sunshine remote desktop");
     const workspace = screen.getByRole("main", { name: "Remote control" });
     expect(frame).toHaveAttribute("src", `${session.viewerUrl}#${session.viewerGrant}`);
@@ -78,7 +76,6 @@ describe("RemoteDesktopWorkspace", () => {
 
     await fireEvent.click(screen.getByRole("button", { name: "Back to OpenBot" }));
     expect(onHide).toHaveBeenCalledOnce();
-    expect(onDisconnect).not.toHaveBeenCalled();
     expect(workspace).toHaveAttribute("aria-hidden", "true");
     expect(workspace.inert).toBe(true);
     expect(screen.getByTitle("Sunshine remote desktop")).toBe(frame);
@@ -97,7 +94,7 @@ describe("RemoteDesktopWorkspace", () => {
   });
 
   it("keeps the header minimal and supports selecting a shared monitor", async () => {
-    const { onSelectDisplay, onDisconnect } = renderWorkspace({ session });
+    const { onSelectDisplay } = renderWorkspace({ session });
     const frame = screen.getByTitle("Sunshine remote desktop");
     if (!(frame instanceof HTMLIFrameElement)) throw new Error("Remote viewer is not an iframe.");
 
@@ -120,10 +117,7 @@ describe("RemoteDesktopWorkspace", () => {
     });
     await fireEvent.click(screen.getByRole("option", { name: "Second display" }));
     expect(onSelectDisplay).toHaveBeenCalledWith(server.id, "display-2");
-    const disconnectButton = screen.getByRole("button", { name: "Disconnect" });
-    await waitFor(() => expect(disconnectButton).toBeEnabled());
-    await fireEvent.click(disconnectButton);
-    await waitFor(() => expect(onDisconnect).toHaveBeenCalledOnce());
+    expect(screen.queryByRole("button", { name: "Disconnect" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/password/iu)).not.toBeInTheDocument();
     expect(screen.queryByText(/view.only/iu)).not.toBeInTheDocument();
   });

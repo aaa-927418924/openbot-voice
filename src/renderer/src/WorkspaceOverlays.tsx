@@ -680,7 +680,6 @@ function RemoteDesktop() {
     remoteDesktopConnectionError,
     remoteDesktopConnectionErrorCode,
     hideRemoteDesktopWorkspace,
-    disconnectRemoteDesktopWorkspace,
     retryRemoteDesktopWorkspace,
     selectRemoteDesktopDisplay,
   } = useRemoteDesktop();
@@ -698,7 +697,6 @@ function RemoteDesktop() {
             connectionError={remoteDesktopConnectionError()}
             connectionErrorCode={remoteDesktopConnectionErrorCode()}
             onHide={hideRemoteDesktopWorkspace}
-            onDisconnect={() => disconnectRemoteDesktopWorkspace()}
             onRetry={retryRemoteDesktopWorkspace}
             onSelectDisplay={selectRemoteDesktopDisplay}
           />

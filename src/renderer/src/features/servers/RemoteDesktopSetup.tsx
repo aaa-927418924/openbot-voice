@@ -421,7 +421,6 @@ export function RemoteDesktopSetup(props: { server: ServerSummary; platform: "da
               connectionError={null}
               connectionErrorCode={null}
               onHide={() => void finish()}
-              onDisconnect={finish}
               onRetry={finish}
               onSelectDisplay={async () => {}}
               onViewerState={(value) => {

@@ -41,7 +41,6 @@ const args: Parameters<typeof RemoteDesktopWorkspace>[0] = {
   onHide: fn(),
   onRetry: fn(async () => undefined),
   onSelectDisplay: fn(async () => undefined),
-  onDisconnect: fn(async () => undefined),
 };
 
 const meta = {

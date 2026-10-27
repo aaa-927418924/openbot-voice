@@ -65,8 +65,7 @@
   align-items: center;
 }
 
-.remote-desktop-back-button,
-.remote-desktop-disconnect-button {
+.remote-desktop-back-button {
   flex: 0 0 auto;
 }
 
@@ -79,16 +78,6 @@
   padding: 0;
   place-items: center;
   border-radius: var(--openbot-radius-pill);
-}
-
-.remote-desktop-disconnect-button {
-  color: var(--openbot-text-muted);
-}
-
-.remote-desktop-disconnect-button:hover:not(:disabled),
-.remote-desktop-disconnect-button:focus-visible:not(:disabled) {
-  background: var(--openbot-danger-soft);
-  color: var(--openbot-danger);
 }
 
 .remote-desktop-stage {

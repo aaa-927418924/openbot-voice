@@ -19,7 +19,6 @@ interface RemoteDesktopWorkspaceProps {
   connectionError: string | null;
   connectionErrorCode: RemoteDesktopErrorCode | null;
   onHide: () => void;
-  onDisconnect: () => Promise<void>;
   onRetry: () => Promise<void>;
   onSelectDisplay: (serverId: string, displayId: string) => Promise<void>;
 }
@@ -41,7 +40,7 @@ export function RemoteDesktopWorkspace(props: RemoteDesktopWorkspaceProps) {
   const { t, errorMessage } = useText();
   const [viewerState, setViewerState] = createSignal<ViewerState>("idle");
   const [viewerError, setViewerError] = createSignal<string | null>(null);
-  const [actionBusy, setActionBusy] = createSignal<"retry" | "disconnect" | "display" | null>(null);
+  const [actionBusy, setActionBusy] = createSignal<"retry" | "display" | null>(null);
   let workspaceElement: HTMLElement | undefined;
   let viewerFrame: HTMLIFrameElement | undefined;
   let activeSessionId = "";
@@ -144,19 +143,6 @@ export function RemoteDesktopWorkspace(props: RemoteDesktopWorkspaceProps) {
     }
   }
 
-  async function disconnect() {
-    if (actionBusy()) return;
-    setActionBusy("disconnect");
-    setViewerError(null);
-    try {
-      await props.onDisconnect();
-    } catch (error) {
-      setViewerState("error");
-      setViewerError(errorMessage(error, t("remoteDesktop.disconnectFailed")));
-      setActionBusy(null);
-    }
-  }
-
   async function selectDisplay(displayId: string) {
     if (actionBusy()) return;
     setActionBusy("display");
@@ -208,19 +194,6 @@ export function RemoteDesktopWorkspace(props: RemoteDesktopWorkspaceProps) {
                 </Select>
               </div>
             </Show>
-            <div class="no-drag remote-desktop-actions">
-              <Button
-                type="button"
-                class="remote-desktop-disconnect-button"
-                size="sm"
-                variant="ghost"
-                disabled={actionBusy() !== null}
-                loading={actionBusy() === "disconnect"}
-                onClick={() => void disconnect()}
-              >
-                {t("remoteDesktop.disconnect")}
-              </Button>
-            </div>
           </Show>
           <Show when={props.testControls}>
             <div class="no-drag remote-desktop-actions">{props.testControls}</div>
