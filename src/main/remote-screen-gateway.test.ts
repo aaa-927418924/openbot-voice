@@ -65,6 +65,38 @@ describe("RemoteScreenGateway", () => {
     await runCauseEffect(gateway.stop());
   });
 
+  it("guides a Wayland user to request screen sharing from the local setup panel", async () => {
+    const onRuntimeCapture = vi.fn();
+    const gateway = createGateway({
+      platform: "linux",
+      sessionEnvironment: { XDG_SESSION_TYPE: "wayland", WAYLAND_DISPLAY: "wayland-0", DISPLAY: ":0" },
+      onRuntimeCapture,
+    });
+
+    await expect(runCauseEffect(gateway.checkSetup())).resolves.toMatchObject({
+      platform: "linux",
+      screenRecording: "unavailable",
+      accessibility: "unavailable",
+      service: "allowed",
+      displays: "allowed",
+      guiSession: "allowed",
+      message: "Start the local screen-sharing test to approve the Wayland portal request.",
+    });
+    expect(onRuntimeCapture).not.toHaveBeenCalled();
+    await runCauseEffect(gateway.stop());
+  });
+
+  it("reports when Linux has no active desktop session", async () => {
+    const gateway = createGateway({ platform: "linux", sessionEnvironment: { XDG_SESSION_TYPE: "tty" } });
+
+    await expect(runCauseEffect(gateway.checkSetup())).resolves.toMatchObject({
+      platform: "linux",
+      guiSession: "blocked",
+      message: "Start OpenBot inside an active Linux desktop session to share its screen.",
+    });
+    await runCauseEffect(gateway.stop());
+  });
+
   it.each(["darwin", "win32", "linux"] as const)(
     "reports the setup failure for an unavailable %s host",
     async (platform) => {

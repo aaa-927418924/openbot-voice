@@ -157,6 +157,21 @@ function props(overrides: Partial<ServerSettingsModalProps> = {}): ServerSetting
 }
 
 describe("ServerSettingsModal", () => {
+  it("offers a local Wayland screen-sharing request on Linux", async () => {
+    const mock = createMockOpenBot();
+    vi.stubGlobal("openbot", mock.api);
+    render(() => <ServerSettingsModal {...props({ platform: "linux" })} />);
+
+    await fireEvent.click(screen.getByRole("tab", { name: "Remote desktop" }));
+    expect(await screen.findByText("Wayland screen sharing")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Start the local test to open GNOME's screen-sharing permission dialog/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Request screen sharing" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Grant Accessibility access" })).not.toBeInTheDocument();
+    mock.dispose();
+  });
+
   it("keeps account errors on account settings tabs", async () => {
     render(() => (
       <ServerSettingsModal {...props({ loadError: "The account cannot perform this remote operation." })} />

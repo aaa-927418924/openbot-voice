@@ -43,6 +43,9 @@ export const messages = {
   "remoteDesktop.setup.hostUpdateRequired":
     "権限を確認してリモートデスクトップをテストするには、ホストの OpenBot をアップデートしてください。",
   "remoteDesktop.setup.permissions": "権限",
+  "remoteDesktop.setup.linuxPortalTitle": "Wayland の画面共有",
+  "remoteDesktop.setup.linuxPortalInstructions":
+    "ローカルテストを開始するとGNOMEの画面共有許可ダイアログが開きます。他の端末から接続する前に、デスクトップの共有を許可してください。",
   "remoteDesktop.setup.checked": "確認日時",
   "remoteDesktop.setup.checkAgain": "もう一度確認",
   "remoteDesktop.setup.grantAccess": "{name} へのアクセスを許可",
@@ -54,6 +57,8 @@ export const messages = {
   "remoteDesktop.setup.showInFinder": "Finder で Sunshine を表示",
   "remoteDesktop.setup.liveTest": "ライブ接続テスト",
   "remoteDesktop.setup.liveTestLocal": "この Mac で映像、マウス、キーボードをテストします。",
+  "remoteDesktop.setup.liveTestLinux":
+    "ローカルテストを開始してWaylandの画面共有を許可し、映像が届くことを確認します。",
   "remoteDesktop.setup.liveTestRemote":
     "テストではホストに一時的なパネルが開きます。先にほかのリモートセッションを終了する必要があります。入力はパネル内に限られます。",
   "remoteDesktop.setup.testSummary": "ビデオ: {video} · 映像: {picture} · マウス: {mouse} · キーボード: {keyboard}",
@@ -64,6 +69,7 @@ export const messages = {
   "remoteDesktop.setup.notTested": "未テスト",
   "remoteDesktop.setup.waiting": "待機中",
   "remoteDesktop.setup.testLocal": "この Mac でテスト",
+  "remoteDesktop.setup.requestLinuxScreenCapture": "画面共有を許可",
   "remoteDesktop.setup.testRemote": "リモートデスクトップをテスト",
   "remoteDesktop.setup.videoFailed": "テスト用のビデオ接続に失敗しました。",
   "remoteDesktop.setup.inputInstructions":

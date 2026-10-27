@@ -73,6 +73,7 @@ export function RemoteDesktopSetup(props: { server: ServerSummary; platform: "da
     picture: false,
   });
   const local = () => props.server.id === LOCAL_SERVER_ID;
+  const localLinux = () => local() && props.platform === "linux";
   const supported = () => local() || serverSupportsCapability(props.server, REMOTE_DESKTOP_SETUP_CAPABILITY);
   let disposed = false;
   let returnFromSettings = false;
@@ -268,13 +269,20 @@ export function RemoteDesktopSetup(props: { server: ServerSummary; platform: "da
 
   return (
     <Show when={supported()} fallback={<Text>{t("remoteDesktop.setup.hostUpdateRequired")}</Text>}>
-      <Show when={!local() || props.platform === "darwin"}>
+      <Show when={!local() || props.platform === "darwin" || localLinux()}>
         <ItemGroup class="settings-modal-card">
           <Item>
             <ItemContent>
-              <ItemTitle>{t("remoteDesktop.setup.permissions")}</ItemTitle>
+              <ItemTitle>
+                {localLinux() ? t("remoteDesktop.setup.linuxPortalTitle") : t("remoteDesktop.setup.permissions")}
+              </ItemTitle>
               <ItemDescription>
-                {state.result ? `${state.result.hostName} · ${state.result.username}` : props.server.name}
+                <Show
+                  when={localLinux()}
+                  fallback={state.result ? `${state.result.hostName} · ${state.result.username}` : props.server.name}
+                >
+                  {t("remoteDesktop.setup.linuxPortalInstructions")}
+                </Show>
                 <Show when={state.result?.checkedAt}>
                   {" · "}
                   {t("remoteDesktop.setup.checked")}{" "}
@@ -297,52 +305,58 @@ export function RemoteDesktopSetup(props: { server: ServerSummary; platform: "da
                 </Show>
               </ItemDescription>
             </ItemContent>
-            <ItemActions>
-              <Button
-                size="sm"
-                variant="outline"
-                loading={state.checking}
-                disabled={state.busy || Boolean(state.session)}
-                onClick={() => void check()}
-              >
-                {t("remoteDesktop.setup.checkAgain")}
-              </Button>
-            </ItemActions>
+            <Show when={!localLinux()}>
+              <ItemActions>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  loading={state.checking}
+                  disabled={state.busy || Boolean(state.session)}
+                  onClick={() => void check()}
+                >
+                  {t("remoteDesktop.setup.checkAgain")}
+                </Button>
+              </ItemActions>
+            </Show>
           </Item>
-          <For each={CHECKS}>
-            {([key, label]) => {
-              const status = () =>
-                state.checking ? "checking" : state.checkFailed ? "failed" : (state.result?.[key] ?? "not-checked");
-              return (
-                <Item>
-                  <ItemContent>
-                    <ItemTitle>{t(label)}</ItemTitle>
-                  </ItemContent>
-                  <ItemActions>
-                    <Badge tone={status() === "allowed" ? "success" : "warning"}>
-                      {status() === "allowed" && key !== "screenRecording" && key !== "accessibility"
-                        ? t("remoteDesktop.setup.state.available")
-                        : t(LABELS[status()])}
-                    </Badge>
-                    <Show when={local() && (key === "screenRecording" || key === "accessibility")}>
-                      <Button
-                        size="sm"
-                        variant="default"
-                        aria-label={t("remoteDesktop.setup.grantAccess", { name: t(label) })}
-                        disabled={state.busy}
-                        onClick={() => void open(key === "screenRecording" ? "screen-recording" : "accessibility")}
-                      >
-                        {t("remoteDesktop.setup.grant")}
-                      </Button>
-                    </Show>
-                  </ItemActions>
-                </Item>
-              );
-            }}
-          </For>
+          <Show when={!localLinux()}>
+            <For each={CHECKS}>
+              {([key, label]) => {
+                const status = () =>
+                  state.checking ? "checking" : state.checkFailed ? "failed" : (state.result?.[key] ?? "not-checked");
+                return (
+                  <Item>
+                    <ItemContent>
+                      <ItemTitle>{t(label)}</ItemTitle>
+                    </ItemContent>
+                    <ItemActions>
+                      <Badge tone={status() === "allowed" ? "success" : "warning"}>
+                        {status() === "allowed" && key !== "screenRecording" && key !== "accessibility"
+                          ? t("remoteDesktop.setup.state.available")
+                          : t(LABELS[status()])}
+                      </Badge>
+                      <Show when={local() && (key === "screenRecording" || key === "accessibility")}>
+                        <Button
+                          size="sm"
+                          variant="default"
+                          aria-label={t("remoteDesktop.setup.grantAccess", { name: t(label) })}
+                          disabled={state.busy}
+                          onClick={() => void open(key === "screenRecording" ? "screen-recording" : "accessibility")}
+                        >
+                          {t("remoteDesktop.setup.grant")}
+                        </Button>
+                      </Show>
+                    </ItemActions>
+                  </Item>
+                );
+              }}
+            </For>
+          </Show>
           <Item>
             <ItemContent>
-              <ItemDescription>{t("remoteDesktop.setup.grantHelp")}</ItemDescription>
+              <Show when={!localLinux()}>
+                <ItemDescription>{t("remoteDesktop.setup.grantHelp")}</ItemDescription>
+              </Show>
               <Show when={state.result?.restartRequired}>
                 <ItemDescription>{t("remoteDesktop.setup.restartRequired")}</ItemDescription>
               </Show>
@@ -350,7 +364,7 @@ export function RemoteDesktopSetup(props: { server: ServerSummary; platform: "da
                 <ItemDescription>{sourceText(state.result?.message ?? "")}</ItemDescription>
               </Show>
             </ItemContent>
-            <Show when={local()}>
+            <Show when={local() && !localLinux()}>
               <ItemActions>
                 <Button size="sm" variant="ghost" disabled={state.busy} onClick={() => void open("reveal")}>
                   {t("remoteDesktop.setup.showInFinder")}
@@ -362,7 +376,11 @@ export function RemoteDesktopSetup(props: { server: ServerSummary; platform: "da
             <ItemContent>
               <ItemTitle>{t("remoteDesktop.setup.liveTest")}</ItemTitle>
               <ItemDescription>
-                {local() ? t("remoteDesktop.setup.liveTestLocal") : t("remoteDesktop.setup.liveTestRemote")}
+                {localLinux()
+                  ? t("remoteDesktop.setup.liveTestLinux")
+                  : local()
+                    ? t("remoteDesktop.setup.liveTestLocal")
+                    : t("remoteDesktop.setup.liveTestRemote")}
               </ItemDescription>
               <Show when={state.test || state.videoOnly}>
                 <ItemDescription>
@@ -395,7 +413,11 @@ export function RemoteDesktopSetup(props: { server: ServerSummary; platform: "da
                 loading={state.busy}
                 onClick={() => void start()}
               >
-                {local() ? t("remoteDesktop.setup.testLocal") : t("remoteDesktop.setup.testRemote")}
+                {localLinux()
+                  ? t("remoteDesktop.setup.requestLinuxScreenCapture")
+                  : local()
+                    ? t("remoteDesktop.setup.testLocal")
+                    : t("remoteDesktop.setup.testRemote")}
               </Button>
             </ItemActions>
           </Item>

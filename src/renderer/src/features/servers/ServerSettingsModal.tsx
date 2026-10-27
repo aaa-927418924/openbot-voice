@@ -219,7 +219,8 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
   let syncedServerId = "";
 
   const local = () => props.server.kind === "local";
-  const remoteDesktopSection = () => props.remoteDesktopSupported !== false && props.platform === "darwin";
+  const remoteDesktopSection = () =>
+    props.remoteDesktopSupported !== false && (props.platform === "darwin" || (local() && props.platform === "linux"));
   const configured = () => (local() ? Boolean(props.hostStatus?.configured) : true);
   /**
    * The role check without `configured()`. MCP servers belong to this machine and are spawned

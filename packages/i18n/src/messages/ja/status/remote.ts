@@ -4,6 +4,9 @@ import type { messages as source } from "../../en/status/remote";
 export const messages = {
   // Status lines of remote desktop setup and remote connection recovery.
   "status.remote.setupMacOnly": "権限の設定は macOS で利用できます。",
+  "status.remote.setupLinuxPortal": "ローカルの画面共有テストを開始し、Waylandポータルの要求を許可してください。",
+  "status.remote.setupLinuxSessionRequired":
+    "画面を共有するには、Linuxのデスクトップセッション内でOpenBotを起動してください。",
   "status.remote.setupInstallHost":
     "リモートデスクトップのホストコンポーネントをインストールしてから、もう一度確認してください。",
   "status.remote.setupUpdateRuntime":

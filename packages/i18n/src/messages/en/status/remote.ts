@@ -3,6 +3,9 @@ import { defineMessages } from "../../../message";
 export const messages = defineMessages("status.remote", {
   // Status lines of remote desktop setup and remote connection recovery.
   "status.remote.setupMacOnly": "Permission setup is available on macOS.",
+  "status.remote.setupLinuxPortal": "Start the local screen-sharing test to approve the Wayland portal request.",
+  "status.remote.setupLinuxSessionRequired":
+    "Start OpenBot inside an active Linux desktop session to share its screen.",
   "status.remote.setupInstallHost": "Install the remote desktop host component, then check again.",
   "status.remote.setupUpdateRuntime": "Update the remote desktop runtime to check macOS permissions.",
   "status.remote.setupCheckFailed":

@@ -234,11 +234,24 @@ export class RemoteScreenGateway {
       activeSessions: this.#sessions.size,
       message: null,
     };
-    if (this.#options.platform !== "darwin" || !this.#options.runtimePaths) {
-      result.message =
-        this.#options.platform !== "darwin"
-          ? sourceText("status.remote.setupMacOnly")
-          : sourceText("status.remote.setupInstallHost");
+    const supportsSetupCheck = this.#options.platform === "darwin" || this.#options.platform === "linux";
+    if (!supportsSetupCheck || !this.#options.runtimePaths) {
+      result.message = !supportsSetupCheck
+        ? sourceText("status.remote.setupMacOnly")
+        : sourceText("status.remote.setupInstallHost");
+      return result;
+    }
+    if (this.#options.platform === "linux") {
+      if (this.#linuxWithoutDesktopSession) {
+        result.guiSession = "blocked";
+        result.message = sourceText("status.remote.setupLinuxSessionRequired");
+      } else {
+        result.service = "allowed";
+        result.guiSession = "allowed";
+        result.displays = this.#availableDisplays().length > 0 ? "allowed" : "unavailable";
+        result.screenRecording = this.#screenRecordingDenied ? "blocked" : "unavailable";
+        result.message = sourceText("status.remote.setupLinuxPortal");
+      }
       return result;
     }
     yield* Effect.acquireUseRelease(

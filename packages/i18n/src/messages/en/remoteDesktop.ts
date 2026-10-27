@@ -40,6 +40,9 @@ export const messages = defineMessages("remoteDesktop", {
   "remoteDesktop.setup.connectionLost": "The test connection was lost.",
   "remoteDesktop.setup.hostUpdateRequired": "Update OpenBot on the host to check permissions and test remote desktop.",
   "remoteDesktop.setup.permissions": "Permissions",
+  "remoteDesktop.setup.linuxPortalTitle": "Wayland screen sharing",
+  "remoteDesktop.setup.linuxPortalInstructions":
+    "Start the local test to open GNOME's screen-sharing permission dialog. Approve the desktop capture request before connecting from another device.",
   "remoteDesktop.setup.checked": "Checked",
   "remoteDesktop.setup.checkAgain": "Check again",
   "remoteDesktop.setup.grantAccess": "Grant {name} access",
@@ -51,6 +54,8 @@ export const messages = defineMessages("remoteDesktop", {
   "remoteDesktop.setup.showInFinder": "Show Sunshine in Finder",
   "remoteDesktop.setup.liveTest": "Live connection test",
   "remoteDesktop.setup.liveTestLocal": "Test the picture, mouse, and keyboard on this Mac.",
+  "remoteDesktop.setup.liveTestLinux":
+    "Start a local test to request Wayland screen sharing and confirm the desktop stream.",
   "remoteDesktop.setup.liveTestRemote":
     "The test opens a temporary panel on the host. Other remote sessions must end first. Input stays inside the panel.",
   "remoteDesktop.setup.testSummary": "Video: {video} · Picture: {picture} · Mouse: {mouse} · Keyboard: {keyboard}",
@@ -61,6 +66,7 @@ export const messages = defineMessages("remoteDesktop", {
   "remoteDesktop.setup.notTested": "not tested",
   "remoteDesktop.setup.waiting": "waiting",
   "remoteDesktop.setup.testLocal": "Test on this Mac",
+  "remoteDesktop.setup.requestLinuxScreenCapture": "Request screen sharing",
   "remoteDesktop.setup.testRemote": "Test remote desktop",
   "remoteDesktop.setup.videoFailed": "The test video connection failed.",
   "remoteDesktop.setup.inputInstructions":
