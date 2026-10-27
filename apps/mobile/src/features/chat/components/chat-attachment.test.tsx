@@ -10,7 +10,8 @@ const native = vi.hoisted(() => ({
   photos: vi.fn(),
   imageSource: vi.fn(),
   download: vi.fn(),
-  downloadRange: vi.fn(),
+  rangeAction: vi.fn(),
+  downloadIconColor: vi.fn(),
   openVideoStream: vi.fn(),
   videoRanges: false,
   share: vi.fn(),
@@ -29,7 +30,7 @@ vi.mock("@/features/workspace/context/mobile-workspace-context", () => ({
   useMobileWorkspace: () => ({
     attachmentSupport: () => ({ eml: false, media: false, video: false, videoRanges: native.videoRanges }),
     downloadAttachment: native.download,
-    downloadAttachmentRange: native.downloadRange,
+    downloadAttachmentRange: native.rangeAction,
   }),
 }));
 vi.mock("react-native", () => ({
@@ -65,7 +66,14 @@ vi.mock("react-native-safe-area-context", () => ({
   useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
 }));
 vi.mock("heroui-native/hooks", () => ({ useThemeColor: () => ["green", "gray"] }));
-vi.mock("lucide-react-native", () => ({ Download: () => null, ExternalLink: () => null, ImageOff: () => null }));
+vi.mock("lucide-react-native", () => ({
+  Download: ({ color }: { color?: string; size?: number }) => {
+    native.downloadIconColor(color);
+    return <span aria-hidden="true" />;
+  },
+  ExternalLink: () => null,
+  ImageOff: () => null,
+}));
 vi.mock("react-native-reanimated", () => ({
   default: {
     View: ({ children }: PropsWithChildren) => <div>{children}</div>,
@@ -181,8 +189,26 @@ vi.mock("heroui-native", () => {
       onPress,
       isDisabled,
       accessibilityLabel,
-    }: PropsWithChildren<{ onPress: () => void; isDisabled?: boolean; accessibilityLabel?: string }>) => (
-      <button type="button" aria-label={accessibilityLabel} disabled={isDisabled} onClick={onPress}>
+      className,
+      size,
+      style,
+    }: PropsWithChildren<{
+      onPress: () => void;
+      isDisabled?: boolean;
+      accessibilityLabel?: string;
+      className?: string;
+      size?: string;
+      style?: import("react").CSSProperties;
+    }>) => (
+      <button
+        type="button"
+        aria-label={accessibilityLabel}
+        className={className}
+        data-size={size}
+        style={style}
+        disabled={isDisabled}
+        onClick={onPress}
+      >
         {children}
       </button>
     ),
@@ -198,6 +224,7 @@ afterEach(() => {
   vi.resetAllMocks();
   native.platform = "ios";
   native.videoRanges = false;
+  native.rangeAction = vi.fn();
 });
 function mount(
   attachment: AttachmentSummary,
@@ -209,18 +236,18 @@ function mount(
   const root = createRoot(container);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   if (cached) client.setQueryData(["chat-attachment", "selected-host", attachment.id], cached);
-  act(() =>
-    root.render(
-      <QueryClientProvider client={client}>
-        <ChatAttachmentView attachment={attachment} serverId="selected-host" upload={upload} />
-      </QueryClientProvider>,
-    ),
+  const renderView = () => (
+    <QueryClientProvider client={client}>
+      <ChatAttachmentView attachment={attachment} serverId="selected-host" upload={upload} />
+    </QueryClientProvider>
   );
+  act(() => root.render(renderView()));
   cleanups.push(() => {
     act(() => root.unmount());
     client.clear();
     container.remove();
   });
+  return { rerender: () => act(() => root.render(renderView())) };
 }
 const attachment: AttachmentSummary = {
   id: "stored-file",
@@ -267,7 +294,7 @@ it("plays large remote Android videos from bounded ranges without downloading th
   native.platform = "android";
   native.videoRanges = true;
   native.openVideoStream.mockResolvedValue({ uri: "http://127.0.0.1:32100/video/stream-token", close: vi.fn() });
-  native.downloadRange.mockResolvedValue({ name: "clip.mp4", mimeType: "video/mp4", base64: "AA==" });
+  native.rangeAction.mockResolvedValue({ name: "clip.mp4", mimeType: "video/mp4", base64: "AA==" });
   mount({ ...attachment, name: "clip.mp4", mimeType: "video/mp4", size: 50 * 1024 * 1024 });
 
   await waitFor(() => expect(screen.getByRole("img", { name: "video player" })).toBeTruthy());
@@ -278,6 +305,32 @@ it("plays large remote Android videos from bounded ranges without downloading th
     "video/mp4",
     expect.any(Function),
   );
+  const requestRange = native.openVideoStream.mock.calls[0]?.[3];
+  expect(requestRange).toBeTypeOf("function");
+  await act(async () => requestRange(0, 2 * 1024 * 1024));
+  expect(native.rangeAction).toHaveBeenCalledWith("selected-host", "stored-file", 0, 2 * 1024 * 1024);
+  expect(native.download).not.toHaveBeenCalled();
+});
+
+it("keeps progressive Android playback alive when the workspace refreshes its range action", async () => {
+  native.platform = "android";
+  native.videoRanges = true;
+  const closeStream = vi.fn(async () => {});
+  native.openVideoStream.mockResolvedValue({ uri: "http://127.0.0.1:32100/video/stream-token", close: closeStream });
+  native.rangeAction.mockResolvedValue({ name: "clip.mp4", mimeType: "video/mp4", base64: "AA==" });
+  const view = mount({ ...attachment, name: "clip.mp4", mimeType: "video/mp4", size: 50 * 1024 * 1024 });
+  await waitFor(() => expect(screen.getByRole("img", { name: "video player" })).toBeTruthy());
+
+  const refreshedRange = vi.fn().mockResolvedValue({ name: "clip.mp4", mimeType: "video/mp4", base64: "AA==" });
+  native.rangeAction = refreshedRange;
+  view.rerender();
+  const requestRange = native.openVideoStream.mock.calls[0]?.[3];
+  await act(async () => requestRange(2 * 1024 * 1024, 2 * 1024 * 1024));
+
+  expect(native.openVideoStream).toHaveBeenCalledOnce();
+  expect(closeStream).not.toHaveBeenCalled();
+  expect(refreshedRange).toHaveBeenCalledWith("selected-host", "stored-file", 2 * 1024 * 1024, 2 * 1024 * 1024);
+  expect(native.download).not.toHaveBeenCalled();
 });
 
 it("embeds a downloaded MP4 in the message and offers only a save-location download", async () => {
@@ -288,7 +341,11 @@ it("embeds a downloaded MP4 in the message and offers only a save-location downl
   expect(screen.getByRole("img", { name: "video player" }).getAttribute("data-source")).toBe(
     "file:///cache/openbot-chat-video-stored-file.mp4",
   );
-  expect(screen.getByRole("button", { name: "Download" })).toBeTruthy();
+  const downloadButton = screen.getByRole("button", { name: "Download" });
+  expect(downloadButton.className).toContain("h-9 w-9");
+  expect(downloadButton.getAttribute("data-size")).toBe("sm");
+  expect(native.downloadIconColor).toHaveBeenCalledWith("#fff");
+  expect(screen.queryByText("Download")).toBeNull();
   native.platform = "android";
   native.requestDirectory.mockResolvedValue({ granted: true, directoryUri: "content://storage/selected" });
   native.createSafFile.mockResolvedValue("content://storage/selected/clip.mp4");

@@ -9,7 +9,7 @@ import { Image } from "expo-image";
 import * as Sharing from "expo-sharing";
 import { useThemeColor } from "heroui-native/hooks";
 import { FileText } from "lucide-react-native";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Platform, View } from "react-native";
 import { useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
 import { haptics } from "@/shared/lib/haptics";
@@ -106,6 +106,10 @@ export function useAttachmentFile(serverId: string, attachment: AttachmentSummar
   }>({ key: "", uri: null, loading: false, failed: false });
   const [videoStreamRetry, setVideoStreamRetry] = useState(0);
   const videoStreamKey = `${serverId}:${attachment.id}:${attachment.size}:${videoStreamRetry}`;
+  const downloadAttachmentRangeRef = useRef(downloadAttachmentRange);
+  useEffect(() => {
+    downloadAttachmentRangeRef.current = downloadAttachmentRange;
+  }, [downloadAttachmentRange]);
   useEffect(() => {
     if (!canStreamVideo || data) {
       setVideoStream({ key: videoStreamKey, uri: null, loading: false, failed: false });
@@ -117,7 +121,7 @@ export function useAttachmentFile(serverId: string, attachment: AttachmentSummar
     void import("../model/attachment-video-stream")
       .then(({ openAttachmentVideoStream }) =>
         openAttachmentVideoStream(attachment.id, attachment.size, attachment.mimeType, (offset, length) =>
-          downloadAttachmentRange(serverId, attachment.id, offset, length),
+          downloadAttachmentRangeRef.current(serverId, attachment.id, offset, length),
         ),
       )
       .then((stream) => {
@@ -135,16 +139,7 @@ export function useAttachmentFile(serverId: string, attachment: AttachmentSummar
       active = false;
       if (closeStream) void closeStream();
     };
-  }, [
-    attachment.id,
-    attachment.mimeType,
-    attachment.size,
-    canStreamVideo,
-    data,
-    downloadAttachmentRange,
-    serverId,
-    videoStreamKey,
-  ]);
+  }, [attachment.id, attachment.mimeType, attachment.size, canStreamVideo, data, serverId, videoStreamKey]);
   useEffect(() => {
     if (!isVideo || !data) {
       setCachedVideoUri(null);

@@ -313,12 +313,13 @@ export function ChatAttachmentView({
           <Button
             variant="secondary"
             size="sm"
+            className="h-9 w-9 min-h-9 min-w-9 p-0"
+            style={{ width: 36, height: 36, padding: 0 }}
             isDisabled={busy || (tooLarge && videoRangeSupported) || (!videoRangeSupported && !query.data)}
             accessibilityLabel={t("common.download")}
             onPress={() => void saveToDownloads()}
           >
-            <Download size={16} />
-            <Button.Label>{t("common.download")}</Button.Label>
+            <Download size={16} color="#fff" />
           </Button>
         </View>
         {query.error || videoCacheFailed || videoStreamFailed ? (
