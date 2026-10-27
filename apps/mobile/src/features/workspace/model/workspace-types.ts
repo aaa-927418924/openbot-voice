@@ -21,6 +21,7 @@ import type {
   InstallAgentTemplateInput,
   InstalledSkill,
   QueueSnapshot,
+  RemoteDesktopSession,
   RespondToBrowserSecretInput,
   RespondToPromptInput,
   Routine,
@@ -92,6 +93,9 @@ interface AddRemoteServerInput {
 }
 
 export interface MobileWorkspaceContextValue extends MobileLiveVoiceHost {
+  remoteDesktopSession: { serverId: string; session: RemoteDesktopSession } | null;
+  openRemoteDesktop: (serverId: string) => Promise<RemoteDesktopSession>;
+  closeRemoteDesktop: (serverId: string, sessionId: string) => Promise<void>;
   respondToBrowserTakeover: (
     serverId: string,
     input: { requestId: string | number; decision: "complete" | "cancel" },

@@ -682,7 +682,13 @@ export class RemoteScreenGateway {
       if (!session || route === undefined) return sendText(response, 404, "Remote session not found.");
       if (request.method === "GET" && route === "viewer") {
         if (!this.#runtimeState) return sendText(response, 503, "Moonlight runtime is unavailable.");
-        return sendViewer(response, session.snapshot.id, session.streamerSlot, this.#runtimeState);
+        return sendViewer(
+          response,
+          session.snapshot.id,
+          session.streamerSlot,
+          this.#runtimeState,
+          url.searchParams.get("openbotRelay") === "1",
+        );
       }
       if (request.method === "POST" && route === "viewer-state") {
         if (!this.#viewerAuthorized(request, session))
@@ -1107,6 +1113,11 @@ export class RemoteScreenGateway {
     search: string,
   ): Effect.fn.Return<void, RemoteWorkflowError> {
     if (!this.#runtimeState) return sendText(response, 503, "Moonlight runtime is unavailable.");
+    if (upstreamPath === "/openbot-relay.js" && new URLSearchParams(search).get("openbotRelay") === "1") {
+      response.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-store" });
+      response.end(remoteDesktopWebSocketRelayScript(session.snapshot.id));
+      return;
+    }
     if (upstreamPath === "/config.js") {
       response.writeHead(200, { "Content-Type": "text/javascript", "Cache-Control": "no-store" });
       response.end(
@@ -1116,6 +1127,7 @@ export class RemoteScreenGateway {
     }
     const target = new URL(`${upstreamPath}${search}`, this.#runtimeState.baseUrl);
     const authHeader = this.#runtimeState.authHeader;
+    const injectRelay = upstreamPath === "/stream.html" && new URLSearchParams(search).get("openbotRelay") === "1";
     yield* Effect.callback<void>((resume) => {
       const resolve = () => resume(Effect.void);
       const upstream = httpRequest(
@@ -1124,6 +1136,7 @@ export class RemoteScreenGateway {
           method: request.method,
           headers: {
             accept: request.headers.accept ?? "*/*",
+            "accept-encoding": "identity",
             "content-type": request.headers["content-type"] ?? "application/octet-stream",
             [authHeader]: moonlightRuntimeUser(session),
           },
@@ -1131,6 +1144,33 @@ export class RemoteScreenGateway {
         (upstreamResponse) => {
           const headers = { ...upstreamResponse.headers };
           delete headers["set-cookie"];
+          if (injectRelay) {
+            const chunks: Buffer[] = [];
+            upstreamResponse.on("data", (chunk: Buffer | string) => chunks.push(Buffer.from(chunk)));
+            upstreamResponse.once("end", () => {
+              const source = Buffer.concat(chunks).toString("utf8");
+              const script = '<script src="openbot-relay.js?openbotRelay=1"></script>';
+              const html = source.includes("</head>")
+                ? source.replace("</head>", `${script}</head>`)
+                : `${script}${source}`;
+              delete headers["content-encoding"];
+              delete headers["content-length"];
+              delete headers["transfer-encoding"];
+              delete headers.etag;
+              response.writeHead(upstreamResponse.statusCode ?? 502, {
+                ...headers,
+                "content-length": String(Buffer.byteLength(html)),
+                "cache-control": "no-store",
+              });
+              response.end(html);
+              resolve();
+            });
+            upstreamResponse.once("error", () => {
+              response.destroy();
+              resolve();
+            });
+            return;
+          }
           response.writeHead(upstreamResponse.statusCode ?? 502, headers);
           upstreamResponse.pipe(response);
           upstreamResponse.once("end", resolve);
@@ -1250,10 +1290,11 @@ function sendViewer(
   sessionId: string,
   streamerSlot: number,
   runtime: SunshineMoonlightRuntimeState,
+  openbotRelay = false,
 ): void {
   const sessionPath = TEAM_API_ROUTES.remoteScreen.session(sessionId);
   const hostId = runtime.hostIds[streamerSlot - 1] ?? runtime.hostId;
-  const target = `${sessionPath}/moonlight/stream.html?hostId=${hostId}&appId=${runtime.desktopAppId}`;
+  const target = `${sessionPath}/moonlight/stream.html?hostId=${hostId}&appId=${runtime.desktopAppId}${openbotRelay ? "&openbotRelay=1" : ""}`;
   const html = `<!doctype html><meta charset="utf-8"><title>OpenBot Moonlight Remote</title><meta name="color-scheme" content="dark"><style>html,body{margin:0;width:100%;height:100%;background:#090b0c;color:#fff;font:14px system-ui}main{display:grid;place-items:center;height:100%}</style><main>Connecting…</main><script type="module">const grant=new URL(location.href).hash.slice(1);history.replaceState(null,"",location.pathname);const response=await fetch(${JSON.stringify(`${sessionPath}/authorize`)},{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({grant})});if(!response.ok){document.querySelector("main").textContent="Remote access expired";const refused=()=>parent.postMessage(${JSON.stringify({ source: "openbot-moonlight", type: "viewer-state", sessionId, state: "error" })},"*");document.readyState==="complete"?refused():addEventListener("load",refused);throw new Error("grant rejected")}location.replace(${JSON.stringify(target)});</script>`;
   response.writeHead(200, {
     "Content-Type": "text/html; charset=utf-8",
@@ -1262,6 +1303,11 @@ function sendViewer(
     "Cache-Control": "no-store",
   });
   response.end(html);
+}
+
+/** The mobile Expo DOM owns the authenticated peer. Relay the viewer socket to that page. */
+function remoteDesktopWebSocketRelayScript(sessionId: string): string {
+  return `(()=>{if(window.__openbotDesktopRelay)return;window.__openbotDesktopRelay=true;const sessionId=${JSON.stringify(sessionId)},source="openbot-remote-desktop-socket-v1",NativeWebSocket=window.WebSocket;const sockets=new Map();const post=(message)=>parent.postMessage({source,sessionId,...message},"*");class RelayWebSocket extends EventTarget{constructor(url,protocols){super();this.url=String(url);this.readyState=0;this.bufferedAmount=0;this.extensions="";this.protocol=Array.isArray(protocols)?protocols[0]||"":protocols||"";this.binaryType="blob";const parsed=new URL(this.url,location.href);this.streamId="ob_"+Math.random().toString(36).slice(2)+Date.now().toString(36);sockets.set(this.streamId,this);post({type:"open",streamId:this.streamId,path:parsed.pathname+parsed.search})}send(data){if(this.readyState!==1)throw new DOMException("WebSocket is not open","InvalidStateError");if(typeof data==="string"){post({type:"text",streamId:this.streamId,data});return}const toBase64=(bytes)=>{let out="";for(let i=0;i<bytes.length;i+=24576)out+=String.fromCharCode(...bytes.subarray(i,i+24576));return btoa(out)};if(data instanceof Blob){data.arrayBuffer().then((buffer)=>post({type:"binary",streamId:this.streamId,data:toBase64(new Uint8Array(buffer))}));return}const buffer=data instanceof ArrayBuffer?data:data.buffer.slice(data.byteOffset,data.byteOffset+data.byteLength);post({type:"binary",streamId:this.streamId,data:toBase64(new Uint8Array(buffer))})}close(code=1000,reason=""){if(this.readyState>=2)return;this.readyState=2;post({type:"close",streamId:this.streamId,code,reason})}dispatch(type,fields={}){const event=type==="message"?new MessageEvent(type,{data:fields.data}):type==="close"?new CloseEvent(type,{code:fields.code||1000,reason:fields.reason||"",wasClean:fields.wasClean!==false}):new Event(type);this.dispatchEvent(event);const handler=this["on"+type];if(typeof handler==="function")handler.call(this,event)}static get CONNECTING(){return 0}static get OPEN(){return 1}static get CLOSING(){return 2}static get CLOSED(){return 3}}window.WebSocket=RelayWebSocket;window.addEventListener("message",(event)=>{if(event.source!==parent||!event.data||event.data.source!==source||event.data.sessionId!==sessionId)return;const message=event.data,socket=sockets.get(message.streamId);if(!socket)return;if(message.type==="opened"){socket.readyState=1;socket.dispatch("open")}else if(message.type==="text"){socket.dispatch("message",{data:message.data})}else if(message.type==="binary"){const decoded=Uint8Array.from(atob(message.data),c=>c.charCodeAt(0)).buffer;socket.dispatch("message",{data:socket.binaryType==="blob"?new Blob([decoded]):decoded})}else if(message.type==="error"){socket.dispatch("error");socket.readyState=3;socket.dispatch("close",{code:1011,reason:message.message,wasClean:false});sockets.delete(message.streamId)}else if(message.type==="close"){socket.readyState=3;socket.dispatch("close",{code:message.code,reason:message.reason});sockets.delete(message.streamId)}})})();`;
 }
 
 function allowedMoonlightPath(path: string): boolean {

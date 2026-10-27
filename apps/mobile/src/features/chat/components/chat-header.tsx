@@ -2,7 +2,7 @@ import { GlassView } from "expo-glass-effect";
 import { Link, router } from "expo-router";
 import { Typography } from "heroui-native";
 import { useThemeColor } from "heroui-native/hooks";
-import { ArrowLeft, TriangleAlert } from "lucide-react-native";
+import { ArrowLeft, Monitor, TriangleAlert } from "lucide-react-native";
 import { useMemo } from "react";
 import { Pressable, View, type ViewStyle } from "react-native";
 import { AgentPinAvatar } from "@/features/agents/components/agent-pin-avatar";
@@ -13,6 +13,7 @@ import { useMobileWorkspace } from "@/features/workspace/context/mobile-workspac
 import { BlurReveal } from "@/shared/components/blur-reveal";
 import { SheetScrollEdgeEffect } from "@/shared/components/sheet-scroll-edge-effect";
 import { haptics } from "@/shared/lib/haptics";
+import { isAndroid } from "@/shared/lib/platform";
 import { useText } from "@/shared/lib/text";
 import type { ChatTarget } from "../model/chat-target";
 
@@ -131,34 +132,50 @@ export function ChatHeader({
         </GlassView>
 
         <View className="flex-1" />
-        {target.kind === "channel" ? (
-          <View style={{ width: 48, height: 48 }} collapsable={false} pointerEvents={needsAction ? "auto" : "none"}>
-            <BlurReveal
-              value={needsAction ? target : null}
-              interactive
-              collapseOnHide
-              enterDuration={320}
-              exitDuration={240}
+        <View className="flex-row items-center gap-2">
+          {isAndroid ? (
+            <ChatGlassIconButton
+              accessibilityLabel={t("mobile.remoteDesktop.workspaceLabel")}
+              fallbackBackground={fallbackBackground}
+              liquidGlassAvailable={liquidGlassAvailable}
+              disabled={disconnected}
+              onPress={() => {
+                void haptics.impact("soft");
+                router.push({ pathname: "/remote-desktop/[serverId]", params: { serverId: target.serverId } });
+              }}
             >
-              {(actionTarget) => (
-                <ChatGlassIconButton
-                  accessibilityLabel={t("mobile.chat.header.actionsNeeded")}
-                  fallbackBackground={fallbackBackground}
-                  liquidGlassAvailable={liquidGlassAvailable}
-                  onPress={() => {
-                    void haptics.impact("soft");
-                    router.push({
-                      pathname: "/channel-actions/[channelId]",
-                      params: { channelId: actionTarget.id, serverId: actionTarget.serverId },
-                    });
-                  }}
-                >
-                  <TriangleAlert color={String(warning)} size={24} strokeWidth={2.5} />
-                </ChatGlassIconButton>
-              )}
-            </BlurReveal>
-          </View>
-        ) : null}
+              <Monitor color={iconColor} size={22} strokeWidth={2} />
+            </ChatGlassIconButton>
+          ) : null}
+          {target.kind === "channel" ? (
+            <View style={{ width: 48, height: 48 }} collapsable={false} pointerEvents={needsAction ? "auto" : "none"}>
+              <BlurReveal
+                value={needsAction ? target : null}
+                interactive
+                collapseOnHide
+                enterDuration={320}
+                exitDuration={240}
+              >
+                {(actionTarget) => (
+                  <ChatGlassIconButton
+                    accessibilityLabel={t("mobile.chat.header.actionsNeeded")}
+                    fallbackBackground={fallbackBackground}
+                    liquidGlassAvailable={liquidGlassAvailable}
+                    onPress={() => {
+                      void haptics.impact("soft");
+                      router.push({
+                        pathname: "/channel-actions/[channelId]",
+                        params: { channelId: actionTarget.id, serverId: actionTarget.serverId },
+                      });
+                    }}
+                  >
+                    <TriangleAlert color={String(warning)} size={24} strokeWidth={2.5} />
+                  </ChatGlassIconButton>
+                )}
+              </BlurReveal>
+            </View>
+          ) : null}
+        </View>
       </View>
       <SheetScrollEdgeEffect
         style={{ height: topInset + 82, left: 0, position: "absolute", right: 0, top: 0, zIndex: 10 }}

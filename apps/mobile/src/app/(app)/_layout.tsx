@@ -102,6 +102,16 @@ function AuthenticatedStack() {
           }}
         />
         <Stack.Screen
+          name="remote-desktop/[serverId]"
+          options={{
+            animation: "fade",
+            contentStyle: { backgroundColor: background },
+            fullScreenGestureEnabled: false,
+            gestureEnabled: true,
+            headerShown: false,
+          }}
+        />
+        <Stack.Screen
           name="channel/[channelId]"
           options={{
             animation: "slide_from_right",

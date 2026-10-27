@@ -2,6 +2,7 @@ import {
   type AgentEvent,
   type CreateAgentInput,
   isQueuedMessageReceipt,
+  type RemoteDesktopSession,
   type SidebarLayoutSnapshot,
   type TeamRealtimeEvent,
   type UpdateAgentInput,
@@ -85,6 +86,7 @@ import type {
   LiveVoiceStartResponse,
   LiveVoiceStopRequest,
 } from "@/features/live-voice/model/live-voice-web-controller";
+import { decodeRemoteDesktopSession } from "@/features/remote-desktop/model/remote-desktop-session";
 import { fetch } from "@/features/support/model/logged-fetch";
 import { supportLog } from "@/features/support/model/support-log";
 import {
@@ -179,6 +181,12 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
   const directoryGeneration = useRef(0);
   const foreground = useAppForeground();
   const [servers, setServers] = useState<MobileServer[]>([]);
+  const [remoteDesktopSession, setRemoteDesktopSession] = useState<{
+    serverId: string;
+    session: RemoteDesktopSession;
+  } | null>(null);
+  const remoteDesktopSessionRef = useRef<typeof remoteDesktopSession>(null);
+  remoteDesktopSessionRef.current = remoteDesktopSession;
   const [serverDirectoryState, setServerDirectoryState] = useState<MobileServerDirectoryState>("loading");
   const [serverDirectoryError, setServerDirectoryError] = useState<string | null>(null);
   const serversRef = useRef(servers);
@@ -375,6 +383,37 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
       return client.request(method, path, decode, body, upload, onUploadProgress);
     },
     [],
+  );
+  const openRemoteDesktop = useCallback(
+    async (serverId: string) => {
+      if (remoteDesktopSessionRef.current) throw new Error(currentText().t("mobile.remoteDesktop.openFailed"));
+      const server = serversRef.current.find((candidate) => candidate.id === serverId);
+      if (server?.state !== "online") throw new Error(currentText().t("mobile.remoteDesktop.hostOffline"));
+      if (!serverCapabilities.current.get(serverId)?.includes("remote-desktop"))
+        throw new Error(currentText().t("mobile.remoteDesktop.notSharing"));
+      const session = await request(
+        "POST",
+        TEAM_API_ROUTES.remoteScreen.sessions,
+        decodeRemoteDesktopSession,
+        {},
+        serverId,
+      );
+      const active = { serverId, session };
+      remoteDesktopSessionRef.current = active;
+      setRemoteDesktopSession(active);
+      return session;
+    },
+    [request],
+  );
+  const closeRemoteDesktop = useCallback(
+    async (serverId: string, sessionId: string) => {
+      const active = remoteDesktopSessionRef.current;
+      if (!active || active.serverId !== serverId || active.session.id !== sessionId) return;
+      remoteDesktopSessionRef.current = null;
+      setRemoteDesktopSession(null);
+      await request("DELETE", TEAM_API_ROUTES.remoteScreen.session(sessionId), ignoreResponse, {}, serverId);
+    },
+    [request],
   );
   const loadAgentAvatar = useCallback(
     (agentId: string, avatarUrl: string, serverId: string) => requestAgentAvatar(request, agentId, avatarUrl, serverId),
@@ -997,6 +1036,9 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
       );
     };
     const workspace: MobileWorkspaceContextValue = {
+      remoteDesktopSession,
+      openRemoteDesktop,
+      closeRemoteDesktop,
       supportsLiveVoice,
       startLiveVoice: async (input: LiveVoiceStartRequest): Promise<LiveVoiceStartResponse> => {
         if (!supportsLiveVoice(input.serverId, Boolean(input.channelId))) throw new MobileLiveVoiceStartRejectedError();
@@ -1436,6 +1478,9 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
     return trackWorkspaceActions(workspace);
   }, [
     sidebarByServer,
+    remoteDesktopSession,
+    openRemoteDesktop,
+    closeRemoteDesktop,
     applySidebarLayout,
     channelStore,
     activeServerId,
@@ -1483,6 +1528,8 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
             hostId={server.id}
             publicKey={server.publicKey}
             active={foreground}
+            remoteDesktopSession={remoteDesktopSession?.serverId === server.id ? remoteDesktopSession.session : null}
+            onCloseRemoteDesktop={(sessionId) => closeRemoteDesktop(server.id, sessionId)}
             directory={directory}
             register={registerConnection}
             load={loadServer}

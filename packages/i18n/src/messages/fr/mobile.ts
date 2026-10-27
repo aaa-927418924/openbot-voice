@@ -8,6 +8,7 @@ import { messages as mobileChat } from "./mobile/chat";
 import { messages as mobileLink } from "./mobile/link";
 import { messages as mobileLiveActivity } from "./mobile/liveActivity";
 import { messages as mobileLiveVoice } from "./mobile/liveVoice";
+import { messages as mobileRemoteDesktop } from "./mobile/remoteDesktop";
 import { messages as mobileSearch } from "./mobile/search";
 import { messages as mobileServer } from "./mobile/server";
 import { messages as mobileSettings } from "./mobile/settings";
@@ -31,6 +32,7 @@ export const frMobile = {
   ...mobileLink,
   ...mobileLiveActivity,
   ...mobileLiveVoice,
+  ...mobileRemoteDesktop,
   ...mobileWorkspace,
   ...mobileShared,
 } as const satisfies PartialTranslation<AppMobileMessages>;

@@ -226,6 +226,44 @@ describe("RemoteScreenGateway", () => {
     await close();
   });
 
+  it("injects the mobile WebRTC socket bridge only for the opted-in viewer", async () => {
+    const upstreamServer = createServer((request, response) => {
+      response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      response.end(`<!doctype html><html><head></head><body>${request.url}</body></html>`);
+    });
+    await new Promise<void>((resolve) => upstreamServer.listen(0, "127.0.0.1", resolve));
+    const upstreamAddress = z.object({ port: z.number().int() }).parse(upstreamServer.address());
+    const gateway = createGateway({ runtimeBaseUrl: `http://127.0.0.1:${upstreamAddress.port}` });
+    const { origin, close } = await serveGateway(gateway);
+    const session = await createSession(gateway, origin);
+    const viewer = await fetch(`${session.viewerUrl}?openbotRelay=1#${session.viewerGrant}`);
+    expect(await viewer.text()).toContain(`&openbotRelay=1`);
+    const authorize = await fetch(`${origin}/v1/remote-screen/sessions/${session.id}/authorize`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ grant: session.viewerGrant }),
+    });
+    const cookie = authorize.headers.get("set-cookie")?.split(";")[0] ?? "";
+    const relayed = await fetch(
+      `${origin}/v1/remote-screen/sessions/${session.id}/moonlight/stream.html?hostId=12&appId=1&openbotRelay=1`,
+      { headers: { Cookie: cookie } },
+    );
+    expect(await relayed.text()).toContain('src="openbot-relay.js?openbotRelay=1"');
+    const relayScript = await fetch(
+      `${origin}/v1/remote-screen/sessions/${session.id}/moonlight/openbot-relay.js?openbotRelay=1`,
+      { headers: { Cookie: cookie } },
+    );
+    expect(await relayScript.text()).toContain("openbot-remote-desktop-socket-v1");
+    const standard = await fetch(
+      `${origin}/v1/remote-screen/sessions/${session.id}/moonlight/stream.html?hostId=12&appId=1`,
+      { headers: { Cookie: cookie } },
+    );
+    expect(await standard.text()).not.toContain("openbot-remote-desktop-socket-v1");
+    await runCauseEffect(gateway.stop());
+    await close();
+    await new Promise<void>((resolve) => upstreamServer.close(() => resolve()));
+  });
+
   it("refuses a session the host may not record, instead of opening one that never shows a frame", async () => {
     // The refused member cannot grant anything on this computer, so the host owner is told as well.
     const onScreenRecordingDenied = vi.fn();

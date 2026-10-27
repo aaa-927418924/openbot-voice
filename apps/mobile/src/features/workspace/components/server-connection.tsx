@@ -1,4 +1,4 @@
-import type { AgentEvent, TeamRealtimeEvent } from "@openbot/contracts/ipc";
+import type { AgentEvent, RemoteDesktopSession, TeamRealtimeEvent } from "@openbot/contracts/ipc";
 import type { LiveVoiceWireEvent } from "@openbot/contracts/team-protocol/live-voice-v1";
 import { sourceText } from "@openbot/i18n/source";
 import {
@@ -28,6 +28,8 @@ interface Props {
   hostId: string;
   publicKey: string;
   active: boolean;
+  remoteDesktopSession?: RemoteDesktopSession | null;
+  onCloseRemoteDesktop?: (sessionId: string) => Promise<void>;
   directory: RemoteTeamDirectoryClient;
   register(hostId: string, handle: ServerConnectionHandle | null): void;
   load(hostId: string, publicKey: string, client: RemoteTeamTransportRef, context: ServerLoadContext): Promise<void>;
@@ -41,6 +43,8 @@ export function ServerConnection({
   hostId,
   publicKey,
   active,
+  remoteDesktopSession = null,
+  onCloseRemoteDesktop,
   directory,
   register,
   load,
@@ -137,6 +141,8 @@ export function ServerConnection({
     <RemoteTeamTransport
       ref={attach}
       active={active}
+      remoteDesktopSession={remoteDesktopSession}
+      onCloseRemoteDesktop={onCloseRemoteDesktop}
       directory={directory}
       onMembershipChanged={onMembershipChanged}
       onNetworkRestored={() => {

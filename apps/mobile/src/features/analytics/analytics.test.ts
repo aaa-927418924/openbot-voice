@@ -353,6 +353,11 @@ it("instruments message commands without sending their contents or changing the 
   };
   const sendMessage = vi.fn(async () => "message-receipt");
   const workspace: MobileWorkspaceContextValue = {
+    remoteDesktopSession: null,
+    openRemoteDesktop: async () => {
+      throw new Error("Unexpected workspace operation");
+    },
+    closeRemoteDesktop: async () => {},
     respondToBrowserTakeover: async () => undefined,
     respondToBrowserSecret: async () => undefined,
     sidebarByServer: {},

@@ -1,4 +1,4 @@
-import type { AgentEvent, TeamRealtimeEvent } from "@openbot/contracts/ipc";
+import type { AgentEvent, RemoteDesktopSession, TeamRealtimeEvent } from "@openbot/contracts/ipc";
 import { LIVE_VOICE_CHANNEL_START_ROUTE } from "@openbot/contracts/team-protocol/live-voice-channel-v1";
 import { LIVE_VOICE_ROUTES, type LiveVoiceWireEvent } from "@openbot/contracts/team-protocol/live-voice-v1";
 import { isQueueEditRoute, QueueEditRejectedError } from "@openbot/contracts/team-protocol/queue-edit-v1";
@@ -41,6 +41,8 @@ export interface RemoteTeamTransportRef {
 
 interface RemoteTeamTransportProps {
   active: boolean;
+  remoteDesktopSession?: RemoteDesktopSession | null;
+  onCloseRemoteDesktop?: (sessionId: string) => Promise<void>;
   directory: RemoteTeamDirectoryClient;
   onConnectionUpdate: (update: RemoteTeamConnectionUpdate) => void;
   /** Signal says this account's server list changed on another device. */
@@ -74,7 +76,16 @@ function isLiveVoiceRoute(path: string): boolean {
 
 export const RemoteTeamTransport = forwardRef<RemoteTeamTransportRef, RemoteTeamTransportProps>(
   function RemoteTeamTransport(
-    { active: foreground, directory, onConnectionUpdate, onMembershipChanged, onNetworkRestored, onTeamEvent },
+    {
+      active: foreground,
+      remoteDesktopSession = null,
+      onCloseRemoteDesktop,
+      directory,
+      onConnectionUpdate,
+      onMembershipChanged,
+      onNetworkRestored,
+      onTeamEvent,
+    },
     ref,
   ) {
     const { refreshProfile } = useMobileSession();
@@ -183,20 +194,29 @@ export const RemoteTeamTransport = forwardRef<RemoteTeamTransportRef, RemoteTeam
       <RemoteTeamBridge
         active={foreground}
         commands={commands}
+        remoteDesktopSession={remoteDesktopSession}
+        remoteDesktopLabels={{
+          back: currentText().t("mobile.remoteDesktop.back"),
+          connecting: currentText().t("mobile.remoteDesktop.connecting"),
+          title: currentText().t("mobile.remoteDesktop.viewerTitle"),
+        }}
+        onCloseRemoteDesktop={(sessionId) => onCloseRemoteDesktop?.(sessionId) ?? Promise.resolve()}
         dom={{
           ...expoGoDomOptions,
-          containerStyle: {
-            flex: 0,
-            height: 1,
-            left: 0,
-            opacity: 0,
-            position: "absolute",
-            top: 0,
-            width: 1,
-          },
-          pointerEvents: "none",
+          containerStyle: remoteDesktopSession
+            ? { bottom: 0, elevation: 1000, left: 0, position: "absolute", right: 0, top: 0, zIndex: 1000 }
+            : {
+                flex: 0,
+                height: 1,
+                left: 0,
+                opacity: 0,
+                position: "absolute",
+                top: 0,
+                width: 1,
+              },
+          pointerEvents: remoteDesktopSession ? "auto" : "none",
           scrollEnabled: false,
-          style: { flex: 0, height: 1, width: 1 },
+          style: remoteDesktopSession ? { flex: 1, height: "100%", width: "100%" } : { flex: 0, height: 1, width: 1 },
         }}
         endSession={(sessionId) => runTeamEffect(directory.endSession(sessionId))}
         getBootstrap={(hostId, clientPublicKey, existingSessionId) =>
