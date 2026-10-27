@@ -65,6 +65,8 @@ const SUNSHINE_BASE_PORT_STEP = SUNSHINE_PORT_FAMILY_SPAN + 5;
 const SUNSHINE_BASE_PORT_CEILING = 65_535 - SUNSHINE_PORT_FAMILY_MAX_OFFSET;
 const SUNSHINE_ALLOCATION_ATTEMPTS = 64;
 const READINESS_ATTEMPT_TIMEOUT_MS = 5_000;
+const SUNSHINE_START_TIMEOUT_MS = 20_000;
+const SUNSHINE_PORTAL_START_TIMEOUT_MS = 120_000;
 const SUNSHINE_START_ATTEMPTS = 3;
 const MOONLIGHT_WEBRTC_RANGE_SIZE = 32;
 const MOONLIGHT_WEBRTC_RANGE_START = 40_000;
@@ -87,6 +89,18 @@ export function createScreenCaptureDenialWatcher(): (message: string) => boolean
     printed = printed.slice(-SUNSHINE_DIAGNOSTIC_OVERLAP);
     return denied;
   };
+}
+
+export function sunshineStartupPolicy(
+  platform: "darwin" | "win32" | "linux",
+  linuxCaptureMethod?: "portal" | "x11",
+): { timeoutMs: number; attempts: number } {
+  // The first XDG Portal capture opens a host-side consent prompt. Keep that one Sunshine process
+  // alive long enough for the user to approve it; restarting the process cancels the pending grant.
+  if (platform === "linux" && linuxCaptureMethod === "portal") {
+    return { timeoutMs: SUNSHINE_PORTAL_START_TIMEOUT_MS, attempts: 1 };
+  }
+  return { timeoutMs: SUNSHINE_START_TIMEOUT_MS, attempts: SUNSHINE_START_ATTEMPTS };
 }
 
 export function sunshineHttpPortForBase(basePort: number): number {
@@ -769,7 +783,8 @@ export class SunshineMoonlightRuntime {
     this: SunshineMoonlightRuntime,
   ): Effect.fn.Return<void, RemoteDesktopOperationError> {
     let lastError: unknown;
-    for (let attempt = 0; attempt < SUNSHINE_START_ATTEMPTS; attempt += 1) {
+    const { attempts } = sunshineStartupPolicy(this.#options.platform, this.#options.linuxCaptureMethod);
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
       yield* desktopSync(() => this.#throwIfStopRequested());
       const result = yield* Effect.result(this.#startSunshineOnceEffect());
       if (Result.isSuccess(result)) return;
@@ -779,7 +794,7 @@ export class SunshineMoonlightRuntime {
         yield* stopRemoteProcess(sunshine).pipe(Effect.catch(() => Effect.void));
         this.#sunshine = null;
       }
-      if (attempt + 1 >= SUNSHINE_START_ATTEMPTS) break;
+      if (attempt + 1 >= attempts) break;
       if (this.#ownsSunshineAllocation && this.#sunshineBasePort !== null) {
         releaseSunshineBasePort(this.#sunshineBasePort);
         this.#sunshineBasePort = yield* allocateSunshineBasePort();
@@ -809,6 +824,7 @@ export class SunshineMoonlightRuntime {
       yield* desktopSync(() => this.#requireSunshineHttpsPort()),
       join(this.#options.stateDirectory, "sunshine-cert.pem"),
       this.#sunshine,
+      sunshineStartupPolicy(this.#options.platform, this.#options.linuxCaptureMethod).timeoutMs,
     );
   });
 
@@ -1333,8 +1349,9 @@ const waitForHttpsEffect = Effect.fn("RemoteDesktop.waitForHttps")(function* (
   port: number,
   certificatePath: string,
   child?: WatchedChild | null,
+  timeoutMs = SUNSHINE_START_TIMEOUT_MS,
 ) {
-  const deadline = Date.now() + 20_000;
+  const deadline = Date.now() + timeoutMs;
   let lastError: unknown;
   while (Date.now() < deadline) {
     if (childEnded(child))
