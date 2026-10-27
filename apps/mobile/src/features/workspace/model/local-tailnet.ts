@@ -41,6 +41,14 @@ export type TailnetRandomBytes = (size: number) => Uint8Array;
 
 export type LocalTailnetEvent = AgentEvent | TeamRealtimeEvent | LiveVoiceWireEvent;
 
+export interface LocalTailnetSocketDiagnostic {
+  phase: "opening" | "open" | "error" | "close";
+  readyState: number;
+  protocolAccepted: boolean;
+  code?: number;
+  wasClean?: boolean;
+}
+
 export class DirectTailnetHttpError extends Error {
   constructor(readonly status: number) {
     super(`Tailscale host returned HTTP ${status}.`);
@@ -357,33 +365,82 @@ export class DirectTailnetTeamClient {
     return decode(decoded);
   }
 
-  openEvents(onEvent: (event: LocalTailnetEvent) => void, onClosed: () => void): Promise<void> {
+  openEvents(
+    onEvent: (event: LocalTailnetEvent) => void,
+    onClosed: () => void,
+    onDiagnostic: (diagnostic: LocalTailnetSocketDiagnostic) => void = () => {},
+  ): Promise<void> {
     const url = new URL(TEAM_API_ROUTES.events, this.#server.apiUrl);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
     const socket = new WebSocket(url, [TEAM_PROTOCOL_V1_WEBSOCKET, `openbot-token.${this.#server.sessionToken}`]);
     this.#events = socket;
+    const diagnostic = (
+      phase: LocalTailnetSocketDiagnostic["phase"],
+      details: Pick<LocalTailnetSocketDiagnostic, "code" | "wasClean"> = {},
+    ) =>
+      onDiagnostic({
+        phase,
+        readyState: socket.readyState,
+        protocolAccepted: socket.protocol === TEAM_PROTOCOL_V1_WEBSOCKET,
+        ...details,
+      });
     return new Promise((resolve, reject) => {
-      const fail = () => {
+      let opened = false;
+      let settled = false;
+      let closedNotified = false;
+      const notifyClosed = () => {
+        if (closedNotified) return;
+        closedNotified = true;
         onClosed();
+      };
+      const rejectBeforeOpen = () => {
+        if (settled) return;
+        settled = true;
         reject(new Error("The Tailscale event connection failed."));
       };
+      diagnostic("opening");
       socket.addEventListener(
         "open",
         () => {
-          socket.send(
-            encodeTeamProtocolV1CurrentClientEvent({
-              type: "agent-event-scope",
-              includeConversations: true,
-              capabilities: TEAM_CURRENT_CAPABILITIES,
-            }),
-          );
-          resolve();
+          if (settled) {
+            socket.close();
+            return;
+          }
+          opened = true;
+          diagnostic("open");
+          try {
+            socket.send(
+              encodeTeamProtocolV1CurrentClientEvent({
+                type: "agent-event-scope",
+                includeConversations: true,
+                capabilities: TEAM_CURRENT_CAPABILITIES,
+              }),
+            );
+            settled = true;
+            resolve();
+          } catch {
+            diagnostic("error");
+            settled = true;
+            reject(new Error("The Tailscale event connection failed."));
+            socket.close();
+          }
         },
         { once: true },
       );
-      socket.addEventListener("error", fail, { once: true });
-      socket.addEventListener("close", () => {
-        onClosed();
+      socket.addEventListener("error", () => {
+        diagnostic("error");
+        if (!opened) {
+          rejectBeforeOpen();
+          if (socket.readyState < WebSocket.CLOSING) socket.close();
+        } else {
+          notifyClosed();
+          if (socket.readyState < WebSocket.CLOSING) socket.close();
+        }
+      });
+      socket.addEventListener("close", (closed: CloseEvent) => {
+        diagnostic("close", { code: closed.code, wasClean: closed.wasClean });
+        if (!opened) rejectBeforeOpen();
+        else notifyClosed();
       });
       socket.addEventListener("message", (message) => {
         if (typeof message.data !== "string" || message.data.length > 1024 * 1024) return;

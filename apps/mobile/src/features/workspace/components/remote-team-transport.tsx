@@ -21,7 +21,11 @@ import * as Crypto from "expo-crypto";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { useMobileSession } from "@/features/auth/context/mobile-session-context";
 import { supportLog, supportLogUrl } from "@/features/support/model/support-log";
-import { DirectTailnetTeamClient, type LocalTailnetServer } from "@/features/workspace/model/local-tailnet";
+import {
+  DirectTailnetTeamClient,
+  type LocalTailnetServer,
+  type LocalTailnetSocketDiagnostic,
+} from "@/features/workspace/model/local-tailnet";
 import { expoGoDomOptions } from "@/shared/lib/expo-go-dom";
 import { currentText } from "@/shared/lib/text";
 
@@ -161,6 +165,21 @@ export const RemoteTeamTransport = forwardRef<RemoteTeamTransportRef, RemoteTeam
                     state: "offline",
                     message: sourceText("error.remote.desktopOffline"),
                   });
+                },
+                (diagnostic: LocalTailnetSocketDiagnostic) => {
+                  const closeDetails =
+                    diagnostic.phase === "close"
+                      ? ` code=${diagnostic.code ?? "unknown"} clean=${diagnostic.wasClean === true}`
+                      : "";
+                  const severity =
+                    diagnostic.phase === "error" || (diagnostic.phase === "close" && diagnostic.code !== 1000)
+                      ? "warn"
+                      : "info";
+                  supportLog.add(
+                    severity,
+                    "connection",
+                    `${hostId} direct event socket ${diagnostic.phase} readyState=${diagnostic.readyState} protocol=${diagnostic.protocolAccepted ? "accepted" : "not-accepted"}${closeDetails}`,
+                  );
                 },
               );
               if (generation === directGeneration.current && directClient.current === client)

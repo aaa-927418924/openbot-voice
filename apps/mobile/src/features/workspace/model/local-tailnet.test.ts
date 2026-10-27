@@ -10,12 +10,44 @@ import {
 import { createEd25519Identity, signEd25519 } from "@openbot/team-client/ed25519";
 import { remoteHostFingerprint } from "@openbot/team-client/remote-directory";
 import { Effect } from "effect";
-import { describe, expect, it, vi } from "vitest";
-import { pairTailnetInvite, parseTailnetInvite, previewTailnetInvite } from "./local-tailnet";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  DirectTailnetTeamClient,
+  type LocalTailnetSocketDiagnostic,
+  pairTailnetInvite,
+  parseTailnetInvite,
+  previewTailnetInvite,
+} from "./local-tailnet";
 
 const serverId = "00000000-0000-4000-8000-0000000000a1";
 const apiUrl = "http://100.100.10.2:43123/";
 const randomBytes = (size: number) => new Uint8Array(size).fill(7);
+
+class FakeTailnetSocket extends EventTarget {
+  static instance: FakeTailnetSocket | null = null;
+  readyState = 0;
+  protocol = "";
+
+  constructor(_url: string | URL, _protocols?: string | string[]) {
+    super();
+    FakeTailnetSocket.instance = this;
+  }
+
+  send(_data: string): void {}
+
+  close(): void {
+    this.readyState = 3;
+  }
+
+  closeBeforeOpen(code: number, wasClean: boolean): void {
+    this.readyState = 3;
+    const event = new Event("close");
+    Object.defineProperties(event, { code: { value: code }, wasClean: { value: wasClean } });
+    this.dispatchEvent(event);
+  }
+}
+
+afterEach(() => vi.unstubAllGlobals());
 
 function inviteUrl(fingerprint: string): string {
   return createOpenBotInviteUrl(
@@ -134,5 +166,45 @@ describe("Android direct Tailscale pairing", () => {
       pairTailnetInvite(inviteUrl("a".repeat(43)), { appVersion: "1.1.0", fetch: host.fetcher, randomBytes }),
     ).rejects.toThrow("identity could not be verified");
     expect(host.calls.some((call) => call.path === TEAM_API_ROUTES.join.server)).toBe(false);
+  });
+
+  it("rejects an event socket that closes before opening and records safe connection details", async () => {
+    vi.stubGlobal("WebSocket", FakeTailnetSocket);
+    const sessionToken = "private-session-token";
+    const client = new DirectTailnetTeamClient(
+      {
+        hostId: serverId,
+        name: "Tailnet host",
+        logoKey: null,
+        apiUrl,
+        publicKey: "unused",
+        fingerprint: "unused",
+        sessionToken,
+        membershipId: "member-id",
+        role: "member",
+      },
+      { randomBytes },
+    );
+    const diagnostics: LocalTailnetSocketDiagnostic[] = [];
+    const onClosed = vi.fn();
+    const opening = client.openEvents(
+      () => {},
+      onClosed,
+      (entry) => diagnostics.push(entry),
+    );
+
+    FakeTailnetSocket.instance?.closeBeforeOpen(1006, false);
+
+    await expect(opening).rejects.toThrow("event connection failed");
+    expect(diagnostics.map(({ phase }) => phase)).toEqual(["opening", "close"]);
+    expect(diagnostics[1]).toMatchObject({
+      phase: "close",
+      readyState: 3,
+      protocolAccepted: false,
+      code: 1006,
+      wasClean: false,
+    });
+    expect(onClosed).not.toHaveBeenCalled();
+    expect(JSON.stringify(diagnostics)).not.toContain(sessionToken);
   });
 });
