@@ -1,11 +1,10 @@
-import { Slider } from "@expo/ui/community/slider";
 import type { AttachmentSummary } from "@openbot/contracts/ipc";
 import { MOBILE_ATTACHMENT_BYTES } from "@openbot/team-client/remote-peer";
 import { Image } from "expo-image";
-import { useVideoPlayer, type VideoPlayer, VideoView } from "expo-video";
+import { useVideoPlayer, VideoView } from "expo-video";
 import { Button, Skeleton, Typography } from "heroui-native";
 import { useThemeColor } from "heroui-native/hooks";
-import { Download, ExternalLink, ImageOff } from "lucide-react-native";
+import { Download, ExternalLink, ImageOff, Maximize } from "lucide-react-native";
 import { useEffect, useRef, useState } from "react";
 import { Platform, Pressable, useWindowDimensions, View } from "react-native";
 import Animated from "react-native-reanimated";
@@ -274,8 +273,7 @@ export function ChatAttachmentView({
             width={maxWidth}
             upload={shownUpload}
             uploadLabel={t("mobile.chat.attachment.uploading", { name: attachment.name })}
-            accentColor={String(fileColor)}
-            trackColor={String(muted)}
+            fullscreenLabel={t("mobile.chat.attachment.expandVideo")}
           />
         ) : (
           <View style={{ width: maxWidth, maxWidth: "100%" }}>
@@ -389,21 +387,45 @@ function InlineVideo({
   width,
   upload,
   uploadLabel,
-  accentColor,
-  trackColor,
+  fullscreenLabel,
 }: {
   uri: string;
   width: number;
   upload?: number;
   uploadLabel: string;
-  accentColor: string;
-  trackColor: string;
+  fullscreenLabel: string;
 }) {
   const player = useVideoPlayer(uri);
+  const videoViewRef = useRef<VideoView | null>(null);
   return (
     <View className="gap-0.5" style={{ width, maxWidth: "100%" }}>
       <View style={VIDEO_FRAME_STYLE}>
-        <VideoView player={player} contentFit="contain" nativeControls style={{ flex: 1 }} />
+        <VideoView
+          ref={videoViewRef}
+          player={player}
+          contentFit="contain"
+          nativeControls
+          buttonOptions={Platform.OS === "android" ? { showBottomBar: false } : undefined}
+          fullscreenOptions={{ enable: true }}
+          style={{ flex: 1 }}
+        />
+        {Platform.OS === "android" ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={fullscreenLabel}
+            onPress={() => void videoViewRef.current?.enterFullscreen()}
+            style={{
+              position: "absolute",
+              right: 8,
+              bottom: 8,
+              padding: 8,
+              borderRadius: 999,
+              backgroundColor: "rgba(0, 0, 0, 0.6)",
+            }}
+          >
+            <Maximize color="white" size={16} strokeWidth={2.5} />
+          </Pressable>
+        ) : null}
         {upload !== undefined ? (
           <View
             pointerEvents="none"
@@ -417,101 +439,6 @@ function InlineVideo({
           </View>
         ) : null}
       </View>
-      {Platform.OS === "android" ? (
-        <InlineVideoSeekBar player={player} accentColor={accentColor} trackColor={trackColor} />
-      ) : null}
     </View>
   );
-}
-
-function InlineVideoSeekBar({
-  player,
-  accentColor,
-  trackColor,
-}: {
-  player: VideoPlayer;
-  accentColor: string;
-  trackColor: string;
-}) {
-  const [position, setPosition] = useState(0);
-  const [duration, setDuration] = useState(0);
-  const isSeeking = useRef(false);
-  const pendingSeek = useRef<number | null>(null);
-  const seekTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    player.timeUpdateEventInterval = 0.25;
-    const updateDuration = () => {
-      const nextDuration = player.duration;
-      if (Number.isFinite(nextDuration) && nextDuration > 0) setDuration(nextDuration);
-    };
-    const timeSubscription = player.addListener("timeUpdate", ({ currentTime }) => {
-      updateDuration();
-      if (!isSeeking.current) setPosition(currentTime);
-    });
-    const sourceSubscription = player.addListener("sourceLoad", updateDuration);
-    updateDuration();
-
-    return () => {
-      timeSubscription.remove();
-      sourceSubscription.remove();
-      if (seekTimer.current !== null) clearTimeout(seekTimer.current);
-      player.timeUpdateEventInterval = 0;
-    };
-  }, [player]);
-
-  const sliderDuration = duration > 0 ? duration : 1;
-  const sliderPosition = Math.min(sliderDuration, Math.max(0, Number.isFinite(position) ? position : 0));
-  const seek = (value: number) => {
-    if (duration <= 0 || !Number.isFinite(value)) return;
-    const nextPosition = Math.min(duration, Math.max(0, value));
-    isSeeking.current = true;
-    pendingSeek.current = nextPosition;
-    setPosition(nextPosition);
-    if (seekTimer.current !== null) clearTimeout(seekTimer.current);
-    // Coalesce rapid drag updates into short pauses so a remote range stream is not opened
-    // repeatedly while the user scrubs across the timeline.
-    seekTimer.current = setTimeout(() => {
-      if (pendingSeek.current !== null) player.currentTime = pendingSeek.current;
-      pendingSeek.current = null;
-      isSeeking.current = false;
-      seekTimer.current = null;
-    }, 180);
-  };
-
-  return (
-    <View className="px-1">
-      <Slider
-        value={sliderPosition}
-        onValueChange={seek}
-        minimumValue={0}
-        maximumValue={sliderDuration}
-        minimumTrackTintColor={accentColor}
-        maximumTrackTintColor={trackColor}
-        thumbTintColor={accentColor}
-        disabled={duration <= 0}
-        style={{ width: "100%", height: 32 }}
-      />
-      {duration > 0 ? (
-        <View className="flex-row justify-between px-1">
-          <Typography.Paragraph type="body-xs" className="text-muted">
-            {formatVideoTime(position)}
-          </Typography.Paragraph>
-          <Typography.Paragraph type="body-xs" className="text-muted">
-            {formatVideoTime(duration)}
-          </Typography.Paragraph>
-        </View>
-      ) : null}
-    </View>
-  );
-}
-
-function formatVideoTime(value: number) {
-  const seconds = Math.max(0, Math.floor(Number.isFinite(value) ? value : 0));
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const remainder = seconds % 60;
-  return hours > 0
-    ? `${hours}:${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`
-    : `${minutes}:${String(remainder).padStart(2, "0")}`;
 }

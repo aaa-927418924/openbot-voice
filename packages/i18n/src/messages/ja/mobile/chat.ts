@@ -92,6 +92,7 @@ export const messages = {
   "mobile.chat.attachment.imageUnavailable": "画像を利用できません。もう一度お試しください。",
   "mobile.chat.attachment.saveImageFailed": "画像を保存できませんでした",
   "mobile.chat.attachment.preview": "{name} のプレビュー",
+  "mobile.chat.attachment.expandVideo": "動画を拡大表示",
   "mobile.chat.attachment.displayFailed": "この画像を表示できませんでした。",
   "mobile.chat.attachment.loadingImage": "画像を読み込み中",
   "mobile.chat.attachment.uploading": "{name} をアップロード中",

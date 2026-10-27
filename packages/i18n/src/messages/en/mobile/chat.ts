@@ -90,6 +90,7 @@ export const messages = defineMessages("mobile.chat", {
   "mobile.chat.attachment.imageUnavailable": "The image is unavailable. Try again.",
   "mobile.chat.attachment.saveImageFailed": "Could not save image",
   "mobile.chat.attachment.preview": "Preview {name}",
+  "mobile.chat.attachment.expandVideo": "Expand video",
   "mobile.chat.attachment.displayFailed": "Could not display this image.",
   "mobile.chat.attachment.loadingImage": "Loading image",
   "mobile.chat.attachment.uploading": "Uploading {name}",

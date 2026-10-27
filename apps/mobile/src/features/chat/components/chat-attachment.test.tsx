@@ -22,6 +22,7 @@ const native = vi.hoisted(() => ({
   download: vi.fn(),
   rangeAction: vi.fn(),
   downloadIconColor: vi.fn(),
+  enterVideoFullscreen: vi.fn(),
   openVideoStream: vi.fn(),
   videoPlayers: new Map<string, MockVideoPlayer>(),
   videoRanges: false,
@@ -84,6 +85,7 @@ vi.mock("lucide-react-native", () => ({
   },
   ExternalLink: () => null,
   ImageOff: () => null,
+  Maximize: () => null,
 }));
 vi.mock("react-native-reanimated", () => ({
   default: {
@@ -161,29 +163,6 @@ vi.mock("expo-media-library", () => ({
   Asset: { create: native.photos },
 }));
 vi.mock("expo-sharing", () => ({ isAvailableAsync: async () => true, shareAsync: native.share }));
-vi.mock("@expo/ui/community/slider", () => ({
-  Slider: ({
-    value,
-    onValueChange,
-    disabled,
-    maximumValue,
-  }: {
-    value: number;
-    onValueChange: (value: number) => void;
-    disabled?: boolean;
-    maximumValue: number;
-  }) => (
-    <input
-      type="range"
-      aria-label="Video seek"
-      min={0}
-      max={maximumValue}
-      value={value}
-      disabled={disabled}
-      onChange={(event) => onValueChange(Number(event.currentTarget.value))}
-    />
-  ),
-}));
 vi.mock("expo-video", () => ({
   useVideoPlayer: (uri: string) => {
     const playerRef = useRef<MockVideoPlayer | null>(null);
@@ -205,9 +184,25 @@ vi.mock("expo-video", () => ({
     playerRef.current.uri = uri;
     return playerRef.current;
   },
-  VideoView: ({ player }: { player: { uri: string } }) => (
-    <div role="img" aria-label="video player" data-source={player.uri} />
-  ),
+  VideoView: ({
+    player,
+    buttonOptions,
+    ref,
+  }: {
+    player: { uri: string };
+    buttonOptions?: { showBottomBar?: boolean };
+    ref?: Ref<unknown>;
+  }) => {
+    useImperativeHandle(ref, () => ({ enterFullscreen: native.enterVideoFullscreen }));
+    return (
+      <div
+        role="img"
+        aria-label="video player"
+        data-source={player.uri}
+        data-bottom-bar={String(buttonOptions?.showBottomBar ?? true)}
+      />
+    );
+  },
 }));
 vi.mock("../model/attachment-video-stream", () => ({
   openAttachmentVideoStream: native.openVideoStream,
@@ -413,18 +408,17 @@ it("embeds a downloaded MP4 in the message and offers only a save-location downl
   });
 });
 
-it("shows an inline Android video seek bar and applies a scrub without expanding the player", async () => {
+it("hides the Android inline video progress bars and keeps the fullscreen action", async () => {
   native.platform = "android";
   native.download.mockResolvedValue({ name: "clip.mp4", mimeType: "video/mp4", base64: "aGVsbG8=" });
   mount({ ...attachment, name: "clip.mp4", mimeType: "video/mp4", size: 5 });
-  await waitFor(() => expect(screen.getByRole("slider", { name: "Video seek" })).toBeTruthy());
-
-  const player = [...native.videoPlayers.values()].at(-1);
-  act(() => player?.listeners.get("sourceLoad")?.());
-  await waitFor(() => expect(screen.getByText("1:00")).toBeTruthy());
-  act(() => fireEvent.change(screen.getByRole("slider", { name: "Video seek" }), { target: { value: "20" } }));
-  expect(screen.getByText("0:20")).toBeTruthy();
-  await waitFor(() => expect(player?.currentTime).toBe(20));
+  await waitFor(() => expect(screen.getByRole("img", { name: "video player" })).toBeTruthy());
+  expect(screen.queryByRole("slider", { name: "Video seek" })).toBeNull();
+  expect(screen.getByRole("img", { name: "video player" }).getAttribute("data-bottom-bar")).toBe("false");
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Expand video" }));
+  });
+  expect(native.enterVideoFullscreen).toHaveBeenCalledOnce();
 });
 
 it("opens a message image from its place in the chat, then shares it and saves it to Photos", async () => {
