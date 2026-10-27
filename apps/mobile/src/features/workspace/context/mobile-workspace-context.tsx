@@ -136,6 +136,7 @@ import type {
   MobileServerDirectoryState,
   MobileWorkspaceContextValue,
 } from "@/features/workspace/model/workspace-types";
+import { mobileAppVersion } from "@/shared/lib/mobile-features";
 import { currentText } from "@/shared/lib/text";
 import { useAppForeground } from "@/shared/lib/use-app-foreground";
 
@@ -1272,6 +1273,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
       addRemoteServer: async ({ inviteUrl }) => {
         if (session.localOnly) {
           const host = await pairTailnetInvite(inviteUrl, {
+            appVersion: mobileAppVersion(),
             randomBytes: (size) => Crypto.getRandomBytes(size),
           });
           await saveLocalTailnetServer(host);

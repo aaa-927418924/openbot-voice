@@ -65,6 +65,11 @@ function appVersion(): string | null {
   return Application.nativeApplicationVersion;
 }
 
+/** A non-empty version string for protocol headers, including development clients. */
+export function mobileAppVersion(): string {
+  return appVersion() ?? Constants.expoConfig?.version ?? "development";
+}
+
 /** One flag for the account server of this session. It is off for another account server. */
 export function useMobileFeature(apiUrl: string, feature: keyof MobileFeatureFlags): boolean {
   return useMobileFeatures((state) => state.apiUrl === apiUrl && state.flags[feature]);

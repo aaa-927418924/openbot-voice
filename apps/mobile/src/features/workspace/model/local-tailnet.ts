@@ -197,10 +197,10 @@ async function verifyTailnetIdentity(
 /** Reviews a local invitation without consuming its one-time token or contacting an account service. */
 export async function previewTailnetInvite(
   inviteUrl: string,
-  options: { appVersion?: string; fetch?: TailnetFetch; randomBytes: TailnetRandomBytes },
+  options: { appVersion: string; fetch?: TailnetFetch; randomBytes: TailnetRandomBytes },
 ): Promise<RemoteInvitePreview> {
   const invite = parseTailnetInvite(inviteUrl);
-  const appVersion = options.appVersion ?? "";
+  const { appVersion } = options;
   const fetcher = options.fetch ?? fetch;
   const { randomBytes } = options;
   const { protocol, proof } = await verifyTailnetIdentity(invite, appVersion, fetcher, randomBytes);
@@ -239,12 +239,11 @@ export async function previewTailnetInvite(
 /** Verifies the host's pinned identity before sending the one-time invite token or a password. */
 export async function pairTailnetInvite(
   inviteUrl: string,
-  options: { appVersion?: string; fetch?: TailnetFetch; randomBytes: TailnetRandomBytes },
+  options: { appVersion: string; fetch?: TailnetFetch; randomBytes: TailnetRandomBytes },
 ): Promise<LocalTailnetServer> {
   const invite = parseTailnetInvite(inviteUrl);
   const fetcher = options.fetch ?? fetch;
-  const appVersion = options.appVersion ?? "";
-  const { randomBytes } = options;
+  const { appVersion, randomBytes } = options;
   const { protocol, proof } = await verifyTailnetIdentity(invite, appVersion, fetcher, randomBytes);
 
   const username = `device-${base64Url(randomBytes(12)).slice(0, 16)}`;

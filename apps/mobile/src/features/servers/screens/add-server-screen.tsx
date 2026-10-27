@@ -19,6 +19,7 @@ import { parseTailnetInvite, previewTailnetInvite } from "@/features/workspace/m
 import { SheetFormField } from "@/shared/components/sheet-form-field";
 import { SheetScrollView } from "@/shared/components/sheet-scroll-view";
 import { haptics } from "@/shared/lib/haptics";
+import { mobileAppVersion } from "@/shared/lib/mobile-features";
 import { isIOS } from "@/shared/lib/platform";
 import { currentText, useText } from "@/shared/lib/text";
 
@@ -92,7 +93,10 @@ export function AddServerScreen({
     }
     setPreviewing(true);
     const preview = session?.localOnly
-      ? previewTailnetInvite(request.url, { randomBytes: (size) => Crypto.getRandomBytes(size) })
+      ? previewTailnetInvite(request.url, {
+          appVersion: mobileAppVersion(),
+          randomBytes: (size) => Crypto.getRandomBytes(size),
+        })
       : teamDirectory
         ? runTeamEffect(teamDirectory.previewInvite(request.url))
         : Promise.reject(new Error("Account directory is unavailable in local-only mode."));

@@ -2,6 +2,11 @@
 import { createOpenBotInviteUrl } from "@openbot/contracts/invite-links";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import { teamHttpCodec } from "@openbot/contracts/team-protocol/http-codecs";
+import {
+  TEAM_APP_VERSION_HEADER,
+  TEAM_CAPABILITIES_HEADER,
+  TEAM_PROTOCOL_VERSION_HEADER,
+} from "@openbot/contracts/team-protocol/v1";
 import { createEd25519Identity, signEd25519 } from "@openbot/team-client/ed25519";
 import { remoteHostFingerprint } from "@openbot/team-client/remote-directory";
 import { Effect } from "effect";
@@ -116,6 +121,11 @@ describe("Android direct Tailscale pairing", () => {
     });
     expect(host.calls.filter((call) => call.path === TEAM_API_ROUTES.join.server)).toHaveLength(1);
     expect(host.calls.every((call) => !call.headers.has("Authorization"))).toBe(true);
+    for (const call of host.calls.filter((entry) => entry.path !== TEAM_API_ROUTES.compatibility)) {
+      expect(call.headers.get(TEAM_APP_VERSION_HEADER)).toBe("1.1.0");
+      expect(call.headers.get(TEAM_PROTOCOL_VERSION_HEADER)).toBe("6");
+      expect(call.headers.get(TEAM_CAPABILITIES_HEADER)).toBeTruthy();
+    }
   });
 
   it("does not send the invite token when the host identity does not match the link", async () => {
