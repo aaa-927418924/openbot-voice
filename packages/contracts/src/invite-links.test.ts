@@ -8,6 +8,7 @@ import {
   isCanonicalInviteUrl,
   isNeverExpiringInvite,
   isPermanentInvite,
+  isTailscaleApiUrl,
   isValidRemoteApiUrl,
   PERMANENT_INVITE_EXPIRES_AT_MS,
   parseInviteUrl,
@@ -90,6 +91,29 @@ describe("OpenBot invite links", () => {
     undefined,
   ])("treats %s as no self-hosted account service", (apiUrl) => {
     expect(selfHostedApiOrigin(apiUrl)).toBeUndefined();
+  });
+
+  it("accepts only explicit HTTP endpoints on Tailscale-reserved IP ranges", () => {
+    const tailnet = { ...payload, apiUrl: "http://100.100.10.2:43123/" };
+    const options = { allowTailscaleApiUrl: true };
+    const invite = createInviteUrl(tailnet, options);
+    expect(parseInviteUrl(invite, options)).toEqual(tailnet);
+    expect(isTailscaleApiUrl(tailnet.apiUrl)).toBe(true);
+    expect(isValidRemoteApiUrl(tailnet.apiUrl, options)).toBe(true);
+    expect(isValidRemoteApiUrl(tailnet.apiUrl)).toBe(false);
+    expect(isTailscaleApiUrl("http://100.63.255.255:43123/")).toBe(false);
+    expect(isTailscaleApiUrl("http://100.128.0.1:43123/")).toBe(false);
+    expect(isTailscaleApiUrl("http://192.168.1.4:43123/")).toBe(false);
+    expect(isTailscaleApiUrl("https://100.100.10.2:43123/")).toBe(false);
+    expect(isTailscaleApiUrl("http://100.100.10.2:43123/path")).toBe(false);
+  });
+
+  it("accepts the Tailscale IPv6 address range with a bracketed URL host", () => {
+    const tailnet = { ...payload, apiUrl: "http://[fd7a:115c:a1e0::12]:43123/" };
+    const options = { allowTailscaleApiUrl: true };
+    expect(isTailscaleApiUrl(tailnet.apiUrl)).toBe(true);
+    expect(parseInviteUrl(createInviteUrl(tailnet, options), options)).toEqual(tailnet);
+    expect(isTailscaleApiUrl("http://[fd7a:115c:a1e1::12]:43123/")).toBe(false);
   });
 
   it("supports localhost invitations only when local development is explicitly enabled", () => {

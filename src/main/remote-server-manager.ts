@@ -1,8 +1,13 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { basename } from "node:path";
 import { isValidAvatarImage } from "@openbot/contracts/avatar-images";
-import { type InviteLinkOptions, type InviteLinkPayload, parseInviteUrl } from "@openbot/contracts/invite-links";
+import {
+  type InviteLinkOptions,
+  type InviteLinkPayload,
+  isTailscaleApiUrl,
+  parseInviteUrl,
+} from "@openbot/contracts/invite-links";
 import type {
   AgentEvent,
   AgentImportPreview,
@@ -127,6 +132,7 @@ interface CentralAccountSession {
 
 interface RemoteServerManagerOptions {
   allowLocalDevelopmentInvites?: boolean;
+  allowTailscaleApiUrl?: boolean;
   /** The origin of the self-hosted account service that this app is configured to use. */
   selfHostedApiOrigin?: string | undefined;
   appVersion?: string;
@@ -220,6 +226,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     this.#allowLocalDevelopmentInvites = options.allowLocalDevelopmentInvites ?? false;
     this.#inviteLinks = {
       allowLocalDevelopmentApiUrl: this.#allowLocalDevelopmentInvites,
+      allowTailscaleApiUrl: options.allowTailscaleApiUrl ?? false,
       selfHostedApiOrigin: options.selfHostedApiOrigin,
     };
     this.#webrtcTransport = options.webrtcTransport ?? null;
@@ -588,7 +595,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       const transport = this.#webrtcTransport;
 
       const invite = yield* remoteDecode(() => this.#parseInvite(input.inviteUrl));
-      if (transport && !isLocalDevelopmentApi(invite.apiUrl)) {
+      if (transport && !isDirectLocalInviteApi(invite.apiUrl)) {
         const preview = yield* transport.previewInvite(invite.token);
         if (preview.hostId !== invite.serverId)
           return yield* new RemoteWorkflowError({ cause: new Error(sourceText("error.remote.inviteHostMismatch")) });
@@ -622,34 +629,56 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         return yield* remoteDecode(() => requiredServerSummary(this.list(), accepted.hostId));
       }
       const verifiedIdentity = yield* this.#client.verifyIdentity(invite.apiUrl, invite.serverId, invite.fingerprint);
-      const accountTicket = yield* this.#centralAccount
-        .createTeamAuthTicket(invite.serverId)
-        .pipe(toRemoteWorkflowError);
-      const result = yield* requestJson(invite.apiUrl, TEAM_API_ROUTES.join.account, decodeJoinResult, {
-        method: "POST",
-        body: {
-          inviteToken: invite.token,
-          accountTicket,
-        },
-        ...this.#client.requestProtocol(verifiedIdentity.compatibility),
-      }).pipe(
-        Effect.mapError(
-          (failure) =>
-            new RemoteWorkflowError({
-              cause:
-                failure instanceof RemoteRequestError || failure instanceof RemoteProtocolError
-                  ? failure
-                  : failure.cause,
-            }),
-        ),
-      );
+      const isTailnetInvite = isTailscaleApiUrl(invite.apiUrl);
+      const username = isTailnetInvite
+        ? `device-${randomBytes(8).toString("hex")}`
+        : this.#centralAccount.getEmail().trim().toLowerCase();
+      const result = isTailnetInvite
+        ? yield* requestJson(invite.apiUrl, TEAM_API_ROUTES.join.server, decodeJoinResult, {
+            method: "POST",
+            body: {
+              inviteToken: invite.token,
+              username,
+              password: randomBytes(32).toString("base64url"),
+            },
+          }).pipe(
+            Effect.mapError(
+              (failure) =>
+                new RemoteWorkflowError({
+                  cause:
+                    failure instanceof RemoteRequestError || failure instanceof RemoteProtocolError
+                      ? failure
+                      : failure.cause,
+                }),
+            ),
+          )
+        : yield* Effect.gen({ self: this }, function* () {
+            const accountTicket = yield* this.#centralAccount
+              .createTeamAuthTicket(invite.serverId)
+              .pipe(toRemoteWorkflowError);
+            return yield* requestJson(invite.apiUrl, TEAM_API_ROUTES.join.account, decodeJoinResult, {
+              method: "POST",
+              body: { inviteToken: invite.token, accountTicket },
+              ...this.#client.requestProtocol(verifiedIdentity.compatibility),
+            }).pipe(
+              Effect.mapError(
+                (failure) =>
+                  new RemoteWorkflowError({
+                    cause:
+                      failure instanceof RemoteRequestError || failure instanceof RemoteProtocolError
+                        ? failure
+                        : failure.cause,
+                  }),
+              ),
+            );
+          });
       const stored: StoredRemoteServer = {
         id: invite.serverId,
         name: verifiedIdentity.serverName,
         apiUrl: invite.apiUrl,
         fingerprint: invite.fingerprint,
         publicKey: verifiedIdentity.publicKey,
-        username: this.#centralAccount.getEmail().trim().toLowerCase(),
+        username,
         encryptedToken: yield* remoteDecode(() => this.#store.sealToken(result.sessionToken)),
         remoteDesktopAvailable: false,
         logoVersion: verifiedIdentity.logoVersion,
@@ -722,7 +751,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       const transport = this.#webrtcTransport;
 
       const invite = yield* remoteDecode(() => this.#parseInvite(input.inviteUrl));
-      if (transport && !isLocalDevelopmentApi(invite.apiUrl)) {
+      if (transport && !isDirectLocalInviteApi(invite.apiUrl)) {
         const preview = yield* transport.previewInvite(invite.token);
         if (preview.hostId !== invite.serverId)
           return yield* new RemoteWorkflowError({ cause: new Error(sourceText("error.remote.inviteHostMismatch")) });
@@ -1681,4 +1710,8 @@ function requiredServerSummary(servers: ServerSummary[], serverId: string): Serv
   const server = servers.find((candidate) => candidate.id === serverId);
   if (!server) throw new Error("Remote server summary is missing.");
   return server;
+}
+
+function isDirectLocalInviteApi(value: string): boolean {
+  return isLocalDevelopmentApi(value) || isTailscaleApiUrl(value);
 }

@@ -272,5 +272,7 @@ export interface TeamApiOptions {
   liveActivityPush?: LiveActivityPushService;
   rateLimitCapacity?: number;
   now?: () => number;
+  /** Binds only to a detected Tailscale interface address rather than loopback. */
+  bindToTailnet?: boolean;
   logger?: Logger;
 }

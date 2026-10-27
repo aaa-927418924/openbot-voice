@@ -54,6 +54,8 @@ export interface InviteLinkPayload {
 
 export interface InviteLinkOptions {
   allowLocalDevelopmentApiUrl?: boolean;
+  /** HTTP URLs on Tailscale-reserved addresses, protected by the tailnet and host-key pinning. */
+  allowTailscaleApiUrl?: boolean;
   /**
    * The one self-hosted account service that this client uses. Only an origin from the client's
    * own configuration goes here, never one read from an invitation.
@@ -177,6 +179,7 @@ export function isValidRemoteApiUrl(value: string, options: InviteLinkOptions = 
       url.protocol === "http:" &&
       url.hostname === "localhost" &&
       url.port !== "";
+    const tailscaleApi = options.allowTailscaleApiUrl === true && isTailscaleApiUrl(url.toString());
     return (
       url.username === "" &&
       url.password === "" &&
@@ -184,6 +187,7 @@ export function isValidRemoteApiUrl(value: string, options: InviteLinkOptions = 
       url.search === "" &&
       url.hash === "" &&
       (localDevelopmentApi ||
+        tailscaleApi ||
         isSelfHostedApiUrl(url, options) ||
         (url.protocol === "https:" &&
           url.port === "" &&
@@ -194,6 +198,52 @@ export function isValidRemoteApiUrl(value: string, options: InviteLinkOptions = 
   } catch {
     return false;
   }
+}
+
+export function isTailscaleApiUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    if (
+      url.protocol !== "http:" ||
+      url.port === "" ||
+      url.username !== "" ||
+      url.password !== "" ||
+      url.pathname !== "/" ||
+      url.search !== "" ||
+      url.hash !== ""
+    )
+      return false;
+    const address = (url.hostname.split("%", 1)[0] ?? url.hostname).replace(/^\[|\]$/gu, "");
+    const v4 = address.split(".").map(Number);
+    if (
+      v4.length === 4 &&
+      v4.every((part) => Number.isInteger(part) && part >= 0 && part <= 255) &&
+      v4[0] === 100 &&
+      v4[1] !== undefined &&
+      v4[1] >= 64 &&
+      v4[1] <= 127
+    )
+      return true;
+    const groups = expandIpv6(address);
+    return groups?.[0] === 0xfd7a && groups[1] === 0x115c && groups[2] === 0xa1e0;
+  } catch {
+    return false;
+  }
+}
+
+function expandIpv6(value: string): number[] | null {
+  const lower = value.toLowerCase();
+  const separator = lower.indexOf("::");
+  const leftText = separator < 0 ? lower : lower.slice(0, separator);
+  const rightText = separator < 0 ? "" : lower.slice(separator + 2);
+  const parse = (part: string) => (part ? part.split(":").map((group) => Number.parseInt(group, 16)) : []);
+  const left = parse(leftText);
+  const right = parse(rightText);
+  if ([...left, ...right].some((group) => !Number.isInteger(group) || group < 0 || group > 0xffff)) return null;
+  if (separator < 0) return left.length === 8 ? left : null;
+  const zeroes = 8 - left.length - right.length;
+  if (zeroes < 1) return null;
+  return [...left, ...Array.from({ length: zeroes }, () => 0), ...right];
 }
 
 function isSelfHostedApiUrl(url: URL, options: InviteLinkOptions): boolean {

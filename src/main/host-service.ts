@@ -92,6 +92,8 @@ interface HostServiceOptions {
    * or writes them in the account directory.
    */
   localDevelopmentHost?: boolean;
+  /** Serve direct clients only over Tailscale; never expose the Team API on a wildcard interface. */
+  localOnlyNetworking?: boolean;
   logDirectory?: string;
   removeLegacyRemoteDesktopCredential?: () => Effect.Effect<void, RemoteWorkflowError>;
   getSignedInUser: () => CentralAuthUser;
@@ -201,6 +203,7 @@ export class HostService extends EventEmitter<HostEvents> {
     this.#options = {
       ...options,
       localDevelopmentHost: options.localDevelopmentHost ?? false,
+      localOnlyNetworking: options.localOnlyNetworking ?? false,
     };
     this.#status = initialHostStatus(options.store.getIdentity(), options.unattended ?? false);
     const logDirectory = options.logDirectory;
@@ -283,6 +286,7 @@ export class HostService extends EventEmitter<HostEvents> {
       : undefined;
     this.#api = new TeamApiServer({
       appVersion: options.appVersion,
+      bindToTailnet: options.localOnlyNetworking ?? false,
       store: options.store,
       agents: options.agents,
       channels: options.channels,
@@ -768,7 +772,7 @@ export class HostService extends EventEmitter<HostEvents> {
   // Where this host's Team API listens on this machine, which is not what `#status.apiUrl` reports:
   // that is how a member reaches the host, and for a published one it is the Signal service.
   #localApiUrl(): string | null {
-    return this.#api.port === null ? null : `http://localhost:${this.#api.port}`;
+    return this.#api.apiUrl;
   }
 
   readonly createDevelopmentConnection = Effect.fn("HostService.createDevelopmentConnection")(
@@ -1198,7 +1202,10 @@ export class HostService extends EventEmitter<HostEvents> {
           fingerprint: identity.fingerprint,
           token: invite.token,
         },
-        { allowLocalDevelopmentApiUrl: this.#options.localDevelopmentHost },
+        {
+          allowLocalDevelopmentApiUrl: this.#options.localDevelopmentHost,
+          allowTailscaleApiUrl: this.#options.localOnlyNetworking,
+        },
       );
       const result: InviteSummary = {
         id: invite.id,

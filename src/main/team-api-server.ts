@@ -92,6 +92,7 @@ import { LifecycleGate } from "./lifecycle-gate";
 import { listenLoopback } from "./listen-loopback";
 import { RemoteScreenError } from "./remote-screen-gateway";
 import { RemoteWorkflowError, remoteCall, toRemoteWorkflowError } from "./remote-service-effects";
+import { listenOnTailscale, tailnetUrl } from "./tailscale-network";
 import { isClientUse } from "./team-api/client-use";
 import type { TeamApiOptions, TeamApiSidebarLayout } from "./team-api/dependencies";
 import { HttpError } from "./team-api/http-error";
@@ -212,6 +213,7 @@ export class TeamApiServer {
   #server: Server | null = null;
   readonly #lifecycle = new LifecycleGate<number, RemoteWorkflowError>();
   #port: number | null = null;
+  #apiUrl: string | null = null;
   #heartbeat: ReturnType<typeof setInterval> | null = null;
   #lastClientUseAt: number | null = null;
   #agentListener: ((event: AgentEvent) => void) | null = null;
@@ -229,6 +231,10 @@ export class TeamApiServer {
 
   get port(): number | null {
     return this.#port;
+  }
+
+  get apiUrl(): string | null {
+    return this.#apiUrl;
   }
 
   // Without the gate, two starts at once open two listeners and lose one, and a stop during a start
@@ -303,8 +309,19 @@ export class TeamApiServer {
       socket.write("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
       socket.destroy();
     });
-    const port = yield* remoteCall(() => listenLoopback(server, () => new Error(sourceText("error.team.bindFailed"))));
-    this.#port = port;
+    let port: number;
+    if (this.#options.bindToTailnet) {
+      const binding = yield* remoteCall(() =>
+        listenOnTailscale(server, () => new Error(sourceText("error.team.bindFailed"))),
+      );
+      port = binding.port;
+      this.#port = port;
+      this.#apiUrl = tailnetUrl(binding);
+    } else {
+      port = yield* remoteCall(() => listenLoopback(server, () => new Error(sourceText("error.team.bindFailed"))));
+      this.#port = port;
+      this.#apiUrl = `http://127.0.0.1:${port}`;
+    }
     this.#agentListener = (event) => this.#broadcastAgentEvent(event);
     this.#options.agents.on("event", this.#agentListener);
     this.#liveVoiceListener = (event) => this.#broadcastAgentEvent(toLiveVoiceWireEvent(event));
@@ -353,6 +370,7 @@ export class TeamApiServer {
           const server = this.#server;
           this.#server = null;
           this.#port = null;
+          this.#apiUrl = null;
           if (server) {
             yield* Effect.callback<void>((resume) => {
               server.close(() => resume(Effect.void));
