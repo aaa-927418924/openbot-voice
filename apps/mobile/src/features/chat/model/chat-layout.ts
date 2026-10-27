@@ -30,6 +30,32 @@ export function chatContentIsVisible(layout: ChatLayout, scrollY: number, obstru
 
 // Keep opening work small while retaining the user-message anchor used by chat motion.
 export const CHAT_HISTORY_BATCH = 16;
+export const CHAT_HISTORY_START_THRESHOLD = 96;
+
+export function isNearChatHistoryStart(offsetY: number): boolean {
+  "worklet";
+  return Number.isFinite(offsetY) && offsetY <= CHAT_HISTORY_START_THRESHOLD;
+}
+
+export function shouldAutoLoadOlderChatHistory(
+  offsetY: number,
+  state: {
+    userInitiated: boolean;
+    historyVisible: boolean;
+    canLoad: boolean;
+    hasCachedOlder: boolean;
+    olderError: boolean;
+  },
+): boolean {
+  "worklet";
+  return (
+    state.userInitiated &&
+    state.historyVisible &&
+    state.canLoad &&
+    (state.hasCachedOlder || !state.olderError) &&
+    isNearChatHistoryStart(offsetY)
+  );
+}
 
 export interface ChatHistoryBoundary {
   firstId: string | null;

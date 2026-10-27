@@ -7,6 +7,8 @@ import {
   chatEndOffset,
   chatHistoryStart,
   chatSendOffset,
+  isNearChatHistoryStart,
+  shouldAutoLoadOlderChatHistory,
 } from "./chat-layout";
 import { largePastedText } from "./composer-paste";
 import { createStreamRevealPool, streamRevealWindow } from "./stream-reveal-pool";
@@ -147,5 +149,29 @@ describe("chat history window", () => {
   it("resets to recent messages if a reconnect replaces the history window", () => {
     const replaced = messages.map((message) => ({ id: `replacement-${message.id}` }));
     expect(chatHistoryStart(replaced, 48, { firstId: "34", headId: "0" })).toBe(34);
+  });
+
+  it("detects the top edge for scroll-triggered older history loading", () => {
+    expect([-4, 0, 96].map(isNearChatHistoryStart)).toEqual([true, true, true]);
+    expect([97, Number.NaN].map(isNearChatHistoryStart)).toEqual([false, false]);
+  });
+
+  it("loads older history only for a user scroll at the visible list start", () => {
+    const ready = {
+      userInitiated: true,
+      historyVisible: true,
+      canLoad: true,
+      hasCachedOlder: false,
+      olderError: false,
+    };
+    expect([
+      shouldAutoLoadOlderChatHistory(96, ready),
+      shouldAutoLoadOlderChatHistory(97, ready),
+      shouldAutoLoadOlderChatHistory(0, { ...ready, userInitiated: false }),
+      shouldAutoLoadOlderChatHistory(0, { ...ready, historyVisible: false }),
+      shouldAutoLoadOlderChatHistory(0, { ...ready, canLoad: false }),
+      shouldAutoLoadOlderChatHistory(0, { ...ready, olderError: true }),
+    ]).toEqual([true, false, false, false, false, false]);
+    expect(shouldAutoLoadOlderChatHistory(0, { ...ready, hasCachedOlder: true, olderError: true })).toBe(true);
   });
 });

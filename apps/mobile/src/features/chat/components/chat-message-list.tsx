@@ -60,7 +60,12 @@ import { agentActivityMood, type MobileAgentActivity } from "@/features/workspac
 import { haptics } from "@/shared/lib/haptics";
 import { useText } from "@/shared/lib/text";
 import type { ChatBubbleMessage } from "../context/message-actions-context";
-import { CHAT_HISTORY_BATCH, type ChatHistoryBoundary, chatHistoryStart } from "../model/chat-layout";
+import {
+  CHAT_HISTORY_BATCH,
+  type ChatHistoryBoundary,
+  chatHistoryStart,
+  shouldAutoLoadOlderChatHistory,
+} from "../model/chat-layout";
 import { mentionDraft } from "../model/chat-mentions";
 import type { ChatTarget } from "../model/chat-target";
 import { isStreamingReply } from "../model/reply-reveal";
@@ -791,11 +796,29 @@ export function ChatMessageList({
   const windowMessages = useMemo(() => visibleMessages.slice(windowStart), [visibleMessages, windowStart]);
   const hasCachedOlder = windowStart > 0;
   const canLoadOlder = hasCachedOlder || (online && hasOlder && !olderLoading);
-  const loadPrevious = () => {
+  const historyScrollStarted = useRef(false);
+  const olderLoadPending = useRef(false);
+  const historyScrollConversation = useRef(conversationKey);
+  useEffect(() => {
+    if (historyScrollConversation.current === conversationKey) return;
+    historyScrollConversation.current = conversationKey;
+    historyScrollStarted.current = false;
+    olderLoadPending.current = false;
+  }, [conversationKey]);
+  useEffect(() => {
+    if (!olderLoading) olderLoadPending.current = false;
+  }, [olderLoading]);
+  const loadPrevious = (automatic = false) => {
     if (hasCachedOlder) {
+      historyScrollStarted.current = false;
       const first = visibleMessages[Math.max(0, windowStart - CHAT_HISTORY_BATCH)];
       if (first) setBoundary({ firstId: first.id, headId });
-    } else if (canLoadOlder) onLoadOlder();
+      return;
+    }
+    if (!canLoadOlder || olderLoadPending.current || (automatic && olderError)) return;
+    historyScrollStarted.current = false;
+    olderLoadPending.current = true;
+    onLoadOlder();
   };
   const actionHandlers = useRef({ onReply, onOpenActions, onSelectQuestion });
   actionHandlers.current = { onReply, onOpenActions, onSelectQuestion };
@@ -988,10 +1011,6 @@ export function ChatMessageList({
           windowSize={7}
           removeClippedSubviews={false}
           maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
-          onStartReached={() => {
-            if (motion.historyVisible && canLoadOlder && (hasCachedOlder || !olderError)) loadPrevious();
-          }}
-          onStartReachedThreshold={0.5}
           renderItem={renderItem}
           renderScrollComponent={(props) => (
             <ChatScrollView
@@ -1020,8 +1039,23 @@ export function ChatMessageList({
             motion.onViewportLayout(event);
             seekLatest();
           }}
-          onScroll={motion.onScroll}
-          onScrollBeginDrag={motion.onScrollBeginDrag}
+          onScroll={(event) => {
+            motion.onScroll(event);
+            if (
+              shouldAutoLoadOlderChatHistory(event.nativeEvent.contentOffset.y, {
+                userInitiated: historyScrollStarted.current,
+                historyVisible: motion.historyVisible,
+                canLoad: canLoadOlder,
+                hasCachedOlder,
+                olderError,
+              })
+            )
+              loadPrevious(true);
+          }}
+          onScrollBeginDrag={() => {
+            historyScrollStarted.current = true;
+            motion.onScrollBeginDrag();
+          }}
           onScrollEndDrag={motion.onScrollEndDrag}
           onMomentumScrollEnd={motion.onScrollEndDrag}
           scrollEventThrottle={16}
@@ -1030,7 +1064,7 @@ export function ChatMessageList({
             <>
               {hasOlder || hasCachedOlder ? (
                 <View className="items-center pb-3">
-                  <Button variant="tertiary" isDisabled={!canLoadOlder} onPress={loadPrevious}>
+                  <Button variant="tertiary" isDisabled={!canLoadOlder} onPress={() => loadPrevious()}>
                     <Button.Label>
                       {!hasCachedOlder && olderLoading
                         ? t("mobile.chat.history.loadingOlder")
