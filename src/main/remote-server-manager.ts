@@ -710,6 +710,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
               username,
               password: randomBytes(32).toString("base64url"),
             },
+            ...this.#client.requestProtocol(verifiedIdentity.compatibility),
           }).pipe(
             Effect.mapError(
               (failure) =>

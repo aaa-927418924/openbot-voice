@@ -3,6 +3,11 @@ import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+  TEAM_APP_VERSION_HEADER,
+  TEAM_CAPABILITIES_HEADER,
+  TEAM_PROTOCOL_VERSION_HEADER,
+} from "@openbot/contracts/team-protocol/v1";
 import { encodeTeamProtocolV1CurrentHttpResponse } from "@openbot/contracts/team-protocol/v1-adapter";
 import { Effect } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -144,6 +149,7 @@ describe("Tailscale-local invitations", () => {
     const publicKeyPem = publicKey.export({ type: "spki", format: "pem" }).toString();
     const hostFingerprint = createHash("sha256").update(publicKeyPem).digest("base64url");
     let receivedJoinBody: { inviteToken?: unknown; username?: unknown; password?: unknown } | undefined;
+    let receivedJoinHeaders: Headers | undefined;
     const createTeamAuthTicket = vi.fn(() => Effect.succeed("unexpected-ticket"));
     vi.stubGlobal("WebSocket", OpenEventSocket);
     vi.stubGlobal(
@@ -169,6 +175,7 @@ describe("Tailscale-local invitations", () => {
           );
         }
         if (url.pathname === "/v1/join") {
+          receivedJoinHeaders = new Headers(init?.headers);
           const bodyText = typeof init?.body === "string" ? init.body : "";
           receivedJoinBody = bodyText ? JSON.parse(bodyText) : undefined;
           const result = {
@@ -227,6 +234,9 @@ describe("Tailscale-local invitations", () => {
       expect(receivedJoinBody).toMatchObject({ inviteToken: "b".repeat(43) });
       expect(receivedJoinBody?.username).toEqual(expect.stringMatching(/^device-[a-f0-9]{16}$/u));
       expect(receivedJoinBody?.password).toEqual(expect.stringMatching(/^[A-Za-z0-9_-]{43}$/u));
+      expect(receivedJoinHeaders?.get(TEAM_PROTOCOL_VERSION_HEADER)).toBe("1");
+      expect(receivedJoinHeaders?.get(TEAM_APP_VERSION_HEADER)).toBe("0.30.0");
+      expect(receivedJoinHeaders?.get(TEAM_CAPABILITIES_HEADER)).toBeTruthy();
     } finally {
       await runCauseEffect(manager.stop());
       await rm(directory, { recursive: true, force: true });
