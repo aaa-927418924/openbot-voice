@@ -177,6 +177,12 @@ export function AttachmentCards(props: {
                       >
                         <track kind="captions" />
                       </video>
+                    </div>
+                    <div class="attachment-video-metadata">
+                      <span class="attachment-video-copy">
+                        <strong>{attachment.name}</strong>
+                        <small>{format.fileSize(attachment.size)}</small>
+                      </span>
                       <Button
                         variant="ghost"
                         size="icon-sm"
@@ -188,10 +194,6 @@ export function AttachmentCards(props: {
                       >
                         <Maximize2 aria-hidden="true" />
                       </Button>
-                    </div>
-                    <div class="attachment-video-metadata">
-                      <strong>{attachment.name}</strong>
-                      <small>{format.fileSize(attachment.size)}</small>
                     </div>
                   </Show>
                 </Show>
