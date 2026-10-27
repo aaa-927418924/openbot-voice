@@ -133,20 +133,6 @@ export function ChatHeader({
 
         <View className="flex-1" />
         <View className="flex-row items-center gap-2">
-          {isAndroid ? (
-            <ChatGlassIconButton
-              accessibilityLabel={t("mobile.remoteDesktop.workspaceLabel")}
-              fallbackBackground={fallbackBackground}
-              liquidGlassAvailable={liquidGlassAvailable}
-              disabled={disconnected}
-              onPress={() => {
-                void haptics.impact("soft");
-                router.push({ pathname: "/remote-desktop/[serverId]", params: { serverId: target.serverId } });
-              }}
-            >
-              <Monitor color={iconColor} size={22} strokeWidth={2} />
-            </ChatGlassIconButton>
-          ) : null}
           {target.kind === "channel" ? (
             <View style={{ width: 48, height: 48 }} collapsable={false} pointerEvents={needsAction ? "auto" : "none"}>
               <BlurReveal
@@ -174,6 +160,20 @@ export function ChatHeader({
                 )}
               </BlurReveal>
             </View>
+          ) : null}
+          {isAndroid ? (
+            <ChatGlassIconButton
+              accessibilityLabel={t("mobile.remoteDesktop.workspaceLabel")}
+              fallbackBackground={fallbackBackground}
+              liquidGlassAvailable={liquidGlassAvailable}
+              disabled={disconnected}
+              onPress={() => {
+                void haptics.impact("soft");
+                router.push({ pathname: "/remote-desktop/[serverId]", params: { serverId: target.serverId } });
+              }}
+            >
+              <Monitor color={iconColor} size={22} strokeWidth={2} />
+            </ChatGlassIconButton>
           ) : null}
         </View>
       </View>
