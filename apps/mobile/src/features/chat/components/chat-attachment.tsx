@@ -6,8 +6,9 @@ import { Button, Skeleton, Typography } from "heroui-native";
 import { useThemeColor } from "heroui-native/hooks";
 import { Download, ExternalLink, ImageOff } from "lucide-react-native";
 import { useEffect, useRef, useState } from "react";
-import { Pressable, useWindowDimensions, View } from "react-native";
+import { Platform, Pressable, useWindowDimensions, View } from "react-native";
 import Animated from "react-native-reanimated";
+import { useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
 import { haptics } from "@/shared/lib/haptics";
 import { useText } from "@/shared/lib/text";
 import type { ImageDimensions } from "../model/image-dimensions";
@@ -58,6 +59,7 @@ export function ChatAttachmentView({
   upload?: number;
 }) {
   const { t, format, sourceText } = useText();
+  const { attachmentSupport } = useMobileWorkspace();
   const [fileColor, muted] = useThemeColor(["success", "muted"]);
   const [decoded, setDecoded] = useState<ImageDimensions | null>(null);
   const [imageLoaded, setImageLoaded] = useState(false);
@@ -81,15 +83,21 @@ export function ChatAttachmentView({
   const revealStyle = useUploadRevealStyle(shownUpload ?? 1);
   const { width } = useWindowDimensions();
   const tooLarge = attachment.size > MOBILE_ATTACHMENT_BYTES;
+  const rangeVideo =
+    Platform.OS === "android" && attachment.mimeType.startsWith("video/") && attachmentSupport(serverId).videoRanges;
   // An image above the transfer limit cannot be shown here, so it is a file the user opens on desktop.
   const image = attachment.kind === "image" && !tooLarge;
-  const video = attachment.mimeType.startsWith("video/") && !tooLarge;
+  const video = attachment.mimeType.startsWith("video/") && (!tooLarge || rangeVideo);
   const {
     pending,
     localUri,
     uri,
     videoUri,
     videoCacheFailed,
+    videoStreamFailed,
+    videoStreamLoading,
+    retryVideoStream,
+    videoRangeSupported,
     dimensions,
     query,
     sharing,
@@ -237,16 +245,17 @@ export function ChatAttachmentView({
   const typeLabel = attachmentTypeLabel(attachment.name, attachment.mimeType, t);
   const videoStatus = query.error
     ? sourceText(query.error.message)
-    : videoCacheFailed
+    : videoCacheFailed || videoStreamFailed
       ? t("mobile.chat.attachment.unavailable")
       : null;
-  const detail = tooLarge
-    ? t("mobile.chat.attachment.openOnDesktopDetail", { size: format.fileSize(attachment.size) })
-    : upload !== undefined
-      ? t("mobile.chat.attachment.uploadingPercent", { percent: format.percent(upload) })
-      : busy
-        ? t("mobile.chat.attachment.downloading")
-        : `${typeLabel} · ${format.fileSize(attachment.size)}`;
+  const detail =
+    tooLarge && !rangeVideo
+      ? t("mobile.chat.attachment.openOnDesktopDetail", { size: format.fileSize(attachment.size) })
+      : upload !== undefined
+        ? t("mobile.chat.attachment.uploadingPercent", { percent: format.percent(upload) })
+        : busy
+          ? t("mobile.chat.attachment.downloading")
+          : `${typeLabel} · ${format.fileSize(attachment.size)}`;
   if (video)
     return (
       <View className={`max-w-full gap-2 ${alignment === "right" ? "items-end" : "items-start"}`}>
@@ -265,12 +274,18 @@ export function ChatAttachmentView({
             <InlineVideo uri={videoUri} />
           ) : (
             <View className="flex-1 items-center justify-center gap-2 p-3">
-              {busy ? (
-                <Skeleton isLoading accessible accessibilityLabel={t("mobile.chat.attachment.downloading")} />
+              {busy || videoStreamLoading ? (
+                <Skeleton
+                  isLoading
+                  accessible={!videoRangeSupported}
+                  accessibilityLabel={videoRangeSupported ? undefined : t("mobile.chat.attachment.downloading")}
+                />
               ) : null}
-              <Typography.Paragraph type="body-xs" align="center" className="text-white">
-                {videoStatus ?? t("mobile.chat.attachment.downloading")}
-              </Typography.Paragraph>
+              {videoStatus || !videoRangeSupported ? (
+                <Typography.Paragraph type="body-xs" align="center" className="text-white">
+                  {videoStatus ?? t("mobile.chat.attachment.downloading")}
+                </Typography.Paragraph>
+              ) : null}
             </View>
           )}
           {shownUpload !== undefined ? (
@@ -298,7 +313,7 @@ export function ChatAttachmentView({
           <Button
             variant="secondary"
             size="sm"
-            isDisabled={busy || !query.data}
+            isDisabled={busy || (tooLarge && videoRangeSupported) || (!videoRangeSupported && !query.data)}
             accessibilityLabel={t("common.download")}
             onPress={() => void saveToDownloads()}
           >
@@ -306,8 +321,15 @@ export function ChatAttachmentView({
             <Button.Label>{t("common.download")}</Button.Label>
           </Button>
         </View>
-        {query.error || videoCacheFailed ? (
-          <Button variant="ghost" size="sm" onPress={() => void query.refetch()}>
+        {query.error || videoCacheFailed || videoStreamFailed ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            onPress={() => {
+              if (videoStreamFailed) retryVideoStream();
+              else void query.refetch();
+            }}
+          >
             <Button.Label>{t("mobile.chat.tryAgain")}</Button.Label>
           </Button>
         ) : null}

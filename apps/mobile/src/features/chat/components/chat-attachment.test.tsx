@@ -10,6 +10,9 @@ const native = vi.hoisted(() => ({
   photos: vi.fn(),
   imageSource: vi.fn(),
   download: vi.fn(),
+  downloadRange: vi.fn(),
+  openVideoStream: vi.fn(),
+  videoRanges: false,
   share: vi.fn(),
   write: vi.fn(),
   remove: vi.fn(),
@@ -23,7 +26,11 @@ vi.mock("@/shared/lib/haptics", () => ({
   haptics: { selection: vi.fn(async () => {}), impact: vi.fn(async () => {}), notification: vi.fn(async () => {}) },
 }));
 vi.mock("@/features/workspace/context/mobile-workspace-context", () => ({
-  useMobileWorkspace: () => ({ downloadAttachment: native.download }),
+  useMobileWorkspace: () => ({
+    attachmentSupport: () => ({ eml: false, media: false, video: false, videoRanges: native.videoRanges }),
+    downloadAttachment: native.download,
+    downloadAttachmentRange: native.downloadRange,
+  }),
 }));
 vi.mock("react-native", () => ({
   View: ({ children, ref }: PropsWithChildren<{ ref?: Ref<unknown> }>) => {
@@ -141,6 +148,9 @@ vi.mock("expo-video", () => ({
     <div role="img" aria-label="video player" data-source={player.uri} />
   ),
 }));
+vi.mock("../model/attachment-video-stream", () => ({
+  openAttachmentVideoStream: native.openVideoStream,
+}));
 vi.mock("expo-file-system", () => ({
   Paths: { cache: "file:///cache" },
   File: class {
@@ -187,6 +197,7 @@ afterEach(() => {
   for (const cleanup of cleanups.splice(0)) cleanup();
   vi.resetAllMocks();
   native.platform = "ios";
+  native.videoRanges = false;
 });
 function mount(
   attachment: AttachmentSummary,
@@ -250,6 +261,23 @@ it("retries a failed image download from the correct host and displays the image
   });
   await waitFor(() => expect(screen.getByRole("img", { name: "photo.png" })).toBeTruthy());
   expect(native.download).toHaveBeenLastCalledWith("selected-host", "stored-file");
+});
+
+it("plays large remote Android videos from bounded ranges without downloading the whole file", async () => {
+  native.platform = "android";
+  native.videoRanges = true;
+  native.openVideoStream.mockResolvedValue({ uri: "http://127.0.0.1:32100/video/stream-token", close: vi.fn() });
+  native.downloadRange.mockResolvedValue({ name: "clip.mp4", mimeType: "video/mp4", base64: "AA==" });
+  mount({ ...attachment, name: "clip.mp4", mimeType: "video/mp4", size: 50 * 1024 * 1024 });
+
+  await waitFor(() => expect(screen.getByRole("img", { name: "video player" })).toBeTruthy());
+  expect(native.download).not.toHaveBeenCalled();
+  expect(native.openVideoStream).toHaveBeenCalledWith(
+    "stored-file",
+    50 * 1024 * 1024,
+    "video/mp4",
+    expect.any(Function),
+  );
 });
 
 it("embeds a downloaded MP4 in the message and offers only a save-location download", async () => {

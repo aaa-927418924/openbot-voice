@@ -106,7 +106,7 @@ export interface MobileWorkspaceContextValue extends MobileLiveVoiceHost {
   loadQueue: (agentId: string, serverId: string) => Promise<QueueSnapshot>;
   canEditQueue: (serverId: string) => boolean;
   /** The files this host accepts beyond the base list, as the desktop picker reads them. */
-  attachmentSupport: (serverId: string) => AttachmentSupport;
+  attachmentSupport: (serverId: string) => AttachmentSupport & { videoRanges: boolean };
   changeQueue: (
     agentId: string,
     serverId: string,
@@ -220,6 +220,13 @@ export interface MobileWorkspaceContextValue extends MobileLiveVoiceHost {
     onProgress?: (fraction: number) => void,
   ) => Promise<DraftAttachment>;
   downloadAttachment: (serverId: string, attachmentId: string) => Promise<RemoteFileUpload>;
+  /** Downloads one bounded segment of a saved video from a host that advertises range support. */
+  downloadAttachmentRange: (
+    serverId: string,
+    attachmentId: string,
+    offset: number,
+    length: number,
+  ) => Promise<RemoteFileUpload>;
   discardAttachment: (agentId: string, attachmentId: string, serverId?: string) => Promise<void>;
   hideAgent: (agentId: string) => void;
   unhideAgent: (agentId: string) => void;

@@ -19,7 +19,7 @@ function controller(chatId: string): ChatQueueController {
     serverId,
     attachments: [],
     changeAttachments: async () => {},
-    attachmentSupport: () => ({ eml: true, media: true, video: true }),
+    attachmentSupport: () => ({ eml: true, media: true, video: true, videoRanges: false }),
     queued: [],
     replies: [],
     waiting: [],

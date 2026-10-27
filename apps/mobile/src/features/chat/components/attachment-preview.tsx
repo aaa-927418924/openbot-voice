@@ -73,7 +73,7 @@ export function localAttachmentPreview(file: { mimeType: string; base64: string;
  * one the chat uses, so a file read in a message is not downloaded a second time for a queue row.
  */
 export function useAttachmentFile(serverId: string, attachment: AttachmentSummary, preview: boolean) {
-  const { downloadAttachment } = useMobileWorkspace();
+  const { attachmentSupport, downloadAttachment, downloadAttachmentRange } = useMobileWorkspace();
   const { t, sourceText } = useText();
   const [sharing, setSharing] = useState(false);
   const pending = attachment.id.startsWith("mobile-draft-attachment-");
@@ -82,13 +82,15 @@ export function useAttachmentFile(serverId: string, attachment: AttachmentSummar
     attachment.previewUrl?.startsWith("data:image/") || (pending && attachment.previewUrl?.startsWith("file://"))
       ? attachment.previewUrl
       : null;
+  const canStreamVideo =
+    preview && Platform.OS === "android" && isVideo && !local && !pending && attachmentSupport(serverId).videoRanges;
   const query = useQuery({
     queryKey: ["chat-attachment", serverId, attachment.id],
     queryFn: (): Promise<RemoteFileUpload & { localUri?: string }> => {
       if (attachment.size > MOBILE_ATTACHMENT_BYTES) throw new Error(t("mobile.chat.attachment.tooLargeForMobile"));
       return downloadAttachment(serverId, attachment.id);
     },
-    enabled: preview && !local && !pending,
+    enabled: preview && !local && !pending && !canStreamVideo,
     retry: false,
     staleTime: Infinity,
     gcTime: 5 * 60 * 1000,
@@ -96,6 +98,53 @@ export function useAttachmentFile(serverId: string, attachment: AttachmentSummar
   const data = query.data;
   const [cachedVideoUri, setCachedVideoUri] = useState<string | null>(null);
   const [videoCacheFailed, setVideoCacheFailed] = useState(false);
+  const [videoStream, setVideoStream] = useState<{
+    key: string;
+    uri: string | null;
+    loading: boolean;
+    failed: boolean;
+  }>({ key: "", uri: null, loading: false, failed: false });
+  const [videoStreamRetry, setVideoStreamRetry] = useState(0);
+  const videoStreamKey = `${serverId}:${attachment.id}:${attachment.size}:${videoStreamRetry}`;
+  useEffect(() => {
+    if (!canStreamVideo || data) {
+      setVideoStream({ key: videoStreamKey, uri: null, loading: false, failed: false });
+      return;
+    }
+    let active = true;
+    let closeStream: (() => Promise<void>) | null = null;
+    setVideoStream({ key: videoStreamKey, uri: null, loading: true, failed: false });
+    void import("../model/attachment-video-stream")
+      .then(({ openAttachmentVideoStream }) =>
+        openAttachmentVideoStream(attachment.id, attachment.size, attachment.mimeType, (offset, length) =>
+          downloadAttachmentRange(serverId, attachment.id, offset, length),
+        ),
+      )
+      .then((stream) => {
+        if (!active) {
+          void stream.close();
+          return;
+        }
+        closeStream = stream.close;
+        setVideoStream({ key: videoStreamKey, uri: stream.uri, loading: false, failed: false });
+      })
+      .catch(() => {
+        if (active) setVideoStream({ key: videoStreamKey, uri: null, loading: false, failed: true });
+      });
+    return () => {
+      active = false;
+      if (closeStream) void closeStream();
+    };
+  }, [
+    attachment.id,
+    attachment.mimeType,
+    attachment.size,
+    canStreamVideo,
+    data,
+    downloadAttachmentRange,
+    serverId,
+    videoStreamKey,
+  ]);
   useEffect(() => {
     if (!isVideo || !data) {
       setCachedVideoUri(null);
@@ -123,7 +172,8 @@ export function useAttachmentFile(serverId: string, attachment: AttachmentSummar
   }, [attachment.id, data]);
   const localUri = local ?? query.data?.localUri;
   const uri = localUri ?? (query.data ? `data:${query.data.mimeType};base64,${query.data.base64}` : null);
-  const videoUri = isVideo ? (localUri ?? cachedVideoUri) : null;
+  const currentVideoStream = videoStream.key === videoStreamKey ? videoStream : null;
+  const videoUri = isVideo ? (localUri ?? cachedVideoUri ?? currentVideoStream?.uri ?? null) : null;
   async function share() {
     setSharing(true);
     let file: File | null = null;
@@ -224,6 +274,10 @@ export function useAttachmentFile(serverId: string, attachment: AttachmentSummar
     uri,
     videoUri,
     videoCacheFailed,
+    videoStreamFailed: currentVideoStream?.failed ?? false,
+    videoStreamLoading: currentVideoStream?.loading ?? canStreamVideo,
+    retryVideoStream: () => setVideoStreamRetry((count) => count + 1),
+    videoRangeSupported: canStreamVideo,
     dimensions,
     saveToPhotos,
     saveToDownloads,

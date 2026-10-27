@@ -1,4 +1,5 @@
 import { isAvatarMimeType } from "@openbot/contracts/avatar-images";
+import { ATTACHMENT_LIMITS } from "@openbot/contracts/input-limits";
 import {
   assertStorageUsageScope,
   CHANNEL_CHATS_CAPABILITY,
@@ -22,6 +23,7 @@ import { AGENT_ADMIN_CAPABILITY, AGENT_ADMIN_ROUTES } from "@openbot/contracts/t
 import { AGENT_INSTALL_CAPABILITY } from "@openbot/contracts/team-protocol/agent-install-v1";
 import { CHANNEL_ROUTES } from "@openbot/contracts/team-protocol/channels-v1";
 import {
+  TEAM_ATTACHMENT_RANGE_CAPABILITY,
   TEAM_EML_ATTACHMENTS_CAPABILITY,
   TEAM_MEDIA_ATTACHMENTS_CAPABILITY,
   TEAM_SEMANTIC_TAGS_CAPABILITY,
@@ -92,6 +94,7 @@ type HostRequestActions = Pick<
   | "editQueue"
   | "changeQueue"
   | "downloadAttachment"
+  | "downloadAttachmentRange"
 >;
 
 /** Workspace actions that only send host requests and read advertised capabilities. */
@@ -323,6 +326,7 @@ export function createHostRequestActions({
         eml: advertised.includes(TEAM_EML_ATTACHMENTS_CAPABILITY),
         media: advertised.includes(TEAM_MEDIA_ATTACHMENTS_CAPABILITY),
         video: advertised.includes(TEAM_VIDEO_ATTACHMENTS_CAPABILITY),
+        videoRanges: advertised.includes(TEAM_ATTACHMENT_RANGE_CAPABILITY),
       };
     },
     editQueue: async (agentId, serverId, input) => {
@@ -372,6 +376,32 @@ export function createHostRequestActions({
         () => {},
       );
       return result;
+    },
+    downloadAttachmentRange: (serverId, attachmentId, offset, length) => {
+      if (!capabilities.get(serverId)?.includes(TEAM_ATTACHMENT_RANGE_CAPABILITY)) {
+        throw new Error("This host does not support progressive video playback.");
+      }
+      if (
+        !Number.isSafeInteger(offset) ||
+        offset < 0 ||
+        !Number.isSafeInteger(length) ||
+        length < 1 ||
+        length > ATTACHMENT_LIMITS.rangeChunkBytes
+      ) {
+        throw new Error("The video byte range is invalid.");
+      }
+      const query = new URLSearchParams({ offset: String(offset), length: String(length) });
+      return request(
+        "GET",
+        `${TEAM_API_ROUTES.attachment(attachmentId)}?${query}`,
+        (value) => {
+          if (!isDynamicRecord(value) || !isString(value.name) || !isString(value.mimeType) || !isString(value.base64))
+            throw new Error("The host returned an invalid video range.");
+          return { name: value.name, mimeType: value.mimeType, base64: value.base64 };
+        },
+        undefined,
+        serverId,
+      );
     },
   };
 }
