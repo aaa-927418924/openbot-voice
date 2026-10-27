@@ -8,7 +8,7 @@ import {
 } from "node:crypto";
 import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import * as forge from "node-forge";
+import forge from "node-forge";
 
 const PRIVATE_KEY_NAME = "sunshine-key.pem";
 const CERTIFICATE_NAME = "sunshine-cert.pem";
