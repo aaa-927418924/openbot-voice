@@ -757,10 +757,17 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       this.#connections.setCompatibility(stored.id, verifiedIdentity.compatibility);
       this.#connections.clearIssue(stored.id);
       this.#connections.setState(stored.id, "online");
-      // Probed before the server is stored, not after: a probe that fails outright now leaves the list
-      // as it was, instead of an entry that is in memory but was never written.
-      stored.remoteDesktopAvailable = yield* this.#client.probeRemoteDesktop(stored);
       yield* this.#store.adopt(stored);
+      // The probe authenticates with the session token created by the join. It must run after adopt,
+      // because the remote client resolves that token through the persisted server directory. A probe
+      // is only a capability hint, so a failed probe must not turn a successful (and now consumed)
+      // invitation into a reported join failure.
+      const remoteDesktopAvailable = yield* this.#client
+        .probeRemoteDesktop(stored)
+        .pipe(Effect.catch(() => Effect.succeed(false)));
+      if (remoteDesktopAvailable) {
+        yield* this.#store.update(stored.id, { remoteDesktopAvailable }).pipe(Effect.catch(() => Effect.succeed(null)));
+      }
       this.#events.syncScopes();
       this.#emitChanged();
       yield* this.#events.restart(stored.id, true);
@@ -804,10 +811,15 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       this.#connections.setCompatibility(stored.id, verifiedIdentity.compatibility);
       this.#connections.clearIssue(stored.id);
       this.#connections.setState(stored.id, "online");
-      // Probed before the server is stored, not after: a probe that fails outright now leaves the list
-      // as it was, instead of an entry that is in memory but was never written.
-      stored.remoteDesktopAvailable = yield* this.#client.probeRemoteDesktop(stored);
       yield* this.#store.adopt(stored);
+      // This credential exists only after the join/bootstrap succeeds, and the probe obtains it from
+      // the server store. Keep capability discovery best-effort so it cannot undo that connection.
+      const remoteDesktopAvailable = yield* this.#client
+        .probeRemoteDesktop(stored)
+        .pipe(Effect.catch(() => Effect.succeed(false)));
+      if (remoteDesktopAvailable) {
+        yield* this.#store.update(stored.id, { remoteDesktopAvailable }).pipe(Effect.catch(() => Effect.succeed(null)));
+      }
       this.#events.syncScopes();
       this.#emitChanged();
       yield* this.#events.restart(stored.id, true);

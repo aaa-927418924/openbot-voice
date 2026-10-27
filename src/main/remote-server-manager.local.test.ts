@@ -150,6 +150,7 @@ describe("Tailscale-local invitations", () => {
     const hostFingerprint = createHash("sha256").update(publicKeyPem).digest("base64url");
     let receivedJoinBody: { inviteToken?: unknown; username?: unknown; password?: unknown } | undefined;
     let receivedJoinHeaders: Headers | undefined;
+    let receivedProbeAuthorization: string | null = null;
     const createTeamAuthTicket = vi.fn(() => Effect.succeed("unexpected-ticket"));
     vi.stubGlobal("WebSocket", OpenEventSocket);
     vi.stubGlobal(
@@ -157,7 +158,11 @@ describe("Tailscale-local invitations", () => {
       vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
         const url = new URL(input instanceof Request ? input.url : String(input));
         if (url.pathname === "/v1/compatibility")
-          return Response.json({ appVersion: "0.30.0", protocol: { minimum: 1, maximum: 1 }, capabilities: [] });
+          return Response.json({
+            appVersion: "0.30.0",
+            protocol: { minimum: 1, maximum: 1 },
+            capabilities: ["remote-desktop"],
+          });
         if (url.pathname === "/v1/identity") {
           const challenge = url.searchParams.get("challenge") ?? "";
           const identity = {
@@ -196,16 +201,24 @@ describe("Tailscale-local invitations", () => {
             status: 201,
           });
         }
-        if (url.pathname === "/v1/remote-screen/capabilities")
+        if (url.pathname === "/v1/remote-screen/capabilities") {
+          receivedProbeAuthorization = new Headers(init?.headers).get("Authorization");
           return Response.json(
             JSON.parse(
-              encodeTeamProtocolV1CurrentHttpResponse("GET", "/v1/remote-screen/capabilities", 503, {
-                error: "Remote control is unavailable.",
-                code: "host_unavailable",
+              encodeTeamProtocolV1CurrentHttpResponse("GET", "/v1/remote-screen/capabilities", 200, {
+                ready: true,
+                platform: "linux",
+                unattended: true,
+                runtime: "sunshine-moonlight",
+                protocolVersion: 2,
+                displays: [],
+                selectedDisplayId: null,
+                activeSessions: 0,
+                maxSessions: 1,
               }),
             ),
-            { status: 503 },
           );
+        }
         if (url.pathname === "/v1/agents")
           return Response.json(JSON.parse(encodeTeamProtocolV1CurrentHttpResponse("GET", "/v1/agents", 200, [])));
         throw new Error(`Unexpected request: ${url.pathname}`);
@@ -228,7 +241,7 @@ describe("Tailscale-local invitations", () => {
       await expect(runCauseEffect(manager.join({ inviteUrl: inviteUrl.toString() }))).resolves.toMatchObject({
         id: serverId,
         state: "online",
-        remoteDesktopAvailable: false,
+        remoteDesktopAvailable: true,
       });
       expect(createTeamAuthTicket).not.toHaveBeenCalled();
       expect(receivedJoinBody).toMatchObject({ inviteToken: "b".repeat(43) });
@@ -237,6 +250,7 @@ describe("Tailscale-local invitations", () => {
       expect(receivedJoinHeaders?.get(TEAM_PROTOCOL_VERSION_HEADER)).toBe("1");
       expect(receivedJoinHeaders?.get(TEAM_APP_VERSION_HEADER)).toBe("0.30.0");
       expect(receivedJoinHeaders?.get(TEAM_CAPABILITIES_HEADER)).toBeTruthy();
+      expect(receivedProbeAuthorization).toBe("Bearer local-session-token");
     } finally {
       await runCauseEffect(manager.stop());
       await rm(directory, { recursive: true, force: true });
