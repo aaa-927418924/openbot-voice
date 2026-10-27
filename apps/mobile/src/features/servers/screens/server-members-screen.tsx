@@ -48,17 +48,23 @@ export function ServerMembersScreen() {
   const locked = useRef(false);
   const members = useQuery({
     queryKey: ["server-members", session?.apiUrl, session?.user.id, sessionScope, serverId],
-    enabled: Boolean(server),
+    enabled: Boolean(server && teamDirectory),
     retry: false,
     gcTime: 0,
-    queryFn: () => runTeamEffect(teamDirectory.listMembers(serverId)),
+    queryFn: () => {
+      if (!teamDirectory) throw new Error("Account directory is unavailable in local-only mode.");
+      return runTeamEffect(teamDirectory.listMembers(serverId));
+    },
   });
   const invites = useQuery({
     queryKey: ["server-invites", session?.apiUrl, session?.user.id, sessionScope, serverId],
-    enabled: canInvite,
+    enabled: Boolean(canInvite && teamDirectory),
     retry: false,
     gcTime: 0,
-    queryFn: () => runTeamEffect(teamDirectory.listInvites(serverId)),
+    queryFn: () => {
+      if (!teamDirectory) throw new Error("Account directory is unavailable in local-only mode.");
+      return runTeamEffect(teamDirectory.listInvites(serverId));
+    },
   });
   const inviteUsed = Boolean(
     created &&
@@ -93,6 +99,10 @@ export function ServerMembersScreen() {
     locked.current = true;
     action.mutate(operation);
   }
+  function requireTeamDirectory() {
+    if (!teamDirectory) throw new Error("Account directory is unavailable in local-only mode.");
+    return teamDirectory;
+  }
   function manage(member: RemoteTeamMember) {
     if (member.role === "owner") return;
     const memberRole = member.role;
@@ -105,7 +115,7 @@ export function ServerMembersScreen() {
               onPress: () =>
                 perform(() =>
                   runTeamEffect(
-                    teamDirectory.updateMember(
+                    requireTeamDirectory().updateMember(
                       serverId,
                       member.membershipId,
                       memberRole === "admin" ? "member" : "admin",
@@ -118,7 +128,7 @@ export function ServerMembersScreen() {
       {
         text: t("mobile.server.members.remove"),
         style: "destructive",
-        onPress: () => perform(() => runTeamEffect(teamDirectory.leaveHost(serverId, member.membershipId))),
+        onPress: () => perform(() => runTeamEffect(requireTeamDirectory().leaveHost(serverId, member.membershipId))),
       },
     ];
     Alert.alert(member.name || member.email, t("mobile.server.members.manage"), [
@@ -208,13 +218,13 @@ export function ServerMembersScreen() {
                     const normalized = normalizeEmailAddress(email);
                     if (!normalized) throw new Error(t("mobile.server.members.invalidEmail"));
                     const invite = await runTeamEffect(
-                      teamDirectory.sendInviteEmail(host, { role, email: normalized }),
+                      requireTeamDirectory().sendInviteEmail(host, { role, email: normalized }),
                     );
                     setCreated({ ...invite, email: normalized });
                   } else {
                     setCreated(
                       await runTeamEffect(
-                        teamDirectory.createInvite(host, {
+                        requireTeamDirectory().createInvite(host, {
                           role,
                           ...(inviteMode === "permanent" ? { permanent: true } : {}),
                         }),
@@ -395,7 +405,7 @@ export function ServerMembersScreen() {
                     style: "destructive",
                     onPress: () =>
                       perform(async () => {
-                        await runTeamEffect(teamDirectory.revokeInvite(invite.inviteId));
+                        await runTeamEffect(requireTeamDirectory().revokeInvite(invite.inviteId));
                         if (created?.inviteId === invite.inviteId) setCreated(null);
                       }),
                   },

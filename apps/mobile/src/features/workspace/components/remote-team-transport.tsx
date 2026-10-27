@@ -46,7 +46,7 @@ interface RemoteTeamTransportProps {
   localTailnetServer?: LocalTailnetServer;
   remoteDesktopSession?: RemoteDesktopSession | null;
   onCloseRemoteDesktop?: (sessionId: string) => Promise<void>;
-  directory: RemoteTeamDirectoryClient;
+  directory: RemoteTeamDirectoryClient | null;
   onConnectionUpdate: (update: RemoteTeamConnectionUpdate) => void;
   /** Signal says this account's server list changed on another device. */
   onMembershipChanged?: () => Promise<void>;
@@ -272,6 +272,11 @@ export const RemoteTeamTransport = forwardRef<RemoteTeamTransportRef, RemoteTeam
       [mailbox],
     );
 
+    const requireDirectory = useCallback((): RemoteTeamDirectoryClient => {
+      if (!directory) throw new Error("Account directory is unavailable in local-only mode.");
+      return directory;
+    }, [directory]);
+
     return (
       <RemoteTeamBridge
         active={foreground}
@@ -301,9 +306,9 @@ export const RemoteTeamTransport = forwardRef<RemoteTeamTransportRef, RemoteTeam
           scrollEnabled: false,
           style: remoteDesktopSession ? { flex: 1, height: "100%", width: "100%" } : { flex: 0, height: 1, width: 1 },
         }}
-        endSession={(sessionId) => runTeamEffect(directory.endSession(sessionId))}
+        endSession={(sessionId) => runTeamEffect(requireDirectory().endSession(sessionId))}
         getBootstrap={(hostId, clientPublicKey, existingSessionId) =>
-          runTeamEffect(directory.createBootstrap(hostId, clientPublicKey, existingSessionId))
+          runTeamEffect(requireDirectory().createBootstrap(hostId, clientPublicKey, existingSessionId))
         }
         onCommandResult={handleCommandResult}
         onUploadProgress={async ({ commandId, sent, total }: RemoteUploadProgress) =>

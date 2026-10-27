@@ -49,6 +49,7 @@ const session = {
   sessionToken: "test-token",
   user: { id: "user", name: "User", email: "user@example.com", avatarUrl: null },
   host: { hostId: host.hostId, fingerprint: remoteHostFingerprint(host.devicePublicKey) },
+  localOnly: false,
 };
 vi.mock("@/features/auth/context/mobile-session-context", () => ({
   useMobileSession: () => ({ session, sessionScope: 1 }),
@@ -217,6 +218,9 @@ afterEach(async () => {
   pendingConversationReadsRequest = null;
   emptyInitialAgentList = false;
   Object.assign(host, { name: "Desktop", logoKey: null, role: "owner" });
+  session.apiUrl = "https://account.example.com";
+  session.sessionToken = "test-token";
+  session.localOnly = false;
   sidebarRequest.mockReset();
   sidebarRequest.mockResolvedValue(initialLayout);
 });
@@ -503,6 +507,18 @@ async function mountWorkspace() {
     ),
   );
 }
+
+it("loads a local-only workspace without constructing an account directory client", async () => {
+  session.apiUrl = "http://127.0.0.1/";
+  session.sessionToken = "";
+  session.localOnly = true;
+
+  await mountWorkspace();
+
+  await vi.waitFor(() => expect(current.serverDirectoryState).toBe("ready"));
+  expect(current.servers).toEqual([]);
+  expect(current.serverDirectoryError).toBeNull();
+});
 
 it("capability-gates direct history operations on older hosts", async () => {
   await mountWorkspace();

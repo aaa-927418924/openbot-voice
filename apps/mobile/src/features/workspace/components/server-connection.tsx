@@ -32,7 +32,7 @@ interface Props {
   active: boolean;
   remoteDesktopSession?: RemoteDesktopSession | null;
   onCloseRemoteDesktop?: (sessionId: string) => Promise<void>;
-  directory: RemoteTeamDirectoryClient;
+  directory: RemoteTeamDirectoryClient | null;
   register(hostId: string, handle: ServerConnectionHandle | null): void;
   load(hostId: string, publicKey: string, client: RemoteTeamTransportRef, context: ServerLoadContext): Promise<void>;
   onStatus(hostId: string, status: RemoteRecoveryStatus, failure: string | null): void;

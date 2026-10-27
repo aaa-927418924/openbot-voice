@@ -123,7 +123,8 @@ export interface MobileWorkspaceContextValue extends MobileLiveVoiceHost {
   servers: MobileServer[];
   /** Saves the order of remote server IDs on this device. Returns false and keeps the old order on failure. */
   reorderServers: (serverIds: string[]) => boolean;
-  teamDirectory: RemoteTeamDirectoryClient;
+  /** Account-backed directory; absent when the app is running in local-only mode. */
+  teamDirectory: RemoteTeamDirectoryClient | null;
   serverDirectoryState: MobileServerDirectoryState;
   serverDirectoryError: string | null;
   agents: MobileAgent[];

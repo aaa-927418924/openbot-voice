@@ -93,7 +93,9 @@ export function AddServerScreen({
     setPreviewing(true);
     const preview = session?.localOnly
       ? previewTailnetInvite(request.url, { randomBytes: (size) => Crypto.getRandomBytes(size) })
-      : runTeamEffect(teamDirectory.previewInvite(request.url));
+      : teamDirectory
+        ? runTeamEffect(teamDirectory.previewInvite(request.url))
+        : Promise.reject(new Error("Account directory is unavailable in local-only mode."));
     void preview.then(
       (value) => {
         if (!active) return;

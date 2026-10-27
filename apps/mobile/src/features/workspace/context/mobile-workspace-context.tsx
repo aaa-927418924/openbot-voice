@@ -174,14 +174,16 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
 
   const directory = useMemo(
     () =>
-      new RemoteTeamDirectoryClient({
-        apiUrl: session.apiUrl,
-        token: session.sessionToken,
-        fetch,
-        hostKeys: trustedHostKeys(session.apiUrl, session.user.id),
-        pairedHost: session.host,
-      }),
-    [session.apiUrl, session.sessionToken, session.user.id, session.host],
+      session.localOnly
+        ? null
+        : new RemoteTeamDirectoryClient({
+            apiUrl: session.apiUrl,
+            token: session.sessionToken,
+            fetch,
+            hostKeys: trustedHostKeys(session.apiUrl, session.user.id),
+            pairedHost: session.host,
+          }),
+    [session.apiUrl, session.sessionToken, session.user.id, session.host, session.localOnly],
   );
   const connections = useRef(new Map<string, ServerConnectionHandle>());
   const loadGeneration = useRef(0);
@@ -383,15 +385,18 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
             });
           const loadHosts = session.localOnly
             ? localHosts()
-            : directory
-                .listHosts()
-                .pipe(
-                  Effect.mapError((error) =>
-                    error instanceof RemoteDirectoryError
-                      ? error
-                      : new RemoteDirectoryError(500, error instanceof Error ? error.message : String(error)),
-                  ),
-                );
+            : (() => {
+                if (!directory) throw new Error("Account directory is unavailable in local-only mode.");
+                return directory
+                  .listHosts()
+                  .pipe(
+                    Effect.mapError((error) =>
+                      error instanceof RemoteDirectoryError
+                        ? error
+                        : new RemoteDirectoryError(500, error instanceof Error ? error.message : String(error)),
+                    ),
+                  );
+              })();
           const hosts = yield* loadHosts.pipe(
             Effect.tapError((error) =>
               Effect.sync(() => {
@@ -1207,7 +1212,10 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
         if (session.localOnly) {
           await removeLocalTailnetServer(server.id);
           localTailnetHosts.current.delete(server.id);
-        } else await runTeamEffect(directory.leaveHost(server.id, server.membershipId));
+        } else {
+          if (!directory) throw new Error("Account directory is unavailable in local-only mode.");
+          await runTeamEffect(directory.leaveHost(server.id, server.membershipId));
+        }
         removedServers.current.add(serverId);
         readRefresh.invalidate(serverId);
         directoryGeneration.current += 1;
@@ -1276,6 +1284,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
           installLocalHosts(localHosts);
           return host.hostId;
         }
+        if (!directory) throw new Error("Account directory is unavailable in local-only mode.");
         const host = await runTeamEffect(directory.acceptInvite(inviteUrl));
         directoryGeneration.current += 1;
         directoryRefresh.invalidate();
