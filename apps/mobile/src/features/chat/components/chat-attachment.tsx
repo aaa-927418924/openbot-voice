@@ -1,7 +1,8 @@
+import { Slider } from "@expo/ui/community/slider";
 import type { AttachmentSummary } from "@openbot/contracts/ipc";
 import { MOBILE_ATTACHMENT_BYTES } from "@openbot/team-client/remote-peer";
 import { Image } from "expo-image";
-import { useVideoPlayer, VideoView } from "expo-video";
+import { useVideoPlayer, type VideoPlayer, VideoView } from "expo-video";
 import { Button, Skeleton, Typography } from "heroui-native";
 import { useThemeColor } from "heroui-native/hooks";
 import { Download, ExternalLink, ImageOff } from "lucide-react-native";
@@ -28,6 +29,14 @@ const MIN_IMAGE_WIDTH = 72;
 const UNKNOWN_RATIO = 3 / 4;
 // Every layer of an image fills its frame exactly, with no padding or percentage in between.
 const FILL = { position: "absolute", top: 0, right: 0, bottom: 0, left: 0 } as const;
+const VIDEO_FRAME_STYLE = {
+  width: "100%",
+  aspectRatio: 16 / 9,
+  overflow: "hidden",
+  borderRadius: 18,
+  borderCurve: "continuous",
+  backgroundColor: "#000",
+} as const;
 
 /**
  * The frame an image draws in, always showing the whole image. It is 240 pt tall with the
@@ -259,48 +268,47 @@ export function ChatAttachmentView({
   if (video)
     return (
       <View className={`max-w-full gap-2 ${alignment === "right" ? "items-end" : "items-start"}`}>
-        <View
-          style={{
-            width: maxWidth,
-            maxWidth: "100%",
-            aspectRatio: 16 / 9,
-            overflow: "hidden",
-            borderRadius: 18,
-            borderCurve: "continuous",
-            backgroundColor: "#000",
-          }}
-        >
-          {videoUri ? (
-            <InlineVideo uri={videoUri} />
-          ) : (
-            <View className="flex-1 items-center justify-center gap-2 p-3">
-              {busy || videoStreamLoading ? (
-                <Skeleton
-                  isLoading
-                  accessible={!videoRangeSupported}
-                  accessibilityLabel={videoRangeSupported ? undefined : t("mobile.chat.attachment.downloading")}
-                />
-              ) : null}
-              {videoStatus || !videoRangeSupported ? (
-                <Typography.Paragraph type="body-xs" align="center" className="text-white">
-                  {videoStatus ?? t("mobile.chat.attachment.downloading")}
-                </Typography.Paragraph>
+        {videoUri ? (
+          <InlineVideo
+            uri={videoUri}
+            width={maxWidth}
+            upload={shownUpload}
+            uploadLabel={t("mobile.chat.attachment.uploading", { name: attachment.name })}
+            accentColor={String(fileColor)}
+            trackColor={String(muted)}
+          />
+        ) : (
+          <View style={{ width: maxWidth, maxWidth: "100%" }}>
+            <View style={VIDEO_FRAME_STYLE}>
+              <View className="flex-1 items-center justify-center gap-2 p-3">
+                {busy || videoStreamLoading ? (
+                  <Skeleton
+                    isLoading
+                    accessible={!videoRangeSupported}
+                    accessibilityLabel={videoRangeSupported ? undefined : t("mobile.chat.attachment.downloading")}
+                  />
+                ) : null}
+                {videoStatus || !videoRangeSupported ? (
+                  <Typography.Paragraph type="body-xs" align="center" className="text-white">
+                    {videoStatus ?? t("mobile.chat.attachment.downloading")}
+                  </Typography.Paragraph>
+                ) : null}
+              </View>
+              {shownUpload !== undefined ? (
+                <View
+                  pointerEvents="none"
+                  accessible
+                  accessibilityRole="progressbar"
+                  accessibilityLabel={t("mobile.chat.attachment.uploading", { name: attachment.name })}
+                  accessibilityValue={{ min: 0, max: 100, now: Math.round(shownUpload * 100) }}
+                  style={{ position: "absolute", top: 8, right: 8 }}
+                >
+                  <UploadProgressCircle progress={shownUpload} />
+                </View>
               ) : null}
             </View>
-          )}
-          {shownUpload !== undefined ? (
-            <View
-              pointerEvents="none"
-              accessible
-              accessibilityRole="progressbar"
-              accessibilityLabel={t("mobile.chat.attachment.uploading", { name: attachment.name })}
-              accessibilityValue={{ min: 0, max: 100, now: Math.round(shownUpload * 100) }}
-              style={{ position: "absolute", top: 8, right: 8 }}
-            >
-              <UploadProgressCircle progress={shownUpload} />
-            </View>
-          ) : null}
-        </View>
+          </View>
+        )}
         <View className="w-full flex-row items-center gap-2" style={{ maxWidth }}>
           <View className="min-w-0 flex-1 gap-0.5">
             <Typography.Paragraph type="body-sm" numberOfLines={1} className="font-semibold text-foreground">
@@ -376,7 +384,134 @@ export function ChatAttachmentView({
   );
 }
 
-function InlineVideo({ uri }: { uri: string }) {
+function InlineVideo({
+  uri,
+  width,
+  upload,
+  uploadLabel,
+  accentColor,
+  trackColor,
+}: {
+  uri: string;
+  width: number;
+  upload?: number;
+  uploadLabel: string;
+  accentColor: string;
+  trackColor: string;
+}) {
   const player = useVideoPlayer(uri);
-  return <VideoView player={player} contentFit="contain" nativeControls style={{ flex: 1 }} />;
+  return (
+    <View className="gap-0.5" style={{ width, maxWidth: "100%" }}>
+      <View style={VIDEO_FRAME_STYLE}>
+        <VideoView player={player} contentFit="contain" nativeControls style={{ flex: 1 }} />
+        {upload !== undefined ? (
+          <View
+            pointerEvents="none"
+            accessible
+            accessibilityRole="progressbar"
+            accessibilityLabel={uploadLabel}
+            accessibilityValue={{ min: 0, max: 100, now: Math.round(upload * 100) }}
+            style={{ position: "absolute", top: 8, right: 8 }}
+          >
+            <UploadProgressCircle progress={upload} />
+          </View>
+        ) : null}
+      </View>
+      {Platform.OS === "android" ? (
+        <InlineVideoSeekBar player={player} accentColor={accentColor} trackColor={trackColor} />
+      ) : null}
+    </View>
+  );
+}
+
+function InlineVideoSeekBar({
+  player,
+  accentColor,
+  trackColor,
+}: {
+  player: VideoPlayer;
+  accentColor: string;
+  trackColor: string;
+}) {
+  const [position, setPosition] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const isSeeking = useRef(false);
+  const pendingSeek = useRef<number | null>(null);
+  const seekTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    player.timeUpdateEventInterval = 0.25;
+    const updateDuration = () => {
+      const nextDuration = player.duration;
+      if (Number.isFinite(nextDuration) && nextDuration > 0) setDuration(nextDuration);
+    };
+    const timeSubscription = player.addListener("timeUpdate", ({ currentTime }) => {
+      updateDuration();
+      if (!isSeeking.current) setPosition(currentTime);
+    });
+    const sourceSubscription = player.addListener("sourceLoad", updateDuration);
+    updateDuration();
+
+    return () => {
+      timeSubscription.remove();
+      sourceSubscription.remove();
+      if (seekTimer.current !== null) clearTimeout(seekTimer.current);
+      player.timeUpdateEventInterval = 0;
+    };
+  }, [player]);
+
+  const sliderDuration = duration > 0 ? duration : 1;
+  const sliderPosition = Math.min(sliderDuration, Math.max(0, Number.isFinite(position) ? position : 0));
+  const seek = (value: number) => {
+    if (duration <= 0 || !Number.isFinite(value)) return;
+    const nextPosition = Math.min(duration, Math.max(0, value));
+    isSeeking.current = true;
+    pendingSeek.current = nextPosition;
+    setPosition(nextPosition);
+    if (seekTimer.current !== null) clearTimeout(seekTimer.current);
+    // Coalesce rapid drag updates into short pauses so a remote range stream is not opened
+    // repeatedly while the user scrubs across the timeline.
+    seekTimer.current = setTimeout(() => {
+      if (pendingSeek.current !== null) player.currentTime = pendingSeek.current;
+      pendingSeek.current = null;
+      isSeeking.current = false;
+      seekTimer.current = null;
+    }, 180);
+  };
+
+  return (
+    <View className="px-1">
+      <Slider
+        value={sliderPosition}
+        onValueChange={seek}
+        minimumValue={0}
+        maximumValue={sliderDuration}
+        minimumTrackTintColor={accentColor}
+        maximumTrackTintColor={trackColor}
+        thumbTintColor={accentColor}
+        disabled={duration <= 0}
+        style={{ width: "100%", height: 32 }}
+      />
+      {duration > 0 ? (
+        <View className="flex-row justify-between px-1">
+          <Typography.Paragraph type="body-xs" className="text-muted">
+            {formatVideoTime(position)}
+          </Typography.Paragraph>
+          <Typography.Paragraph type="body-xs" className="text-muted">
+            {formatVideoTime(duration)}
+          </Typography.Paragraph>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function formatVideoTime(value: number) {
+  const seconds = Math.max(0, Math.floor(Number.isFinite(value) ? value : 0));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainder = seconds % 60;
+  return hours > 0
+    ? `${hours}:${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`
+    : `${minutes}:${String(remainder).padStart(2, "0")}`;
 }

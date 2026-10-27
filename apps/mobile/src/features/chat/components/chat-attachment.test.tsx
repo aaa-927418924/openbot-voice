@@ -6,6 +6,16 @@ import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
 import { ChatAttachmentView, imageFrame } from "./chat-attachment";
 
+type MockVideoPlayer = {
+  uri: string;
+  currentTime: number;
+  duration: number;
+  timeUpdateEventInterval: number;
+  pause: ReturnType<typeof vi.fn>;
+  listeners: Map<string, (payload?: { currentTime?: number }) => void>;
+  addListener: ReturnType<typeof vi.fn>;
+};
+
 const native = vi.hoisted(() => ({
   photos: vi.fn(),
   imageSource: vi.fn(),
@@ -13,6 +23,7 @@ const native = vi.hoisted(() => ({
   rangeAction: vi.fn(),
   downloadIconColor: vi.fn(),
   openVideoStream: vi.fn(),
+  videoPlayers: new Map<string, MockVideoPlayer>(),
   videoRanges: false,
   share: vi.fn(),
   write: vi.fn(),
@@ -150,8 +161,50 @@ vi.mock("expo-media-library", () => ({
   Asset: { create: native.photos },
 }));
 vi.mock("expo-sharing", () => ({ isAvailableAsync: async () => true, shareAsync: native.share }));
+vi.mock("@expo/ui/community/slider", () => ({
+  Slider: ({
+    value,
+    onValueChange,
+    disabled,
+    maximumValue,
+  }: {
+    value: number;
+    onValueChange: (value: number) => void;
+    disabled?: boolean;
+    maximumValue: number;
+  }) => (
+    <input
+      type="range"
+      aria-label="Video seek"
+      min={0}
+      max={maximumValue}
+      value={value}
+      disabled={disabled}
+      onChange={(event) => onValueChange(Number(event.currentTarget.value))}
+    />
+  ),
+}));
 vi.mock("expo-video", () => ({
-  useVideoPlayer: (uri: string) => ({ uri, pause: vi.fn() }),
+  useVideoPlayer: (uri: string) => {
+    const playerRef = useRef<MockVideoPlayer | null>(null);
+    if (!playerRef.current) {
+      playerRef.current = {
+        uri,
+        currentTime: 0,
+        duration: 60,
+        timeUpdateEventInterval: 0,
+        pause: vi.fn(),
+        listeners: new Map(),
+        addListener: vi.fn((event: string, listener: (payload?: { currentTime?: number }) => void) => {
+          playerRef.current?.listeners.set(event, listener);
+          return { remove: () => playerRef.current?.listeners.delete(event) };
+        }),
+      };
+      native.videoPlayers.set(uri, playerRef.current);
+    }
+    playerRef.current.uri = uri;
+    return playerRef.current;
+  },
   VideoView: ({ player }: { player: { uri: string } }) => (
     <div role="img" aria-label="video player" data-source={player.uri} />
   ),
@@ -223,6 +276,7 @@ afterEach(() => {
   for (const cleanup of cleanups.splice(0)) cleanup();
   vi.resetAllMocks();
   native.platform = "ios";
+  native.videoPlayers.clear();
   native.videoRanges = false;
   native.rangeAction = vi.fn();
 });
@@ -357,6 +411,20 @@ it("embeds a downloaded MP4 in the message and offers only a save-location downl
   expect(native.writeSafFile).toHaveBeenCalledWith("content://storage/selected/clip.mp4", "aGVsbG8=", {
     encoding: "base64",
   });
+});
+
+it("shows an inline Android video seek bar and applies a scrub without expanding the player", async () => {
+  native.platform = "android";
+  native.download.mockResolvedValue({ name: "clip.mp4", mimeType: "video/mp4", base64: "aGVsbG8=" });
+  mount({ ...attachment, name: "clip.mp4", mimeType: "video/mp4", size: 5 });
+  await waitFor(() => expect(screen.getByRole("slider", { name: "Video seek" })).toBeTruthy());
+
+  const player = [...native.videoPlayers.values()].at(-1);
+  act(() => player?.listeners.get("sourceLoad")?.());
+  await waitFor(() => expect(screen.getByText("1:00")).toBeTruthy());
+  act(() => fireEvent.change(screen.getByRole("slider", { name: "Video seek" }), { target: { value: "20" } }));
+  expect(screen.getByText("0:20")).toBeTruthy();
+  await waitFor(() => expect(player?.currentTime).toBe(20));
 });
 
 it("opens a message image from its place in the chat, then shares it and saves it to Photos", async () => {
