@@ -1150,7 +1150,7 @@ const V1_BROWSER_TAB_KEYS = ["id", "title", "url", "loading", "ownerThreadId", "
 
 const TEAM_PROTOCOL_V1_HTTP_REQUEST_KEYS = {
   "POST invitation-preview": ["inviteToken"],
-  "POST join": ["inviteToken", "username", "password"],
+  "POST join": ["inviteToken", "username", "password", "displayName"],
   "POST join-account": ["inviteToken", "accountTicket"],
   "POST auth-login": ["username", "password"],
   "POST auth-account": ["accountTicket"],
@@ -2000,7 +2000,8 @@ function validateTeamProtocolV1HttpRequest(route: TeamProtocolV1HttpRoute, value
       valid =
         isV1Identifier(value.inviteToken) &&
         isV1LimitedString(value.username, 64) &&
-        isV1LimitedString(value.password, 256);
+        isV1LimitedString(value.password, 256) &&
+        (value.displayName === undefined || value.displayName === null || isV1LimitedString(value.displayName, 120));
       break;
     case "POST join-account":
       valid = isV1Identifier(value.inviteToken) && isV1Identifier(value.accountTicket);

@@ -1226,7 +1226,7 @@ const ProviderAware_BROWSER_TAB_KEYS = ["id", "title", "url", "loading", "ownerT
 
 const TEAM_PROTOCOL_ProviderAware_HTTP_REQUEST_KEYS = {
   "POST invitation-preview": ["inviteToken"],
-  "POST join": ["inviteToken", "username", "password"],
+  "POST join": ["inviteToken", "username", "password", "displayName"],
   "POST join-account": ["inviteToken", "accountTicket"],
   "POST auth-login": ["username", "password"],
   "POST auth-account": ["accountTicket"],
@@ -2144,7 +2144,10 @@ function validateTeamProtocolProviderAwareHttpRequest(
       valid =
         isProviderAwareIdentifier(value.inviteToken) &&
         isProviderAwareLimitedString(value.username, 64) &&
-        isProviderAwareLimitedString(value.password, 256);
+        isProviderAwareLimitedString(value.password, 256) &&
+        (value.displayName === undefined ||
+          value.displayName === null ||
+          isProviderAwareLimitedString(value.displayName, 120));
       break;
     case "POST join-account":
       valid = isProviderAwareIdentifier(value.inviteToken) && isProviderAwareIdentifier(value.accountTicket);

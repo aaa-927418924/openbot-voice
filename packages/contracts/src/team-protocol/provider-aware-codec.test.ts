@@ -86,6 +86,18 @@ function accepts(run: () => unknown): boolean {
 }
 
 describe("provider-aware base codecs", () => {
+  it("preserves an optional member display name for protocols 4 to 6", () => {
+    const request = {
+      inviteToken: "f".repeat(43),
+      username: "device-b1b611f6f24a865d",
+      password: "a secure team password",
+      displayName: "Alice Example",
+    };
+    for (const protocol of protocols) {
+      expect(protocol.decodeRequest("POST", "/v1/join", request)).toEqual(request);
+    }
+  });
+
   for (const protocol of protocols) {
     it(`accepts exactly the protocol ${protocol.version} providers, auth kinds and model ids`, () => {
       const { decodeEvent, decodeRequest, decodeResponse } = protocol;

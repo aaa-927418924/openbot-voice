@@ -163,6 +163,7 @@ class LocalTailnetRemoteServerDirectory implements RemoteServerDirectory {
 interface CentralAccountSession {
   createTeamAuthTicket: (serverId: string) => Effect.Effect<string, CentralAuthOperationError>;
   getEmail: () => string;
+  getDisplayName?: () => string;
   sendTeamInviteEmail?: (input: {
     email: string;
     serverName: string;
@@ -702,6 +703,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       const username = isTailnetInvite
         ? `device-${randomBytes(8).toString("hex")}`
         : this.#centralAccount.getEmail().trim().toLowerCase();
+      const displayName = isTailnetInvite ? this.#centralAccount.getDisplayName?.().trim() : undefined;
       const result = isTailnetInvite
         ? yield* requestJson(invite.apiUrl, TEAM_API_ROUTES.join.server, decodeJoinResult, {
             method: "POST",
@@ -709,6 +711,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
               inviteToken: invite.token,
               username,
               password: randomBytes(32).toString("base64url"),
+              ...(displayName ? { displayName } : {}),
             },
             ...this.#client.requestProtocol(verifiedIdentity.compatibility),
           }).pipe(

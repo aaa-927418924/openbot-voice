@@ -166,8 +166,10 @@ describe("TeamStore", () => {
     const { store } = await createStore();
     await runCauseEffect(store.configure("Studio Mac", "owner", "correct horse battery"));
     const invite = await runCauseEffect(store.createInvite("member"));
-    const joined = await runCauseEffect(store.acceptInvite(invite.token, "alice", "a secure team password"));
-    expect(joined.member.role).toBe("member");
+    const joined = await runCauseEffect(
+      store.acceptInvite(invite.token, "alice", "a secure team password", "Alice Example"),
+    );
+    expect(joined.member).toMatchObject({ role: "member", username: "alice", name: "Alice Example" });
     await expect(runCauseEffect(store.acceptInvite(invite.token, "bob", "another secure password"))).rejects.toThrow(
       "invalid or expired",
     );

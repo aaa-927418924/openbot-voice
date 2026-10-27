@@ -148,7 +148,9 @@ describe("Tailscale-local invitations", () => {
     const { publicKey, privateKey } = generateKeyPairSync("ed25519");
     const publicKeyPem = publicKey.export({ type: "spki", format: "pem" }).toString();
     const hostFingerprint = createHash("sha256").update(publicKeyPem).digest("base64url");
-    let receivedJoinBody: { inviteToken?: unknown; username?: unknown; password?: unknown } | undefined;
+    let receivedJoinBody:
+      | { inviteToken?: unknown; username?: unknown; password?: unknown; displayName?: unknown }
+      | undefined;
     let receivedJoinHeaders: Headers | undefined;
     let receivedProbeAuthorization: string | null = null;
     const createTeamAuthTicket = vi.fn(() => Effect.succeed("unexpected-ticket"));
@@ -227,7 +229,7 @@ describe("Tailscale-local invitations", () => {
     const manager = new RemoteServerManager(
       join(directory, "servers.json"),
       { encrypt: (value) => Buffer.from(value), decrypt: (value) => value.toString() },
-      { createTeamAuthTicket, getEmail: () => "unused@example.com" },
+      { createTeamAuthTicket, getEmail: () => "unused@example.com", getDisplayName: () => "Alice Example" },
       { allowTailscaleApiUrl: true, appVersion: "0.30.0" },
     );
     const inviteUrl = new URL("openbot://join");
@@ -246,6 +248,7 @@ describe("Tailscale-local invitations", () => {
       expect(createTeamAuthTicket).not.toHaveBeenCalled();
       expect(receivedJoinBody).toMatchObject({ inviteToken: "b".repeat(43) });
       expect(receivedJoinBody?.username).toEqual(expect.stringMatching(/^device-[a-f0-9]{16}$/u));
+      expect(receivedJoinBody?.displayName).toBe("Alice Example");
       expect(receivedJoinBody?.password).toEqual(expect.stringMatching(/^[A-Za-z0-9_-]{43}$/u));
       expect(receivedJoinHeaders?.get(TEAM_PROTOCOL_VERSION_HEADER)).toBe("1");
       expect(receivedJoinHeaders?.get(TEAM_APP_VERSION_HEADER)).toBe("0.30.0");

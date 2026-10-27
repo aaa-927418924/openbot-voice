@@ -1592,6 +1592,10 @@ export async function createApplicationServices({
     {
       createTeamAuthTicket: (serverId) => centralAuth.createTeamAuthTicket(serverId),
       getEmail: () => centralAuth.getSignedInUser().email,
+      getDisplayName: () => {
+        const state = localOnlyNetworking ? localProfile.getState() : centralAuth.getState();
+        return state.status === "signed_in" ? (state.user.name ?? "") : "";
+      },
       sendTeamInviteEmail: (input) => centralAuth.sendTeamInviteEmail(input),
     },
     {

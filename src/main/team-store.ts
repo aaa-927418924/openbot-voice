@@ -23,7 +23,7 @@ import type {
   TeamSessionSummary,
 } from "@openbot/contracts/ipc";
 import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
-import { normalizeEmailAddress, slugifyTeamServerName } from "@openbot/contracts/validation";
+import { normalizeEmailAddress, slugifyTeamServerName, validateProfileName } from "@openbot/contracts/validation";
 import { sourceText } from "@openbot/i18n/source";
 import { Context, Deferred, Effect, Layer, Result, Schema } from "effect";
 import { type WriteJsonFileOptions, writeFileAtomically } from "../backend/atomic-json-file";
@@ -1102,6 +1102,7 @@ export class TeamStore {
       token: string,
       username: string,
       password: string,
+      displayName: string | null = null,
     ): Effect.fn.Return<AuthenticatedMember, RemoteWorkflowError, TeamStoreFiles> {
       yield* remoteDecode(() => validateUsername(username));
       yield* remoteDecode(() => validatePassword(password));
@@ -1122,11 +1123,12 @@ export class TeamStore {
       yield* remoteDecode(() => this.#requireUnchangedState(state));
       // A concurrent join can take the username, the invitation or the last seat during the hash.
       const invite = requireJoin();
+      const profileName = displayName === null ? null : validateProfileName(displayName);
       const member: StoredMember = {
         id: randomUUID(),
         username: normalizedUsername,
         email: null,
-        name: null,
+        name: profileName && profileName.error === null ? profileName.name : null,
         avatarUrl: null,
         role: invite.role,
         disabled: false,

@@ -236,6 +236,26 @@ describe("TeamApiServer team", () => {
     }
   });
 
+  it("keeps the invited login name separate from the member's profile name", async () => {
+    const { store, start } = await createTeamApiFixture("server", { configure: true });
+    const { base } = await start({ agents: createAgents() });
+    const invite = await Effect.runPromise(store.createInvite("member"));
+
+    const joined = await jsonRequest<{ member: { username: string; name: string | null } }>(base, "/v1/join", {
+      body: {
+        inviteToken: invite.token,
+        username: "device-b1b611f6f24a865d",
+        password: "a secure team password",
+        displayName: "Alice Example",
+      },
+    });
+
+    expect(joined.member).toMatchObject({ username: "device-b1b611f6f24a865d", name: "Alice Example" });
+    expect(store.listMembers()).toContainEqual(
+      expect.objectContaining({ username: "device-b1b611f6f24a865d", name: "Alice Example" }),
+    );
+  });
+
   it("lets a member leave with the same effect as an admin removal, and refuses the owner", async () => {
     const { store, start } = await createTeamApiFixture("server", { configure: true });
     const { base } = await start({ agents: createAgents() });

@@ -108,6 +108,7 @@ import {
   conversationSnapshotForCapabilities,
   firstHeaderValue,
   JSON_LIMIT,
+  nullableString,
   pathIdentifier,
   readJson,
   requestCapabilities,
@@ -589,6 +590,7 @@ export class TeamApiServer {
             stringField(body, "inviteToken", false, INPUT_LIMITS.identifier),
             stringField(body, "username", false, 64),
             stringField(body, "password", false, 256),
+            nullableString(body, "displayName", INPUT_LIMITS.accountName),
           ),
         );
         return this.#json(response, 201, result);

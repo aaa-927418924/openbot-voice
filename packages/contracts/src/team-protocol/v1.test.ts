@@ -46,6 +46,18 @@ describe("Team protocol v1", () => {
     );
   });
 
+  it("preserves an optional display name in invitation join requests", () => {
+    const request = {
+      inviteToken: "f".repeat(43),
+      username: "device-b1b611f6f24a865d",
+      password: "a secure team password",
+      displayName: "Alice Example",
+    };
+    const wire = encodeTeamProtocolV1CurrentHttpRequest("POST", "/v1/join", request);
+    expect(JSON.parse(wire)).toEqual(request);
+    expect(decodeTeamProtocolV1CurrentHttpRequest("POST", "/v1/join", request)).toEqual(request);
+  });
+
   it("down-converts semantic tags in current requests for v1 hosts", () => {
     const message = JSON.parse(
       encodeTeamProtocolV1CurrentHttpRequest("POST", "/v1/agents/chief/messages", {
