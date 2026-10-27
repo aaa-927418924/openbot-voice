@@ -17,7 +17,7 @@ import { useCSSVariable, useUniwind, withUniwind } from "uniwind";
 import { MobileAnalyticsLifecycle } from "@/features/analytics/lifecycle";
 import { MobileSessionProvider, useMobileSession } from "@/features/auth/context/mobile-session-context";
 import { loadAppLanguage } from "@/features/settings/model/app-language";
-import { loadAppearance, useAppearance } from "@/features/settings/model/appearance";
+import { loadAppearance } from "@/features/settings/model/appearance";
 import { loadDictationLanguage } from "@/features/settings/model/dictation-language";
 import { loadHapticsPreference } from "@/features/settings/model/haptics";
 import { loadLiveActivitiesPreference } from "@/features/settings/model/live-activities";
@@ -53,9 +53,8 @@ function RootNavigator() {
   const { loading, session } = useMobileSession();
   const pathname = usePathname();
   const { setLoadingLabel, isLoaderPresent } = useAppLoadingOverlay();
-  const appearanceReady = useAppearance((state) => state.ready);
-  const busy = loading || !appearanceReady || (!session && isLoaderPresent);
-  const { covered, reportArtwork, reportContentReady } = useSplashGate(busy, nativeSplash, appearanceReady);
+  const busy = loading || (!session && isLoaderPresent);
+  const { covered, reportArtwork, reportContentReady } = useSplashGate(busy, nativeSplash);
 
   const container = useRef<View>(null);
   const reducedMotion = useReducedMotion();
@@ -131,7 +130,7 @@ function RootNavigator() {
             accessibilityElementsHidden={!covered}
             importantForAccessibility={covered ? "auto" : "no-hide-descendants"}
           >
-            {appearanceReady && (covered || !motion.complete) ? (
+            {covered || !motion.complete ? (
               <SplashBackdrop
                 onArtworkDisplay={reportArtwork}
                 progress={motion.progress}

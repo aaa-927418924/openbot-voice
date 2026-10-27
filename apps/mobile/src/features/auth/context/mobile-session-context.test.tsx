@@ -68,9 +68,27 @@ it("loads a device profile without validating or signing into a central account"
   expect(mobileAnalytics.isEnabled()).toBe(false);
 });
 
+it("keeps the workspace available while local profile storage is still pending", async () => {
+  await act(() => root.unmount());
+  root = createRoot(container);
+  native.read.mockReturnValueOnce(new Promise<MobileSession>(() => {}));
+  await act(async () => {
+    root.render(
+      <MobileSessionProvider>
+        <Account />
+      </MobileSessionProvider>,
+    );
+  });
+
+  expect(current.loading).toBe(false);
+  expect(current.session?.localOnly).toBe(true);
+  expect(current.session?.user.name).toBe("OpenBot");
+});
+
 it("keeps the app usable with a temporary local profile if saved profile data cannot be read", async () => {
   await act(() => root.unmount());
   root = createRoot(container);
+  native.createFallback.mockClear();
   native.read.mockRejectedValueOnce(new Error("profile storage failure"));
   await act(async () => {
     root.render(

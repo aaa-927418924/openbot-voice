@@ -35,8 +35,10 @@ interface MobileSessionContextValue {
 const MobileSessionContext = createContext<MobileSessionContextValue | null>(null);
 
 export function MobileSessionProvider({ children }: PropsWithChildren) {
-  const [sessionState, setSessionState] = useState<MobileSession | null | undefined>(undefined);
-  const sessionRef = useRef<MobileSession | null>(null);
+  // The device profile only supplies account presentation. It must not block the workspace while
+  // the native file system hydrates it, so start with an in-memory profile and replace it on success.
+  const [sessionState, setSessionState] = useState<MobileSession | null>(() => createEphemeralLocalMobileProfile());
+  const sessionRef = useRef<MobileSession | null>(sessionState);
   const sessionScope = useRef(0);
   const refreshProfile = useCallback(async () => undefined, []);
 
@@ -61,8 +63,7 @@ export function MobileSessionProvider({ children }: PropsWithChildren) {
         if (active && scope === sessionScope.current) setCurrentSession(stored);
       })
       .catch(() => {
-        // Keep the app local and usable without replacing a damaged profile file or showing account login.
-        if (active && scope === sessionScope.current) setCurrentSession(createEphemeralLocalMobileProfile());
+        // Keep the in-memory profile active without replacing a damaged file or blocking app startup.
       });
     return () => {
       active = false;
@@ -83,8 +84,8 @@ export function MobileSessionProvider({ children }: PropsWithChildren) {
 
   const value = useMemo<MobileSessionContextValue>(
     () => ({
-      loading: sessionState === undefined,
-      session: sessionState ?? null,
+      loading: false,
+      session: sessionState,
       sessionScope: sessionScope.current,
       refreshProfile,
       handleSessionError,
