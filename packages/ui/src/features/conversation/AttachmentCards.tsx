@@ -1,6 +1,6 @@
 import { playableMediaKind } from "@openbot/contracts/attachment-files";
 import { type AttachmentSummary, canPreviewAttachment } from "@openbot/contracts/ipc";
-import { Button, Dialog, Download, Maximize2, Spinner, X } from "@openbot/ui";
+import { Button, Dialog, Download, Spinner, X } from "@openbot/ui";
 import { createSignal, createUniqueId, For, onCleanup, Show } from "solid-js";
 import { useText } from "../../text";
 import { AnchoredTooltip } from "./AnchoredTooltip";
@@ -89,16 +89,22 @@ export function AttachmentCards(props: {
         <For each={props.attachments}>
           {(attachment) => {
             let inlineVideo: HTMLVideoElement | undefined;
-            onCleanup(() => {
-              if (videoElements.get(attachment.id) === inlineVideo) videoElements.delete(attachment.id);
-            });
-            const openExpandedVideo = () => {
-              if (!inlineVideo) return;
+            const handleNativeExpand = () => {
+              if (!inlineVideo || document.fullscreenElement !== inlineVideo) return;
               const wasPlaying = !inlineVideo.paused;
               const currentTime = inlineVideo.currentTime;
               inlineVideo.pause();
-              setExpandedVideo({ attachment, currentTime, wasPlaying });
+              const state = { attachment, currentTime, wasPlaying };
+              void document
+                .exitFullscreen()
+                .catch(() => undefined)
+                .then(() => setExpandedVideo(state));
             };
+            document.addEventListener("fullscreenchange", handleNativeExpand);
+            onCleanup(() => {
+              document.removeEventListener("fullscreenchange", handleNativeExpand);
+              if (videoElements.get(attachment.id) === inlineVideo) videoElements.delete(attachment.id);
+            });
             return (
               <div
                 class="message-attachment"
@@ -170,7 +176,6 @@ export function AttachmentCards(props: {
                         class="message-video-preview"
                         aria-label={t("attachment.preview", { name: attachment.name })}
                         controls
-                        controlslist="nofullscreen"
                         playsinline
                         preload="metadata"
                         src={attachment.previewUrl ?? ""}
@@ -183,17 +188,6 @@ export function AttachmentCards(props: {
                         <strong>{attachment.name}</strong>
                         <small>{format.fileSize(attachment.size)}</small>
                       </span>
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        type="button"
-                        class="message-video-expand"
-                        aria-label={t("chat.preview.expandLabel")}
-                        title={t("chat.preview.expandLabel")}
-                        onClick={openExpandedVideo}
-                      >
-                        <Maximize2 aria-hidden="true" />
-                      </Button>
                     </div>
                   </Show>
                 </Show>

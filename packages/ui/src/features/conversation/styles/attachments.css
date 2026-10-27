@@ -46,19 +46,6 @@
   grid-column: 1 / -1;
 }
 
-.message-video-expand.ui-button {
-  flex: 0 0 auto;
-  border: 1px solid var(--openbot-border);
-  background: var(--openbot-bg-control);
-  color: var(--openbot-text-primary);
-  box-shadow: 0 1px 3px var(--openbot-shadow-popover-ambient);
-  opacity: 0.92;
-}
-
-.message-video-expand.ui-button:hover {
-  opacity: 1;
-}
-
 .message-video-preview-dialog {
   display: flex;
   flex-direction: column;
