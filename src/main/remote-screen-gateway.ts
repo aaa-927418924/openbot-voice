@@ -38,6 +38,7 @@ const GRANT_TTL_MS = 60_000;
 const REMOTE_DESKTOP_MAX_SESSIONS = 4;
 const VIEWER_COOKIE = "openbotRemoteViewer";
 const VIEWER_GRANT_HEADER = "x-openbot-viewer";
+const VIEWER_GRANT_QUERY = "openbotViewer";
 const VIEWER_GRANT_SUBPROTOCOL = "openbot-viewer.";
 const MAX_PENDING_STREAM_FRAMES = 32;
 const MAX_PENDING_STREAM_BYTES = 1_048_576;
@@ -1393,12 +1394,18 @@ function viewerGrantFromRequest(request: IncomingMessage): string | null {
   const header = request.headers[VIEWER_GRANT_HEADER];
   if (typeof header === "string") return header;
   const protocols = request.headers["sec-websocket-protocol"];
-  if (typeof protocols !== "string") return null;
-  const token = protocols
-    .split(",")
-    .map((value) => value.trim())
-    .find((value) => value.startsWith(VIEWER_GRANT_SUBPROTOCOL));
-  return token?.slice(VIEWER_GRANT_SUBPROTOCOL.length) ?? null;
+  if (typeof protocols === "string") {
+    const token = protocols
+      .split(",")
+      .map((value) => value.trim())
+      .find((value) => value.startsWith(VIEWER_GRANT_SUBPROTOCOL));
+    if (token) return token.slice(VIEWER_GRANT_SUBPROTOCOL.length);
+  }
+  try {
+    return new URL(request.url ?? "/", "http://127.0.0.1").searchParams.get(VIEWER_GRANT_QUERY);
+  } catch {
+    return null;
+  }
 }
 
 function parseCookie(header: string | undefined, name: string): string | null {

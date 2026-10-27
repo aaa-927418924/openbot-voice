@@ -152,11 +152,15 @@ export class RemoteViewerProxy {
     return yield* Effect.gen({ self: this }, function* () {
       const body =
         request.method === "GET" || request.method === "HEAD" ? undefined : yield* remoteCall(() => readBody(request));
-      const upstream = yield* this.#options.fetchResource(route.serverId, route.upstreamPath, {
-        method: request.method === "HEAD" ? "GET" : request.method,
-        headers: { "Content-Type": request.headers["content-type"] ?? "application/octet-stream" },
-        body: body ? Uint8Array.from(body).buffer : undefined,
-      });
+      const upstream = yield* this.#options.fetchResource(
+        route.serverId,
+        remoteViewerPathWithGrant(route.upstreamPath, request.headers["x-openbot-viewer"]),
+        {
+          method: request.method === "HEAD" ? "GET" : request.method,
+          headers: { "Content-Type": request.headers["content-type"] ?? "application/octet-stream" },
+          body: body ? Uint8Array.from(body).buffer : undefined,
+        },
+      );
       if (upstream.status === 204) {
         response.writeHead(204, { "Cache-Control": "no-store" });
         response.end();
@@ -356,6 +360,21 @@ async function readBody(request: IncomingMessage): Promise<Buffer> {
   const body = await readBodyWithin(request, MAX_REQUEST_BYTES);
   if (body === null) throw new Error("Remote viewer request is too large.");
   return body;
+}
+
+function remoteViewerPathWithGrant(path: string, header: string | string[] | undefined): string {
+  if (typeof header !== "string" || header.length === 0 || header.length > 256 || !/^[A-Za-z0-9_-]+$/u.test(header))
+    return path;
+  try {
+    const url = new URL(path, "http://127.0.0.1");
+    if (!url.pathname.startsWith(`${TEAM_API_ROUTES.remoteScreen.prefix}/sessions/`)) return path;
+    // WebRTC V2 carries request paths but not arbitrary headers. Forward only this short-lived grant
+    // through the scoped remote-screen route; the host still validates it against the active session.
+    url.searchParams.set("openbotViewer", header);
+    return `${url.pathname}${url.search}`;
+  } catch {
+    return path;
+  }
 }
 
 function sendText(response: ServerResponse, status: number, body: string): void {

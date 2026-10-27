@@ -312,16 +312,19 @@ describe("RemoteScreenGateway", () => {
       expect(authScriptText).toContain("X-OpenBot-Viewer");
       expect(authScriptText).not.toContain(session.viewerGrant);
 
-      const state = await fetch(`${origin}${sessionPath}/viewer-state`, {
-        method: "POST",
-        headers: { ...headers, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          source: "openbot-moonlight",
-          type: "viewer-state",
-          sessionId: session.id,
-          state: "connecting",
-        }),
-      });
+      const state = await fetch(
+        `${origin}${sessionPath}/viewer-state?openbotViewer=${encodeURIComponent(session.viewerGrant)}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            source: "openbot-moonlight",
+            type: "viewer-state",
+            sessionId: session.id,
+            state: "connecting",
+          }),
+        },
+      );
       expect(state.status).toBe(204);
 
       viewerSocket = new WebSocket(`${origin.replace(/^http/, "ws")}${sessionPath}/stream`, [

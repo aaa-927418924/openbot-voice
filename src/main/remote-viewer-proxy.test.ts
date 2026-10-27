@@ -14,6 +14,43 @@ import { RemoteWorkflowError, remoteCall } from "./remote-service-effects";
 import { RemoteViewerProxy } from "./remote-viewer-proxy";
 
 describe("RemoteViewerProxy", () => {
+  it("carries only a scoped viewer grant through WebRTC resource requests", async () => {
+    const transport = new FakeTransport();
+    const requests: Array<{ path: string; headers: Headers }> = [];
+    const proxy = new RemoteViewerProxy({
+      transport,
+      fetchResource: (_serverId, path, init) =>
+        Effect.sync(() => {
+          requests.push({ path, headers: new Headers(init.headers) });
+          return new Response(null, { status: 204 });
+        }),
+    });
+    const viewerUrl = await runCauseEffect(proxy.viewerUrl("host-1", "/v1/remote-screen/sessions/session-1/viewer"));
+    const stateUrl = viewerUrl.replace(/\/viewer$/u, "/viewer-state");
+
+    await expect(
+      fetch(stateUrl, {
+        method: "POST",
+        headers: {
+          Authorization: "must-not-forward",
+          "Content-Type": "application/json",
+          "X-OpenBot-Viewer": "safe_grant-123",
+        },
+        body: "{}",
+      }),
+    ).resolves.toMatchObject({ status: 204 });
+    expect(requests[0]?.path).toBe("/v1/remote-screen/sessions/session-1/viewer-state?openbotViewer=safe_grant-123");
+    expect(requests[0]?.headers.get("content-type")).toBe("application/json");
+    expect(requests[0]?.headers.has("authorization")).toBe(false);
+    expect(requests[0]?.headers.has("x-openbot-viewer")).toBe(false);
+
+    await expect(
+      fetch(stateUrl, { method: "POST", headers: { "X-OpenBot-Viewer": "invalid grant" }, body: "{}" }),
+    ).resolves.toMatchObject({ status: 204 });
+    expect(requests[1]?.path).toBe("/v1/remote-screen/sessions/session-1/viewer-state");
+    await runCauseEffect(proxy.stop());
+  });
+
   it("serves viewer resources on loopback and bridges Moonlight signal frames without Base64", async () => {
     const transport = new FakeTransport();
     const proxy = new RemoteViewerProxy({
