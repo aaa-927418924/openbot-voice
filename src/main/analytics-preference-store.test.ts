@@ -5,7 +5,11 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { readAnalyticsPreference, writeAnalyticsPreference } from "./analytics-preference-store";
+import {
+  analyticsEnabledForPlatform,
+  readAnalyticsPreference,
+  writeAnalyticsPreference,
+} from "./analytics-preference-store";
 
 const roots: string[] = [];
 
@@ -14,6 +18,12 @@ afterEach(async () => {
 });
 
 describe("analytics preference store", () => {
+  it("keeps product analytics disabled on Windows regardless of the saved choice", () => {
+    expect(analyticsEnabledForPlatform(true, "win32")).toBe(false);
+    expect(analyticsEnabledForPlatform(false, "win32")).toBe(false);
+    expect(analyticsEnabledForPlatform(true, "linux")).toBe(true);
+  });
+
   it("defaults to enabled when no preference exists", async () => {
     const root = await temporaryRoot();
     await expect(Effect.runPromise(readAnalyticsPreference(join(root, "analytics.json")))).resolves.toEqual({

@@ -76,7 +76,7 @@ import { AgentTemplateService } from "./agent-template-service";
 import { HostAnalytics } from "./analytics";
 import { analyticsInventoryDayStore, collectAnalyticsInventory } from "./analytics-inventory";
 import { catalogPluginSlug, isReportedMcpServerName, loadCatalogPluginServers } from "./analytics-plugin-catalog";
-import { readAnalyticsPreference } from "./analytics-preference-store";
+import { analyticsEnabledForPlatform, readAnalyticsPreference } from "./analytics-preference-store";
 import { ApprovalAutomation, readApprovalAutomation } from "./approval-automation-store";
 import { AutomationServer } from "./automation-server";
 import { BillingDesktopService } from "./billing-service";
@@ -1539,8 +1539,8 @@ export async function createApplicationServices({
     ),
   );
   const analytics = new HostAnalytics({
-    enabled: !localOnlyNetworking && app.isPackaged && appVariant === "production",
-    trackingEnabled: analyticsPreference.enabled,
+    enabled: analyticsPlatform !== "win32" && !localOnlyNetworking && app.isPackaged && appVariant === "production",
+    trackingEnabled: analyticsEnabledForPlatform(analyticsPreference.enabled, analyticsPlatform),
     appVersion: app.getVersion(),
     platform: analyticsPlatform,
     // A function for a lifetime reason, not an ordering one: the signed-in account changes

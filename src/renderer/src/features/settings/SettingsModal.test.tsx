@@ -47,6 +47,26 @@ beforeEach(() => {
 });
 
 describe("SettingsModal", () => {
+  it("hides product analytics sharing on Windows", () => {
+    render(() => (
+      <SettingsModal
+        open
+        onOpenChange={() => {}}
+        value={DEFAULT_GENERAL_SETTINGS}
+        onValueChange={() => {}}
+        appInfo={{ name: "OpenBot", version: "0.2.1", platform: "win32", variant: "production" }}
+        updateStatus={idleUpdateStatus}
+        onUpdateAction={async () => {}}
+        account={account}
+        onUpdateAccountName={async () => {}}
+        onUpdateAccountAvatar={async () => {}}
+      />
+    ));
+
+    expect(screen.queryByRole("switch", { name: "Share product analytics" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Privacy")).not.toBeInTheDocument();
+  });
+
   it("disconnects another desktop from the account session list and preserves the current device", async () => {
     const current: AccountSession = {
       sessionId: "current",

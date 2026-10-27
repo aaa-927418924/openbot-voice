@@ -16,7 +16,11 @@ import { app, type BrowserWindow, shell } from "electron";
 import type { AgentService } from "../../backend/agent-service";
 import type { BrowserHost } from "../../backend/browser-host";
 import type { MailboxStore } from "../../backend/mailbox-store";
-import { readAnalyticsPreference, writeAnalyticsPreference } from "../analytics-preference-store";
+import {
+  analyticsEnabledForPlatform,
+  readAnalyticsPreference,
+  writeAnalyticsPreference,
+} from "../analytics-preference-store";
 import type { ApprovalAutomation } from "../approval-automation-store";
 import type { BusyMessageModePreferenceStore } from "../busy-message-mode-preference-store";
 import type { LanguageService } from "../language-service";
@@ -114,11 +118,22 @@ export function appIpcHandlers({
         return { name: app.getName(), version: app.getVersion(), platform, variant: appVariant };
       }),
       getSetupState: handler(() => runCauseEffect(readSetupState(setupFile))),
-      getAnalyticsPreference: handler(() => Effect.runPromise(readAnalyticsPreference(analyticsPreferenceFile))),
+      getAnalyticsPreference: handler(() => {
+        if (process.platform !== "win32") {
+          return Effect.runPromise(readAnalyticsPreference(analyticsPreferenceFile));
+        }
+        setAnalyticsTrackingEnabled(false);
+        return Effect.runPromise(
+          writeAnalyticsPreference(analyticsPreferenceFile, false).pipe(
+            Effect.catch(() => Effect.succeed({ enabled: false })),
+          ),
+        );
+      }),
       setAnalyticsPreference: payloadHandler(parseAnalyticsPreference, (parsed) => {
+        const enabled = analyticsEnabledForPlatform(parsed.enabled);
         return runCauseEffect(
           analyticsPreferenceWrites.withPermit(
-            writeAnalyticsPreference(analyticsPreferenceFile, parsed.enabled).pipe(
+            writeAnalyticsPreference(analyticsPreferenceFile, enabled).pipe(
               Effect.tap((preference) => Effect.sync(() => setAnalyticsTrackingEnabled(preference.enabled))),
               Effect.uninterruptible,
             ),

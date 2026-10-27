@@ -29,8 +29,21 @@ function fakeClient(): OpenPanelClient {
 describe("desktop analytics", () => {
   it("enables only a production build of the production variant", () => {
     expect(shouldEnableDesktopAnalytics(PRODUCTION_APP, true)).toBe(true);
+    expect(shouldEnableDesktopAnalytics({ ...PRODUCTION_APP, platform: "win32" }, true)).toBe(false);
     expect(shouldEnableDesktopAnalytics({ ...PRODUCTION_APP, variant: "dev" }, true)).toBe(false);
     expect(shouldEnableDesktopAnalytics(PRODUCTION_APP, false)).toBe(false);
+  });
+
+  it("does not create an analytics client on Windows when the saved preference was enabled", () => {
+    const client = fakeClient();
+    const createClient = vi.fn(() => client);
+    const analytics = new DesktopAnalytics(createClient, true);
+    analytics.setUser({ id: "account-1", email: "person@example.com" });
+    analytics.track("agent_action", { action: "create", result: "succeeded" });
+
+    expect(analytics.configure({ ...PRODUCTION_APP, platform: "win32" })).toBe(false);
+    expect(createClient).not.toHaveBeenCalled();
+    expect(client.track).not.toHaveBeenCalled();
   });
 
   it("configures the base OpenPanel SDK without browser auto-tracking", () => {

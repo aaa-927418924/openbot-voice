@@ -385,7 +385,7 @@ const UPDATE_PHASES = new Set([
 ]);
 
 export function shouldEnableDesktopAnalytics(appInfo: AppInfo, productionBuild: boolean): boolean {
-  return productionBuild && appInfo.variant === "production";
+  return productionBuild && appInfo.variant === "production" && appInfo.platform !== "win32";
 }
 
 export function sanitizeDesktopAnalyticsEvent(

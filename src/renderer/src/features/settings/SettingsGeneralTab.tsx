@@ -353,16 +353,18 @@ export function SettingsGeneralTab(props: SettingsGeneralTabProps) {
         </ItemGroup>
       </SettingsSection>
 
-      <SettingsSection title={i18n.t("settings.privacy.title")}>
-        <ItemGroup class="settings-modal-card">
-          <SwitchField
-            checked={props.value.productAnalytics}
-            onChange={(checked) => props.onUpdateSetting("productAnalytics", checked)}
-            label={i18n.t("settings.analytics.title")}
-            description={i18n.t("settings.analytics.description")}
-          />
-        </ItemGroup>
-      </SettingsSection>
+      <Show when={props.platform !== "win32"}>
+        <SettingsSection title={i18n.t("settings.privacy.title")}>
+          <ItemGroup class="settings-modal-card">
+            <SwitchField
+              checked={props.value.productAnalytics}
+              onChange={(checked) => props.onUpdateSetting("productAnalytics", checked)}
+              label={i18n.t("settings.analytics.title")}
+              description={i18n.t("settings.analytics.description")}
+            />
+          </ItemGroup>
+        </SettingsSection>
+      </Show>
     </>
   );
 }

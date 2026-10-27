@@ -6,6 +6,11 @@ import { type PreferenceFileFailure, readPreferenceFile, writePreferenceFile } f
 
 const DEFAULT_PREFERENCE: AnalyticsPreference = { enabled: true };
 
+/** Product analytics are disabled by policy in the Windows desktop app. */
+export function analyticsEnabledForPlatform(enabled: boolean, platform: NodeJS.Platform = process.platform): boolean {
+  return enabled && platform !== "win32";
+}
+
 export const readAnalyticsPreference = Effect.fn("readAnalyticsPreference")((path: string) =>
   readPreferenceFile(path, (parsed): AnalyticsPreference => {
     if (!isDynamicRecord(parsed) || parsed.version !== 1 || !isBoolean(parsed.enabled)) {
