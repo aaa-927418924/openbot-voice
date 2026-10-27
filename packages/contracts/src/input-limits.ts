@@ -88,6 +88,7 @@ export const DEFAULT_TEAM_MEMBER_LIMIT = 3;
 
 export const ATTACHMENT_LIMITS = {
   fileBytes: 100 * 1024 * 1024,
+  rangeChunkBytes: 256 * 1024,
   totalBytes: 250 * 1024 * 1024,
 } as const;
 

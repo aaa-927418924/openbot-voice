@@ -21,6 +21,7 @@ import { basename } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
+import { TEAM_ATTACHMENT_RANGE_CAPABILITY } from "@openbot/contracts/team-protocol/current";
 import { sourceText } from "@openbot/i18n/source";
 import { Deferred, Effect } from "effect";
 import { runCauseEffect } from "../../backend/effect-boundary";
@@ -121,6 +122,20 @@ export async function routeFiles(
     if (method === "GET") {
       const attachment = await runCauseEffect(mailbox.resolveAttachment(attachmentId));
       if (!attachment) throw new HttpError(404, sourceText("error.team.attachmentNotFound"));
+      const offsetValue = url.searchParams.get("offset");
+      const lengthValue = url.searchParams.get("length");
+      if (offsetValue !== null || lengthValue !== null) {
+        if (!context.capabilities.has(TEAM_ATTACHMENT_RANGE_CAPABILITY)) return "unmatched";
+        const offset = rangeInteger(offsetValue);
+        const length = rangeInteger(lengthValue);
+        if (offset === null || length === null || length === 0 || length > ATTACHMENT_LIMITS.rangeChunkBytes) {
+          throw new HttpError(400, "The attachment byte range is invalid.");
+        }
+        if (!attachment.mimeType.startsWith("video/")) {
+          throw new HttpError(415, "Byte ranges are only available for video attachments.");
+        }
+        return sendFileRange(response, attachment.path, attachment.mimeType, attachment.name, offset, length);
+      }
       return sendFile(response, attachment.path, null, (size) => ({
         "Content-Type": attachment.mimeType || "application/octet-stream",
         "Content-Length": String(size),
@@ -169,6 +184,56 @@ export async function routeFiles(
   }
 
   return "unmatched";
+}
+
+function rangeInteger(value: string | null): number | null {
+  if (value === null || !/^(?:0|[1-9][0-9]*)$/u.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : null;
+}
+
+/** Sends one bounded video range without changing the released whole-file response. */
+async function sendFileRange(
+  response: ServerResponse,
+  path: string,
+  mimeType: string,
+  name: string,
+  offset: number,
+  length: number,
+): Promise<"handled"> {
+  const file = await open(path, "r");
+  let size: number;
+  let end: number;
+  try {
+    const metadata = await file.stat();
+    if (!metadata.isFile()) throw new Error("The requested path is not a file.");
+    size = metadata.size;
+    if (offset >= size || !Number.isSafeInteger(offset + length - 1)) {
+      throw new HttpError(416, "The attachment byte range is outside the file.");
+    }
+    end = Math.min(offset + length, size) - 1;
+  } catch (error) {
+    await file.close();
+    throw error;
+  }
+  const partLength = end - offset + 1;
+  response.writeHead(206, {
+    "Accept-Ranges": "bytes",
+    "Content-Range": `bytes ${offset}-${end}/${size}`,
+    "Content-Type": mimeType || "application/octet-stream",
+    "Content-Length": String(partLength),
+    "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(basename(name))}`,
+  });
+  const stream = file.createReadStream({ start: offset, end });
+  try {
+    await pipeline(stream, response, { end: false });
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ERR_STREAM_PREMATURE_CLOSE") return "handled";
+    throw error;
+  }
+  if (stream.bytesRead !== partLength) response.destroy();
+  else response.end();
+  return "handled";
 }
 
 /**

@@ -45,6 +45,8 @@ export const AGENT_LIVE_VOICE_SETTINGS_CAPABILITY = "agent-live-voice-settings-v
 export const TEAM_MEDIA_ATTACHMENTS_CAPABILITY = "media-attachments";
 /** An additive capability for MP4 attachments; older media support remains unchanged. */
 export const TEAM_VIDEO_ATTACHMENTS_CAPABILITY = "video-attachments";
+/** A host can serve authenticated, bounded byte ranges from a saved video attachment. */
+export const TEAM_ATTACHMENT_RANGE_CAPABILITY = "attachment-ranges-v1";
 export const TEAM_EML_ATTACHMENTS_CAPABILITY = "eml-attachments";
 /**
  * Frozen optional member-leave-v1 contract: a bodyless `POST /v1/team/leave` answered with 204. The
@@ -106,6 +108,7 @@ export const TEAM_CURRENT_CAPABILITIES = [
   TEAM_EML_ATTACHMENTS_CAPABILITY,
   TEAM_MEDIA_ATTACHMENTS_CAPABILITY,
   TEAM_VIDEO_ATTACHMENTS_CAPABILITY,
+  TEAM_ATTACHMENT_RANGE_CAPABILITY,
   "channel-chats-v1",
   CHANNEL_DELETE_CAPABILITY,
   MCP_SERVERS_CAPABILITY,

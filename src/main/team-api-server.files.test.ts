@@ -8,6 +8,8 @@ import { writeFile } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import { join } from "node:path";
 import { ATTACHMENT_LIMITS } from "@openbot/contracts/input-limits";
+import { TEAM_ATTACHMENT_RANGE_CAPABILITY } from "@openbot/contracts/team-protocol/current";
+import { TEAM_CAPABILITIES_HEADER } from "@openbot/contracts/team-protocol/v1";
 import { afterEach, describe, expect, it } from "vitest";
 import { createAgents, createTeamApiFixture, stopTeamApiFixtures } from "./team-api-server-test-harness";
 
@@ -31,6 +33,44 @@ describe("TeamApiServer files", () => {
     });
     expect(original.status).toBe(200);
     expect(await original.text()).toBe("full attachment bytes");
+  });
+
+  it("sends a bounded video range only when the client advertises range support", async () => {
+    const { root, start, signIn } = await createTeamApiFixture("attachment-range", { configure: true });
+    const path = join(root, "clip.mp4");
+    await writeFile(path, "0123456789");
+    const { base } = await start({
+      mailbox: { resolveAttachment: () => Effect.sync(() => ({ path, mimeType: "video/mp4", name: "clip.mp4" })) },
+    });
+    const authorization = `Bearer ${await signIn()}`;
+    const rangeUrl = `${base}/v1/attachments/video?offset=2&length=4`;
+
+    const unsupported = await fetch(rangeUrl, { headers: { Authorization: authorization } });
+    expect(unsupported.status).toBe(404);
+
+    const partial = await fetch(rangeUrl, {
+      headers: {
+        Authorization: authorization,
+        [TEAM_CAPABILITIES_HEADER]: TEAM_ATTACHMENT_RANGE_CAPABILITY,
+      },
+    });
+    expect(partial.status).toBe(206);
+    expect(partial.headers.get("accept-ranges")).toBe("bytes");
+    expect(partial.headers.get("content-range")).toBe("bytes 2-5/10");
+    expect(partial.headers.get("content-length")).toBe("4");
+    expect(partial.headers.get("content-disposition")).toContain("clip.mp4");
+    expect(await partial.text()).toBe("2345");
+
+    const oversized = await fetch(
+      `${base}/v1/attachments/video?offset=0&length=${ATTACHMENT_LIMITS.rangeChunkBytes + 1}`,
+      {
+        headers: {
+          Authorization: authorization,
+          [TEAM_CAPABILITIES_HEADER]: TEAM_ATTACHMENT_RANGE_CAPABILITY,
+        },
+      },
+    );
+    expect(oversized.status).toBe(400);
   });
 
   it("downloads authenticated shared files through the remote API", async () => {
