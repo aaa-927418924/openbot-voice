@@ -3,6 +3,7 @@
 import {
   type CreateHostedServerInput,
   type DeleteHostedServerInput,
+  type HostedServerList,
   parseCreateHostedServerInput,
   parseDeleteHostedServerInput,
 } from "@openbot/contracts/hosted-servers";
@@ -14,28 +15,55 @@ import { requireString } from "./validation";
 
 export interface HostedServerIpcDependencies {
   hostedServers: HostedServerDesktopService;
+  localOnlyNetworking?: boolean;
 }
 
 export function hostedServerIpcHandlers({
   hostedServers,
+  localOnlyNetworking = false,
 }: HostedServerIpcDependencies): Pick<IpcGroupHandlers, "hostedServers"> {
+  const unavailable = () => {
+    if (localOnlyNetworking) throw new Error("Hosted servers are unavailable in local-only mode.");
+  };
+
   return {
     hostedServers: {
-      list: handler(() => runCauseEffect(hostedServers.list())),
-      plans: handler(() => runCauseEffect(hostedServers.plans())),
-      create: payloadHandler(parseCreate, (input) => runCauseEffect(hostedServers.create(input))),
+      list: handler(() => (localOnlyNetworking ? LOCAL_ONLY_HOSTED_SERVER_LIST : runCauseEffect(hostedServers.list()))),
+      plans: handler(() => {
+        unavailable();
+        return runCauseEffect(hostedServers.plans());
+      }),
+      create: payloadHandler(parseCreate, (input) => {
+        unavailable();
+        return runCauseEffect(hostedServers.create(input));
+      }),
       openCheckout: payloadHandler(
         (value) => requireString(value, "serverId", INPUT_LIMITS.identifier),
-        (serverId) => runCauseEffect(hostedServers.openCheckout(serverId)),
+        (serverId) => {
+          unavailable();
+          return runCauseEffect(hostedServers.openCheckout(serverId));
+        },
       ),
-      delete: payloadHandler(parseDelete, (input) => runCauseEffect(hostedServers.delete(input))),
+      delete: payloadHandler(parseDelete, (input) => {
+        unavailable();
+        return runCauseEffect(hostedServers.delete(input));
+      }),
       wake: payloadHandler(
         (value) => requireString(value, "serverId", INPUT_LIMITS.identifier),
-        (serverId) => runCauseEffect(hostedServers.wake(serverId)),
+        (serverId) => {
+          unavailable();
+          return runCauseEffect(hostedServers.wake(serverId));
+        },
       ),
     },
   };
 }
+
+const LOCAL_ONLY_HOSTED_SERVER_LIST: HostedServerList = {
+  available: false,
+  servers: [],
+  maxServers: null,
+};
 
 function parseCreate(value: unknown): CreateHostedServerInput {
   const input = parseCreateHostedServerInput(value);

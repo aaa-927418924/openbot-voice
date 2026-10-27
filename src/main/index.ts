@@ -505,7 +505,7 @@ function registerIpcHandlers({
     ...onePasswordConnectorIpcHandlers({ onePasswordConnector }),
     ...billingIpcHandlers({ billing }),
     ...routineFeedIpcHandlers({ routineFeed }),
-    ...hostedServerIpcHandlers({ hostedServers }),
+    ...hostedServerIpcHandlers({ hostedServers, localOnlyNetworking }),
     ...customProviderIpcHandlers(customProviderChanges),
     ...customAgentIpcHandlers(customAgentChanges),
     ...providerDetectionIpcHandlers({ detection: providerDetection, settings: providerDetectionSettings }),
