@@ -32,7 +32,9 @@ export function StaticAccountDock(props: StaticAccountDockProps) {
             <UserAvatar user={props.account} class="account-dock-avatar" decorative />
             <span class="account-dock-copy">
               <strong title={accountName()}>{accountName()}</strong>
-              <span title={props.account.email}>{props.account.email}</span>
+              <Show when={props.account.email}>
+                <span title={props.account.email}>{props.account.email}</span>
+              </Show>
             </span>
           </div>
         }
@@ -44,7 +46,9 @@ export function StaticAccountDock(props: StaticAccountDockProps) {
             </span>
             <span class="account-dock-copy">
               <strong title={accountName()}>{accountName()}</strong>
-              <span title={props.account.email}>{props.account.email}</span>
+              <Show when={props.account.email}>
+                <span title={props.account.email}>{props.account.email}</span>
+              </Show>
             </span>
           </div>
           <span class="account-dock-usage-trigger" aria-hidden="true">

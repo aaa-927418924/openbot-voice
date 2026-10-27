@@ -500,13 +500,16 @@ export class TeamStore {
         invites: [],
         sessions: [],
       };
+      const previousActiveAccountId = this.#file.activeAccountId;
       this.#file.hosts.push(this.#state);
+      this.#file.activeAccountId = null;
       const attempt3 = yield* Effect.gen({ self: this }, function* () {
         yield* this.#persistFileEffect();
       }).pipe(Effect.result);
       if (Result.isFailure(attempt3)) {
         const error = attempt3.failure.cause;
         this.#file.hosts.pop();
+        this.#file.activeAccountId = previousActiveAccountId;
         this.#state = null;
         return yield* new RemoteWorkflowError({ cause: error });
       }
@@ -514,6 +517,30 @@ export class TeamStore {
       if (!identity)
         return yield* new RemoteWorkflowError({ cause: new Error(sourceText("error.team.identityCreateFailed")) });
       return identity;
+    },
+    Effect.provide(TeamStoreFiles.layer),
+    Effect.uninterruptible,
+  ).bind(this);
+
+  /** Selects an existing unowned host when this fork is running without an account directory. */
+  readonly activateLocalHost = Effect.fn("TeamStore.activateLocalHost")(
+    function* (this: TeamStore): Effect.fn.Return<boolean, RemoteWorkflowError, TeamStoreFiles> {
+      if (this.#state) return true;
+      const localHost = this.#file.hosts.find((host) => ownerAccountId(host) === null);
+      if (!localHost) return false;
+      const previousState = this.#state;
+      const previousActiveAccountId = this.#file.activeAccountId;
+      this.#state = localHost;
+      this.#file.activeAccountId = null;
+      const persisted = yield* Effect.gen({ self: this }, function* () {
+        yield* this.#persistFileEffect();
+      }).pipe(Effect.result);
+      if (Result.isFailure(persisted)) {
+        this.#state = previousState;
+        this.#file.activeAccountId = previousActiveAccountId;
+        return yield* new RemoteWorkflowError({ cause: persisted.failure.cause });
+      }
+      return true;
     },
     Effect.provide(TeamStoreFiles.layer),
     Effect.uninterruptible,

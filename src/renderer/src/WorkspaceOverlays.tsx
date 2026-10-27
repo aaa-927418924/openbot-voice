@@ -615,13 +615,13 @@ function AppSettings(props: AccountProps) {
         account={props.account()}
         onUpdateAccountName={auth.updateAccountName}
         onUpdateAccountAvatar={auth.updateAccountAvatar}
-        onCreateMobileConnect={auth.createMobileConnect}
-        onListMobileConnectedDevices={auth.listMobileConnectedDevices}
-        onRevokeMobileConnectedDevice={auth.revokeMobileConnectedDevice}
-        onListAccountSessions={auth.listAccountSessions}
-        onRevokeAccountSession={auth.revokeAccountSession}
-        billingApi={appPort().billing}
-        hostedServersApi={appPort().hostedServers}
+        onCreateMobileConnect={props.account().email ? auth.createMobileConnect : undefined}
+        onListMobileConnectedDevices={props.account().email ? auth.listMobileConnectedDevices : undefined}
+        onRevokeMobileConnectedDevice={props.account().email ? auth.revokeMobileConnectedDevice : undefined}
+        onListAccountSessions={props.account().email ? auth.listAccountSessions : undefined}
+        onRevokeAccountSession={props.account().email ? auth.revokeAccountSession : undefined}
+        billingApi={props.account().email ? appPort().billing : undefined}
+        hostedServersApi={props.account().email ? appPort().hostedServers : undefined}
         onAddHostedServer={() => {
           setAppSettingsOpen(false);
           setAddServerOpen(true);

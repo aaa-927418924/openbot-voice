@@ -527,7 +527,9 @@ export function AccountDock(props: AccountDockProps) {
           {avatar("account-dock-avatar")}
           <span class="account-dock-copy">
             <strong title={accountName()}>{accountName()}</strong>
-            <span title={props.account.email}>{props.account.email}</span>
+            <Show when={props.account.email}>
+              <span title={props.account.email}>{props.account.email}</span>
+            </Show>
             <Show when={props.appInfo}>
               {(info) => (
                 <span class="sr-only">
@@ -586,7 +588,9 @@ export function AccountDock(props: AccountDockProps) {
             <span class="account-dock-avatar-frame">{avatar("account-dock-avatar")}</span>
             <span class="account-dock-copy">
               <strong title={accountName()}>{accountName()}</strong>
-              <span title={props.account.email}>{props.account.email}</span>
+              <Show when={props.account.email}>
+                <span title={props.account.email}>{props.account.email}</span>
+              </Show>
               <Show when={props.appInfo}>
                 {(info) => (
                   <span class="sr-only">

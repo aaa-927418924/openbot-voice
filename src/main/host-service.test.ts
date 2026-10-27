@@ -41,6 +41,7 @@ async function createHostService(
       | "remoteControlPlaneUrl"
       | "sendTeamInviteEmail"
       | "localDevelopmentHost"
+      | "localOnlyNetworking"
     >
   > = {},
   /** Supplied only by the screen recording cases, which need a runtime to hold an answer. */
@@ -169,6 +170,20 @@ describe("HostService screen recording", () => {
 describe("HostService account binding", () => {
   const first = { id: "account-a", email: "a@example.com", name: "A", avatarUrl: null };
   const second = { id: "account-b", email: "b@example.com", name: "B", avatarUrl: null };
+
+  it("configures and updates a local-only host without a signed-in account", async () => {
+    const registerRemoteHost = vi.fn(() => remoteCall(async () => undefined));
+    const { service, store } = await createHostService({ localOnlyNetworking: true, registerRemoteHost });
+
+    const status = await runCauseEffect(service.configure({ serverName: "Tailnet host" }));
+    expect(status).toMatchObject({ configured: true, serverName: "Tailnet host", phase: "idle" });
+    expect(store.listMembers()).toHaveLength(1);
+    expect(store.listMembers()[0]).toMatchObject({ username: "owner", email: null, role: "owner" });
+    await expect(runCauseEffect(service.updateIdentity({ serverName: "Renamed host" }))).resolves.toMatchObject({
+      serverName: "Renamed host",
+    });
+    expect(registerRemoteHost).not.toHaveBeenCalled();
+  });
 
   it("uses the local caller for channels without requiring a cloud account", async () => {
     const { service, announce } = await createHostService();

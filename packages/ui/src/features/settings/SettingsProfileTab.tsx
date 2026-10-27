@@ -125,21 +125,23 @@ export function SettingsProfileTab(props: SettingsProfileTabProps) {
         </ItemGroup>
       </SettingsSection>
 
-      <SettingsSection title={t("settings.profile.account.title")}>
-        <ItemGroup class="settings-modal-card">
-          <Item class="settings-modal-account-email-row">
-            <ItemContent>
-              <ItemTitle>{t("settings.profile.email.title")}</ItemTitle>
-              <ItemDescription>{t("settings.profile.email.description")}</ItemDescription>
-            </ItemContent>
-            <ItemActions>
-              <Text as="span" class="settings-modal-readonly-value" variant="body">
-                {props.account.email}
-              </Text>
-            </ItemActions>
-          </Item>
-        </ItemGroup>
-      </SettingsSection>
+      <Show when={props.account.email}>
+        <SettingsSection title={t("settings.profile.account.title")}>
+          <ItemGroup class="settings-modal-card">
+            <Item class="settings-modal-account-email-row">
+              <ItemContent>
+                <ItemTitle>{t("settings.profile.email.title")}</ItemTitle>
+                <ItemDescription>{t("settings.profile.email.description")}</ItemDescription>
+              </ItemContent>
+              <ItemActions>
+                <Text as="span" class="settings-modal-readonly-value" variant="body">
+                  {props.account.email}
+                </Text>
+              </ItemActions>
+            </Item>
+          </ItemGroup>
+        </SettingsSection>
+      </Show>
       <Show when={props.canListSessions}>
         <SettingsSection
           title={t("settings.profile.sessions.title")}

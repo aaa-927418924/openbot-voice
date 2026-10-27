@@ -133,6 +133,8 @@ interface CentralAccountSession {
 interface RemoteServerManagerOptions {
   allowLocalDevelopmentInvites?: boolean;
   allowTailscaleApiUrl?: boolean;
+  /** Do not expose or connect to hosts that depend on the OpenBot account directory. */
+  localOnlyNetworking?: boolean;
   /** The origin of the self-hosted account service that this app is configured to use. */
   selfHostedApiOrigin?: string | undefined;
   appVersion?: string;
@@ -187,6 +189,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   readonly #team: RemoteTeamDirectory;
   readonly #centralAccount: CentralAccountSession;
   readonly #allowLocalDevelopmentInvites: boolean;
+  readonly #localOnlyNetworking: boolean;
   readonly #inviteLinks: InviteLinkOptions;
   readonly #appVersion: string | null;
   #duplicateOperationIds = new Map<string, string>();
@@ -224,6 +227,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     });
     this.#centralAccount = centralAccount;
     this.#allowLocalDevelopmentInvites = options.allowLocalDevelopmentInvites ?? false;
+    this.#localOnlyNetworking = options.localOnlyNetworking ?? false;
     this.#inviteLinks = {
       allowLocalDevelopmentApiUrl: this.#allowLocalDevelopmentInvites,
       allowTailscaleApiUrl: options.allowTailscaleApiUrl ?? false,
@@ -368,6 +372,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
    */
   #parseInvite(inviteUrl: string): InviteLinkPayload {
     const invite = parseInviteUrl(inviteUrl, this.#inviteLinks);
+    if (this.#localOnlyNetworking && !isTailscaleApiUrl(invite.apiUrl)) {
+      throw new Error("Local-only mode accepts invitations from Tailscale addresses only.");
+    }
     const service = this.#inviteLinks.selfHostedApiOrigin;
     if (service && new URL(invite.apiUrl).origin !== service) {
       throw new Error(sourceText("error.remote.inviteOtherService"));
@@ -426,7 +433,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
   list(): ServerSummary[] {
     return remoteServerSummaries(
-      this.#store.servers,
+      this.#store.servers.filter((server) => !this.#localOnlyNetworking || isTailscaleApiUrl(server.apiUrl)),
       this.#store.activeServerId,
       (serverId) => this.#connections.statusFor(serverId),
       this.#localMemberLimit,
@@ -472,7 +479,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
   readonly syncRemoteHosts = Effect.fn("RemoteManager.syncRemoteHosts")(
     function* (this: RemoteServerManager): Effect.fn.Return<ServerSummary[], RemoteWorkflowError, RemoteRequest> {
-      yield* this.#syncWebRtcHosts();
+      if (!this.#localOnlyNetworking) yield* this.#syncWebRtcHosts();
+      if (this.#localOnlyNetworking) return this.list();
       if (this.#events.enabled) yield* this.startEventConnections();
       this.#emitChanged();
       return this.list();

@@ -37,6 +37,31 @@ class OpenEventSocket extends EventTarget {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Tailscale-local invitations", () => {
+  it("refuses account-service invitation links in local-only mode", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "openbot-local-only-join-"));
+    const manager = new RemoteServerManager(
+      join(directory, "servers.json"),
+      { encrypt: (value) => Buffer.from(value), decrypt: (value) => value.toString() },
+      { createTeamAuthTicket: () => Effect.succeed("not used"), getEmail: () => "unused@example.com" },
+      { localOnlyNetworking: true, allowTailscaleApiUrl: true },
+    );
+    const inviteUrl = new URL("openbot://join");
+    inviteUrl.searchParams.set("api", "https://api.openbot.run/");
+    inviteUrl.searchParams.set("server", "00000000-0000-4000-8000-0000000000f2");
+    inviteUrl.searchParams.set("fingerprint", "a".repeat(43));
+    inviteUrl.searchParams.set("invite", "b".repeat(43));
+
+    try {
+      await runCauseEffect(manager.initialize());
+      await expect(runCauseEffect(manager.previewInvite({ inviteUrl: inviteUrl.toString() }))).rejects.toThrow(
+        "Tailscale addresses only",
+      );
+    } finally {
+      await runCauseEffect(manager.stop());
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("pairs directly with a tailnet host without requesting a central account ticket", async () => {
     const directory = await mkdtemp(join(tmpdir(), "openbot-tailnet-join-"));
     const serverId = "00000000-0000-4000-8000-0000000000f1";

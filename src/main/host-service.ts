@@ -539,6 +539,28 @@ export class HostService extends EventEmitter<HostEvents> {
 
   readonly configure = Effect.fn("HostService.configure")(
     function* (this: HostService, input: ConfigureHostInput): Effect.fn.Return<HostStatus, RemoteWorkflowError> {
+      if (this.#options.localOnlyNetworking) {
+        const identity = yield* this.#options.store.configure(
+          input.serverName,
+          "owner",
+          randomBytes(32).toString("base64url"),
+        );
+        if (input.logo !== undefined) yield* this.#options.store.updateIdentity({ logo: input.logo });
+        this.#setStatus({
+          phase: "idle",
+          configured: true,
+          serverId: identity.serverId,
+          serverName: identity.serverName,
+          logoUrl: identity.logoVersion ? serverLogoUrl(identity.logoVersion) : null,
+          enabledOnLaunch: identity.enabledOnLaunch,
+          apiUrl: null,
+          apiOnline: false,
+          message: null,
+        });
+        this.#api.refreshPresence();
+        this.#api.refreshIdentity();
+        return this.getStatus();
+      }
       const optionalRegisterRemoteHost = this.#options.registerRemoteHost;
       const optionalUpdateRemoteHostLogo = this.#options.updateRemoteHostLogo;
       const account = yield* remoteDecode(() => this.#options.getSignedInUser());
@@ -610,7 +632,8 @@ export class HostService extends EventEmitter<HostEvents> {
     function* (this: HostService, input: UpdateHostIdentityInput): Effect.fn.Return<HostStatus, RemoteWorkflowError> {
       const optionalRegisterRemoteHost = this.#options.registerRemoteHost;
       const optionalUpdateRemoteHostLogo = this.#options.updateRemoteHostLogo;
-      yield* remoteDecode(() => this.#options.store.assertOwnerAccount(this.#options.getSignedInUser()));
+      if (!this.#options.localOnlyNetworking)
+        yield* remoteDecode(() => this.#options.store.assertOwnerAccount(this.#options.getSignedInUser()));
       const identity = yield* this.#options.store.updateIdentity(input);
       // Before anything is published: the store checked the account before it resolved, and a
       // switch landing in this gap would show the previous account's name and logo.
@@ -621,6 +644,7 @@ export class HostService extends EventEmitter<HostEvents> {
         message: sourceText("status.host.identityUpdated"),
       });
       this.#api.refreshIdentity();
+      if (this.#options.localOnlyNetworking) return this.getStatus();
       const ownerMembershipId = yield* remoteDecode(() => this.#requiredOwnerMemberId());
       yield* optionalRegisterRemoteHost?.({
         hostId: identity.serverId,
@@ -682,14 +706,20 @@ export class HostService extends EventEmitter<HostEvents> {
     const optionalListRemoteMembers = this.#options.listRemoteMembers;
     if (!this.#options.store.configured)
       return yield* new RemoteWorkflowError({ cause: new Error(sourceText("error.host.nameBeforePublish")) });
-    if ((this.#status.phase === "online" && this.#webRtcOnline) || this.#status.phase === "starting") {
+    if (
+      (this.#status.phase === "online" &&
+        (this.#webRtcOnline || (this.#options.localOnlyNetworking && this.#status.apiOnline))) ||
+      this.#status.phase === "starting"
+    ) {
       return this.getStatus();
     }
     if (this.#status.phase === "stopping") return this.getStatus();
     const generation = ++this.#runtimeGeneration;
-    const signedInUser = yield* remoteDecode(() => this.#options.getSignedInUser());
-    yield* remoteDecode(() => this.#options.store.assertOwnerAccount(signedInUser));
-    if (yield* this.#options.store.syncAccount(signedInUser)) this.#api.refreshPresence();
+    if (!this.#options.localOnlyNetworking) {
+      const signedInUser = yield* remoteDecode(() => this.#options.getSignedInUser());
+      yield* remoteDecode(() => this.#options.store.assertOwnerAccount(signedInUser));
+      if (yield* this.#options.store.syncAccount(signedInUser)) this.#api.refreshPresence();
+    }
     this.#setStatus({ phase: "starting", message: sourceText("status.host.starting") });
 
     const attempt1 = yield* Effect.gen({ self: this }, function* () {
@@ -698,6 +728,21 @@ export class HostService extends EventEmitter<HostEvents> {
       const identity = this.#options.store.getIdentity();
       if (!identity)
         return yield* new RemoteWorkflowError({ cause: new Error(sourceText("error.host.nameBeforePublish")) });
+      if (this.#options.localOnlyNetworking) {
+        const apiUrl = this.#localApiUrl();
+        if (!apiUrl)
+          return yield* new RemoteWorkflowError({ cause: new Error(sourceText("error.host.publishFailed")) });
+        if (yield* this.#cancelSupersededStartEffect(generation)) return this.getStatus();
+        yield* this.#options.store.setEnabledOnLaunch(identity.serverId, true);
+        this.#setStatus({
+          apiUrl,
+          apiOnline: true,
+          enabledOnLaunch: true,
+          phase: "online",
+          message: sourceText("status.host.ready"),
+        });
+        return this.getStatus();
+      }
       if (!gateway || !optionalRegisterRemoteHost || !optionalIssueRemoteHostTicket) {
         return yield* new RemoteWorkflowError({ cause: new Error(sourceText("error.host.webRtcNotConfigured")) });
       }
@@ -830,7 +875,8 @@ export class HostService extends EventEmitter<HostEvents> {
       const serverId = this.#options.store.getIdentity()?.serverId;
       this.#runtimeGeneration += 1;
       if (persistPreference)
-        yield* remoteDecode(() => this.#options.store.assertOwnerAccount(this.#options.getSignedInUser()));
+        if (!this.#options.localOnlyNetworking)
+          yield* remoteDecode(() => this.#options.store.assertOwnerAccount(this.#options.getSignedInUser()));
       this.#setStatus({ phase: "stopping", message: sourceText("status.host.stopping") });
       yield* this.#stopRuntime();
       if (this.#startOperation) yield* Fiber.join(this.#startOperation);
@@ -1108,7 +1154,7 @@ export class HostService extends EventEmitter<HostEvents> {
    * them in its own team file, so every read and write of them goes where the others went.
    */
   #usesAccountDirectory(): boolean {
-    return !this.#options.localDevelopmentHost;
+    return !this.#options.localDevelopmentHost && !this.#options.localOnlyNetworking;
   }
 
   /** The account directory that holds invitations, or `null` for this machine's own team file. */
@@ -1194,7 +1240,11 @@ export class HostService extends EventEmitter<HostEvents> {
       const localApiUrl = this.#localApiUrl();
       if (!localApiUrl)
         return yield* new RemoteWorkflowError({ cause: new Error(sourceText("error.host.publishBeforeInvite")) });
-      const invite = yield* this.#options.store.createInvite(input.role, input.email, { permanent: input.permanent });
+      const invite = yield* this.#options.store.createInvite(
+        input.role,
+        this.#options.localOnlyNetworking ? undefined : input.email,
+        { permanent: input.permanent },
+      );
       const inviteUrl = createInviteUrl(
         {
           apiUrl: localApiUrl,
@@ -1217,7 +1267,7 @@ export class HostService extends EventEmitter<HostEvents> {
         permanent: invite.permanent,
         useCount: invite.useCount,
       };
-      if (invite.email) {
+      if (invite.email && !this.#options.localOnlyNetworking) {
         const email = invite.email;
         const attempt3 = yield* Effect.gen({ self: this }, function* () {
           yield* this.#options.sendTeamInviteEmail({
@@ -1366,6 +1416,11 @@ export class HostService extends EventEmitter<HostEvents> {
 
   #findCurrentMemberId(): string | null {
     try {
+      if (this.#options.localOnlyNetworking) {
+        const ownerId = this.#options.store.getOwnerMemberId();
+        const owner = ownerId ? this.#options.store.listMembers().find((member) => member.id === ownerId) : null;
+        return owner && !owner.disabled ? owner.id : null;
+      }
       const email = this.#options.getSignedInUser().email.trim().toLowerCase();
       const member = this.#options.store
         .listMembers()

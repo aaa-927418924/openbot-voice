@@ -11,6 +11,7 @@ import { LocalSkillLibrary } from "./local-skill-library";
 import { localSkillTools } from "./local-skill-tools";
 import { MAC_PERMISSION_URLS } from "./mac-permission-urls";
 import { RemoteWorkflowError, toRemoteWorkflowError } from "./remote-service-effects";
+
 /**
  * The composition root. Every long-lived service the desktop app owns is built here, in one
  * function, in dependency order, and handed back as a single record.
@@ -32,6 +33,7 @@ import { RemoteWorkflowError, toRemoteWorkflowError } from "./remote-service-eff
  * when - see `teardown-registry.ts` for why shutdown here is not the reverse of construction.
  */
 
+import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readdir, rm } from "node:fs/promises";
 import { homedir, hostname, tmpdir } from "node:os";
@@ -119,6 +121,7 @@ import { HostedServerStartRetry } from "./hosted-server-start-retry";
 import { HostedSiteDesktopService } from "./hosted-site-service";
 import { IdleRestart } from "./idle-restart";
 import { LanguageService } from "./language-service";
+import { LocalProfileStore } from "./local-profile-store";
 import { localRoutineFeedDocument } from "./local-routine-calendar";
 import { LogoColorService } from "./logo-color-service";
 import type { MacHapticFeedback } from "./mac-haptic-feedback";
@@ -348,6 +351,8 @@ export interface ApplicationServices {
   remoteDesktop: RemoteDesktopManager;
   remoteServers: RemoteServerManager;
   centralAuth: CentralAuthManager;
+  localProfile: LocalProfileStore;
+  localOnlyNetworking: boolean;
   skills: SkillMarketplaceService;
   hostedSites: HostedSiteDesktopService;
   billing: BillingDesktopService;
@@ -586,14 +591,24 @@ export async function createApplicationServices({
     ...safeStorageCipher("error.app.macSecureStorageUnavailable"),
     onInitializationDiagnostic: (diagnostic) => logger.warn("The account initialization failed.", diagnostic),
   });
+  // Fork builds run as a private Tailscale host by default. Hosted-server installs and the
+  // explicit development-account harness retain their existing account-directory behavior.
+  const localOnlyNetworking = !hostedServer && !serverModeEnvironment && developmentRemoteRole === null;
+  const localProfile = new LocalProfileStore(join(app.getPath("userData"), "local-profile.json"));
+  await runCauseEffect(localProfile.load());
+  const localProfileState = localProfile.getState();
   // Registered before `initialize()`, which publishes `{ status: "loading" }` synchronously: the
   // listener therefore runs on the next line with most of this function's services still unbuilt.
   teardown.push(TEARDOWN_ORDER.centralAuth, "the account runtime", () => Effect.runPromise(centralAuth.dispose()));
-  centralAuth.on("changed", forwardCentralAuth);
-  const centralAuthInitialization = Effect.runSync(Effect.cached(centralAuth.initialize().pipe(toRemoteWorkflowError)));
-  void Effect.runPromise(centralAuthInitialization).catch((error) =>
-    logger.warn("The account did not initialize.", toLogValue(error)),
-  );
+  const centralAuthInitialization: Effect.Effect<CentralAuthState, RemoteWorkflowError> = localOnlyNetworking
+    ? Effect.succeed(localProfileState)
+    : Effect.runSync(Effect.cached(centralAuth.initialize().pipe(toRemoteWorkflowError)));
+  if (!localOnlyNetworking) {
+    centralAuth.on("changed", forwardCentralAuth);
+    void Effect.runPromise(centralAuthInitialization).catch((error) =>
+      logger.warn("The account did not initialize.", toLogValue(error)),
+    );
+  }
 
   let profileRefreshActive = true;
   let profileRefreshing = false;
@@ -624,14 +639,18 @@ export async function createApplicationServices({
     profileTimer = setInterval(() => void refreshAccountProfile(), REMOTE_ACCOUNT_CHECK_INTERVAL_MS);
     profileTimer.unref();
   };
-  if (mainWindow.isFocused()) startProfileTimer();
-  mainWindow.on("focus", startProfileTimer);
-  mainWindow.on("blur", stopProfileTimer);
+  if (!localOnlyNetworking) {
+    if (mainWindow.isFocused()) startProfileTimer();
+    mainWindow.on("focus", startProfileTimer);
+    mainWindow.on("blur", stopProfileTimer);
+  }
   teardown.push(TEARDOWN_ORDER.updater, "account profile refresh", () => {
     profileRefreshActive = false;
     stopProfileTimer();
-    mainWindow.removeListener("focus", startProfileTimer);
-    mainWindow.removeListener("blur", stopProfileTimer);
+    if (!localOnlyNetworking) {
+      mainWindow.removeListener("focus", startProfileTimer);
+      mainWindow.removeListener("blur", stopProfileTimer);
+    }
     centralAuth.stopProfileRefresh();
   });
   const store = new AgentStore(app.getPath("userData"), homedir());
@@ -687,7 +706,7 @@ export async function createApplicationServices({
     developmentUrl,
     iceTransportPolicy: developmentUrl && process.env.OPENBOT_DEV_ICE_TRANSPORT_POLICY === "relay" ? "relay" : "all",
   });
-  teamWebRtcBridge.on("accountProfileChanged", refreshAccountProfile);
+  if (!localOnlyNetworking) teamWebRtcBridge.on("accountProfileChanged", refreshAccountProfile);
   teardown.push(TEARDOWN_ORDER.teamWebRtcBridge, "the team WebRTC bridge", () =>
     runCauseEffect(teamWebRtcBridge.stop()),
   );
@@ -1289,6 +1308,12 @@ export async function createApplicationServices({
     join(app.getPath("userData"), TEAM_FILE),
   );
   await runCauseEffect(teamStore.initialize());
+  if (localOnlyNetworking && !teamStore.configured) {
+    await runCauseEffect(teamStore.activateLocalHost());
+  }
+  if (localOnlyNetworking && !teamStore.configured) {
+    await runCauseEffect(teamStore.configure(hostname(), "owner", randomBytes(32).toString("base64url")));
+  }
   slackIngressHostId = () => teamStore.getIdentity()?.serverId ?? null;
   slackIngress.reconnect();
   // After `teamStore.initialize()` and before `HostService`, which reads the account it activates.
@@ -1424,6 +1449,7 @@ export async function createApplicationServices({
     updateRemoteHostLogo: (hostId, image, version) =>
       centralAuth.updateRemoteHostLogo(hostId, image, version).pipe(toRemoteWorkflowError),
     localDevelopmentHost: developmentRemoteRole === "host",
+    localOnlyNetworking,
     logDirectory: join(app.getPath("userData"), "logs", "remote"),
     removeLegacyRemoteDesktopCredential: () =>
       Effect.tryPromise({
@@ -1435,7 +1461,7 @@ export async function createApplicationServices({
       }),
     // Still a function, and still throws when nobody is signed in: the account is a lifetime
     // state of the running app, not a startup-ordering artifact.
-    getSignedInUser: () => centralAuth.getSignedInUser(),
+    getSignedInUser: () => (localOnlyNetworking ? localProfile.getUser() : centralAuth.getSignedInUser()),
     redeemCentralTicket: (ticket, serverId) =>
       centralAuth.redeemTeamAuthTicket(ticket, serverId).pipe(toRemoteWorkflowError),
     sendTeamInviteEmail: (input) => centralAuth.sendTeamInviteEmail(input).pipe(toRemoteWorkflowError),
@@ -1489,10 +1515,10 @@ export async function createApplicationServices({
       }),
   });
   teardown.push(TEARDOWN_ORDER.host, "the local host", () => runCauseEffect(host.shutdown()));
-  const signedInState = centralAuth.getState();
-  if (signedInState.status === "signed_in") {
+  const signedInState = localOnlyNetworking ? localProfileState : centralAuth.getState();
+  if (!localOnlyNetworking && signedInState.status === "signed_in") {
     await runCauseEffect(host.applySignedInAccount(signedInState.user));
-  } else if (signedInState.status === "signed_out") {
+  } else if (!localOnlyNetworking && signedInState.status === "signed_out") {
     // Sign-out can settle before this service exists, leaving `forwardCentralAuth`
     // nothing to deactivate. Unbinding here is what stops a persisted
     // `activeAccountId` from keeping the last account's host configured - and
@@ -1513,7 +1539,7 @@ export async function createApplicationServices({
     ),
   );
   const analytics = new HostAnalytics({
-    enabled: app.isPackaged && appVariant === "production",
+    enabled: !localOnlyNetworking && app.isPackaged && appVariant === "production",
     trackingEnabled: analyticsPreference.enabled,
     appVersion: app.getVersion(),
     platform: analyticsPlatform,
@@ -1570,6 +1596,8 @@ export async function createApplicationServices({
     },
     {
       allowLocalDevelopmentInvites: developmentRemoteRole !== null,
+      allowTailscaleApiUrl: localOnlyNetworking,
+      localOnlyNetworking,
       selfHostedApiOrigin: selfHostedApiOrigin(centralAuthApiUrl),
       appVersion: app.getVersion(),
       getLocalHostId: () => teamStore.getIdentity()?.serverId ?? null,
@@ -1577,26 +1605,29 @@ export async function createApplicationServices({
         unavailable: (serverId, wake) => hostedServers.unavailableHost(serverId, wake),
         wake: (serverId) => hostedServers.wake(serverId),
       },
-      webrtcTransport: new TeamWebRtcClientTransport({
-        bridge: teamWebRtcBridge,
-        listHosts: () => centralAuth.listRemoteHosts(),
-        startSession: (hostId) => centralAuth.startRemoteSession(hostId),
-        issueTicket: (sessionId, clientPublicKey) => centralAuth.issueRemoteSessionTicket(sessionId, clientPublicKey),
-        endSession: (sessionId) => centralAuth.endRemoteSession(sessionId),
-        createInvite: (hostId, input) => centralAuth.createRemoteInvite(hostId, input),
-        listInvites: (hostId) => centralAuth.listRemoteInvites(hostId),
-        previewInvite: (token) => centralAuth.previewRemoteInvite(token),
-        acceptInvite: (token) => centralAuth.acceptRemoteInvite(token),
-        revokeInvite: (inviteId) => centralAuth.revokeRemoteInvite(inviteId),
-        listMembers: (hostId) => centralAuth.listRemoteMembers(hostId),
-        updateMember: (hostId, membershipId, role, reactivate) =>
-          centralAuth.updateRemoteMember(hostId, membershipId, role, reactivate),
-        removeMember: (hostId, membershipId) => centralAuth.removeRemoteMember(hostId, membershipId),
-        getPrincipalId: () => centralAuth.getSignedInUser().id,
-        controlPlaneUrl: centralAuth.resolveApiUrl("/"),
-        downloadHostLogo: (hostId, version) => centralAuth.downloadRemoteHostLogo(hostId, version),
-        transferDirectory: join(app.getPath("userData"), "remote-transfers"),
-      }),
+      webrtcTransport: localOnlyNetworking
+        ? undefined
+        : new TeamWebRtcClientTransport({
+            bridge: teamWebRtcBridge,
+            listHosts: () => centralAuth.listRemoteHosts(),
+            startSession: (hostId) => centralAuth.startRemoteSession(hostId),
+            issueTicket: (sessionId, clientPublicKey) =>
+              centralAuth.issueRemoteSessionTicket(sessionId, clientPublicKey),
+            endSession: (sessionId) => centralAuth.endRemoteSession(sessionId),
+            createInvite: (hostId, input) => centralAuth.createRemoteInvite(hostId, input),
+            listInvites: (hostId) => centralAuth.listRemoteInvites(hostId),
+            previewInvite: (token) => centralAuth.previewRemoteInvite(token),
+            acceptInvite: (token) => centralAuth.acceptRemoteInvite(token),
+            revokeInvite: (inviteId) => centralAuth.revokeRemoteInvite(inviteId),
+            listMembers: (hostId) => centralAuth.listRemoteMembers(hostId),
+            updateMember: (hostId, membershipId, role, reactivate) =>
+              centralAuth.updateRemoteMember(hostId, membershipId, role, reactivate),
+            removeMember: (hostId, membershipId) => centralAuth.removeRemoteMember(hostId, membershipId),
+            getPrincipalId: () => centralAuth.getSignedInUser().id,
+            controlPlaneUrl: centralAuth.resolveApiUrl("/"),
+            downloadHostLogo: (hostId, version) => centralAuth.downloadRemoteHostLogo(hostId, version),
+            transferDirectory: join(app.getPath("userData"), "remote-transfers"),
+          }),
     },
   );
   // A server joined or revoked on another device of this account. Signal carries it to every socket
@@ -1909,6 +1940,8 @@ export async function createApplicationServices({
     remoteDesktop,
     remoteServers,
     centralAuth,
+    localProfile,
+    localOnlyNetworking,
     skills,
     hostedSites,
     billing,

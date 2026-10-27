@@ -439,6 +439,8 @@ function registerIpcHandlers({
   remoteDesktop,
   remoteServers,
   centralAuth,
+  localProfile,
+  localOnlyNetworking,
   skills,
   hostedSites,
   githubConnector,
@@ -495,7 +497,7 @@ function registerIpcHandlers({
     ...providerIpcHandlers({ service, providerRuntimes, credentials: providerCredentials }),
     ...voiceIpcHandlers(),
     ...liveVoiceIpcHandlers({ service, getMainWindow, channelActor: () => host.channelActor(), remoteServers }),
-    ...accountIpcHandlers({ centralAuth, host }),
+    ...accountIpcHandlers({ centralAuth, host, localProfile: localOnlyNetworking ? localProfile : undefined }),
     ...skillIpcHandlers({ skills, getMainWindow, translate: language.translate }),
     ...hostedSiteIpcHandlers({ hostedSites, remoteServers, getMainWindow, translate: language.translate }),
     ...githubConnectorIpcHandlers({ githubConnector }),
@@ -886,15 +888,20 @@ if (!hasSingleInstanceLock) {
       // queued analytics to it, so adopt that as the active principal; then apply the current state
       // if the account moved on after that read - a sign-in settling while `remoteServers.initialize()`
       // awaits would otherwise leave the previous account's host selected, with nothing to replay it.
-      const appliedAccount = built.appliedAccount;
-      activeAnalyticsPrincipalId = centralAuthPrincipalId(appliedAccount);
-      activeRemotePrincipalId = centralAuthPrincipalId(appliedAccount);
-      const currentAccount = built.centralAuth.getState();
-      if (
-        currentAccount.status !== appliedAccount.status ||
-        centralAuthPrincipalId(currentAccount) !== centralAuthPrincipalId(appliedAccount)
-      ) {
-        forwardCentralAuth(currentAccount);
+      if (built.localOnlyNetworking) {
+        activeAnalyticsPrincipalId = null;
+        activeRemotePrincipalId = null;
+      } else {
+        const appliedAccount = built.appliedAccount;
+        activeAnalyticsPrincipalId = centralAuthPrincipalId(appliedAccount);
+        activeRemotePrincipalId = centralAuthPrincipalId(appliedAccount);
+        const currentAccount = built.centralAuth.getState();
+        if (
+          currentAccount.status !== appliedAccount.status ||
+          centralAuthPrincipalId(currentAccount) !== centralAuthPrincipalId(appliedAccount)
+        ) {
+          forwardCentralAuth(currentAccount);
+        }
       }
       const {
         service,
@@ -1007,7 +1014,11 @@ if (!hasSingleInstanceLock) {
       powerMonitor.on("resume", () => routineWake.resume());
       teardown.push(0, "routine wake", () => routineWake.dispose());
       const teamIdentity = teamStore.getIdentity();
-      if (built.serverMode) {
+      if (built.localOnlyNetworking) {
+        void runCauseEffect(host.start()).catch((error) =>
+          logger.error("Unable to start the Tailscale-only OpenBot host:", toLogValue(error)),
+        );
+      } else if (built.serverMode) {
         const serverModeControl = built.serverMode;
         void runCauseEffect(
           built.centralAuthInitialization.pipe(Effect.flatMap(() => serverModeControl.publish())),

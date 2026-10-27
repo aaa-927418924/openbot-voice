@@ -59,6 +59,24 @@ describe("TeamStore", () => {
     expect(raw).not.toContain(login.sessionToken);
   });
 
+  it("can reactivate an unowned host after an account id was left in the profile file", async () => {
+    const { store, path } = await createStore();
+    const identity = await runCauseEffect(store.configure("Studio Mac", "owner", "correct horse battery"));
+    const saved: { activeAccountId: string | null } = JSON.parse(await readFile(path, "utf8"));
+    saved.activeAccountId = "account-that-is-no-longer-used";
+    await writeFile(path, JSON.stringify(saved));
+
+    const restarted = new TeamStore(path);
+    await runCauseEffect(restarted.initialize());
+    expect(restarted.configured).toBe(false);
+    await expect(runCauseEffect(restarted.activateLocalHost())).resolves.toBe(true);
+    expect(restarted.getIdentity()?.serverId).toBe(identity.serverId);
+
+    const afterAnotherRestart = new TeamStore(path);
+    await runCauseEffect(afterAnotherRestart.initialize());
+    expect(afterAnotherRestart.getIdentity()?.serverId).toBe(identity.serverId);
+  });
+
   it("recovers the persistence queue after a write failure", async () => {
     const { store, path } = await createStore();
     const identity = await runCauseEffect(store.configure("Studio Mac", "owner", "correct horse battery"));
