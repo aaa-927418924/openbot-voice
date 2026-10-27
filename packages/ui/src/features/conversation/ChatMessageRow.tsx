@@ -136,7 +136,7 @@ export function ChatMessageRow(props: ChatMessageRowProps): JSX.Element {
         <div class="message-author-gutter" aria-hidden="true" />
       </Show>
       <MessageContent>
-        <Show when={props.showAuthor && !own()}>
+        <Show when={props.showAuthor && !person()}>
           <MessageHeader class="message-author-name">
             <Show when={props.author.agent} fallback={<span>{props.author.name}</span>}>
               {(agent) => (
@@ -157,7 +157,7 @@ export function ChatMessageRow(props: ChatMessageRowProps): JSX.Element {
             </Show>
           </MessageHeader>
         </Show>
-        <Show when={props.showTime && (!props.showAuthor || own())}>
+        <Show when={props.showTime && (!props.showAuthor || person())}>
           <MessageHeader class="message-time">
             <time datetime={props.message.createdAt}>{props.message.time}</time>
           </MessageHeader>
