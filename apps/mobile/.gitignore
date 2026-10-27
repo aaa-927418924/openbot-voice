@@ -42,3 +42,4 @@ example
 /ios
 /android
 /modules/live-voice-background/android/build
+/modules/attachment-video-stream/android/build
