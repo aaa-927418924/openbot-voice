@@ -24,11 +24,12 @@ import { canCheckRendererPermission, canRequestRendererPermission } from "./rend
 import type { TeamStore } from "./team-store";
 import { isTrustedRendererUrl } from "./trusted-renderer";
 
-export function configureContentSecurityPolicy(): void {
-  const policy = buildContentSecurityPolicy(
-    app.isPackaged,
-    process.env.REMOTE_SIGNAL_URL,
-    readSelfHostedSignalOrigin(process.env.OPENBOT_AUTH_API_URL, process.env.OPENBOT_REMOTE_SIGNAL_URL),
+export function configureContentSecurityPolicy(getTailnetViewerUrls: () => readonly string[] = () => []): void {
+  const packaged = app.isPackaged;
+  const developmentSignalUrl = process.env.REMOTE_SIGNAL_URL;
+  const selfHostedSignalOrigin = readSelfHostedSignalOrigin(
+    process.env.OPENBOT_AUTH_API_URL,
+    process.env.OPENBOT_REMOTE_SIGNAL_URL,
   );
 
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
@@ -39,7 +40,9 @@ export function configureContentSecurityPolicy(): void {
     callback({
       responseHeaders: {
         ...details.responseHeaders,
-        "Content-Security-Policy": [policy],
+        "Content-Security-Policy": [
+          buildContentSecurityPolicy(packaged, developmentSignalUrl, selfHostedSignalOrigin, getTailnetViewerUrls()),
+        ],
       },
     });
   });

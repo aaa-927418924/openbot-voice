@@ -93,6 +93,7 @@ import { trustSystemCertificates } from "./system-certificates";
 import { TeardownRegistry } from "./teardown-registry";
 import type { TraceFile } from "./trace-file";
 import { setIpcCallObserver } from "./trusted-ipc";
+import { isTrustedRendererUrl } from "./trusted-renderer";
 import { createWindowsStartupController, WINDOWS_STARTUP_FLAG } from "./windows-startup";
 import { createWindowsTray, type WindowsTrayController } from "./windows-tray";
 
@@ -841,7 +842,7 @@ if (!hasSingleInstanceLock) {
         }
       }
       if (process.platform === "darwin") app.dock?.setIcon(appIconPath);
-      configureContentSecurityPolicy();
+      configureContentSecurityPolicy(() => services?.remoteServers.remoteDesktopViewerOrigins() ?? []);
       configureRendererPermissions();
       await Effect.runPromise(windows.restoreMainWindowBounds());
       if (process.platform === "win32") {
@@ -941,6 +942,18 @@ if (!hasSingleInstanceLock) {
       built.githubConnector.onChanged(forwardGitHubConnectorStatus);
       built.onePasswordConnector.onChanged(forwardOnePasswordConnectorStatus);
       remoteServers.on("changed", forwardServers);
+      // CSP is fixed for the current renderer document, so reload only when its trusted host set changes.
+      let viewerOrigins = remoteServers.remoteDesktopViewerOrigins().join("\n");
+      let rendererLoaded = false;
+      remoteServers.on("changed", () => {
+        const nextViewerOrigins = remoteServers.remoteDesktopViewerOrigins().join("\n");
+        if (nextViewerOrigins === viewerOrigins) return;
+        viewerOrigins = nextViewerOrigins;
+        if (!rendererLoaded) return;
+        const window = windows.getMainWindow();
+        if (window && !window.isDestroyed() && isTrustedRendererUrl(window.webContents.getURL()))
+          window.webContents.reload();
+      });
       remoteServers.on("agent", (serverId, event, bufferedLive) => {
         forwardAgentEvent(serverId, event, bufferedLive);
       });
@@ -996,6 +1009,7 @@ if (!hasSingleInstanceLock) {
         logger.error("Unable to initialize Dynamic Island:", toLogValue(error)),
       );
       await windows.loadRenderer(mainWindow);
+      rendererLoaded = true;
       performance.mark("openbot:renderer-loaded");
       // After the load: `sendToRenderer` drops events aimed at a window that is still loading.
       await Effect.runPromise(remoteServers.startEventConnections());

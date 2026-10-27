@@ -475,6 +475,16 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     (operation) => this.#owned(operation),
   ).bind(this);
 
+  remoteDesktopViewerOrigins(): string[] {
+    return [
+      ...new Set(
+        this.#servers.servers
+          .filter((server) => server.transport !== "webrtc-v2" && isTailscaleApiUrl(server.apiUrl))
+          .map((server) => new URL(server.apiUrl).origin),
+      ),
+    ].sort();
+  }
+
   list(): ServerSummary[] {
     return remoteServerSummaries(
       this.#servers.servers,

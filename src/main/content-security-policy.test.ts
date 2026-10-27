@@ -19,6 +19,19 @@ describe("buildContentSecurityPolicy", () => {
     expect(directives.find((directive) => directive.startsWith("script-src "))).toBe("script-src 'self'");
   });
 
+  it("allows only saved Tailscale API origins as HTTP viewer frames", () => {
+    const policy = buildContentSecurityPolicy(true, undefined, null, [
+      "http://100.100.135.107:43123/",
+      "http://100.63.1.2:43123/",
+      "https://100.100.135.107:43123/",
+      "http://192.168.1.2:43123/",
+    ]);
+    const frame = policy.split("; ").find((directive) => directive.startsWith("frame-src "));
+    expect(frame).toBe(
+      "frame-src 'self' openbot-attachment: openbot-remote-attachment: https://*.openbot.run http://127.0.0.1:* http://localhost:* http://100.100.135.107:43123",
+    );
+  });
+
   it("lets the renderer play an attachment recording, but only from the attachment schemes", () => {
     const policy = buildContentSecurityPolicy(true);
 

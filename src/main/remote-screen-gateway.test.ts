@@ -1,3 +1,4 @@
+import { once } from "node:events";
 import { createServer, type IncomingMessage } from "node:http";
 import { createRequire } from "node:module";
 import { connect } from "node:net";
@@ -219,7 +220,9 @@ describe("RemoteScreenGateway", () => {
     const session = await createSession(gateway, origin);
     const viewer = await fetch(`${session.viewerUrl}#${session.viewerGrant}`);
     expect(viewer.status).toBe(200);
-    expect(await viewer.text()).toContain("Moonlight");
+    const viewerHtml = await viewer.text();
+    expect(viewerHtml).toContain("Moonlight");
+    expect(viewerHtml).toContain("encodeURIComponent(grant)");
 
     const authorize = `${origin}/v1/remote-screen/sessions/${session.id}/authorize`;
     const first = await fetch(authorize, {
@@ -256,6 +259,83 @@ describe("RemoteScreenGateway", () => {
     });
     expect(second.status).toBe(401);
     await close();
+  });
+
+  it("authorizes a cross-site viewer with its consumed grant when third-party cookies are absent", async () => {
+    const upstreamServer = createServer((_request, response) => {
+      response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      response.end("<!doctype html><html><head></head><body>Viewer</body></html>");
+    });
+    const upstreamWebSockets = new webSockets.WebSocketServer({ noServer: true });
+    upstreamServer.on("upgrade", (request, socket, head) => {
+      upstreamWebSockets.handleUpgrade(request, socket, head, (webSocket) =>
+        upstreamWebSockets.emit("connection", webSocket, request),
+      );
+    });
+    await new Promise<void>((resolve) => upstreamServer.listen(0, "127.0.0.1", resolve));
+    const upstreamAddress = z.object({ port: z.number().int() }).parse(upstreamServer.address());
+    const gateway = createGateway({ runtimeBaseUrl: `http://127.0.0.1:${upstreamAddress.port}` });
+    const { origin, close } = await serveGateway(gateway);
+    const session = await createSession(gateway, origin);
+    const sessionPath = `/v1/remote-screen/sessions/${session.id}`;
+    const headers = { "X-OpenBot-Viewer": session.viewerGrant };
+    let viewerSocket: WebSocket | null = null;
+
+    try {
+      const beforeGrant = await fetch(`${origin}${sessionPath}/moonlight/stream.html?hostId=12&appId=1`, {
+        headers,
+      });
+      expect(beforeGrant.status).toBe(401);
+      const authScriptBeforeGrant = await fetch(`${origin}${sessionPath}/moonlight/openbot-viewer-auth.js`);
+      expect(authScriptBeforeGrant.status).toBe(401);
+
+      const authorized = await fetch(`${origin}${sessionPath}/authorize`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ grant: session.viewerGrant }),
+      });
+      expect(authorized.status).toBe(204);
+
+      const staticViewerShell = await fetch(`${origin}${sessionPath}/moonlight/stream.html?hostId=12&appId=1`);
+      expect(staticViewerShell.status).toBe(200);
+      expect(await staticViewerShell.text()).toContain('src="openbot-viewer-auth.js"');
+
+      const protectedConfig = await fetch(`${origin}${sessionPath}/moonlight/config.js`);
+      expect(protectedConfig.status).toBe(401);
+
+      const streamHtml = await fetch(`${origin}${sessionPath}/moonlight/stream.html?hostId=12&appId=1`, { headers });
+      expect(streamHtml.status).toBe(200);
+      expect(await streamHtml.text()).toContain('src="openbot-viewer-auth.js"');
+      const authScript = await fetch(`${origin}${sessionPath}/moonlight/openbot-viewer-auth.js`);
+      const authScriptText = await authScript.text();
+      expect(authScript.status).toBe(200);
+      expect(authScriptText).toContain("X-OpenBot-Viewer");
+      expect(authScriptText).not.toContain(session.viewerGrant);
+
+      const state = await fetch(`${origin}${sessionPath}/viewer-state`, {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source: "openbot-moonlight",
+          type: "viewer-state",
+          sessionId: session.id,
+          state: "connecting",
+        }),
+      });
+      expect(state.status).toBe(204);
+
+      viewerSocket = new WebSocket(`${origin.replace(/^http/, "ws")}${sessionPath}/stream`, [
+        "openbot-viewer-v1",
+        `openbot-viewer.${session.viewerGrant}`,
+      ]);
+      await once(viewerSocket, "open");
+    } finally {
+      viewerSocket?.close();
+      await runCauseEffect(gateway.stop());
+      await close();
+      upstreamWebSockets.close();
+      await new Promise<void>((resolve) => upstreamServer.close(() => resolve()));
+    }
   });
 
   it("injects the mobile WebRTC socket bridge only for the opted-in viewer", async () => {

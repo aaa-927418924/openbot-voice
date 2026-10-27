@@ -98,6 +98,7 @@ describe("local-only server directory", () => {
     try {
       await runCauseEffect(manager.initialize());
       expect(manager.list().map((server) => server.id)).toEqual(["local", tailnetServerId]);
+      expect(manager.remoteDesktopViewerOrigins()).toEqual([new URL(tailnetApiUrl).origin]);
       expect(manager.activeServerId).toBe("local");
       await expect(runCauseEffect(manager.select(cloudServerId))).rejects.toThrow();
       await runCauseEffect(manager.startEventConnections());

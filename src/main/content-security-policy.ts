@@ -1,15 +1,22 @@
+import { isTailscaleApiUrl } from "@openbot/contracts/invite-links";
 import { isMobileConnectDevelopmentHost } from "@openbot/contracts/mobile-connect";
 
 export function buildContentSecurityPolicy(
   packaged: boolean,
   developmentSignalUrl?: string,
   selfHostedSignalOrigin?: string | null,
+  tailnetViewerUrls: readonly string[] = [],
 ): string {
   const selfHostedSignalSource = selfHostedSignalOrigin ? ` ${selfHostedSignalOrigin}` : "";
   const developmentSources = packaged
     ? ""
     : ` http://localhost:* ws://localhost:*${developmentSignalSource(developmentSignalUrl)}`;
   const developmentImageSources = packaged ? "" : " http://127.0.0.1:* http://localhost:*";
+  // Only enrolled direct Tailnet hosts may frame a viewer; do not add a wildcard HTTP source.
+  const tailnetViewerSources = [
+    ...new Set(tailnetViewerUrls.filter(isTailscaleApiUrl).map((value) => new URL(value).origin)),
+  ].sort();
+  const tailnetViewerSourceList = tailnetViewerSources.map((origin) => ` ${origin}`).join("");
 
   return [
     "default-src 'self'",
@@ -23,7 +30,7 @@ export function buildContentSecurityPolicy(
     `connect-src 'self' openbot-attachment: openbot-remote-attachment: https://analytics.openbot.run ws://127.0.0.1:* wss://*.openbot.run${selfHostedSignalSource}${developmentSources}`,
     "object-src 'none'",
     // The remote desktop viewer uses a loopback proxy in packaged apps too.
-    "frame-src 'self' openbot-attachment: openbot-remote-attachment: https://*.openbot.run http://127.0.0.1:* http://localhost:*",
+    `frame-src 'self' openbot-attachment: openbot-remote-attachment: https://*.openbot.run http://127.0.0.1:* http://localhost:*${tailnetViewerSourceList}`,
     "base-uri 'none'",
   ].join("; ");
 }

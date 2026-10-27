@@ -37,6 +37,8 @@ import { rawDataSize, rawDataText } from "./ws-raw-data";
 const GRANT_TTL_MS = 60_000;
 const REMOTE_DESKTOP_MAX_SESSIONS = 4;
 const VIEWER_COOKIE = "openbotRemoteViewer";
+const VIEWER_GRANT_HEADER = "x-openbot-viewer";
+const VIEWER_GRANT_SUBPROTOCOL = "openbot-viewer.";
 const MAX_PENDING_STREAM_FRAMES = 32;
 const MAX_PENDING_STREAM_BYTES = 1_048_576;
 const MAX_TIMER_DELAY_MS = 2_147_000_000;
@@ -754,7 +756,20 @@ export class RemoteScreenGateway {
         response.end();
         return;
       }
-      if (!this.#viewerAuthorized(request, session)) return sendText(response, 401, "Remote viewer is not authorized.");
+      if (request.method === "GET" && route === "moonlight/openbot-viewer-auth.js" && session.viewerGrantUsed) {
+        response.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-store" });
+        response.end(remoteDesktopViewerAuthScript(session.snapshot.id));
+        return;
+      }
+      // The consumed grant is carried in the iframe fragment, which is intentionally absent from
+      // the initial HTTP request. Expose only the static viewer shell and shim; every media/API
+      // request and the stream socket still require the grant-derived credential.
+      const publicViewerBootstrap =
+        request.method === "GET" &&
+        session.viewerGrantUsed &&
+        (route === "moonlight/stream.html" || route === "moonlight/openbot-viewer-auth.js");
+      if (!publicViewerBootstrap && !this.#viewerAuthorized(request, session))
+        return sendText(response, 401, "Remote viewer is not authorized.");
       if (!route.startsWith("moonlight")) return sendText(response, 404, "Remote route not found.");
       const upstreamPath = route.slice("moonlight".length) || "/";
       if (!allowedMoonlightPath(upstreamPath)) return sendText(response, 404, "Moonlight route is not exposed.");
@@ -1141,6 +1156,7 @@ export class RemoteScreenGateway {
     const target = new URL(`${upstreamPath}${search}`, this.#runtimeState.baseUrl);
     const authHeader = this.#runtimeState.authHeader;
     const injectRelay = upstreamPath === "/stream.html" && new URLSearchParams(search).get("openbotRelay") === "1";
+    const injectViewerAuth = upstreamPath === "/stream.html" && !injectRelay;
     yield* Effect.callback<void>((resume) => {
       const resolve = () => resume(Effect.void);
       const upstream = httpRequest(
@@ -1157,15 +1173,18 @@ export class RemoteScreenGateway {
         (upstreamResponse) => {
           const headers = { ...upstreamResponse.headers };
           delete headers["set-cookie"];
-          if (injectRelay) {
+          if (injectRelay || injectViewerAuth) {
             const chunks: Buffer[] = [];
             upstreamResponse.on("data", (chunk: Buffer | string) => chunks.push(Buffer.from(chunk)));
             upstreamResponse.once("end", () => {
               const source = Buffer.concat(chunks).toString("utf8");
-              const script = '<script src="openbot-relay.js?openbotRelay=1"></script>';
+              const scripts = [
+                ...(injectViewerAuth ? ['<script src="openbot-viewer-auth.js"></script>'] : []),
+                ...(injectRelay ? ['<script src="openbot-relay.js?openbotRelay=1"></script>'] : []),
+              ].join("");
               const html = source.includes("</head>")
-                ? source.replace("</head>", `${script}</head>`)
-                : `${script}${source}`;
+                ? source.replace("</head>", `${scripts}</head>`)
+                : `${scripts}${source}`;
               delete headers["content-encoding"];
               delete headers["content-length"];
               delete headers["transfer-encoding"];
@@ -1234,6 +1253,14 @@ export class RemoteScreenGateway {
   #viewerAuthorized(request: IncomingMessage, session: ManagedRemoteScreenSession): boolean {
     const remoteSession = request.headers["x-openbot-webrtc-session"];
     if (remoteSession === session.teamSessionId) return true;
+    const grant = viewerGrantFromRequest(request);
+    if (
+      session.viewerGrantUsed &&
+      grant &&
+      grant.length <= 256 &&
+      safeHashEqual(secretHash(grant), session.viewerGrantHash)
+    )
+      return true;
     const cookie = parseCookie(request.headers.cookie, VIEWER_COOKIE);
     return Boolean(cookie && session.viewerCookieHash && safeHashEqual(secretHash(cookie), session.viewerCookieHash));
   }
@@ -1308,7 +1335,8 @@ function sendViewer(
   const sessionPath = TEAM_API_ROUTES.remoteScreen.session(sessionId);
   const hostId = runtime.hostIds[streamerSlot - 1] ?? runtime.hostId;
   const target = `${sessionPath}/moonlight/stream.html?hostId=${hostId}&appId=${runtime.desktopAppId}${openbotRelay ? "&openbotRelay=1" : ""}`;
-  const html = `<!doctype html><meta charset="utf-8"><title>OpenBot Moonlight Remote</title><meta name="color-scheme" content="dark"><style>html,body{margin:0;width:100%;height:100%;background:#090b0c;color:#fff;font:14px system-ui}main{display:grid;place-items:center;height:100%}</style><main>Connecting…</main><script type="module">const grant=new URL(location.href).hash.slice(1);history.replaceState(null,"",location.pathname);const response=await fetch(${JSON.stringify(`${sessionPath}/authorize`)},{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({grant})});if(!response.ok){document.querySelector("main").textContent="Remote access expired";const refused=()=>parent.postMessage(${JSON.stringify({ source: "openbot-moonlight", type: "viewer-state", sessionId, state: "error" })},"*");document.readyState==="complete"?refused():addEventListener("load",refused);throw new Error("grant rejected")}location.replace(${JSON.stringify(target)});</script>`;
+  const grantFragment = openbotRelay ? "" : '+"#"+encodeURIComponent(grant)';
+  const html = `<!doctype html><meta charset="utf-8"><title>OpenBot Moonlight Remote</title><meta name="color-scheme" content="dark"><style>html,body{margin:0;width:100%;height:100%;background:#090b0c;color:#fff;font:14px system-ui}main{display:grid;place-items:center;height:100%}</style><main>Connecting…</main><script type="module">const grant=new URL(location.href).hash.slice(1);history.replaceState(null,"",location.pathname);const response=await fetch(${JSON.stringify(`${sessionPath}/authorize`)},{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({grant})});if(!response.ok){document.querySelector("main").textContent="Remote access expired";const refused=()=>parent.postMessage(${JSON.stringify({ source: "openbot-moonlight", type: "viewer-state", sessionId, state: "error" })},"*");document.readyState==="complete"?refused():addEventListener("load",refused);throw new Error("grant rejected")}location.replace(${JSON.stringify(target)}${grantFragment});</script>`;
   response.writeHead(200, {
     "Content-Type": "text/html; charset=utf-8",
     "Content-Security-Policy":
@@ -1316,6 +1344,11 @@ function sendViewer(
     "Cache-Control": "no-store",
   });
   response.end(html);
+}
+
+function remoteDesktopViewerAuthScript(sessionId: string): string {
+  const sessionPath = TEAM_API_ROUTES.remoteScreen.session(sessionId);
+  return `(()=>{const grant=location.hash.slice(1);if(!grant||grant.length>256)return;history.replaceState(null,"",location.pathname+location.search);const prefix=${JSON.stringify(`${sessionPath}/`)};const nativeFetch=window.fetch.bind(window);window.fetch=(input,init)=>{const raw=input instanceof Request?input.url:String(input);const url=new URL(raw,location.href);if(url.origin!==location.origin||!url.pathname.startsWith(prefix))return nativeFetch(input,init);const headers=new Headers(input instanceof Request?input.headers:undefined);new Headers(init&&init.headers).forEach((value,key)=>headers.set(key,value));headers.set("X-OpenBot-Viewer",grant);return nativeFetch(input,{...init,headers})};const NativeWebSocket=window.WebSocket;window.WebSocket=class extends NativeWebSocket{constructor(url,protocols){const target=new URL(String(url),location.href);const origin=target.protocol==="ws:"?"http:"+target.host:target.protocol==="wss:"?"https:"+target.host:target.origin;if(origin!==location.origin||target.pathname!==prefix+"stream"){super(url,protocols);return}const offered=protocols===undefined?[]:Array.isArray(protocols)?[...protocols]:[protocols];if(offered.length===0)offered.push("openbot-viewer-v1");if(!offered.some((protocol)=>protocol.startsWith("openbot-viewer.")))offered.push("openbot-viewer."+grant);super(url,offered)}}})();`;
 }
 
 /** The mobile Expo DOM owns the authenticated peer. Relay the viewer socket to that page. */
@@ -1354,6 +1387,18 @@ async function readSmallJson<T>(request: IncomingMessage, schema: z.ZodType<T>):
 function sendText(response: ServerResponse, status: number, message: string): void {
   response.writeHead(status, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" });
   response.end(message);
+}
+
+function viewerGrantFromRequest(request: IncomingMessage): string | null {
+  const header = request.headers[VIEWER_GRANT_HEADER];
+  if (typeof header === "string") return header;
+  const protocols = request.headers["sec-websocket-protocol"];
+  if (typeof protocols !== "string") return null;
+  const token = protocols
+    .split(",")
+    .map((value) => value.trim())
+    .find((value) => value.startsWith(VIEWER_GRANT_SUBPROTOCOL));
+  return token?.slice(VIEWER_GRANT_SUBPROTOCOL.length) ?? null;
 }
 
 function parseCookie(header: string | undefined, name: string): string | null {
