@@ -12,6 +12,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { MobileConnectionAnalytics } from "@/features/analytics/connection";
 import { mobileAnalytics } from "@/features/analytics/mobile-analytics";
 import { supportLog, supportLogValue } from "@/features/support/model/support-log";
+import type { LocalTailnetServer } from "@/features/workspace/model/local-tailnet";
 import { RemoteTeamTransport, type RemoteTeamTransportRef } from "./remote-team-transport";
 
 export interface ServerConnectionHandle {
@@ -27,6 +28,7 @@ export interface ServerLoadContext {
 interface Props {
   hostId: string;
   publicKey: string;
+  localTailnetServer?: LocalTailnetServer;
   active: boolean;
   remoteDesktopSession?: RemoteDesktopSession | null;
   onCloseRemoteDesktop?: (sessionId: string) => Promise<void>;
@@ -42,6 +44,7 @@ interface Props {
 export function ServerConnection({
   hostId,
   publicKey,
+  localTailnetServer,
   active,
   remoteDesktopSession = null,
   onCloseRemoteDesktop,
@@ -141,6 +144,7 @@ export function ServerConnection({
     <RemoteTeamTransport
       ref={attach}
       active={active}
+      localTailnetServer={localTailnetServer}
       remoteDesktopSession={remoteDesktopSession}
       onCloseRemoteDesktop={onCloseRemoteDesktop}
       directory={directory}

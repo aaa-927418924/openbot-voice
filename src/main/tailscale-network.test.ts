@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import { isTailscaleAddress, tailnetUrl, tailscaleAddresses } from "./tailscale-network";
+import { isTailscaleAddress, LOCAL_TAILNET_API_PORT, tailnetUrl, tailscaleAddresses } from "./tailscale-network";
 
 describe("Tailscale address selection", () => {
   it("accepts only the reserved tailnet ranges", () => {
@@ -38,9 +38,23 @@ describe("Tailscale address selection", () => {
     ]);
   });
 
-  it("brackets IPv6 addresses in HTTP URLs", () => {
-    expect(tailnetUrl({ address: "fd7a:115c:a1e0::1", family: 6, port: 43210 })).toBe(
-      "http://[fd7a:115c:a1e0::1]:43210",
+  it("selects only interfaces named for Tailscale, even when another VPN uses the CGNAT range", () => {
+    expect(
+      tailscaleAddresses({
+        Ethernet: [
+          { address: "100.100.10.9", family: "IPv4", internal: false, mac: "", netmask: "", cidr: "100.100.10.9/32" },
+        ],
+        Tailscale: [
+          { address: "100.100.10.2", family: "IPv4", internal: false, mac: "", netmask: "", cidr: "100.100.10.2/32" },
+        ],
+      }),
+    ).toEqual([{ address: "100.100.10.2", family: 4 }]);
+  });
+
+  it("uses a stable port in its direct Tailscale API URL", () => {
+    expect(LOCAL_TAILNET_API_PORT).toBe(43123);
+    expect(tailnetUrl({ address: "fd7a:115c:a1e0::1", family: 6, port: LOCAL_TAILNET_API_PORT })).toBe(
+      "http://[fd7a:115c:a1e0::1]:43123",
     );
   });
 });

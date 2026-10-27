@@ -4,6 +4,7 @@ import { Typography } from "heroui-native";
 import { useEffect, useState } from "react";
 import { useUniwind } from "uniwind";
 import { saveAnalyticsPreference, useAnalyticsPreference } from "@/features/analytics/preference";
+import { useMobileSession } from "@/features/auth/context/mobile-session-context";
 import { dictationLanguageOptions } from "@/features/chat/model/voice-dictation";
 import { SettingsContent, SettingsRow, SettingsSection } from "@/features/settings/components/settings-content";
 import { SettingsPicker, SettingsSwitch } from "@/features/settings/components/settings-controls";
@@ -146,6 +147,7 @@ function LiveActivitiesSection({ dark }: { dark: boolean }) {
 
 export function GeneralSettingsScreen() {
   const { t } = useText();
+  const { session } = useMobileSession();
   const { theme } = useUniwind();
   const { activeServer } = useMobileWorkspace();
   const hapticsPreference = useHapticsPreference();
@@ -248,29 +250,31 @@ export function GeneralSettingsScreen() {
         ) : null}
       </SettingsSection>
       <LiveActivitiesSection dark={theme === "dark"} />
-      <SettingsSection
-        title={t("mobile.settings.privacy.title")}
-        footer={analyticsError ?? t("mobile.settings.privacy.footer")}
-      >
-        <SettingsRow>
-          <SettingsSwitch
-            value={analytics.enabled}
-            disabled={!analytics.ready || analytics.saving}
-            label={t("mobile.settings.privacy.analytics")}
-            dark={theme === "dark"}
-            onValueChange={saveAnalytics}
-          />
-        </SettingsRow>
-        {retryAnalyticsValue !== null ? (
-          <SettingsRow
-            disabled={analytics.saving}
-            disclosure={false}
-            onPress={() => saveAnalytics(retryAnalyticsValue)}
-          >
-            <Typography.Paragraph>{t("mobile.settings.privacy.retry")}</Typography.Paragraph>
+      {!session?.localOnly ? (
+        <SettingsSection
+          title={t("mobile.settings.privacy.title")}
+          footer={analyticsError ?? t("mobile.settings.privacy.footer")}
+        >
+          <SettingsRow>
+            <SettingsSwitch
+              value={analytics.enabled}
+              disabled={!analytics.ready || analytics.saving}
+              label={t("mobile.settings.privacy.analytics")}
+              dark={theme === "dark"}
+              onValueChange={saveAnalytics}
+            />
           </SettingsRow>
-        ) : null}
-      </SettingsSection>
+          {retryAnalyticsValue !== null ? (
+            <SettingsRow
+              disabled={analytics.saving}
+              disclosure={false}
+              onPress={() => saveAnalytics(retryAnalyticsValue)}
+            >
+              <Typography.Paragraph>{t("mobile.settings.privacy.retry")}</Typography.Paragraph>
+            </SettingsRow>
+          ) : null}
+        </SettingsSection>
+      ) : null}
       <SettingsSection title={t("mobile.settings.conversations.title")}>
         <SettingsRow onPress={() => router.push("/settings/hidden-servers")}>
           <Typography.Paragraph>{t("mobile.settings.servers.hiddenTitle")}</Typography.Paragraph>

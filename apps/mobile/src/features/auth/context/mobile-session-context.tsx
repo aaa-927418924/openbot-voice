@@ -1,5 +1,3 @@
-import { createRemoteAccountRefresh, runTeamEffect } from "@openbot/team-client";
-import { Effect } from "effect";
 import {
   createContext,
   type PropsWithChildren,
@@ -11,21 +9,17 @@ import {
   useState,
 } from "react";
 import { mobileAnalytics } from "@/features/analytics/mobile-analytics";
-import { loadAnalyticsPreference } from "@/features/analytics/preference";
 import {
-  logoutMobileSession,
   type MobileProfileChange,
   type MobileSession,
   MobileSessionExpiredError,
-  readMobileSession,
-  retryMobileSessionRevocations,
-  updateMobileProfile,
-  validateMobileSession,
 } from "@/features/auth/api/mobile-auth";
+import {
+  createEphemeralLocalMobileProfile,
+  readLocalMobileProfile,
+  updateLocalMobileProfile,
+} from "@/features/auth/model/local-mobile-profile";
 import { queryClient } from "@/shared/lib/query-client";
-import { useAppForeground } from "@/shared/lib/use-app-foreground";
-
-import { resolveSessionValidation } from "./session-validation";
 
 interface MobileSessionContextValue {
   loading: boolean;
@@ -44,110 +38,47 @@ export function MobileSessionProvider({ children }: PropsWithChildren) {
   const [sessionState, setSessionState] = useState<MobileSession | null | undefined>(undefined);
   const sessionRef = useRef<MobileSession | null>(null);
   const sessionScope = useRef(0);
-  const foreground = useAppForeground();
-  const foregroundRef = useRef(foreground);
-  foregroundRef.current = foreground;
-  const validation = useRef<ReturnType<typeof createRemoteAccountRefresh> | null>(null);
-  const refreshProfileRef = useRef<() => Promise<void>>(async () => undefined);
-  const refreshProfile = useCallback(() => refreshProfileRef.current(), []);
+  const refreshProfile = useCallback(async () => undefined, []);
 
   const setCurrentSession = useCallback((session: MobileSession | null) => {
     if (sessionRef.current?.sessionToken !== session?.sessionToken || sessionRef.current?.apiUrl !== session?.apiUrl) {
       sessionScope.current += 1;
       queryClient.removeQueries({ queryKey: ["account-sessions"] });
     }
-    mobileAnalytics.setUser(session?.user ?? null);
+    mobileAnalytics.setUser(null);
     sessionRef.current = session;
     setSessionState(session);
   }, []);
 
-  const handleSessionError = useCallback(
-    (error: unknown, initiatingSession: MobileSession) => {
-      if (
-        error instanceof MobileSessionExpiredError &&
-        sessionRef.current?.sessionToken === initiatingSession.sessionToken &&
-        sessionRef.current?.apiUrl === initiatingSession.apiUrl
-      )
-        setCurrentSession(null);
-    },
-    [setCurrentSession],
-  );
+  const handleSessionError = useCallback((_error: unknown, _initiatingSession: MobileSession) => undefined, []);
 
   useEffect(() => {
     let active = true;
     const scope = sessionScope.current;
-    void loadAnalyticsPreference();
-    void readMobileSession()
+    mobileAnalytics.setEnabled(false);
+    void readLocalMobileProfile()
       .then((stored) => {
         if (active && scope === sessionScope.current) setCurrentSession(stored);
       })
       .catch(() => {
-        if (active && scope === sessionScope.current) setCurrentSession(null);
+        // Keep the app local and usable without replacing a damaged profile file or showing account login.
+        if (active && scope === sessionScope.current) setCurrentSession(createEphemeralLocalMobileProfile());
       });
     return () => {
       active = false;
     };
   }, [setCurrentSession]);
 
-  const credentialToken = sessionState?.sessionToken;
-  const credentialApiUrl = sessionState?.apiUrl;
-  useEffect(() => {
-    if (!credentialToken || !credentialApiUrl) return;
-    let active = true;
-    const controller = createRemoteAccountRefresh(() =>
-      Effect.tryPromise(async () => {
-        const current = sessionRef.current;
-        if (!current) return;
-        await validateMobileSession(current, (validated) => {
-          if (!active) return;
-          const next = resolveSessionValidation(sessionRef.current, current, validated);
-          if (next !== sessionRef.current) setCurrentSession(next);
-        });
-      }),
-    );
-    validation.current = controller;
-    refreshProfileRef.current = () => {
-      controller.invalidate();
-      return runTeamEffect(controller.refresh()).catch(() => undefined);
-    };
-    controller.setActive(foregroundRef.current);
-    return () => {
-      active = false;
-      controller.dispose();
-      validation.current = null;
-      refreshProfileRef.current = async () => undefined;
-    };
-  }, [credentialToken, credentialApiUrl, setCurrentSession]);
-
-  useEffect(() => {
-    validation.current?.setActive(foreground);
-    if (foreground) void retryMobileSessionRevocations();
-  }, [foreground]);
-
-  const signOut = useCallback(async () => {
-    const current = sessionRef.current;
-    if (!current) return;
-    await mobileAnalytics.operation("account_sign_out", {}, () => logoutMobileSession(current));
-    if (sessionRef.current?.sessionToken === current.sessionToken && sessionRef.current?.apiUrl === current.apiUrl) {
-      setCurrentSession(null);
-    }
-  }, [setCurrentSession]);
+  const signOut = useCallback(async () => undefined, []);
 
   const updateProfile = useCallback(
     async (change: MobileProfileChange) => {
       const current = sessionRef.current;
       if (!current) throw new MobileSessionExpiredError();
-      try {
-        await updateMobileProfile(current, change, (updated) => {
-          const next = resolveSessionValidation(sessionRef.current, current, updated);
-          if (next !== sessionRef.current) setCurrentSession(next);
-        });
-      } catch (error) {
-        handleSessionError(error, current);
-        throw error;
-      }
+      if (!current.localOnly) throw new Error("Account profiles are disabled in local-only mode.");
+      setCurrentSession(await updateLocalMobileProfile(current, change));
     },
-    [handleSessionError, setCurrentSession],
+    [setCurrentSession],
   );
 
   const value = useMemo<MobileSessionContextValue>(
@@ -157,7 +88,10 @@ export function MobileSessionProvider({ children }: PropsWithChildren) {
       sessionScope: sessionScope.current,
       refreshProfile,
       handleSessionError,
-      connect: setCurrentSession,
+      connect: (next) => {
+        if (!next.localOnly) throw new Error("Account sign-in is disabled in local-only mode.");
+        setCurrentSession(next);
+      },
       signOut,
       updateProfile,
     }),

@@ -56,7 +56,7 @@ export function ServerAvatar({
   const { logoKey } = server;
   const saved = useQuery({
     queryKey: ["server-logo", session?.apiUrl, session?.user.id, sessionScope, server.id, logoKey],
-    enabled: logoUri === undefined && Boolean(session && logoKey),
+    enabled: logoUri === undefined && Boolean(session && !session.localOnly && logoKey),
     queryFn: () => {
       if (!session || !logoKey) throw new Error("The server logo is unavailable.");
       return loadServerLogo(session, server.id, logoKey);

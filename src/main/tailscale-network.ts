@@ -8,6 +8,15 @@ export interface TailnetBinding {
   port: number;
 }
 
+/** Stable Team API port so paired clients survive a host restart. */
+export const LOCAL_TAILNET_API_PORT = 43123;
+
+function isTailscaleInterfaceName(name: string): boolean {
+  // Linux names the TUN interface `tailscale0`; the Windows adapter is `Tailscale`.
+  // Do not trust the CGNAT range alone: 100.64/10 may also be assigned to another VPN.
+  return name === "tailscale0" || /^tailscale(?:\s+(?:tunnel|adapter))?$/iu.test(name);
+}
+
 /** Accept only Tailscale's reserved IPv4 and IPv6 address ranges. */
 export function isTailscaleAddress(value: string): boolean {
   const address = value.split("%", 1)[0] ?? value;
@@ -25,7 +34,8 @@ export function tailscaleAddresses(
   interfaces: NodeJS.Dict<NetworkInterfaceInfo[]> = networkInterfaces(),
 ): Array<{ address: string; family: 4 | 6 }> {
   const found: Array<{ address: string; family: 4 | 6 }> = [];
-  for (const entries of Object.values(interfaces)) {
+  for (const [name, entries] of Object.entries(interfaces)) {
+    if (!isTailscaleInterfaceName(name)) continue;
     for (const entry of entries ?? []) {
       const family = entry.family === "IPv4" ? 4 : entry.family === "IPv6" ? 6 : null;
       if (!entry.internal && family && isTailscaleAddress(entry.address))
@@ -35,12 +45,16 @@ export function tailscaleAddresses(
   return found.sort((left, right) => left.family - right.family);
 }
 
-export function listenOnTailscale(server: Server, noPort: () => Error): Promise<TailnetBinding> {
+export function listenOnTailscale(
+  server: Server,
+  noPort: () => Error,
+  port = LOCAL_TAILNET_API_PORT,
+): Promise<TailnetBinding> {
   const [binding] = tailscaleAddresses();
   if (!binding) return Promise.reject(new Error("Tailscale is not connected. Start Tailscale before sharing OpenBot."));
   return new Promise<TailnetBinding>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(0, binding.address, () => {
+    server.listen(port, binding.address, () => {
       server.removeListener("error", reject);
       const address = server.address();
       if (address === null || typeof address === "string") {

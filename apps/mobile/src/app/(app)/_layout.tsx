@@ -30,6 +30,7 @@ function AuthenticatedStack() {
   const sheetBackground = String(useCSSVariable("--openbot-bg-sheet") ?? background);
   const [navigationGate] = useState(createChatNavigationGate);
   const { agentId: openAgentId } = useGlobalSearchParams<{ agentId?: string }>();
+  const { session } = useMobileSession();
   const openChat = useRef<string | null>(null);
   openChat.current = segments.at(-2) === "chat" && typeof openAgentId === "string" ? openAgentId : null;
   const onChatList = useRef(false);
@@ -246,17 +247,19 @@ function AuthenticatedStack() {
             sheetGrabberVisible: true,
           }}
         />
-        <Stack.Screen
-          name="hosted-server"
-          options={{
-            contentStyle: { backgroundColor: sheetBackground },
-            headerShown: false,
-            scrollEdgeEffects: { top: "hidden", bottom: "soft" },
-            presentation: "formSheet",
-            sheetAllowedDetents: [0.85],
-            sheetGrabberVisible: true,
-          }}
-        />
+        <Stack.Protected guard={!session?.localOnly}>
+          <Stack.Screen
+            name="hosted-server"
+            options={{
+              contentStyle: { backgroundColor: sheetBackground },
+              headerShown: false,
+              scrollEdgeEffects: { top: "hidden", bottom: "soft" },
+              presentation: "formSheet",
+              sheetAllowedDetents: [0.85],
+              sheetGrabberVisible: true,
+            }}
+          />
+        </Stack.Protected>
         <Stack.Screen
           name="search-agents"
           options={{

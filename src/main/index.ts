@@ -74,6 +74,7 @@ import { teamIpcHandlers } from "./ipc/team-handlers";
 import { updateIpcHandlers } from "./ipc/update-handlers";
 import { voiceIpcHandlers } from "./ipc/voice-handlers";
 import { installLinuxDesktopEntry } from "./linux-desktop-entry";
+import { LocalTailnetHostStartRetry } from "./local-tailnet-host-start-retry";
 import { MacHapticFeedback } from "./mac-haptic-feedback";
 import {
   configureApplicationMenu,
@@ -1015,9 +1016,13 @@ if (!hasSingleInstanceLock) {
       teardown.push(0, "routine wake", () => routineWake.dispose());
       const teamIdentity = teamStore.getIdentity();
       if (built.localOnlyNetworking) {
-        void runCauseEffect(host.start()).catch((error) =>
-          logger.error("Unable to start the Tailscale-only OpenBot host:", toLogValue(error)),
-        );
+        const localHostRetry = new LocalTailnetHostStartRetry({
+          startHost: () => runCauseEffect(host.start()),
+          onError: (error) =>
+            logger.warn("Unable to start the Tailscale-only OpenBot host; retrying:", toLogValue(error)),
+        });
+        localHostRetry.start();
+        teardown.push(0, "Tailscale host start retry", () => localHostRetry.stop());
       } else if (built.serverMode) {
         const serverModeControl = built.serverMode;
         void runCauseEffect(

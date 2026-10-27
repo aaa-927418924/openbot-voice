@@ -1,5 +1,6 @@
 import { Stack } from "expo-router/stack";
 import { useCSSVariable } from "uniwind";
+import { useMobileSession } from "@/features/auth/context/mobile-session-context";
 import { isIOS } from "@/shared/lib/platform";
 import { sheetBackHaptics } from "@/shared/lib/sheet-back-haptics";
 import { sheetHeaderInsetOptions } from "@/shared/lib/sheet-header";
@@ -9,6 +10,7 @@ export const unstable_settings = { initialRouteName: "index" };
 
 export default function SettingsLayout() {
   const { t } = useText();
+  const { session } = useMobileSession();
   const background = String(useCSSVariable("--openbot-bg-sheet"));
   return (
     <Stack
@@ -28,7 +30,9 @@ export default function SettingsLayout() {
       <Stack.Screen name="index" options={{ title: t("mobile.app.route.settings") }} />
       <Stack.Screen name="profile" options={{ title: t("mobile.app.route.profile") }} />
       <Stack.Screen name="general" options={{ title: t("mobile.app.route.general") }} />
-      <Stack.Screen name="sessions" options={{ title: t("mobile.app.route.accountSessions") }} />
+      <Stack.Protected guard={!session?.localOnly}>
+        <Stack.Screen name="sessions" options={{ title: t("mobile.app.route.accountSessions") }} />
+      </Stack.Protected>
       <Stack.Screen name="about" options={{ title: t("mobile.app.route.about") }} />
       <Stack.Screen name="support" options={{ title: t("mobile.app.route.support") }} />
       <Stack.Screen name="hidden-chats" options={{ title: t("mobile.app.route.hiddenChats") }} />

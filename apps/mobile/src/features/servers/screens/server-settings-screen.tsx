@@ -6,6 +6,7 @@ import { useThemeColor } from "heroui-native/hooks";
 import { Camera } from "lucide-react-native";
 import { useRef, useState } from "react";
 import { Alert, Pressable, View } from "react-native";
+import { useMobileSession } from "@/features/auth/context/mobile-session-context";
 import { ServerAvatar } from "@/features/servers/components/server-avatar";
 import { ServerStatusLabel } from "@/features/servers/components/server-status-label";
 import { SERVER_ROLE_KEYS } from "@/features/servers/model/server-role";
@@ -24,6 +25,7 @@ import { type AvatarPhoto, pickAvatarPhoto } from "@/shared/lib/pick-avatar-phot
 import { useText } from "@/shared/lib/text";
 
 export function ServerSettingsScreen() {
+  const { session } = useMobileSession();
   const { t, sourceText } = useText();
   const { serverId } = useLocalSearchParams<{ serverId: string }>();
   const { servers, leaveServer, refreshServer } = useMobileWorkspace();
@@ -64,9 +66,11 @@ export function ServerSettingsScreen() {
           <ServerStatusLabel server={server} />
         </SettingsRow>
         {server.connectionMessage ? <SettingsNote>{sourceText(server.connectionMessage)}</SettingsNote> : null}
-        <SettingsRow onPress={() => router.push({ pathname: "/server-settings/members", params: { serverId } })}>
-          <Typography.Paragraph type="body-sm">{t("mobile.server.settings.members")}</Typography.Paragraph>
-        </SettingsRow>
+        {!session?.localOnly ? (
+          <SettingsRow onPress={() => router.push({ pathname: "/server-settings/members", params: { serverId } })}>
+            <Typography.Paragraph type="body-sm">{t("mobile.server.settings.members")}</Typography.Paragraph>
+          </SettingsRow>
+        ) : null}
         <SettingsRow disclosure={false} disabled={busy} onPress={() => void perform(() => refreshServer(serverId))}>
           <Typography.Paragraph type="body-sm">
             {busy ? t("mobile.server.settings.refreshing") : t("mobile.server.settings.refresh")}

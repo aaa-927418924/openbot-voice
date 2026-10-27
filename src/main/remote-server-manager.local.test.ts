@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { encodeTeamProtocolV1CurrentHttpResponse } from "@openbot/contracts/team-protocol/v1-adapter";
@@ -35,6 +35,80 @@ class OpenEventSocket extends EventTarget {
 }
 
 afterEach(() => vi.unstubAllGlobals());
+
+describe("local-only server directory", () => {
+  it("keeps persisted cloud entries but never exposes or reconnects to them", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "openbot-local-only-directory-"));
+    const storePath = join(directory, "servers.json");
+    const cloudServerId = "00000000-0000-4000-8000-0000000000c1";
+    const tailnetServerId = "00000000-0000-4000-8000-0000000000c2";
+    const tailnetApiUrl = "http://100.100.10.2:43123/";
+    const initialStore = {
+      version: 3,
+      activeServerId: cloudServerId,
+      servers: [
+        {
+          id: cloudServerId,
+          name: "Old cloud host",
+          apiUrl: "https://api.openbot.run/",
+          fingerprint: "cloud-fingerprint",
+          username: "old-account",
+          encryptedToken: Buffer.from("cloud-token").toString("base64"),
+          remoteDesktopAvailable: false,
+          role: "member",
+        },
+        {
+          id: tailnetServerId,
+          name: "Tailnet host",
+          apiUrl: tailnetApiUrl,
+          fingerprint: "tailnet-fingerprint",
+          username: "device-local",
+          encryptedToken: Buffer.from("tailnet-token").toString("base64"),
+          remoteDesktopAvailable: false,
+          role: "member",
+        },
+      ],
+      hiddenHostIds: [],
+    };
+    await writeFile(storePath, JSON.stringify(initialStore));
+    const requests: URL[] = [];
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      requests.push(url);
+      if (url.pathname === "/v1/compatibility") {
+        return Response.json({ appVersion: "0.30.0", protocol: { minimum: 1, maximum: 1 }, capabilities: [] });
+      }
+      if (url.pathname === "/v1/agents") return Response.json([]);
+      throw new Error(`Unexpected request: ${url.pathname}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("WebSocket", OpenEventSocket);
+    const manager = new RemoteServerManager(
+      storePath,
+      { encrypt: (value) => Buffer.from(value), decrypt: (value) => value.toString() },
+      { createTeamAuthTicket: () => Effect.succeed("not used"), getEmail: () => "unused@example.com" },
+      { localOnlyNetworking: true, appVersion: "0.30.0", allowTailscaleApiUrl: true },
+    );
+
+    try {
+      await runCauseEffect(manager.initialize());
+      expect(manager.list().map((server) => server.id)).toEqual(["local", tailnetServerId]);
+      expect(manager.activeServerId).toBe("local");
+      await expect(runCauseEffect(manager.select(cloudServerId))).rejects.toThrow();
+      await runCauseEffect(manager.startEventConnections());
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+      expect(requests.length).toBeGreaterThan(0);
+      expect(requests.every((url) => url.origin === new URL(tailnetApiUrl).origin)).toBe(true);
+      expect(JSON.parse(await readFile(storePath, "utf8"))).toMatchObject({
+        activeServerId: cloudServerId,
+        servers: [{ id: cloudServerId }, { id: tailnetServerId }],
+      });
+    } finally {
+      await runCauseEffect(manager.stop());
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("Tailscale-local invitations", () => {
   it("refuses account-service invitation links in local-only mode", async () => {

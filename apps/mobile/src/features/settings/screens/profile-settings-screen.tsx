@@ -145,38 +145,42 @@ export function ProfileSettingsScreen() {
           {nameError ?? error}
         </Typography.Paragraph>
       ) : null}
-      <SettingsSection title={t("mobile.settings.profile.email")}>
-        <SettingsRow>
-          <Typography.Paragraph selectable className="text-grouped-secondary">
-            {session.user.email}
-          </Typography.Paragraph>
-        </SettingsRow>
-      </SettingsSection>
-      <SettingsSection title={t("mobile.settings.profile.security")}>
-        <SettingsRow disabled={busy} onPress={() => router.push("/settings/sessions")}>
-          <Typography.Paragraph>{t("mobile.settings.profile.accountSessions")}</Typography.Paragraph>
-        </SettingsRow>
-      </SettingsSection>
-      <SettingsSection>
-        <SettingsRow
-          disclosure={false}
-          disabled={busy}
-          onPress={() =>
-            Alert.alert(t("mobile.settings.profile.signOutTitle"), t("mobile.settings.profile.signOutBody"), [
-              { text: t("common.cancel"), style: "cancel" },
-              {
-                text: t("mobile.settings.profile.signOut"),
-                style: "destructive",
-                onPress: () => void perform("sign-out", signOut),
-              },
-            ])
-          }
-        >
-          <Typography.Paragraph className="text-danger-text">
-            {t("mobile.settings.profile.signOut")}
-          </Typography.Paragraph>
-        </SettingsRow>
-      </SettingsSection>
+      {!session.localOnly ? (
+        <>
+          <SettingsSection title={t("mobile.settings.profile.email")}>
+            <SettingsRow>
+              <Typography.Paragraph selectable className="text-grouped-secondary">
+                {session.user.email}
+              </Typography.Paragraph>
+            </SettingsRow>
+          </SettingsSection>
+          <SettingsSection title={t("mobile.settings.profile.security")}>
+            <SettingsRow disabled={busy} onPress={() => router.push("/settings/sessions")}>
+              <Typography.Paragraph>{t("mobile.settings.profile.accountSessions")}</Typography.Paragraph>
+            </SettingsRow>
+          </SettingsSection>
+          <SettingsSection>
+            <SettingsRow
+              disclosure={false}
+              disabled={busy}
+              onPress={() =>
+                Alert.alert(t("mobile.settings.profile.signOutTitle"), t("mobile.settings.profile.signOutBody"), [
+                  { text: t("common.cancel"), style: "cancel" },
+                  {
+                    text: t("mobile.settings.profile.signOut"),
+                    style: "destructive",
+                    onPress: () => void perform("sign-out", signOut),
+                  },
+                ])
+              }
+            >
+              <Typography.Paragraph className="text-danger-text">
+                {t("mobile.settings.profile.signOut")}
+              </Typography.Paragraph>
+            </SettingsRow>
+          </SettingsSection>
+        </>
+      ) : null}
     </SheetScrollView>
   );
 }

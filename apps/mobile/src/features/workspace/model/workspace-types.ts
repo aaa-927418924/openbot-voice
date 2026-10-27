@@ -43,6 +43,7 @@ import type { MobileChannelStore } from "@/features/channels/model/channel-store
 import type { MobileLiveVoiceHost } from "@/features/live-voice/model/live-voice-host";
 import type { MobileConversationStore } from "./conversation-store";
 import type { LiveWorkspaceStore } from "./live-workspace-store";
+import type { LocalTailnetServer } from "./local-tailnet";
 
 type MobileServerKind = "local" | "remote";
 export type MobileServerState = "unknown" | "connecting" | "online" | "offline" | "error";
@@ -67,6 +68,8 @@ export interface MobileServer {
   role: "owner" | "admin" | "member";
   /** The active members that the host's plan allows. Absent when the account server gave none. */
   memberLimit?: number;
+  /** Saved on-device direct Tailscale membership; absent for account-directory connections. */
+  tailnet?: LocalTailnetServer;
 }
 
 export interface MobileAgent {

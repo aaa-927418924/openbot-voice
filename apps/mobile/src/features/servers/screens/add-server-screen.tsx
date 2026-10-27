@@ -3,6 +3,7 @@ import type { AppFormat, MobileTranslate } from "@openbot/i18n/mobile";
 import { runTeamEffect } from "@openbot/team-client";
 import type { RemoteInvitePreview } from "@openbot/team-client/remote-directory";
 import * as Clipboard from "expo-clipboard";
+import * as Crypto from "expo-crypto";
 import { type Href, router } from "expo-router";
 import { usePreventRemove } from "expo-router/react-navigation";
 import { Button, Spinner, Typography } from "heroui-native";
@@ -14,6 +15,7 @@ import { AppState, Keyboard, Pressable, View } from "react-native";
 import { useMobileSession } from "@/features/auth/context/mobile-session-context";
 import { SERVER_ROLE_KEYS } from "@/features/servers/model/server-role";
 import { useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
+import { parseTailnetInvite, previewTailnetInvite } from "@/features/workspace/model/local-tailnet";
 import { SheetFormField } from "@/shared/components/sheet-form-field";
 import { SheetScrollView } from "@/shared/components/sheet-scroll-view";
 import { haptics } from "@/shared/lib/haptics";
@@ -22,11 +24,12 @@ import { currentText, useText } from "@/shared/lib/text";
 
 const INVITE_PLACEHOLDER = "https://openbot.run/join?…";
 
-function normalizeInviteUrl(value: string, options: InviteLinkOptions): string | null {
+function normalizeInviteUrl(value: string, options: InviteLinkOptions, localOnly = false): string | null {
   const invite = value.trim();
   if (!invite) return null;
   try {
-    parseInviteUrl(invite, options);
+    if (localOnly) parseTailnetInvite(invite);
+    else parseInviteUrl(invite, options);
     return invite;
   } catch {
     return null;
@@ -66,7 +69,7 @@ export function AddServerScreen({
   const [inviteLink, setInviteLink] = useState(initialInvite);
   // A new object repeats a failed preview for the same link; an unchanged link keeps the result.
   const [request, setRequest] = useState(() => {
-    const url = normalizeInviteUrl(initialInvite, inviteLinks);
+    const url = normalizeInviteUrl(initialInvite, inviteLinks, session?.localOnly);
     return url ? { url } : null;
   });
   const reviewedInvite = request?.url ?? null;
@@ -88,7 +91,10 @@ export function AddServerScreen({
       return;
     }
     setPreviewing(true);
-    void runTeamEffect(teamDirectory.previewInvite(request.url)).then(
+    const preview = session?.localOnly
+      ? previewTailnetInvite(request.url, { randomBytes: (size) => Crypto.getRandomBytes(size) })
+      : runTeamEffect(teamDirectory.previewInvite(request.url));
+    void preview.then(
       (value) => {
         if (!active) return;
         setPreview(value);
@@ -104,13 +110,13 @@ export function AddServerScreen({
     return () => {
       active = false;
     };
-  }, [request, teamDirectory]);
+  }, [request, session?.localOnly, teamDirectory]);
 
   // Verification starts as soon as the field holds a complete invitation, so a paste needs no
   // separate review step before the server identity is shown.
   function changeLink(value: string): void {
     setInviteLink(value);
-    const url = normalizeInviteUrl(value, inviteLinks);
+    const url = normalizeInviteUrl(value, inviteLinks, session?.localOnly);
     setRequest((current) => (url === null ? null : current?.url === url ? current : { url }));
     if (url === null) setError(null);
   }

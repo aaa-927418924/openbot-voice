@@ -39,7 +39,9 @@ export interface MobileSession {
   apiUrl: string;
   sessionToken: string;
   user: CentralAuthUser;
-  host: MobileConnectHostBinding;
+  host?: MobileConnectHostBinding;
+  /** Uses an on-device profile and direct Tailscale pairing instead of an account service. */
+  localOnly?: boolean;
 }
 
 type MobileCredential = Pick<MobileSession, "apiUrl" | "sessionToken">;

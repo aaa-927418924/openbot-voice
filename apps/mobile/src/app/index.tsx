@@ -3,17 +3,22 @@ import { useContext, useEffect } from "react";
 import { View } from "react-native";
 
 import { useMobileSession } from "@/features/auth/context/mobile-session-context";
-import { SignInScreen } from "@/features/auth/screens/sign-in-screen";
 import { SplashContentReadyContext } from "@/shared/lib/use-splash-gate";
 
 export default function IndexRoute() {
-  const { session } = useMobileSession();
+  const { loading, session } = useMobileSession();
   const reportContentReady = useContext(SplashContentReadyContext);
   useEffect(() => {
     if (session) router.replace("/connected");
   }, [session]);
 
-  // The root splash waits for route-owned layout. Keep a readiness signal while an
-  // authenticated startup route replaces itself with the workspace.
-  return session ? <View className="flex-1 bg-background" onLayout={() => reportContentReady()} /> : <SignInScreen />;
+  // Local-only startup never exposes an account sign-in page. The splash covers this view while
+  // the on-device profile is loaded and the workspace route replaces it.
+  return (
+    <View
+      className="flex-1 bg-background"
+      onLayout={() => reportContentReady()}
+      accessibilityLabel={loading ? "Loading local profile" : undefined}
+    />
+  );
 }

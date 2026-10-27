@@ -8,6 +8,7 @@ import { QrScanner } from "@/features/auth/components/qr-scanner";
 import { ScannerCloseButton } from "@/features/auth/components/scanner-close-button";
 import { useMobileSession } from "@/features/auth/context/mobile-session-context";
 import { rememberIncomingLink } from "@/features/links/model/incoming-links";
+import { parseTailnetInvite } from "@/features/workspace/model/local-tailnet";
 import { useText } from "@/shared/lib/text";
 
 // An inner page of the add-server sheet, or of the plans sheet. The preview fills the whole sheet.
@@ -30,7 +31,8 @@ export function ScanInviteScreen({
       pairing={false}
       onScan={async (data) => {
         try {
-          parseInviteUrl(data, { selfHostedApiOrigin: selfHostedApiOrigin(session?.apiUrl) });
+          if (session?.localOnly) parseTailnetInvite(data);
+          else parseInviteUrl(data, { selfHostedApiOrigin: selfHostedApiOrigin(session?.apiUrl) });
         } catch {
           throw new Error(t("mobile.server.scan.notInvitation"));
         }

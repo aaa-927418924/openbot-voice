@@ -41,6 +41,13 @@ export type TailnetRandomBytes = (size: number) => Uint8Array;
 
 export type LocalTailnetEvent = AgentEvent | TeamRealtimeEvent | LiveVoiceWireEvent;
 
+export class DirectTailnetHttpError extends Error {
+  constructor(readonly status: number) {
+    super(`Tailscale host returned HTTP ${status}.`);
+    this.name = "DirectTailnetHttpError";
+  }
+}
+
 interface IdentityProof {
   serverId: string;
   publicKey: string;
@@ -168,8 +175,8 @@ async function verifyTailnetIdentity(
   appVersion: string,
   fetcher: TailnetFetch,
   randomBytes: TailnetRandomBytes,
-): Promise<{ protocol: number; proof: IdentityProof }> {
-  const { protocol } = await negotiate(invite.apiUrl, fetcher);
+): Promise<{ protocol: number; proof: IdentityProof; support: ReturnType<typeof decodeTeamProtocolSupportV1> }> {
+  const { protocol, support } = await negotiate(invite.apiUrl, fetcher);
   const challenge = base64Url(randomBytes(24));
   const identityPath = `${TEAM_API_ROUTES.identity}?challenge=${encodeURIComponent(challenge)}`;
   const proof = decodeIdentity(
@@ -184,7 +191,7 @@ async function verifyTailnetIdentity(
       verifyEd25519Pem(decodeBase64Url(proof.signature), new TextEncoder().encode(challenge), proof.publicKey),
     ));
   if (!verified) throw new Error("The Tailscale host identity could not be verified.");
-  return { protocol, proof };
+  return { protocol, proof, support };
 }
 
 /** Reviews a local invitation without consuming its one-time token or contacting an account service. */
@@ -272,14 +279,19 @@ export class DirectTailnetTeamClient {
   readonly #server: LocalTailnetServer;
   readonly #appVersion: string;
   readonly #fetch: TailnetFetch;
+  readonly #randomBytes: TailnetRandomBytes;
   #protocol: number | null = null;
   #capabilities: string[] = [];
   #events: WebSocket | null = null;
 
-  constructor(server: LocalTailnetServer, options: { appVersion?: string; fetch?: TailnetFetch } = {}) {
+  constructor(
+    server: LocalTailnetServer,
+    options: { appVersion?: string; fetch?: TailnetFetch; randomBytes: TailnetRandomBytes },
+  ) {
     this.#server = server;
     this.#appVersion = options.appVersion ?? "";
     this.#fetch = options.fetch ?? fetch;
+    this.#randomBytes = options.randomBytes;
   }
 
   get capabilities(): readonly string[] {
@@ -287,9 +299,19 @@ export class DirectTailnetTeamClient {
   }
 
   async connect(): Promise<void> {
-    const result = await negotiate(this.#server.apiUrl, this.#fetch);
-    this.#protocol = result.protocol;
-    this.#capabilities = result.support.capabilities;
+    const { protocol, support } = await verifyTailnetIdentity(
+      {
+        apiUrl: this.#server.apiUrl,
+        serverId: this.#server.hostId,
+        fingerprint: this.#server.fingerprint,
+        token: "",
+      },
+      this.#appVersion,
+      this.#fetch,
+      this.#randomBytes,
+    );
+    this.#protocol = protocol;
+    this.#capabilities = support.capabilities;
   }
 
   async request<T>(
@@ -331,13 +353,7 @@ export class DirectTailnetTeamClient {
     const value = response.status === 204 ? undefined : await response.json();
     const decoded =
       value === undefined ? undefined : teamHttpCodec(protocol).decodeResponse(method, route, response.status, value);
-    if (!response.ok) {
-      const message =
-        isDynamicRecord(decoded) && isString(decoded.error)
-          ? decoded.error
-          : `Host request failed (${response.status}).`;
-      throw new Error(message);
-    }
+    if (!response.ok) throw new DirectTailnetHttpError(response.status);
     onUploadProgress?.(1);
     return decode(decoded);
   }

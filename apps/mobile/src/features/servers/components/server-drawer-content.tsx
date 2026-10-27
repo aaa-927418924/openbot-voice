@@ -118,9 +118,9 @@ export function ServerDrawerContent({
   // the feature flag of this build allows the purchase.
   const accountCanCreate = useHostedServerAvailability((state) => state.userId === session.user.id && state.available);
   const cloudServersOn = useMobileFeature(session.apiUrl, "cloudServers");
-  const canCreateServer = accountCanCreate && cloudServersOn;
+  const canCreateServer = !session.localOnly && accountCanCreate && cloudServersOn;
   useEffect(() => {
-    if (!open) return;
+    if (!open || session.localOnly) return;
     void refreshHostedServerAvailability(session.user.id, hostedServerCalls(session));
     void refreshMobileFeatures(session.apiUrl);
   }, [open, session]);
@@ -327,9 +327,11 @@ export function ServerDrawerContent({
             <Typography.Paragraph type="body-sm" weight="semibold" numberOfLines={1}>
               {displayName}
             </Typography.Paragraph>
-            <Typography.Paragraph type="body-xs" className="text-text-secondary" numberOfLines={1} selectable>
-              {session.user.email}
-            </Typography.Paragraph>
+            {!session.localOnly ? (
+              <Typography.Paragraph type="body-xs" className="text-text-secondary" numberOfLines={1} selectable>
+                {session.user.email}
+              </Typography.Paragraph>
+            ) : null}
           </View>
         </View>
         <ServerDrawerIconButton

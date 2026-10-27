@@ -16,10 +16,12 @@ import {
   type RemoteUploadProgress,
   remoteTeamRequestTimeoutMs,
 } from "@openbot/team-client/remote-peer";
+import * as Application from "expo-application";
 import * as Crypto from "expo-crypto";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { useMobileSession } from "@/features/auth/context/mobile-session-context";
 import { supportLog, supportLogUrl } from "@/features/support/model/support-log";
+import { DirectTailnetTeamClient, type LocalTailnetServer } from "@/features/workspace/model/local-tailnet";
 import { expoGoDomOptions } from "@/shared/lib/expo-go-dom";
 import { currentText } from "@/shared/lib/text";
 
@@ -41,6 +43,7 @@ export interface RemoteTeamTransportRef {
 
 interface RemoteTeamTransportProps {
   active: boolean;
+  localTailnetServer?: LocalTailnetServer;
   remoteDesktopSession?: RemoteDesktopSession | null;
   onCloseRemoteDesktop?: (sessionId: string) => Promise<void>;
   directory: RemoteTeamDirectoryClient;
@@ -78,6 +81,7 @@ export const RemoteTeamTransport = forwardRef<RemoteTeamTransportRef, RemoteTeam
   function RemoteTeamTransport(
     {
       active: foreground,
+      localTailnetServer,
       remoteDesktopSession = null,
       onCloseRemoteDesktop,
       directory,
@@ -95,7 +99,19 @@ export const RemoteTeamTransport = forwardRef<RemoteTeamTransportRef, RemoteTeam
     const mailbox = mailboxRef.current;
     // The server of this transport, for support log lines. Requests do not name it.
     const hostIdRef = useRef<string | null>(null);
+    const directClient = useRef<DirectTailnetTeamClient | null>(null);
+    const directGeneration = useRef(0);
+    const callbacks = useRef({ onConnectionUpdate, onTeamEvent });
+    callbacks.current = { onConnectionUpdate, onTeamEvent };
     useEffect(() => () => mailbox.dispose(), [mailbox]);
+    useEffect(
+      () => () => {
+        directGeneration.current += 1;
+        directClient.current?.disconnect();
+        directClient.current = null;
+      },
+      [],
+    );
 
     // Upload progress arrives from the web view by command ID, while the command is still pending.
     const uploadListeners = useRef(new Map<string, (fraction: number) => void>());
@@ -124,10 +140,55 @@ export const RemoteTeamTransport = forwardRef<RemoteTeamTransportRef, RemoteTeam
       () => ({
         connect: async (hostId, hostPublicKey) => {
           hostIdRef.current = hostId;
+          if (localTailnetServer?.hostId === hostId) {
+            directClient.current?.disconnect();
+            const generation = ++directGeneration.current;
+            const client = new DirectTailnetTeamClient(localTailnetServer, {
+              appVersion: Application.nativeApplicationVersion ?? "",
+              randomBytes: (size) => Crypto.getRandomBytes(size),
+            });
+            directClient.current = client;
+            callbacks.current.onConnectionUpdate({ hostId, state: "connecting", message: null });
+            try {
+              await client.connect();
+              await client.openEvents(
+                (event) => callbacks.current.onTeamEvent(hostId, event),
+                () => {
+                  if (generation !== directGeneration.current || directClient.current !== client) return;
+                  directClient.current = null;
+                  callbacks.current.onConnectionUpdate({
+                    hostId,
+                    state: "offline",
+                    message: sourceText("error.remote.desktopOffline"),
+                  });
+                },
+              );
+              if (generation === directGeneration.current && directClient.current === client)
+                callbacks.current.onConnectionUpdate({ hostId, state: "online", message: null });
+            } catch (error) {
+              client.disconnect();
+              if (generation === directGeneration.current && directClient.current === client) {
+                directClient.current = null;
+                callbacks.current.onConnectionUpdate({
+                  hostId,
+                  state: "offline",
+                  message: sourceText("error.remote.serverRequestFailed"),
+                });
+              }
+              throw error;
+            }
+            return;
+          }
           const result = await enqueue({ type: "connect", hostId, hostPublicKey });
           if (!result.ok) throw new Error(result.error ?? currentText().t("mobile.workspace.error.connectFailed"));
         },
         disconnect: async () => {
+          if (localTailnetServer) {
+            directGeneration.current += 1;
+            directClient.current?.disconnect();
+            directClient.current = null;
+            return;
+          }
           const result = await enqueue({ type: "disconnect" });
           if (!result.ok) throw new Error(result.error ?? currentText().t("mobile.workspace.error.disconnectFailed"));
         },
@@ -141,6 +202,27 @@ export const RemoteTeamTransport = forwardRef<RemoteTeamTransportRef, RemoteTeam
         ): Promise<T> => {
           const started = Date.now();
           const innerTimeout = remoteTeamRequestTimeoutMs(method, path);
+          if (localTailnetServer) {
+            const client = directClient.current;
+            if (!client) throw new Error(currentText().t("mobile.workspace.error.transportNotReady"));
+            const request = `${hostIdRef.current ?? "unknown server"} ${method} ${supportLogUrl(path)}`;
+            try {
+              const value = await client.request(method, path, decode, body, upload, onUploadProgress);
+              supportLog.add("info", "connection", `${request} -> 200 (${Date.now() - started} ms)`);
+              return value;
+            } catch (error) {
+              const status =
+                typeof error === "object" && error !== null && "status" in error ? error.status : undefined;
+              supportLog.add(
+                "warn",
+                "connection",
+                `${request} -> ${typeof status === "number" ? status : "failed"} (${Date.now() - started} ms)`,
+              );
+              if (isLiveVoiceRoute(path) && typeof status === "number" && status >= 400 && status < 500)
+                throw new RemoteTeamHttpError(status);
+              throw error;
+            }
+          }
           // Let the peer's route timer return a useful error first. This native timer also recovers
           // if Android's hidden DOM WebView stops processing commands altogether.
           const bridgeTimeout = innerTimeout === undefined ? undefined : innerTimeout + 5_000;
@@ -180,7 +262,7 @@ export const RemoteTeamTransport = forwardRef<RemoteTeamTransportRef, RemoteTeam
           return decode(result.body);
         },
       }),
-      [enqueue],
+      [enqueue, localTailnetServer],
     );
 
     const handleCommandResult = useCallback(
@@ -195,6 +277,7 @@ export const RemoteTeamTransport = forwardRef<RemoteTeamTransportRef, RemoteTeam
         active={foreground}
         commands={commands}
         remoteDesktopSession={remoteDesktopSession}
+        directRemoteDesktop={Boolean(localTailnetServer)}
         remoteDesktopLabels={{
           back: currentText().t("mobile.remoteDesktop.back"),
           connecting: currentText().t("mobile.remoteDesktop.connecting"),

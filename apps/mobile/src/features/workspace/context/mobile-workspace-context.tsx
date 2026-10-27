@@ -36,6 +36,7 @@ import {
   createRemoteReadRefresh,
   createWorkspacePreferences,
   mergeRemoteUnreadIds,
+  RemoteDirectoryError,
   type RemoteRecoveryStatus,
   RemoteTeamDirectoryClient,
   type RemoteTeamHost,
@@ -109,6 +110,12 @@ import {
 import { conversationMessageId, decodeConversationPage } from "@/features/workspace/model/conversation";
 import { MobileConversationStore } from "@/features/workspace/model/conversation-store";
 import { LiveWorkspaceStore } from "@/features/workspace/model/live-workspace-store";
+import { type LocalTailnetServer, pairTailnetInvite } from "@/features/workspace/model/local-tailnet";
+import {
+  readLocalTailnetServers,
+  removeLocalTailnetServer,
+  saveLocalTailnetServer,
+} from "@/features/workspace/model/local-tailnet-store";
 import { applyMobileQueueEvent } from "@/features/workspace/model/queue-cache";
 import { decodeServerOrder, serverAccent, serverOrderKey, sortServers } from "@/features/workspace/model/server-order";
 import { applyServerRecovery, serverKind } from "@/features/workspace/model/server-status";
@@ -191,6 +198,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
   const [serverDirectoryError, setServerDirectoryError] = useState<string | null>(null);
   const serversRef = useRef(servers);
   serversRef.current = servers;
+  const localTailnetHosts = useRef(new Map<string, LocalTailnetServer>());
   const [sidebarByServer, setSidebarByServer] = useState<
     Record<string, { layout: SidebarLayoutSnapshot | null; error: string | null }>
   >({});
@@ -309,6 +317,9 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
             publicKey: previous?.publicKey ?? host.devicePublicKey,
             membershipId: host.membershipId,
             role: host.role,
+            ...(localTailnetHosts.current.has(host.hostId)
+              ? { tailnet: localTailnetHosts.current.get(host.hostId) }
+              : {}),
             ...(host.memberLimit === undefined ? {} : { memberLimit: host.memberLimit }),
           };
         });
@@ -327,6 +338,26 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
     ],
   );
 
+  const installLocalHosts = useCallback(
+    (hosts: LocalTailnetServer[]) => {
+      localTailnetHosts.current = new Map(hosts.map((host) => [host.hostId, host]));
+      installHosts(
+        hosts.map((host) => ({
+          hostId: host.hostId,
+          name: host.name,
+          logoKey: host.logoKey,
+          devicePublicKey: host.publicKey,
+          membershipId: host.membershipId,
+          role: host.role,
+        })),
+      );
+      setActiveServerId((current) =>
+        hosts.some((host) => host.hostId === current) ? current : (hosts[0]?.hostId ?? null),
+      );
+    },
+    [installHosts],
+  );
+
   const directoryRefresh = useMemo(
     () =>
       createRemoteAccountRefresh(() =>
@@ -334,7 +365,34 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
           const generation = ++directoryGeneration.current;
           setServerDirectoryState("loading");
           setServerDirectoryError(null);
-          const hosts = yield* directory.listHosts().pipe(
+          const localHosts = () =>
+            Effect.tryPromise({
+              try: async () => {
+                const hosts = await readLocalTailnetServers();
+                localTailnetHosts.current = new Map(hosts.map((host) => [host.hostId, host]));
+                return hosts.map((host) => ({
+                  hostId: host.hostId,
+                  name: host.name,
+                  logoKey: host.logoKey,
+                  devicePublicKey: host.publicKey,
+                  membershipId: host.membershipId,
+                  role: host.role,
+                }));
+              },
+              catch: (error) => new RemoteDirectoryError(500, error instanceof Error ? error.message : String(error)),
+            });
+          const loadHosts = session.localOnly
+            ? localHosts()
+            : directory
+                .listHosts()
+                .pipe(
+                  Effect.mapError((error) =>
+                    error instanceof RemoteDirectoryError
+                      ? error
+                      : new RemoteDirectoryError(500, error instanceof Error ? error.message : String(error)),
+                  ),
+                );
+          const hosts = yield* loadHosts.pipe(
             Effect.tapError((error) =>
               Effect.sync(() => {
                 if (generation !== directoryGeneration.current) return;
@@ -348,10 +406,16 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
           );
           if (generation !== directoryGeneration.current) return;
           installHosts(hosts);
+          if (session.localOnly) {
+            const localHosts = [...localTailnetHosts.current.values()];
+            setActiveServerId((current) =>
+              localHosts.some((host) => host.hostId === current) ? current : (localHosts[0]?.hostId ?? null),
+            );
+          }
           setServerDirectoryState("ready");
         }),
       ),
-    [directory, installHosts],
+    [directory, installHosts, session.localOnly],
   );
   const refreshHosts = useCallback(() => runTeamEffect(directoryRefresh.refresh(true)), [directoryRefresh]);
   const refreshMemberships = useCallback(() => {
@@ -668,6 +732,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
   // app in the foreground. It connects again when the account server says that it starts.
   const wakeSelectedServer = useCallback(
     (hostId: string) => {
+      if (session.localOnly) return;
       if (!foregroundRef.current || hostId !== activeServerIdRef.current) return;
       void runTeamEffect(wakeHostedServer(hostId)).then((waking) => {
         if (!waking || hostId !== activeServerIdRef.current) return;
@@ -675,7 +740,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
         wakeReconnect.current = setTimeout(() => connections.current.get(hostId)?.refresh(), WAKE_RECONNECT_DELAY_MS);
       });
     },
-    [wakeHostedServer],
+    [wakeHostedServer, session.localOnly],
   );
   /** The last failed attempt of each server that asked for a wake. */
   const wakeAttempts = useRef(new Map<string, number>());
@@ -912,11 +977,12 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
         if (conversationStore.get(event.agentId))
           void loadConversation(event.agentId, serverId, true).catch(() => undefined);
       } else if (event.type === "team-identity") {
-        // The host uploads its logo to the account service under its own version, so that version
-        // is also the directory key that loads the image.
+        // Account-directory logos are loaded from the cloud; local-only hosts use initials.
         setServers((current) =>
           current.map((server) =>
-            server.id === serverId ? { ...server, name: event.serverName, logoKey: event.logoVersion } : server,
+            server.id === serverId
+              ? { ...server, name: event.serverName, logoKey: session.localOnly ? null : event.logoVersion }
+              : server,
           ),
         );
       }
@@ -936,6 +1002,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
       session.user.id,
       sessionScope,
       applyConversationReads,
+      session.localOnly,
     ],
   );
 
@@ -1135,9 +1202,12 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
       },
       leaveServer: async (serverId) => {
         const server = serversRef.current.find((candidate) => candidate.id === serverId);
-        if (!server || server.role === "owner")
+        if (!server || (!session.localOnly && server.role === "owner"))
           throw new Error(currentText().t("mobile.workspace.error.leaveOwnServer"));
-        await runTeamEffect(directory.leaveHost(server.id, server.membershipId));
+        if (session.localOnly) {
+          await removeLocalTailnetServer(server.id);
+          localTailnetHosts.current.delete(server.id);
+        } else await runTeamEffect(directory.leaveHost(server.id, server.membershipId));
         removedServers.current.add(serverId);
         readRefresh.invalidate(serverId);
         directoryGeneration.current += 1;
@@ -1146,9 +1216,10 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
         setServerDirectoryError(null);
         const removedIds = serverAgentIds.current.get(serverId) ?? new Set<string>();
         serverAgentIds.current.delete(serverId);
-        if (activeServerId === serverId) {
+        if (activeServerIdRef.current === serverId) {
           loadGeneration.current += 1;
-          setActiveServerId(session.host?.hostId ?? null);
+          const nextServer = serversRef.current.find((candidate) => candidate.id !== serverId);
+          setActiveServerId(nextServer?.id ?? null);
         }
         setServers((current) => current.filter((candidate) => candidate.id !== serverId));
         setSidebarByServer((current) => Object.fromEntries(Object.entries(current).filter(([id]) => id !== serverId)));
@@ -1180,17 +1251,31 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
           setServers((current) =>
             current.map((candidate) => (candidate.id === serverId ? { ...candidate, name: serverName } : candidate)),
           );
+          if (session.localOnly && server.tailnet)
+            await saveLocalTailnetServer({ ...server.tailnet, name: serverName });
         }
-        // The host has written the name and logo to the account service; read the new logo key.
-        // A new generation drops a directory read that started before the save, and the refresh
-        // reads again after it. The change is saved, so a failed read must not report a failure.
-        await refreshMemberships().catch(() => undefined);
+        // Account-backed memberships refresh their directory metadata after a host identity change.
+        if (!session.localOnly) await refreshMemberships().catch(() => undefined);
       },
       refreshServers: async () => {
         for (const connection of connections.current.values()) connection.refresh();
         await refreshHosts();
       },
       addRemoteServer: async ({ inviteUrl }) => {
+        if (session.localOnly) {
+          const host = await pairTailnetInvite(inviteUrl, {
+            randomBytes: (size) => Crypto.getRandomBytes(size),
+          });
+          await saveLocalTailnetServer(host);
+          const localHosts = await readLocalTailnetServers();
+          directoryGeneration.current += 1;
+          directoryRefresh.invalidate();
+          setServerDirectoryState("ready");
+          setServerDirectoryError(null);
+          removedServers.current.delete(host.hostId);
+          installLocalHosts(localHosts);
+          return host.hostId;
+        }
         const host = await runTeamEffect(directory.acceptInvite(inviteUrl));
         directoryGeneration.current += 1;
         directoryRefresh.invalidate();
@@ -1506,7 +1591,8 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
     servers,
     orderedServers,
     orderKey,
-    session.host,
+    installLocalHosts,
+    session.localOnly,
     session.apiUrl,
     session.user.id,
     sessionScope,
@@ -1527,6 +1613,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
             key={server.id}
             hostId={server.id}
             publicKey={server.publicKey}
+            localTailnetServer={server.tailnet}
             active={foreground}
             remoteDesktopSession={remoteDesktopSession?.serverId === server.id ? remoteDesktopSession.session : null}
             onCloseRemoteDesktop={(sessionId) => closeRemoteDesktop(server.id, sessionId)}

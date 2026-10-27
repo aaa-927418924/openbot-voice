@@ -89,7 +89,12 @@ import { RemoteEventStream } from "./remote-server-event-stream";
 import { reconcileWebRtcHosts } from "./remote-server-host-directory";
 import { requestJson } from "./remote-server-http";
 import { RemotePresenceCache } from "./remote-server-presence";
-import { RemoteServerStore, type TokenCipher } from "./remote-server-store";
+import {
+  type RemoteServerDirectory,
+  RemoteServerStore,
+  type StoredRemoteServerView,
+  type TokenCipher,
+} from "./remote-server-store";
 import type { StoredRemoteServer } from "./remote-server-stored-shape";
 import { remoteServerSummaries } from "./remote-server-summaries";
 import { addRemotePreviewUrls, isLocalDevelopmentApi, pageQuery } from "./remote-server-urls";
@@ -117,6 +122,42 @@ interface RemoteServerEvents {
   presence: [serverId: string, snapshot: TeamPresenceSnapshot];
   directMessage: [serverId: string, event: DirectMessageRealtimeEvent];
   directTyping: [serverId: string, event: DirectTypingRealtimeEvent];
+}
+
+class LocalTailnetRemoteServerDirectory implements RemoteServerDirectory {
+  readonly #store: RemoteServerStore;
+
+  constructor(store: RemoteServerStore) {
+    this.#store = store;
+  }
+
+  get activeServerId(): string {
+    const activeServerId = this.#store.activeServerId;
+    return activeServerId === LOCAL_SERVER_ID || this.has(activeServerId) ? activeServerId : LOCAL_SERVER_ID;
+  }
+
+  get servers(): readonly StoredRemoteServerView[] {
+    return this.#store.servers.filter((server) => isTailscaleApiUrl(server.apiUrl));
+  }
+
+  require(serverId: string): StoredRemoteServerView {
+    const server = this.find(serverId);
+    if (!server) throw new Error(sourceText("error.remote.serverNotFound"));
+    return server;
+  }
+
+  find(serverId: string): StoredRemoteServerView | null {
+    const server = this.#store.find(serverId);
+    return server && isTailscaleApiUrl(server.apiUrl) ? server : null;
+  }
+
+  has(serverId: string): boolean {
+    return this.find(serverId) !== null;
+  }
+
+  token(server: StoredRemoteServerView): string {
+    return this.#store.token(this.require(server.id));
+  }
 }
 
 interface CentralAccountSession {
@@ -180,6 +221,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   readonly #operations = new Set<Deferred.Deferred<void>>();
   #stopping: Deferred.Deferred<void, RemoteWorkflowError> | null = null;
   readonly #store: RemoteServerStore;
+  readonly #servers: RemoteServerDirectory;
   readonly #connections: RemoteServerConnections;
   readonly #client: RemoteServerClient;
   readonly #refresh: RemoteEventRefresh;
@@ -217,6 +259,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   ) {
     super();
     this.#store = new RemoteServerStore({ path, cipher });
+    this.#localOnlyNetworking = options.localOnlyNetworking ?? false;
+    this.#servers = this.#localOnlyNetworking ? new LocalTailnetRemoteServerDirectory(this.#store) : this.#store;
     this.#appVersion = options.appVersion ?? null;
     this.#connections = new RemoteServerConnections({
       appVersion: this.#appVersion,
@@ -227,18 +271,17 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     });
     this.#centralAccount = centralAccount;
     this.#allowLocalDevelopmentInvites = options.allowLocalDevelopmentInvites ?? false;
-    this.#localOnlyNetworking = options.localOnlyNetworking ?? false;
     this.#inviteLinks = {
       allowLocalDevelopmentApiUrl: this.#allowLocalDevelopmentInvites,
       allowTailscaleApiUrl: options.allowTailscaleApiUrl ?? false,
       selfHostedApiOrigin: options.selfHostedApiOrigin,
     };
-    this.#webrtcTransport = options.webrtcTransport ?? null;
+    this.#webrtcTransport = this.#localOnlyNetworking ? null : (options.webrtcTransport ?? null);
     this.#getLocalHostId = options.getLocalHostId ?? (() => null);
     this.#hostedServers = options.hostedServers ?? null;
     this.#client = new RemoteServerClient({
       appVersion: this.#appVersion,
-      servers: this.#store,
+      servers: this.#servers,
       connections: this.#connections,
       transport: this.#webrtcTransport,
     });
@@ -250,7 +293,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     );
     this.#refresh = new RemoteEventRefresh({
       request: (serverId, path, decoder, init) => this.#client.request(serverId, path, decoder, init),
-      hasServer: (serverId) => this.#store.has(serverId),
+      hasServer: (serverId) => this.#servers.has(serverId),
       emit: (serverId, event, bufferedLive) =>
         bufferedLive ? this.emit("agent", serverId, event, true) : this.emit("agent", serverId, event),
     });
@@ -259,7 +302,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       onSnapshot: (serverId, snapshot) => this.emit("presence", serverId, snapshot),
     });
     this.#team = new RemoteTeamDirectory({
-      servers: this.#store,
+      servers: this.#servers,
       request: (serverId, path, decoder, init) => this.#client.request(serverId, path, decoder, init),
       transport: this.#webrtcTransport,
       sendInviteEmail: (input) => {
@@ -270,7 +313,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     });
     this.#events = new RemoteEventStream({
       appVersion: this.#appVersion,
-      servers: this.#store,
+      servers: this.#servers,
       client: this.#client,
       connections: this.#connections,
       agents: this.#refresh,
@@ -299,7 +342,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       this.#hostedStartExpired.delete(serverId);
       this.#connections.markConnected(serverId);
       this.#emitChanged();
-      const server = this.#store.find(serverId);
+      const server = this.#servers.find(serverId);
       this.#background(
         this.#owned(
           Effect.gen({ self: this }, function* () {
@@ -350,7 +393,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         Effect.runFork(
           this.#checkHostedServer(
             serverId,
-            !this.#hostedStartExpired.has(serverId) && this.#appFocused && serverId === this.#store.activeServerId,
+            !this.#hostedStartExpired.has(serverId) && this.#appFocused && serverId === this.#servers.activeServerId,
           ),
         );
       }
@@ -384,7 +427,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
   #suspendServer(serverId: string): void {
     this.#events.suspendReconnect(serverId);
-    if (this.#store.find(serverId)?.transport !== "webrtc-v2") return;
+    if (this.#servers.find(serverId)?.transport !== "webrtc-v2") return;
     const transport = this.#webrtcTransport;
     if (transport) this.#background(this.#owned(transport.disconnect(serverId).pipe(Effect.catch(() => Effect.void))));
   }
@@ -422,8 +465,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
       yield* this.#store.load();
       this.#scheduleMuteExpiry();
-      if (transport) yield* this.#syncWebRtcHosts().pipe(Effect.catch(() => Effect.void));
-      for (const server of this.#store.servers) {
+      if (transport && !this.#localOnlyNetworking) yield* this.#syncWebRtcHosts().pipe(Effect.catch(() => Effect.void));
+      for (const server of this.#servers.servers) {
         this.#connections.setState(server.id, "offline");
         if (server.transport === "webrtc-v2") this.#connections.startCheckingCompatibility(server.id);
       }
@@ -433,8 +476,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
   list(): ServerSummary[] {
     return remoteServerSummaries(
-      this.#store.servers.filter((server) => !this.#localOnlyNetworking || isTailscaleApiUrl(server.apiUrl)),
-      this.#store.activeServerId,
+      this.#servers.servers,
+      this.#servers.activeServerId,
       (serverId) => this.#connections.statusFor(serverId),
       this.#localMemberLimit,
     ).map((server) => {
@@ -489,7 +532,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   ).bind(this);
 
   get activeServerId(): string {
-    return this.#store.activeServerId;
+    return this.#servers.activeServerId;
   }
 
   // What the host on the other end negotiated it can do. An IPC handler asks before calling a route
@@ -516,7 +559,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   readonly #selectEffect = Effect.fn("RemoteManager.select")(function* (this: RemoteServerManager, serverId: string) {
-    if (serverId !== LOCAL_SERVER_ID && !this.#store.has(serverId))
+    if (serverId !== LOCAL_SERVER_ID && !this.#servers.has(serverId))
       return yield* new RemoteWorkflowError({ cause: new Error(sourceText("error.remote.serverNotFound")) });
     const previousSelection = this.#store.selection;
     const selectionRevision = this.#store.setActiveServerId(serverId);
@@ -589,7 +632,25 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       this: RemoteServerManager,
       serverIds: string[],
     ): Effect.fn.Return<ServerSummary[], RemoteWorkflowError, RemoteRequest> {
-      if (yield* this.#store.reorder(serverIds)) this.#emitChanged();
+      let order = serverIds;
+      if (this.#localOnlyNetworking) {
+        const visibleIds = new Set(this.#servers.servers.map((server) => server.id));
+        if (
+          serverIds.length !== visibleIds.size ||
+          new Set(serverIds).size !== visibleIds.size ||
+          serverIds.some((id) => !visibleIds.has(id))
+        ) {
+          return yield* new RemoteWorkflowError({ cause: new Error("The server order is incomplete.") });
+        }
+        const reordered = [...serverIds];
+        let reorderedIndex = 0;
+        order = this.#store.servers.map((server) => {
+          if (!visibleIds.has(server.id)) return server.id;
+          const nextId = reordered[reorderedIndex++];
+          return nextId ?? server.id;
+        });
+      }
+      if (yield* this.#store.reorder(order)) this.#emitChanged();
       return this.list();
     },
     (operation) => this.#owned(operation),
@@ -620,7 +681,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
           });
         yield* this.#store.unhideHost(accepted.hostId);
         yield* this.#syncWebRtcHosts();
-        const synchronized = this.#store.find(accepted.hostId);
+        const synchronized = this.#servers.find(accepted.hostId);
         if (!synchronized || synchronized.fingerprint !== invite.fingerprint) {
           return yield* new RemoteWorkflowError({
             cause: new Error(sourceText("error.remote.inviteIdentityChanged")),
@@ -712,12 +773,15 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       this: RemoteServerManager,
       input: DevelopmentRemoteServerConnection,
     ): Effect.fn.Return<ServerSummary, RemoteWorkflowError, RemoteRequest> {
+      if (this.#localOnlyNetworking && !isTailscaleApiUrl(input.apiUrl)) {
+        return yield* new RemoteWorkflowError({ cause: new Error("Tailscale addresses only") });
+      }
       // A published dev host answers over WebRTC, and that membership belongs to an account the
       // control plane keeps across restarts. The technical member this connection carries does not:
       // publishing reconciles it away, so adopting an HTTP entry over the WebRTC one -- same host, so
       // same id -- would replace a working server with one the host answers 401 to. The host role
       // writes the file either way; which of the two connections wins is decided here.
-      const adopted = this.#store.find(input.serverId);
+      const adopted = this.#servers.find(input.serverId);
       if (adopted?.transport === "webrtc-v2")
         return yield* remoteDecode(() => requiredServerSummary(this.list(), input.serverId));
       const verifiedIdentity = yield* this.#client.verifyIdentity(input.apiUrl, input.serverId, input.fingerprint);
@@ -810,7 +874,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       this: RemoteServerManager,
       input: LoginServerInput,
     ): Effect.fn.Return<ServerSummary, RemoteWorkflowError, RemoteRequest> {
-      const server = yield* remoteDecode(() => this.#store.require(input.serverId));
+      const server = yield* remoteDecode(() => this.#servers.require(input.serverId));
       this.#connections.setState(server.id, "connecting");
       this.#emitChanged();
       const attempt0 = yield* Effect.gen({ self: this }, function* () {
@@ -884,7 +948,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     ): Effect.fn.Return<ServerSummary, RemoteWorkflowError, RemoteRequest> {
       const transport = this.#webrtcTransport;
 
-      const server = yield* remoteDecode(() => this.#store.require(serverId));
+      const server = yield* remoteDecode(() => this.#servers.require(serverId));
       const blockedState = this.#connections.hasIssue(serverId)
         ? (this.#connections.stateFor(serverId) ?? "error")
         : "error";
@@ -937,7 +1001,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
       if (serverId === LOCAL_SERVER_ID)
         return yield* new RemoteWorkflowError({ cause: new Error(sourceText("error.remote.localServerRemove")) });
-      const server = this.#store.find(serverId);
+      const server = this.#servers.find(serverId);
       // An owner cannot leave their own host, so the account service keeps listing it. Hiding it is
       // what makes the removal survive the next directory sync.
       let hideHost = false;
@@ -971,7 +1035,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
    * until it answers. The account client calls it for each wake, also one from settings.
    */
   hostedServerStarting(serverId: string): void {
-    if (!this.#store.has(serverId) || this.#connections.stateFor(serverId) === "online") return;
+    if (!this.#servers.has(serverId) || this.#connections.stateFor(serverId) === "online") return;
     // Automatic wakes stop after an expired start, so this wake came from the user.
     this.#hostedStartExpired.delete(serverId);
     this.#hostedStartAt.set(serverId, Date.now());
@@ -1004,7 +1068,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     if (!hosted) return;
     const availability = yield* hosted.unavailable(serverId, wake);
     // A later wake or connection owns the current state.
-    if (availability === "waking" || this.#hostedStartAt.has(serverId) || !this.#store.has(serverId)) return;
+    if (availability === "waking" || this.#hostedStartAt.has(serverId) || !this.#servers.has(serverId)) return;
     if (this.#connections.stateFor(serverId) === "online") return;
     if (this.#connections.setHostedSleep(serverId, availability === "sleeping" ? "sleeping" : null))
       this.#emitChanged();
@@ -1051,7 +1115,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     function* (
       this: RemoteServerManager,
       agentId: string,
-      serverId = this.#store.activeServerId,
+      serverId = this.#servers.activeServerId,
     ): Effect.fn.Return<DuplicateAgentResult, RemoteWorkflowError, RemoteRequest> {
       const key = `${serverId}\0${agentId}`;
       const operationId = this.#duplicateOperationIds.get(key) ?? randomUUID();
@@ -1080,14 +1144,14 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   ).bind(this);
 
   listAgentConversationReads(
-    serverId = this.#store.activeServerId,
+    serverId = this.#servers.activeServerId,
   ): Effect.Effect<Record<string, ConversationReadState>, RemoteWorkflowError> {
     return this.request(serverId, TEAM_API_ROUTES.agents.conversationReads, decodeConversationReadStates);
   }
 
   readAgentConversation(
     agentId: string,
-    serverId = this.#store.activeServerId,
+    serverId = this.#servers.activeServerId,
   ): Effect.Effect<ConversationWithReadState, RemoteWorkflowError> {
     return this.request(serverId, TEAM_API_ROUTES.agent.conversation(agentId), decodeConversationWithReadState);
   }
@@ -1096,7 +1160,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     agentId: string,
     anchor: ConversationPageAnchor = { type: "latest" },
     limit = 50,
-    serverId = this.#store.activeServerId,
+    serverId = this.#servers.activeServerId,
   ): Effect.Effect<ConversationPage, RemoteWorkflowError> {
     return this.request(
       serverId,
@@ -1110,7 +1174,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     agentId?: string,
     cursor?: string,
     limit = 100,
-    serverId = this.#store.activeServerId,
+    serverId = this.#servers.activeServerId,
   ): Effect.Effect<ConversationSearchPage, RemoteWorkflowError> {
     const parameters = new URLSearchParams({ q: query, limit: String(limit) });
     // A query parameter never reaches the JSON adapters, so it keeps the released spelling.
@@ -1125,7 +1189,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
   markAgentConversationRead(
     input: MarkConversationReadInput,
-    serverId = this.#store.activeServerId,
+    serverId = this.#servers.activeServerId,
   ): Effect.Effect<ConversationReadState, RemoteWorkflowError> {
     return this.request(serverId, TEAM_API_ROUTES.agent.conversationRead(input.agentId), decodeConversationReadState, {
       method: "POST",
@@ -1133,7 +1197,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     });
   }
 
-  getPresence(serverId = this.#store.activeServerId): TeamPresenceSnapshot {
+  getPresence(serverId = this.#servers.activeServerId): TeamPresenceSnapshot {
     return this.#presence.get(serverId);
   }
 
@@ -1148,7 +1212,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     ): Effect.fn.Return<ServerSummary, RemoteWorkflowError, RemoteRequest> {
       const transport = this.#webrtcTransport;
 
-      const server = yield* remoteDecode(() => this.#store.require(serverId));
+      const server = yield* remoteDecode(() => this.#servers.require(serverId));
       if (server.transport === "webrtc-v2" && transport) {
         yield* this.#syncWebRtcHosts();
         this.#connections.clearCompatibility(serverId);
@@ -1197,9 +1261,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   readonly setTyping = Effect.fn("RemoteManager.setTyping")(function* (
     this: RemoteServerManager,
     input: SetTeamTypingInput,
-    serverId = this.#store.activeServerId,
+    serverId = this.#servers.activeServerId,
   ) {
-    const server = this.#store.find(serverId);
+    const server = this.#servers.find(serverId);
     if (server?.transport === "webrtc-v2") {
       const transport = this.#webrtcTransport;
       if (transport)
@@ -1212,13 +1276,15 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     this.#events.send(serverId, { type: "team-typing", ...input });
   }).bind(this);
 
-  listDirectThreads(serverId = this.#store.activeServerId): Effect.Effect<DirectThreadSummary[], RemoteWorkflowError> {
+  listDirectThreads(
+    serverId = this.#servers.activeServerId,
+  ): Effect.Effect<DirectThreadSummary[], RemoteWorkflowError> {
     return this.request(serverId, TEAM_API_ROUTES.direct.threads, decodeDirectThreadSummaries);
   }
 
   readDirectConversation(
     memberId: string,
-    serverId = this.#store.activeServerId,
+    serverId = this.#servers.activeServerId,
   ): Effect.Effect<DirectConversationSnapshot, RemoteWorkflowError> {
     return this.request(serverId, TEAM_API_ROUTES.direct.conversation(memberId), decodeDirectConversationSnapshot);
   }
@@ -1227,7 +1293,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     memberId: string,
     anchor: DirectConversationPageAnchor = { type: "latest" },
     limit = 50,
-    serverId = this.#store.activeServerId,
+    serverId = this.#servers.activeServerId,
   ): Effect.Effect<DirectConversationPage, RemoteWorkflowError> {
     return this.request(
       serverId,
@@ -1238,7 +1304,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
   sendDirectMessage(
     input: SendDirectMessageInput,
-    serverId = this.#store.activeServerId,
+    serverId = this.#servers.activeServerId,
   ): Effect.Effect<DirectMessage, RemoteWorkflowError> {
     return this.request(serverId, TEAM_API_ROUTES.direct.messages, decodeDirectMessage, {
       method: "POST",
@@ -1248,7 +1314,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
   markDirectRead(
     input: MarkDirectReadInput,
-    serverId = this.#store.activeServerId,
+    serverId = this.#servers.activeServerId,
   ): Effect.Effect<DirectConversationReadState, RemoteWorkflowError> {
     return this.request(
       serverId,
@@ -1261,9 +1327,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   readonly setDirectTyping = Effect.fn("RemoteManager.setDirectTyping")(function* (
     this: RemoteServerManager,
     input: DirectTypingInput,
-    serverId = this.#store.activeServerId,
+    serverId = this.#servers.activeServerId,
   ) {
-    const server = this.#store.find(serverId);
+    const server = this.#servers.find(serverId);
     if (server?.transport === "webrtc-v2") {
       const transport = this.#webrtcTransport;
       if (transport)
@@ -1311,7 +1377,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         method: "POST",
         body: {},
       });
-      if ((yield* remoteDecode(() => this.#store.require(serverId))).transport !== "webrtc-v2") return session;
+      if ((yield* remoteDecode(() => this.#servers.require(serverId))).transport !== "webrtc-v2") return session;
       if (!viewerProxy)
         return yield* new RemoteWorkflowError({
           cause: new Error(sourceText("error.remote.viewerProxyUnavailable")),
@@ -1331,7 +1397,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       path: string,
       init: RequestInit,
     ): Effect.fn.Return<Response, RemoteWorkflowError, RemoteRequest> {
-      const server = yield* remoteDecode(() => this.#store.require(serverId));
+      const server = yield* remoteDecode(() => this.#servers.require(serverId));
       if (server.transport !== "webrtc-v2")
         return yield* new RemoteWorkflowError({
           cause: new Error(sourceText("error.remote.viewerTransportInvalid")),
@@ -1355,7 +1421,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     ): Effect.fn.Return<{ sessionId: string; url: string; protocols: string[] }, RemoteWorkflowError, RemoteRequest> {
       const viewerProxy = this.#remoteViewerProxy;
 
-      const server = yield* remoteDecode(() => this.#store.require(serverId));
+      const server = yield* remoteDecode(() => this.#servers.require(serverId));
       const session = yield* this.request(
         serverId,
         TEAM_API_ROUTES.browser.viewSessions,
@@ -1411,9 +1477,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       name: string,
       mimeType: string,
       bytes: Uint8Array,
-      serverId = this.#store.activeServerId,
+      serverId = this.#servers.activeServerId,
     ): Effect.fn.Return<DraftAttachment, RemoteWorkflowError, RemoteRequest> {
-      const server = yield* remoteDecode(() => this.#store.require(serverId));
+      const server = yield* remoteDecode(() => this.#servers.require(serverId));
       const url = new URL(TEAM_API_ROUTES.attachments, server.apiUrl);
       url.searchParams.set("name", name);
       url.searchParams.set("mime", mimeType || "application/octet-stream");
@@ -1443,7 +1509,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       serverId: string,
       bytes: Uint8Array,
     ): Effect.fn.Return<AgentImportPreview, RemoteWorkflowError, RemoteRequest> {
-      const server = yield* remoteDecode(() => this.#store.require(serverId));
+      const server = yield* remoteDecode(() => this.#servers.require(serverId));
       const url = new URL(AGENT_IMPORT_ROUTES.stage, server.apiUrl);
       const response = yield* this.#client.fetch(
         server,
@@ -1463,9 +1529,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       this: RemoteServerManager,
       agentId: string,
       image: AvatarImageInput | null,
-      serverId = this.#store.activeServerId,
+      serverId = this.#servers.activeServerId,
     ): Effect.fn.Return<AgentSummary, RemoteWorkflowError, RemoteRequest> {
-      const server = yield* remoteDecode(() => this.#store.require(serverId));
+      const server = yield* remoteDecode(() => this.#servers.require(serverId));
       const url = new URL(TEAM_API_ROUTES.agent.avatar(agentId), server.apiUrl);
       const headers = new Headers();
       if (image) headers.set("Content-Type", image.mimeType);
@@ -1487,10 +1553,10 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     function* (
       this: RemoteServerManager,
       agentId: string,
-      serverId = this.#store.activeServerId,
+      serverId = this.#servers.activeServerId,
       version?: string,
     ): Effect.fn.Return<{ bytes: Uint8Array; mimeType: string }, RemoteWorkflowError, RemoteRequest> {
-      const server = yield* remoteDecode(() => this.#store.require(serverId));
+      const server = yield* remoteDecode(() => this.#servers.require(serverId));
       const url = new URL(TEAM_API_ROUTES.agent.avatar(agentId), server.apiUrl);
       if (version) url.searchParams.set("v", version);
       const response = yield* this.#client.fetch(server, url);
@@ -1510,7 +1576,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     ): Effect.fn.Return<{ bytes: Uint8Array; mimeType: string }, RemoteWorkflowError, RemoteRequest> {
       const transport = this.#webrtcTransport;
 
-      const server = yield* remoteDecode(() => this.#store.require(serverId));
+      const server = yield* remoteDecode(() => this.#servers.require(serverId));
       if (server.logoVersion !== version)
         return yield* new RemoteWorkflowError({ cause: new Error("Server logo version is not current.") });
       if (server.transport === "webrtc-v2" && transport) {
@@ -1535,9 +1601,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     function* (
       this: RemoteServerManager,
       attachmentId: string,
-      serverId = this.#store.activeServerId,
+      serverId = this.#servers.activeServerId,
     ): Effect.fn.Return<RemoteAttachment, RemoteWorkflowError, RemoteRequest> {
-      const server = yield* remoteDecode(() => this.#store.require(serverId));
+      const server = yield* remoteDecode(() => this.#servers.require(serverId));
       return yield* this.#attachments.get(server.id, attachmentId, () =>
         this.#owned(
           Effect.gen({ self: this }, function* () {
@@ -1561,9 +1627,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     function* (
       this: RemoteServerManager,
       sharedPath: string,
-      serverId = this.#store.activeServerId,
+      serverId = this.#servers.activeServerId,
     ): Effect.fn.Return<{ bytes: Uint8Array; name: string }, RemoteWorkflowError, RemoteRequest> {
-      const server = yield* remoteDecode(() => this.#store.require(serverId));
+      const server = yield* remoteDecode(() => this.#servers.require(serverId));
       const url = new URL(TEAM_API_ROUTES.sharedFiles, server.apiUrl);
       url.searchParams.set("path", sharedPath);
       const response = yield* this.#client.fetch(server, url);
@@ -1580,9 +1646,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       this: RemoteServerManager,
       agentId: string,
       workspacePath: string,
-      serverId = this.#store.activeServerId,
+      serverId = this.#servers.activeServerId,
     ): Effect.fn.Return<{ bytes: Uint8Array; name: string }, RemoteWorkflowError, RemoteRequest> {
-      const server = yield* remoteDecode(() => this.#store.require(serverId));
+      const server = yield* remoteDecode(() => this.#servers.require(serverId));
       const url = new URL(TEAM_API_ROUTES.workspaceFiles, server.apiUrl);
       // A query parameter never reaches the JSON adapters, so it keeps the released spelling.
       url.searchParams.set("botId", agentId);
@@ -1628,7 +1694,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       this.#attachments.clear();
       if (!transport) return;
       yield* Effect.forEach(
-        this.#store.servers.filter((server) => server.transport === "webrtc-v2"),
+        this.#servers.servers.filter((server) => server.transport === "webrtc-v2"),
         (server) => transport.disconnect(server.id),
         { concurrency: "unbounded", discard: true },
       );

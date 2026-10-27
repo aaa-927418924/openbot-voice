@@ -23,6 +23,7 @@ interface RemoteTeamBridgeProps extends RemoteTeamPeerActions {
   active: boolean;
   onCommandResult: (result: RemoteTeamCommandResult) => Promise<void>;
   remoteDesktopSession?: RemoteDesktopSession | null;
+  directRemoteDesktop?: boolean;
   remoteDesktopLabels?: { back: string; connecting: string; title: string };
   onCloseRemoteDesktop?: (sessionId: string) => Promise<void>;
   dom?: import("expo/dom").DOMProps;
@@ -89,6 +90,7 @@ export default function RemoteTeamBridge({
   active,
   onCommandResult,
   remoteDesktopSession = null,
+  directRemoteDesktop = false,
   remoteDesktopLabels = { back: "Back", connecting: "Connecting…", title: "Remote desktop" },
   onCloseRemoteDesktop,
   ...callbacks
@@ -101,10 +103,11 @@ export default function RemoteTeamBridge({
   const viewerUrl = useMemo(() => {
     if (!remoteDesktopSession) return null;
     const url = new URL(remoteDesktopSession.viewerUrl);
-    url.searchParams.set("openbotRelay", "1");
+    if (!directRemoteDesktop) url.searchParams.set("openbotRelay", "1");
+    else url.searchParams.delete("openbotRelay");
     url.hash = remoteDesktopSession.viewerGrant;
     return url.toString();
-  }, [remoteDesktopSession]);
+  }, [directRemoteDesktop, remoteDesktopSession]);
 
   const sendViewerMessage = useCallback((message: ViewerSocketMessage) => {
     const session = viewerSession.current;

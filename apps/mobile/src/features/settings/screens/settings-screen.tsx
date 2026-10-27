@@ -15,7 +15,7 @@ export function SettingsScreen() {
       <SettingsSection>
         <SettingsRow
           onPress={() => router.push("/settings/profile")}
-          supportingText={session?.user.email}
+          supportingText={session?.localOnly ? undefined : session?.user.email}
           leading={
             <ProfileAvatar
               neutral
