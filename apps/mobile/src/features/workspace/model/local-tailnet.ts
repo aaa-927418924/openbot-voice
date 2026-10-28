@@ -372,7 +372,12 @@ export class DirectTailnetTeamClient {
   ): Promise<void> {
     const url = new URL(TEAM_API_ROUTES.events, this.#server.apiUrl);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-    const socket = new WebSocket(url, [TEAM_PROTOCOL_V1_WEBSOCKET, `openbot-token.${this.#server.sessionToken}`]);
+    // React Native's native WebSocket bridge requires a string URL. The browser implementation
+    // accepts URL objects, but Android's HostFunction rejects them before the socket can open.
+    const socket = new WebSocket(url.toString(), [
+      TEAM_PROTOCOL_V1_WEBSOCKET,
+      `openbot-token.${this.#server.sessionToken}`,
+    ]);
     this.#events = socket;
     const diagnostic = (
       phase: LocalTailnetSocketDiagnostic["phase"],

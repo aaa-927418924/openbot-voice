@@ -25,11 +25,13 @@ const randomBytes = (size: number) => new Uint8Array(size).fill(7);
 
 class FakeTailnetSocket extends EventTarget {
   static instance: FakeTailnetSocket | null = null;
+  static constructedUrl: string | null = null;
   readyState = 0;
   protocol = "";
 
-  constructor(_url: string | URL, _protocols?: string | string[]) {
+  constructor(url: string, _protocols?: string | string[]) {
     super();
+    FakeTailnetSocket.constructedUrl = url;
     FakeTailnetSocket.instance = this;
   }
 
@@ -170,6 +172,7 @@ describe("Android direct Tailscale pairing", () => {
 
   it("rejects an event socket that closes before opening and records safe connection details", async () => {
     vi.stubGlobal("WebSocket", FakeTailnetSocket);
+    FakeTailnetSocket.constructedUrl = null;
     const sessionToken = "private-session-token";
     const client = new DirectTailnetTeamClient(
       {
@@ -193,6 +196,7 @@ describe("Android direct Tailscale pairing", () => {
       (entry) => diagnostics.push(entry),
     );
 
+    expect(FakeTailnetSocket.constructedUrl).toBe("ws://100.100.10.2:43123/v1/events");
     FakeTailnetSocket.instance?.closeBeforeOpen(1006, false);
 
     await expect(opening).rejects.toThrow("event connection failed");
