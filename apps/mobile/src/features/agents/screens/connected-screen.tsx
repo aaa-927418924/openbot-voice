@@ -1,11 +1,10 @@
-import { type MenuAction, MenuView } from "@expo/ui/community/menu";
 import type { SidebarLayoutSnapshot } from "@openbot/contracts/ipc";
 import { type Href, router, Stack } from "expo-router";
 import { Button, Typography } from "heroui-native";
 import { useThemeColor } from "heroui-native/hooks";
 import { Bot, Layers3, Plus, Search, WifiOff } from "lucide-react-native";
 import { useContext, useLayoutEffect, useMemo, useState } from "react";
-import { Pressable, View } from "react-native";
+import { Modal, Pressable, View } from "react-native";
 import Animated, {
   cancelAnimation,
   Easing,
@@ -182,6 +181,7 @@ export function ConnectedScreen() {
     servers,
   } = useMobileWorkspace();
   const [collapsedByServer, setCollapsedByServer] = useState<Record<string, ReadonlySet<string>>>({});
+  const [optionsOpen, setOptionsOpen] = useState(false);
   const collapsedSectionIds = collapsedByServer[activeServer.id];
   const channels = useChannels(activeServer.id);
   const channelAgents = useMemo(
@@ -245,7 +245,7 @@ export function ConnectedScreen() {
     }
     return ids;
   }, [items, collapsedSectionIds]);
-  const optionsActions = useMemo<MenuAction[]>(
+  const optionsActions = useMemo(
     () => [
       { id: "add-agent", title: t("mobile.agent.home.addAgent") },
       ...(sidebar?.layout ? [{ id: "add-section", title: t("mobile.agent.sectionForm.newTitle") }] : []),
@@ -254,6 +254,14 @@ export function ConnectedScreen() {
     ],
     [hasHiddenChats, channels.supported, sidebar?.layout, t],
   );
+  const selectOptionsAction = (action: string) => {
+    setOptionsOpen(false);
+    void haptics.impact("soft");
+    if (action === "add-section") router.push({ pathname: "/section-form", params: { serverId: activeServer.id } });
+    if (action === "add-agent") router.push("/add-agent");
+    if (action === "add-channel") router.push({ pathname: "/add-channel", params: { serverId: activeServer.id } });
+    if (action === "hidden-chats") router.push("/hidden-chats");
+  };
 
   return (
     <View className="flex-1 bg-background" onLayout={() => reportContentReady()}>
@@ -432,27 +440,12 @@ export function ConnectedScreen() {
                   >
                     <Search color={iconColor} size={22} strokeWidth={1.9} />
                   </HeaderIconButton>
-                  <MenuView
-                    actions={optionsActions}
-                    onPressAction={(event) => {
-                      if (event.nativeEvent.event === "add-section")
-                        router.push({ pathname: "/section-form", params: { serverId: activeServer.id } });
-                      if (event.nativeEvent.event === "add-agent") router.push("/add-agent");
-                      if (event.nativeEvent.event === "add-channel")
-                        router.push({ pathname: "/add-channel", params: { serverId: activeServer.id } });
-                      if (event.nativeEvent.event === "hidden-chats") router.push("/hidden-chats");
-                    }}
-                    style={{ height: 44, width: 44 }}
+                  <HeaderIconButton
+                    accessibilityLabel={t("mobile.agent.home.chatOptions")}
+                    onPress={() => setOptionsOpen(true)}
                   >
-                    <View
-                      accessibilityLabel={t("mobile.agent.home.chatOptions")}
-                      accessibilityRole="button"
-                      accessible
-                      className="size-11 items-center justify-center rounded-full"
-                    >
-                      <Plus color={iconColor} size={24} strokeWidth={1.9} />
-                    </View>
-                  </MenuView>
+                    <Plus color={iconColor} size={24} strokeWidth={1.9} />
+                  </HeaderIconButton>
                 </View>
               )
             : undefined,
@@ -462,6 +455,26 @@ export function ConnectedScreen() {
           title: "",
         }}
       />
+
+      {isAndroid ? (
+        <Modal visible={optionsOpen} transparent animationType="fade" onRequestClose={() => setOptionsOpen(false)}>
+          <Pressable className="flex-1 justify-end bg-black/50" onPress={() => setOptionsOpen(false)}>
+            <View className="mx-4 mb-8 gap-1 rounded-grouped bg-sheet p-2">
+              {optionsActions.map((action) => (
+                <Pressable
+                  key={action.id}
+                  accessibilityRole="button"
+                  onPress={() => selectOptionsAction(action.id)}
+                  className="min-h-12 justify-center rounded-xl px-4"
+                  style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
+                >
+                  <Typography.Paragraph>{action.title}</Typography.Paragraph>
+                </Pressable>
+              ))}
+            </View>
+          </Pressable>
+        </Modal>
+      ) : null}
 
       {isIOS ? (
         <>
