@@ -478,7 +478,7 @@ function projectChannelMessage(
     id: entry.id,
     kind: "message",
     author: self ? "user" : "agent",
-    speaker: entry.author,
+    ...(entry.author.kind === "member" ? { speaker: entry.author } : {}),
     superseded: entry.superseded,
     body: entry.message.text,
     streaming: entry.message.status === "streaming",

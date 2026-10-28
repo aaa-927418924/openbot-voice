@@ -227,4 +227,33 @@ describe("Live Voice history markers", () => {
       { id: "channel-start-row", kind: "live-voice-boundary", action: "ended", durationMs: 12_500 },
     ]);
   });
+
+  it("keeps human speakers in channel messages but omits Bot names and avatars", () => {
+    const message = (author: ChannelMessage["author"], id: string): ChannelMessage => ({
+      id,
+      channelId: "channel-one",
+      sequence: 1,
+      author,
+      taskId: null,
+      superseded: false,
+      message: {
+        id: `${id}-content`,
+        author: author.kind === "agent" ? "assistant" : "user",
+        text: "Hello",
+        createdAt: "2026-10-29T00:00:00.000Z",
+        status: "completed",
+      },
+    });
+    const botReply = projectChannelMessages(
+      [message({ kind: "agent", id: "agent-one", name: "AI Research" }, "bot")],
+      null,
+    )[0];
+    const humanReply = projectChannelMessages(
+      [message({ kind: "member", id: "member-one", name: "Alex" }, "human")],
+      null,
+    )[0];
+
+    expect(botReply).not.toHaveProperty("speaker");
+    expect(humanReply).toMatchObject({ speaker: { kind: "member", id: "member-one", name: "Alex" } });
+  });
 });
