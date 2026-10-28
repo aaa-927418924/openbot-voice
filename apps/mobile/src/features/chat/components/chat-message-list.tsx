@@ -525,7 +525,7 @@ const MessageRow = memo(function MessageRow({
         }
         style={[{ borderCurve: "circular" }, isFirstUser ? firstMessageStyle : undefined]}
       >
-        {memberColor && message.sender ? (
+        {message.author !== "user" && memberColor && message.sender ? (
           <Typography.Paragraph type="body-xs" className="shrink px-1" numberOfLines={1} style={{ color: memberColor }}>
             {message.sender.name.trim() || t("mobile.chat.speaker.memberFallback")}
           </Typography.Paragraph>
