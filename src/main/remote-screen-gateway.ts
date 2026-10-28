@@ -35,6 +35,8 @@ import {
 import { rawDataSize, rawDataText } from "./ws-raw-data";
 
 const GRANT_TTL_MS = 60_000;
+const VIEWER_CONNECT_TTL_MS = 60_000;
+const VIEWER_DISCONNECT_GRACE_MS = 15_000;
 const REMOTE_DESKTOP_MAX_SESSIONS = 4;
 const VIEWER_COOKIE = "openbotRemoteViewer";
 const VIEWER_GRANT_HEADER = "x-openbot-viewer";
@@ -108,6 +110,8 @@ interface ManagedRemoteScreenSession {
   memberId: string;
   teamSessionId: string;
   grantExpirationTimer: CancellableTimer | null;
+  viewerConnectExpirationTimer: CancellableTimer | null;
+  viewerDisconnectTimer: CancellableTimer | null;
   teamSessionExpirationTimer: CancellableTimer;
   streamerSlot: number;
   viewerGrantHash: Buffer;
@@ -623,6 +627,8 @@ export class RemoteScreenGateway {
       memberId: input.memberId,
       teamSessionId: input.teamSessionId,
       grantExpirationTimer,
+      viewerConnectExpirationTimer: null,
+      viewerDisconnectTimer: null,
       teamSessionExpirationTimer,
       streamerSlot,
       viewerGrantHash: secretHash(viewerGrant),
@@ -745,6 +751,14 @@ export class RemoteScreenGateway {
         session.viewerGrantUsed = true;
         session.grantExpirationTimer?.cancel();
         session.grantExpirationTimer = null;
+        session.viewerConnectExpirationTimer = scheduleDeadline(
+          this.#options.now() + VIEWER_CONNECT_TTL_MS,
+          this.#options.now,
+          () => {
+            if (this.#sessions.get(session.snapshot.id) === session && !session.clientSocket && !session.upstreamSocket)
+              Effect.runFork(this.closeSession(session.snapshot.id, "session_expired"));
+          },
+        );
         session.viewerCookieHash = secretHash(cookie);
         const cookiePolicy =
           this.#localTestServers.has(session.snapshot.id) || request.headers["x-forwarded-proto"] === "https"
@@ -798,6 +812,10 @@ export class RemoteScreenGateway {
       return;
     }
     const authHeader = this.#runtimeState.authHeader;
+    session.viewerConnectExpirationTimer?.cancel();
+    session.viewerConnectExpirationTimer = null;
+    session.viewerDisconnectTimer?.cancel();
+    session.viewerDisconnectTimer = null;
     this.#webSockets.handleUpgrade(request, socket, head, (client) => {
       const upstreamUrl = new URL("/api/host/stream", this.#runtimeState?.baseUrl);
       upstreamUrl.protocol = "ws:";
@@ -873,6 +891,26 @@ export class RemoteScreenGateway {
         if (session.upstreamSocket === upstream) session.upstreamSocket = null;
         client.close();
         upstream.close();
+        if (
+          this.#sessions.get(session.snapshot.id) === session &&
+          session.clientSocket === null &&
+          session.upstreamSocket === null
+        ) {
+          session.viewerDisconnectTimer?.cancel();
+          session.viewerDisconnectTimer = scheduleDeadline(
+            this.#options.now() + VIEWER_DISCONNECT_GRACE_MS,
+            this.#options.now,
+            () => {
+              if (
+                this.#sessions.get(session.snapshot.id) === session &&
+                session.clientSocket === null &&
+                session.upstreamSocket === null
+              ) {
+                Effect.runFork(this.closeSession(session.snapshot.id, "session_expired"));
+              }
+            },
+          );
+        }
         if (this.#testSessionId === session.snapshot.id)
           Effect.runFork(this.closeSession(session.snapshot.id, "connection_failed"));
       };
@@ -903,6 +941,8 @@ export class RemoteScreenGateway {
       }
       this.#finishStreamStart(id);
       session.grantExpirationTimer?.cancel();
+      session.viewerConnectExpirationTimer?.cancel();
+      session.viewerDisconnectTimer?.cancel();
       session.teamSessionExpirationTimer.cancel();
       session.snapshot.phase = "disconnecting";
       session.clientSocket?.close(4403, reason);
@@ -1373,26 +1413,50 @@ function remoteDesktopVideoPresentation(): string {
 <style id="openbot-remote-video-waiting-style">
   video.video-stream:not([data-openbot-video-frame-ready]) {
     visibility: hidden !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+  }
+  video.video-stream::-webkit-media-controls-start-playback-button,
+  video.video-stream::-webkit-media-controls-overlay-play-button {
+    display: none !important;
+    -webkit-appearance: none !important;
   }
 </style>
 <script id="openbot-remote-video-waiting-script">
 (() => {
+  const hasFrame = (video) =>
+    video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth > 0 && video.videoHeight > 0;
+  const revealFrame = (video, frame) => {
+    if (hasFrame(video) && frame.width > 0 && frame.height > 0) {
+      video.setAttribute("data-openbot-video-frame-ready", "true");
+    }
+  };
+  const waitForPresentedFrame = (video) => {
+    if (!hasFrame(video)) return;
+    if (typeof video.requestVideoFrameCallback === "function") {
+      video.requestVideoFrameCallback((_now, frame) => revealFrame(video, frame));
+      return;
+    }
+    requestAnimationFrame(() => {
+      if (hasFrame(video) && !video.paused) {
+        video.setAttribute("data-openbot-video-frame-ready", "true");
+      }
+    });
+  };
   const observeVideos = () => {
     document.querySelectorAll("video.video-stream:not([data-openbot-video-watch])").forEach((video) => {
       video.dataset.openbotVideoWatch = "true";
-      const revealFrame = () => {
-        if (
-          video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
-          video.videoWidth > 0 &&
-          video.videoHeight > 0
-        ) {
-          video.setAttribute("data-openbot-video-frame-ready", "true");
-        }
-      };
       for (const eventName of ["loadeddata", "playing", "resize"]) {
-        video.addEventListener(eventName, revealFrame, { passive: true });
+        video.addEventListener(eventName, () => waitForPresentedFrame(video), { passive: true });
       }
-      revealFrame();
+      for (const eventName of ["emptied", "loadstart", "waiting", "stalled", "error", "pause"]) {
+        video.addEventListener(
+          eventName,
+          () => video.removeAttribute("data-openbot-video-frame-ready"),
+          { passive: true },
+        );
+      }
+      waitForPresentedFrame(video);
     });
   };
 

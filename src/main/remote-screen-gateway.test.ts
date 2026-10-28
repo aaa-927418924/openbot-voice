@@ -286,7 +286,7 @@ describe("RemoteScreenGateway", () => {
     const session = await createSession(gateway, origin);
     const sessionPath = `/v1/remote-screen/sessions/${session.id}`;
     const headers = { "X-OpenBot-Viewer": session.viewerGrant };
-    let viewerSocket: WebSocket | null = null;
+    let viewerSocket: Ws.WebSocket | null = null;
 
     try {
       const beforeGrant = await fetch(`${origin}${sessionPath}/moonlight/stream.html?hostId=12&appId=1`, {
@@ -319,8 +319,12 @@ describe("RemoteScreenGateway", () => {
       expect(protectedApi.status).toBe(401);
 
       const streamHtml = await fetch(`${origin}${sessionPath}/moonlight/stream.html?hostId=12&appId=1`, { headers });
+      const streamHtmlSource = await streamHtml.text();
       expect(streamHtml.status).toBe(200);
-      expect(await streamHtml.text()).toContain('src="openbot-viewer-auth.js"');
+      expect(streamHtmlSource).toContain('src="openbot-viewer-auth.js"');
+      expect(streamHtmlSource).toContain("requestVideoFrameCallback");
+      expect(streamHtmlSource).toContain('"waiting", "stalled"');
+      expect(streamHtmlSource).toContain("::-webkit-media-controls-overlay-play-button");
       const authScript = await fetch(`${origin}${sessionPath}/moonlight/openbot-viewer-auth.js`);
       const authScriptText = await authScript.text();
       expect(authScript.status).toBe(200);
@@ -354,7 +358,7 @@ describe("RemoteScreenGateway", () => {
       );
       expect(state.status).toBe(204);
 
-      viewerSocket = new WebSocket(`${origin.replace(/^http/, "ws")}${sessionPath}/stream`, [
+      viewerSocket = new webSockets.WebSocket(`${origin.replace(/^http/, "ws")}${sessionPath}/stream`, [
         "openbot-viewer-v1",
         `openbot-viewer.${session.viewerGrant}`,
       ]);
@@ -763,6 +767,78 @@ describe("RemoteScreenGateway", () => {
       expect(runtimes[0]?.stop).toHaveBeenCalled();
     } finally {
       await runCauseEffect(gateway.stop());
+      vi.useRealTimers();
+    }
+  });
+
+  it("releases an authorized session when the viewer never opens its stream", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
+    vi.setSystemTime(new Date("2026-08-21T12:00:00.000Z"));
+    const gateway = createGateway();
+    const { origin, close } = await serveGateway(gateway);
+    try {
+      const session = await createSession(gateway, origin);
+      const authorized = await fetch(`${origin}${TEAM_API_ROUTES.remoteScreen.session(session.id)}/authorize`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ grant: session.viewerGrant }),
+      });
+      expect(authorized.status).toBe(204);
+      expect(gateway.list()).toHaveLength(1);
+
+      await vi.advanceTimersByTimeAsync(60_001);
+
+      expect(gateway.list()).toHaveLength(0);
+    } finally {
+      await runCauseEffect(gateway.stop());
+      await close();
+      vi.useRealTimers();
+    }
+  });
+
+  it("releases a disconnected viewer session after a short reconnect grace period", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
+    vi.setSystemTime(new Date("2026-08-21T12:00:00.000Z"));
+    const upstreamServer = createServer();
+    const upstreamWebSockets = new webSockets.WebSocketServer({ noServer: true });
+    upstreamServer.on("upgrade", (request, socket, head) => {
+      upstreamWebSockets.handleUpgrade(request, socket, head, (webSocket) =>
+        upstreamWebSockets.emit("connection", webSocket, request),
+      );
+    });
+    await new Promise<void>((resolve) => upstreamServer.listen(0, "127.0.0.1", resolve));
+    const upstreamAddress = z.object({ port: z.number().int() }).parse(upstreamServer.address());
+    const gateway = createGateway({ runtimeBaseUrl: `http://127.0.0.1:${upstreamAddress.port}` });
+    const { origin, close } = await serveGateway(gateway);
+    let viewerSocket: Ws.WebSocket | null = null;
+    try {
+      const session = await createSession(gateway, origin);
+      const authorized = await fetch(`${origin}${TEAM_API_ROUTES.remoteScreen.session(session.id)}/authorize`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ grant: session.viewerGrant }),
+      });
+      expect(authorized.status).toBe(204);
+      viewerSocket = new webSockets.WebSocket(
+        `${origin.replace(/^http/u, "ws")}${TEAM_API_ROUTES.remoteScreen.session(session.id)}/stream`,
+        { headers: { "X-OpenBot-Viewer": session.viewerGrant } },
+      );
+      await once(viewerSocket, "open");
+      expect(gateway.list()).toHaveLength(1);
+
+      viewerSocket.close();
+      await once(viewerSocket, "close");
+      expect(gateway.list()).toHaveLength(1);
+
+      await vi.advanceTimersByTimeAsync(15_001);
+
+      expect(gateway.list()).toHaveLength(0);
+    } finally {
+      viewerSocket?.terminate();
+      await runCauseEffect(gateway.stop());
+      await close();
+      upstreamWebSockets.close();
+      await new Promise<void>((resolve) => upstreamServer.close(() => resolve()));
       vi.useRealTimers();
     }
   });
