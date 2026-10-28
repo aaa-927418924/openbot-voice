@@ -97,6 +97,48 @@ describe("remote desktop session startup", () => {
     });
     expect(REMOTE_DESKTOP_SESSION_START_TIMEOUT_MS).toBe(180_000);
   });
+
+  it("uses one cold-start deadline for compatibility negotiation and session creation", async () => {
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    const session: RemoteDesktopSession = {
+      id: "session-1",
+      serverId: "viewer-host",
+      viewerUrl: "http://127.0.0.1:8080",
+      viewerGrant: "viewer-grant",
+      displays: [],
+      selectedDisplayId: null,
+      phase: "starting_host",
+      transport: "unknown",
+      errorCode: null,
+      message: null,
+      createdAt: "2026-10-28T00:00:00.000Z",
+      grantExpiresAt: "2026-10-28T00:03:00.000Z",
+    };
+    const stub = stubTeamFetch({
+      compatibility: {
+        appVersion: "0.4.0",
+        protocol: { minimum: 1, maximum: 6 },
+        capabilities: [],
+      },
+      routes: { [TEAM_API_ROUTES.remoteScreen.sessions]: () => Response.json(session) },
+    });
+    const fixture = await createRemoteManager({
+      servers: [storedHttpsServer("viewer-host")],
+      appVersion: "0.4.0",
+    });
+
+    try {
+      await expect(runCauseEffect(fixture.manager.createRemoteDesktopSession("viewer-host"))).resolves.toEqual(session);
+
+      expect(stub.requests(TEAM_API_ROUTES.compatibility)).toHaveLength(1);
+      expect(stub.requests(TEAM_API_ROUTES.remoteScreen.sessions)).toHaveLength(1);
+      expect(timeout.mock.calls[0]?.[0]).toBe(REMOTE_DESKTOP_SESSION_START_TIMEOUT_MS);
+      expect(timeout.mock.calls[1]?.[0]).toBeGreaterThan(0);
+      expect(timeout.mock.calls[1]?.[0]).toBeLessThan(REMOTE_DESKTOP_SESSION_START_TIMEOUT_MS);
+    } finally {
+      timeout.mockRestore();
+    }
+  });
 });
 
 describe("remote server links", () => {

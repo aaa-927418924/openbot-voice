@@ -179,7 +179,22 @@ export class RemoteServerClient {
         // the server looking healthy.
         return yield* remoteDecode(() => addRemotePreviewUrls(decodeOrProtocolError(decoder, value), server.id));
       }
-      const compatibility = yield* this.ensureCompatibility(server, refreshLiveVoiceSettings);
+      const deadlineAt = init.timeoutMs === undefined ? null : Date.now() + init.timeoutMs;
+      const remainingTimeout = () => (deadlineAt === null ? undefined : Math.max(1, deadlineAt - Date.now()));
+      const negotiation = this.ensureCompatibility(server, refreshLiveVoiceSettings, remainingTimeout());
+      const compatibility = yield* deadlineAt === null
+        ? negotiation
+        : negotiation.pipe(
+            Effect.timeoutOrElse({
+              duration: remainingTimeout() ?? init.timeoutMs ?? 1,
+              orElse: () =>
+                Effect.fail(
+                  new RemoteWorkflowError({
+                    cause: new RemoteRequestError(408, sourceText("error.remote.requestTimeout"), "request_timeout"),
+                  }),
+                ),
+            }),
+          );
       if (refreshLiveVoiceSettings && !compatibility.capabilities.includes(AGENT_LIVE_VOICE_SETTINGS_CAPABILITY)) {
         return yield* remoteDecode(() => {
           throw new Error(sourceText("error.team.liveVoiceUnsupported"));
@@ -188,7 +203,7 @@ export class RemoteServerClient {
       const value = yield* requestJson(server.apiUrl, path, decoder, {
         ...init,
         token: this.#servers.token(server),
-        timeoutMs: init.timeoutMs,
+        timeoutMs: remainingTimeout(),
         // A host without the capability drops the fields in its frozen projection and starts the
         // agent on its own default, so the pair is only encoded for hosts that read it.
         agentCreateModel: this.supportsAgentCreateModel(path, init, compatibility.capabilities),
@@ -331,6 +346,7 @@ export class RemoteServerClient {
     this: RemoteServerClient,
     server: StoredRemoteServerView,
     refresh = false,
+    timeoutMs?: number,
   ): Effect.fn.Return<ServerCompatibility, RemoteWorkflowError> {
     const current = this.#connections.compatibilityFor(server.id);
     const issue = this.#connections.issueFor(server.id);
@@ -372,7 +388,7 @@ export class RemoteServerClient {
     return yield* Effect.gen({ self: this }, function* () {
       const compatibility = yield* server.transport === "webrtc-v2"
         ? this.#negotiateWebRtcCompatibilityEffect(server.id)
-        : this.negotiateCompatibility(server.apiUrl);
+        : this.negotiateCompatibility(server.apiUrl, timeoutMs);
       this.#connections.setCompatibility(server.id, compatibility);
       this.#connections.clearStaleIssue(server.id, issueAtStart);
       return compatibility;
@@ -428,10 +444,11 @@ export class RemoteServerClient {
   readonly negotiateCompatibility = Effect.fn("RemoteClient.negotiateCompatibility")(function* (
     this: RemoteServerClient,
     apiUrl: string,
+    timeoutMs?: number,
   ): Effect.fn.Return<ServerCompatibility, RemoteWorkflowError> {
     if (!this.#appVersion) return assumedCompatibility(this.#appVersion);
     const attempt4 = yield* Effect.gen({ self: this }, function* () {
-      return yield* requestJson(apiUrl, TEAM_API_ROUTES.compatibility, decodeTeamProtocolSupportV1).pipe(
+      return yield* requestJson(apiUrl, TEAM_API_ROUTES.compatibility, decodeTeamProtocolSupportV1, { timeoutMs }).pipe(
         Effect.mapError(
           (failure) =>
             new RemoteWorkflowError({

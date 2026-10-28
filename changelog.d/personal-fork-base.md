@@ -9,3 +9,5 @@
 - Keep the remote host connection open after message deletion or history clearing returns its validated empty response.
 - Start Live Voice on a new conversation without a prior text message by preparing its Codex provider thread first.
 - Enable Linux Remote Desktop in Wayland sessions through Sunshine's XDG Desktop Portal and PipeWire capture, while keeping X11 and Xvfb on the existing X11 path.
+- Let the server owner link invited device memberships to one channel author identity.
+- Give cold Remote Desktop startup one deadline for compatibility checks and session creation.
