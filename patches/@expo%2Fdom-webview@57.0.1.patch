@@ -1,3 +1,6 @@
+diff --git a/node_modules/@expo/dom-webview/.bun-tag-b7e5b5e8625cb12e b/.bun-tag-b7e5b5e8625cb12e
+new file mode 100644
+index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
 diff --git a/android/build.gradle b/android/build.gradle
 index 8784c32d96c5382dc61d3d37bbf61247a24a3e71..2bc08df54972484c5c5474528a2c2555b38301ba 100644
 --- a/android/build.gradle
@@ -11,7 +14,7 @@ index 8784c32d96c5382dc61d3d37bbf61247a24a3e71..2bc08df54972484c5c5474528a2c2555
 +  testImplementation 'junit:junit:4.13.2'
 +}
 diff --git a/android/src/main/java/expo/modules/webview/DomWebView.kt b/android/src/main/java/expo/modules/webview/DomWebView.kt
-index 125ad1db8dc4e099b689ac45b651f142b07c728c..678a798b36c7409f1eaddb6a667830d58dfb3c54 100644
+index 125ad1db8dc4e099b689ac45b651f142b07c728c..70d299eda6a9fe59050bab33f515a8708eae5abb 100644
 --- a/android/src/main/java/expo/modules/webview/DomWebView.kt
 +++ b/android/src/main/java/expo/modules/webview/DomWebView.kt
 @@ -2,9 +2,11 @@
@@ -36,7 +39,12 @@ index 125ad1db8dc4e099b689ac45b651f142b07c728c..678a798b36c7409f1eaddb6a667830d5
  import android.webkit.WebView
  import android.webkit.WebViewClient
  import expo.modules.core.logging.LogHandlers
-@@ -198,6 +202,7 @@ internal class DomWebView(context: Context, appContext: AppContext) : ExpoView(c
+@@ -195,9 +199,12 @@ internal class DomWebView(context: Context, appContext: AppContext) : ExpoView(c
+     return WebView(context).apply {
+       setBackgroundColor(Color.TRANSPARENT)
+       settings.javaScriptEnabled = true
++      // Expo DOM pages use browser storage for persistent web preferences.
++      settings.domStorageEnabled = true
        // API 30+ default disables file access; DOM bundles need it for sibling assets.
        settings.allowFileAccess = true
        settings.allowFileAccessFromFileURLs = true
@@ -44,7 +52,7 @@ index 125ad1db8dc4e099b689ac45b651f142b07c728c..678a798b36c7409f1eaddb6a667830d5
        webViewClient = createWebViewClient()
        addJavascriptInterface(rncWebViewBridge, "ReactNativeWebView")
        addJavascriptInterface(DomWebViewBridge(this@DomWebView), "ExpoDomWebViewBridge")
-@@ -205,6 +210,25 @@ internal class DomWebView(context: Context, appContext: AppContext) : ExpoView(c
+@@ -205,6 +212,25 @@ internal class DomWebView(context: Context, appContext: AppContext) : ExpoView(c
      }
    }
  
