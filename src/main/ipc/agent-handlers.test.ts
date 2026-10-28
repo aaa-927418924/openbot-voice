@@ -128,3 +128,29 @@ describe.each(["https", "webrtc"] as const)("remote conversation deletion over %
     expect(fixture.disconnect).not.toHaveBeenCalled();
   });
 });
+
+describe("local channel reads", () => {
+  it("passes the local member id to the channel read projection", async () => {
+    const page = vi.fn(() => ({ messages: [] }));
+    const dependencies = {
+      service: { channels: { store: { page } } },
+      sidebarLayout: {},
+      host: { channelActor: () => ({ id: "local-member", name: "You" }) },
+      remoteServers: {},
+      skills: {},
+    };
+    // biome-ignore lint/nursery/noUnsafeTypeAssertion: Only the local channel read handler is invoked.
+    const handlers = agentIpcHandlers(dependencies as unknown as AgentIpcDependencies).agent;
+    handlers.readChannel(IPC_ENDPOINTS.agent.readChannel.channel);
+
+    const listener = bound.get(IPC_ENDPOINTS.agent.readChannel.channel);
+    if (!listener) throw new Error("No local channel read handler was registered.");
+    const result = await listener(TRUSTED_EVENT, {
+      serverId: "local",
+      payload: { channelId: "channel-1", beforeSequence: 17 },
+    });
+
+    expect(page).toHaveBeenCalledWith("channel-1", 17, "local-member");
+    expect(result).toEqual({ messages: [] });
+  });
+});
