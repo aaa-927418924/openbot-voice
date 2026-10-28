@@ -9,11 +9,12 @@ import {
   useRef,
   useState,
 } from "react";
-import { Platform, View } from "react-native";
+import { PermissionsAndroid, Platform, View } from "react-native";
 import { supportLog } from "@/features/support/model/support-log";
 import { expoGoDomOptions } from "@/shared/lib/expo-go-dom";
 import { useAppForeground } from "@/shared/lib/use-app-foreground";
 import LiveVoiceBridge from "../components/live-voice-bridge.dom";
+import { ensureMicrophonePermission } from "../model/android-microphone-permission";
 import {
   EMPTY_LIVE_VOICE_STATE,
   isCurrentLiveVoiceStartAction,
@@ -175,6 +176,25 @@ export function MobileLiveVoiceProvider({
 
       void (async () => {
         try {
+          if (Platform.OS === "android") {
+            const microphoneGranted = await ensureMicrophonePermission({
+              hasPermission: () => PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO),
+              requestPermission: async () =>
+                (await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO)) ===
+                PermissionsAndroid.RESULTS.GRANTED,
+            });
+            if (!microphoneGranted) {
+              supportLog.add("warn", "connection", "Live Voice start blocked: Android microphone permission denied");
+              if (originRef.current?.sessionId === nextOrigin.sessionId && !isVoiceStopping(stateRef.current))
+                publish({
+                  ...EMPTY_LIVE_VOICE_STATE,
+                  phase: "error",
+                  sessionId: nextOrigin.sessionId,
+                  error: "microphone",
+                });
+              return;
+            }
+          }
           await startBackgroundService(nextOrigin.sessionId);
           if (
             originRef.current?.sessionId !== nextOrigin.sessionId ||
