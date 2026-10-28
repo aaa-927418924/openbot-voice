@@ -1,6 +1,11 @@
 import { vi } from "vitest";
 
 vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+vi.stubGlobal("__DEV__", false);
+
+// Remote transport reads the native app version; UI tests use a fixed value without Expo native modules.
+vi.mock("expo-application", () => ({ nativeApplicationVersion: "test" }));
+vi.mock("@/shared/lib/mobile-features", () => ({ mobileAppVersion: () => "test" }));
 
 // UI tests exercise product behavior without loading native analytics modules or sending events.
 vi.mock("@/features/analytics/mobile-analytics", async () => {

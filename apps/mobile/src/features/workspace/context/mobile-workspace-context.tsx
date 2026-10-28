@@ -1013,11 +1013,11 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
   );
 
   const markAgentRead = useCallback(
-    (agentId: string, visibleMessageId?: string | null) => {
+    (agentId: string, visibleMessageId?: string | null, targetServerId?: string) => {
+      const serverId = targetServerId ?? activeServerId;
       if (
         visibleMessageId === null &&
-        (!activeServerId ||
-          !serverCapabilities.current.get(activeServerId)?.includes(TEAM_CONVERSATION_UNREAD_CAPABILITY))
+        (!serverId || !serverCapabilities.current.get(serverId)?.includes(TEAM_CONVERSATION_UNREAD_CAPABILITY))
       ) {
         Alert.alert(
           currentText().t("mobile.workspace.alert.updateRequiredTitle"),
@@ -1025,18 +1025,19 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
         );
         return;
       }
-      if (!activeServerId) return;
-      const isCurrentRead = readRefresh.invalidate(activeServerId);
+      if (!serverId) return;
+      const isCurrentRead = readRefresh.invalidate(serverId);
       const generation = loadGeneration.current;
+      const readKey = `${serverId}\u0000${agentId}`;
       if (visibleMessageId === null)
         liveState.update("unreadAgentIds", (current) => [...new Set([...current, agentId])]);
-      const write = (readWrites.current.get(agentId) ?? Promise.resolve())
+      const write = (readWrites.current.get(readKey) ?? Promise.resolve())
         .then(async () => {
           if (generation !== loadGeneration.current) return;
           const snapshot =
             visibleMessageId !== undefined
               ? null
-              : (conversationStore.get(agentId) ?? (await loadConversation(agentId)));
+              : (conversationStore.get(agentId) ?? (await loadConversation(agentId, serverId)));
           if (generation !== loadGeneration.current) return;
           const throughMessageId = visibleMessageId !== undefined ? visibleMessageId : snapshot?.messages.at(-1)?.id;
           if (throughMessageId === undefined) return;
@@ -1047,23 +1048,24 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
               : TEAM_API_ROUTES.agent.conversationRead(agentId),
             (value) => decodeConversationReads({ [agentId]: value }),
             visibleMessageId === null ? {} : { throughMessageId },
+            serverId,
           );
           if (generation === loadGeneration.current && isCurrentRead()) {
-            readRefresh.invalidate(activeServerId);
+            readRefresh.invalidate(serverId);
             applyConversationReads(reads);
           }
         })
         .catch(() => {
-          if (generation === loadGeneration.current) void refreshConversationReads().catch(() => undefined);
+          if (generation === loadGeneration.current) void refreshConversationReads(serverId).catch(() => undefined);
           if (visibleMessageId === null)
             Alert.alert(
               currentText().t("mobile.workspace.alert.markUnreadTitle"),
               currentText().t("mobile.workspace.alert.markUnreadBody"),
             );
         });
-      readWrites.current.set(agentId, write);
+      readWrites.current.set(readKey, write);
       void write.finally(() => {
-        if (readWrites.current.get(agentId) === write) readWrites.current.delete(agentId);
+        if (readWrites.current.get(readKey) === write) readWrites.current.delete(readKey);
       });
     },
     [
@@ -1536,8 +1538,8 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
         mobileAnalytics.track("conversation_action", { action: "unhide", result: saved ? "succeeded" : "failed" });
       },
       markAgentRead,
-      markAgentUnread: (agentId) => {
-        markAgentRead(agentId, null);
+      markAgentUnread: (agentId, serverId) => {
+        markAgentRead(agentId, null, serverId);
       },
       toggleChannelPin: (channelId, serverId) => {
         let result: "pinned" | "unpinned" = "pinned";

@@ -234,7 +234,7 @@ export interface MobileWorkspaceContextValue extends MobileLiveVoiceHost {
   discardAttachment: (agentId: string, attachmentId: string, serverId?: string) => Promise<void>;
   hideAgent: (agentId: string) => void;
   unhideAgent: (agentId: string) => void;
-  markAgentRead: (agentId: string, throughMessageId?: string) => void;
-  markAgentUnread: (agentId: string) => void;
+  markAgentRead: (agentId: string, throughMessageId?: string | null, serverId?: string) => void;
+  markAgentUnread: (agentId: string, serverId?: string) => void;
   toggleAgentPin: (agentId: string) => ToggleAgentPinResult;
 }

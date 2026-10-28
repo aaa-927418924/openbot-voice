@@ -77,8 +77,8 @@ export function MobileChatView({ agent }: { agent: MobileAgent }) {
   const latest = latestReadableMessage(conversation?.messages ?? []);
   const latestId = latest?.id;
   const markRead = useCallback(() => {
-    if (latestId) markAgentRead(agent.id, latestId);
-  }, [agent.id, latestId, markAgentRead]);
+    if (latestId) markAgentRead(agent.id, latestId, agent.serverId);
+  }, [agent.id, agent.serverId, latestId, markAgentRead]);
   const activePrompt = messages.findLast(
     (message) =>
       message.kind === "question" &&

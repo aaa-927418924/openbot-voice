@@ -105,8 +105,8 @@ function useAgentMenuActions(agent: MobileAgent) {
   };
 
   const handleRead = () => {
-    if (isUnread) markAgentRead(agent.id);
-    else markAgentUnread(agent.id);
+    if (isUnread) markAgentRead(agent.id, undefined, agent.serverId);
+    else markAgentUnread(agent.id, agent.serverId);
     void haptics.selection();
   };
   const handleHide = () => {

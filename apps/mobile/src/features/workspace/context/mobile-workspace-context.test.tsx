@@ -29,6 +29,7 @@ const native = vi.hoisted(() => ({
   storage: new Map<string, string>(),
 }));
 const sent = vi.hoisted((): { method: string; path: string; body: unknown }[] => []);
+const routedRequests = vi.hoisted((): { hostId: string | null; method: string; path: string; body: unknown }[] => []);
 const host: {
   hostId: string;
   name: string;
@@ -42,6 +43,15 @@ const host: {
   logoKey: null,
   devicePublicKey: "trusted-key",
   membershipId: "membership",
+  role: "owner",
+};
+const additionalHosts: (typeof host)[] = [];
+const secondaryHost = {
+  hostId: "other",
+  name: "Other desktop",
+  logoKey: null,
+  devicePublicKey: "other-trusted-key",
+  membershipId: "other-membership",
   role: "owner",
 };
 const session = {
@@ -69,7 +79,7 @@ vi.mock("react-native", () => ({
   },
 }));
 vi.mock("expo-crypto", () => ({ randomUUID: () => crypto.randomUUID() }));
-vi.mock("expo/fetch", () => ({ fetch: async () => Response.json({ hosts: [host] }) }));
+vi.mock("expo/fetch", () => ({ fetch: async () => Response.json({ hosts: [host, ...additionalHosts] }) }));
 vi.mock("expo-secure-store", () => ({
   getItem: (key: string) => native.storage.get(key) ?? null,
   setItem: (key: string, value: string) => native.storage.set(key, value),
@@ -117,11 +127,13 @@ vi.mock("../components/remote-team-transport", () => ({
     onConnectionUpdate(update: RemoteTeamConnectionUpdate): void;
   }) => {
     const callbacks = useRef({ onTeamEvent, onConnectionUpdate });
+    const connectedHostId = useRef<string | null>(null);
     callbacks.current = { onTeamEvent, onConnectionUpdate };
     useImperativeHandle(
       ref,
       () => ({
         connect: async (hostId: string) => {
+          connectedHostId.current = hostId;
           emit = (event) => callbacks.current.onTeamEvent(hostId, event);
           disconnect = () => callbacks.current.onConnectionUpdate({ hostId, state: "offline", message: null });
           if (reconnectSnapshot) emit(reconnectSnapshot);
@@ -134,6 +146,7 @@ vi.mock("../components/remote-team-transport", () => ({
           body?: TeamProtocolV2Json,
         ): Promise<T> => {
           sent.push({ method, path, body });
+          routedRequests.push({ hostId: connectedHostId.current, method, path, body });
           if (path === TEAM_API_ROUTES.agent.interrupt("working")) return decode({});
           if (path === TEAM_API_ROUTES.sidebarLayout.state || path === TEAM_API_ROUTES.sidebarLayout.actions)
             return decode(await sidebarRequest(method, body));
@@ -208,6 +221,8 @@ afterEach(async () => {
   native.state = "active";
   native.storage.clear();
   sent.length = 0;
+  routedRequests.length = 0;
+  additionalHosts.length = 0;
   reconnectSnapshot = null;
   sidebarSupported = false;
   hostAdminSupported = false;
@@ -547,6 +562,36 @@ it("keeps a message unread until the host acknowledges the read", async () => {
 
   await act(async () => read.resolve({ unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "message-one" }));
   await vi.waitFor(() => expect(current.liveState.get().unreadAgentIds).not.toContain("working"));
+});
+
+it("sends a read acknowledgement to the agent's host rather than the selected host", async () => {
+  additionalHosts.push(secondaryHost);
+  pendingConversationRead = Promise.resolve({
+    unreadCount: 0,
+    firstUnreadMessageId: null,
+    throughMessageId: "message-one",
+  });
+  await mountWorkspace();
+  await vi.waitFor(() => expect(routedRequests.some((request) => request.hostId === "other")).toBe(true));
+
+  await act(async () => current.markAgentRead("working", "message-one", "other"));
+
+  await vi.waitFor(() =>
+    expect(routedRequests).toContainEqual({
+      hostId: "other",
+      method: "POST",
+      path: TEAM_API_ROUTES.agent.conversationRead("working"),
+      body: { throughMessageId: "message-one" },
+    }),
+  );
+  expect(
+    routedRequests.some(
+      (request) =>
+        request.hostId === "host" &&
+        request.method === "POST" &&
+        request.path === TEAM_API_ROUTES.agent.conversationRead("working"),
+    ),
+  ).toBe(false);
 });
 
 it("shows agents before optional startup reads and layout finish", async () => {
