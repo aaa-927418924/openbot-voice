@@ -763,16 +763,18 @@ export class RemoteScreenGateway {
         return;
       }
       // The consumed grant is carried in the iframe fragment, which is intentionally absent from
-      // the initial HTTP request. Expose only the static viewer shell and shim; every media/API
-      // request and the stream socket still require the grant-derived credential.
+      // ordinary stylesheet and ES module requests. Expose only static viewer assets after the
+      // one-time grant is consumed; APIs and the stream socket still require grant-derived auth.
+      const upstreamPath = route.startsWith("moonlight") ? route.slice("moonlight".length) || "/" : "";
       const publicViewerBootstrap =
         request.method === "GET" &&
         session.viewerGrantUsed &&
         (route === "moonlight/stream.html" || route === "moonlight/openbot-viewer-auth.js");
-      if (!publicViewerBootstrap && !this.#viewerAuthorized(request, session))
+      const publicViewerStaticAsset =
+        request.method === "GET" && session.viewerGrantUsed && isMoonlightStaticAsset(upstreamPath);
+      if (!publicViewerBootstrap && !publicViewerStaticAsset && !this.#viewerAuthorized(request, session))
         return sendText(response, 401, "Remote viewer is not authorized.");
       if (!route.startsWith("moonlight")) return sendText(response, 404, "Remote route not found.");
-      const upstreamPath = route.slice("moonlight".length) || "/";
       if (!allowedMoonlightPath(upstreamPath)) return sendText(response, 404, "Moonlight route is not exposed.");
       yield* this.#proxyHttpEffect(request, response, session, upstreamPath, url.search);
     },
@@ -1355,6 +1357,10 @@ function remoteDesktopViewerAuthScript(sessionId: string): string {
 /** The mobile Expo DOM owns the authenticated peer. Relay the viewer socket to that page. */
 function remoteDesktopWebSocketRelayScript(sessionId: string): string {
   return `(()=>{if(window.__openbotDesktopRelay)return;window.__openbotDesktopRelay=true;const sessionId=${JSON.stringify(sessionId)},source="openbot-remote-desktop-socket-v1",NativeWebSocket=window.WebSocket;const sockets=new Map();const post=(message)=>parent.postMessage({source,sessionId,...message},"*");class RelayWebSocket extends EventTarget{constructor(url,protocols){super();this.url=String(url);this.readyState=0;this.bufferedAmount=0;this.extensions="";this.protocol=Array.isArray(protocols)?protocols[0]||"":protocols||"";this.binaryType="blob";const parsed=new URL(this.url,location.href);this.streamId="ob_"+Math.random().toString(36).slice(2)+Date.now().toString(36);sockets.set(this.streamId,this);post({type:"open",streamId:this.streamId,path:parsed.pathname+parsed.search})}send(data){if(this.readyState!==1)throw new DOMException("WebSocket is not open","InvalidStateError");if(typeof data==="string"){post({type:"text",streamId:this.streamId,data});return}const toBase64=(bytes)=>{let out="";for(let i=0;i<bytes.length;i+=24576)out+=String.fromCharCode(...bytes.subarray(i,i+24576));return btoa(out)};if(data instanceof Blob){data.arrayBuffer().then((buffer)=>post({type:"binary",streamId:this.streamId,data:toBase64(new Uint8Array(buffer))}));return}const buffer=data instanceof ArrayBuffer?data:data.buffer.slice(data.byteOffset,data.byteOffset+data.byteLength);post({type:"binary",streamId:this.streamId,data:toBase64(new Uint8Array(buffer))})}close(code=1000,reason=""){if(this.readyState>=2)return;this.readyState=2;post({type:"close",streamId:this.streamId,code,reason})}dispatch(type,fields={}){const event=type==="message"?new MessageEvent(type,{data:fields.data}):type==="close"?new CloseEvent(type,{code:fields.code||1000,reason:fields.reason||"",wasClean:fields.wasClean!==false}):new Event(type);this.dispatchEvent(event);const handler=this["on"+type];if(typeof handler==="function")handler.call(this,event)}static get CONNECTING(){return 0}static get OPEN(){return 1}static get CLOSING(){return 2}static get CLOSED(){return 3}}window.WebSocket=RelayWebSocket;window.addEventListener("message",(event)=>{if(event.source!==parent||!event.data||event.data.source!==source||event.data.sessionId!==sessionId)return;const message=event.data,socket=sockets.get(message.streamId);if(!socket)return;if(message.type==="opened"){socket.readyState=1;socket.dispatch("open")}else if(message.type==="text"){socket.dispatch("message",{data:message.data})}else if(message.type==="binary"){const decoded=Uint8Array.from(atob(message.data),c=>c.charCodeAt(0)).buffer;socket.dispatch("message",{data:socket.binaryType==="blob"?new Blob([decoded]):decoded})}else if(message.type==="error"){socket.dispatch("error");socket.readyState=3;socket.dispatch("close",{code:1011,reason:message.message,wasClean:false});sockets.delete(message.streamId)}else if(message.type==="close"){socket.readyState=3;socket.dispatch("close",{code:message.code,reason:message.reason});sockets.delete(message.streamId)}})})();`;
+}
+
+function isMoonlightStaticAsset(path: string): boolean {
+  return /\.(?:css|js|mjs|svg|png|jpe?g|gif|webp|ico|woff2?|ttf|otf|wasm)$/i.test(path);
 }
 
 function allowedMoonlightPath(path: string): boolean {

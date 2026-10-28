@@ -286,6 +286,8 @@ describe("RemoteScreenGateway", () => {
         headers,
       });
       expect(beforeGrant.status).toBe(401);
+      const staticAssetBeforeGrant = await fetch(`${origin}${sessionPath}/moonlight/stream.js`, { headers });
+      expect(staticAssetBeforeGrant.status).toBe(401);
       const authScriptBeforeGrant = await fetch(`${origin}${sessionPath}/moonlight/openbot-viewer-auth.js`);
       expect(authScriptBeforeGrant.status).toBe(401);
 
@@ -300,8 +302,14 @@ describe("RemoteScreenGateway", () => {
       expect(staticViewerShell.status).toBe(200);
       expect(await staticViewerShell.text()).toContain('src="openbot-viewer-auth.js"');
 
-      const protectedConfig = await fetch(`${origin}${sessionPath}/moonlight/config.js`);
-      expect(protectedConfig.status).toBe(401);
+      // Native CSS/module loaders cannot attach the grant header. Static Moonlight assets become
+      // readable only after the one-time viewer grant is consumed; API requests remain protected.
+      for (const assetPath of ["stream.js", "api.js", "config.js", "styles/standard.css", "resources/moonlight.svg"]) {
+        const asset = await fetch(`${origin}${sessionPath}/moonlight/${assetPath}`);
+        expect(asset.status).toBe(200);
+      }
+      const protectedApi = await fetch(`${origin}${sessionPath}/moonlight/api/authenticate`);
+      expect(protectedApi.status).toBe(401);
 
       const streamHtml = await fetch(`${origin}${sessionPath}/moonlight/stream.html?hostId=12&appId=1`, { headers });
       expect(streamHtml.status).toBe(200);
