@@ -435,10 +435,15 @@ const MessageRow = memo(function MessageRow({
   );
   const waiting = awaitingFirstWord(message, shared);
   const speaker = message.kind === "message" && message.speaker ? agentsById.get(message.speaker.id) : undefined;
-  // Another person in an agent chat: a person's bubble in their own colour, seeded by the member id
-  // as on desktop, so it does not read as the reader's own.
+  // Member colours and generated avatars use the shared channel identity, not a device membership.
   const memberColor =
-    message.kind === "message" && message.sender ? getBloubAvatarColor(message.sender.id, null) : undefined;
+    message.kind === "message"
+      ? message.sender
+        ? getBloubAvatarColor(message.sender.id, null)
+        : message.speaker?.kind === "member"
+          ? getBloubAvatarColor(message.speaker.identityId ?? message.speaker.id, null)
+          : undefined
+      : undefined;
   const rendered =
     message.kind === "live-voice-boundary" ? (
       <LiveVoiceBoundaryRow key={message.id} message={message} muted={muted} />
@@ -540,8 +545,15 @@ const MessageRow = memo(function MessageRow({
                 hue={speaker?.avatarHue ?? null}
                 size={20}
               />
-            ) : null}
-            <Typography.Paragraph type="body-xs" className="shrink text-muted" numberOfLines={1}>
+            ) : (
+              <BloubAvatarThumbnail seed={message.speaker.identityId ?? message.speaker.id} hue={null} size={20} />
+            )}
+            <Typography.Paragraph
+              type="body-xs"
+              className={memberColor ? "shrink" : "shrink text-muted"}
+              numberOfLines={1}
+              style={memberColor ? { color: memberColor } : undefined}
+            >
               {message.superseded
                 ? t("mobile.chat.speaker.superseded", { name: message.speaker.name })
                 : message.speaker.name}
@@ -593,7 +605,9 @@ const MessageRow = memo(function MessageRow({
                 ? memberColor
                   ? { backgroundColor: `${memberColor}38` }
                   : userBubbleStyle
-                : undefined,
+                : message.speaker?.kind === "member" && memberColor
+                  ? { backgroundColor: `${memberColor}38` }
+                  : undefined,
             ]}
           >
             <ChatMarkdown

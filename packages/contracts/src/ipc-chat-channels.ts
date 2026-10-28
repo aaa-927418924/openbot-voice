@@ -59,7 +59,13 @@ export interface ChannelMessage {
   id: string;
   channelId: string;
   sequence: number;
-  author: { kind: "member" | "agent" | "coordinator"; id: string; name: string };
+  author: {
+    kind: "member" | "agent" | "coordinator";
+    id: string;
+    name: string;
+    /** Stable identity shared by explicitly linked device memberships. */
+    identityId?: string;
+  };
   taskId: string | null;
   superseded: boolean;
   message: ConversationMessage;
@@ -247,6 +253,7 @@ export function isChannelMessage(value: unknown): value is ChannelMessage {
     isDynamicRecord(value.author) &&
     isOneOf(["member", "agent", "coordinator"] as const, value.author.kind) &&
     isIdentifier(value.author.id) &&
+    (value.author.identityId === undefined || isIdentifier(value.author.identityId)) &&
     // The author of a channel message can be a person, and an account name is bounded there, not
     // by the agent name. A name this validator refuses is a stored message no read can decode.
     isBoundedString(value.author.name, INPUT_LIMITS.accountName) &&

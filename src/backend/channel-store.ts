@@ -355,7 +355,12 @@ export class ChannelStore {
       readerMemberId !== undefined && (message.author.id === readerMemberId || readerIdentity?.id === identity.id);
     return {
       ...message,
-      author: { ...message.author, id: authorIsReader ? readerMemberId : identity.id, name: identity.name },
+      author: {
+        ...message.author,
+        id: authorIsReader ? readerMemberId : identity.id,
+        name: identity.name,
+        identityId: identity.id,
+      },
     };
   }
 

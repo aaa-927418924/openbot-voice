@@ -165,12 +165,17 @@ const message: Decoder = (value) =>
     id: identifier,
     channelId: identifier,
     sequence,
-    author: (author) =>
-      record(author, {
+    author: (author) => {
+      const decoded = record(author, {
         kind: oneOf("member", "agent", "coordinator"),
         id: identifier,
         name: string(120),
-      }),
+      });
+      if (isDynamicRecord(author) && author.identityId !== undefined) {
+        decoded.identityId = identifier(author.identityId);
+      }
+      return decoded;
+    },
     taskId: nullable(identifier),
     superseded: boolean,
     message: conversationMessage,

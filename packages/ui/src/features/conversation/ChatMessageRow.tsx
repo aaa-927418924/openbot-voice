@@ -29,9 +29,9 @@ import { conversationBubbleVariant, MessageBody } from "./MessageRendering";
 export interface ChatMessageAuthor {
   kind: "you" | "agent" | "member";
   name: string;
-  /** Missing for an author the agent list no longer holds, and for the reader's own messages. */
+  /** Agent profile when this author is one of the channel's agents. */
   agent?: AgentProfile;
-  /** The face to draw when the profile is gone: the author id keeps deleted agents apart. */
+  /** Stable identity seed for generated member colors and faces, including linked devices. */
   avatarSeed?: string;
 }
 
@@ -94,7 +94,7 @@ export function ChatMessageRow(props: ChatMessageRowProps): JSX.Element {
   // face beside it.
   const authorStyle = () => {
     const currentSeed = seed();
-    if (own() || currentSeed === undefined) return undefined;
+    if (currentSeed === undefined) return undefined;
     return `--message-author-color: ${avatarHeadColor(currentSeed, props.author.agent?.avatarHue ?? null)}`;
   };
   return (
@@ -164,7 +164,7 @@ export function ChatMessageRow(props: ChatMessageRowProps): JSX.Element {
         </Show>
         <div class="message-shell">
           <Bubble
-            class={member() ? "message-bubble-member" : undefined}
+            class={member() || (own() && seed() !== undefined) ? "message-bubble-member" : undefined}
             align={person() ? "end" : "start"}
             variant={variant()}
             data-author={person() ? "user" : "assistant"}

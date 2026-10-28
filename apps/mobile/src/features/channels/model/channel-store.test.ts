@@ -394,6 +394,27 @@ describe("mobile channels", () => {
     expect(after[1]).toMatchObject({ kind: "message", body: "Updated", author: "user" });
     expect(projectChannelMessages(merged.messages, "other-user")[0]).toMatchObject({ author: "agent" });
   });
+  it("keeps the shared profile identity when the host marks a linked device message as mine", () => {
+    const linked = page(1, 1);
+    const message = linked.messages[0];
+    assert(message);
+    message.author = {
+      kind: "member",
+      id: "membership-on-this-device",
+      identityId: "shared-profile",
+      name: "Shared profile",
+    };
+    expect(projectChannelMessages(linked.messages, "membership-on-this-device")[0]).toMatchObject({
+      kind: "message",
+      author: "user",
+      speaker: { id: "membership-on-this-device", identityId: "shared-profile", name: "Shared profile" },
+    });
+    expect(projectChannelMessages(linked.messages, "membership-on-another-device")[0]).toMatchObject({
+      kind: "message",
+      author: "agent",
+      speaker: { identityId: "shared-profile" },
+    });
+  });
   it("does not request channels from unsupported hosts or while in the background", async () => {
     const { store, calls } = fixture(async () => []);
     await store.refresh("old-host");

@@ -81,7 +81,7 @@ function page(messages: ChannelMessage[]): ChannelPage {
 }
 
 const chief = agent("agent-chief", "Chief");
-const member = { kind: "member" as const, id: "local", name: "Norbert" };
+const member = { kind: "member" as const, id: "local", identityId: "shared-profile", name: "Norbert" };
 
 describe("channelTimelineEntries", () => {
   it("hides persisted realtime handoff envelopes from agents but keeps matching member text", () => {
@@ -133,6 +133,7 @@ user: Hello</transcript_delta>
     );
     expect(entries.map((entry) => entry.author.kind)).toEqual(["you", "agent"]);
     expect(entries[0]?.message.author).toBe("you");
+    expect(entries[0]?.author.avatarSeed).toBe("shared-profile");
     expect(entries[1]?.author.agent?.id).toBe(chief.id);
   });
 
@@ -151,6 +152,23 @@ user: Hello</transcript_delta>
       options,
     );
     expect(entries[0]?.author).toMatchObject({ kind: "agent", name: "Ada" });
+  });
+
+  it("uses the shared profile id for a linked device's avatar seed", () => {
+    const entries = channelTimelineEntries(
+      page([
+        message({
+          id: "m1",
+          sequence: 1,
+          author: { kind: "member", id: "membership-reader", identityId: "shared-profile", name: "Ada" },
+          createdAt: new Date(2026, 8, 9, 12, 0),
+        }),
+      ]),
+      [],
+      () => false,
+      options,
+    );
+    expect(entries[0]?.author).toMatchObject({ name: "Ada", avatarSeed: "shared-profile" });
   });
 
   it("draws the lead routing dispatch as activity that names the member it went to", () => {

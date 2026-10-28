@@ -120,8 +120,17 @@ export function channelTimelineEntries(
     const own = source.author.kind === "member" && isOwnMessage(source.author.id);
     const agent = agents.find((candidate) => candidate.id === source.author.id);
     const author: ChatMessageAuthor = own
-      ? { kind: "you", name: t("chat.message.you") }
-      : { kind: "agent", name: source.author.name, agent, avatarSeed: agent ? undefined : source.author.id };
+      ? {
+          kind: "you",
+          name: t("chat.message.you"),
+          avatarSeed: source.author.identityId ?? source.author.id,
+        }
+      : {
+          kind: "agent",
+          name: source.author.name,
+          agent,
+          avatarSeed: agent ? undefined : (source.author.identityId ?? source.author.id),
+        };
     const dayMarker = dayMarkerLabel(previous?.message.createdAt, source.message.createdAt, options);
     const marker = channelActionMarker(source);
     const sameAuthor =

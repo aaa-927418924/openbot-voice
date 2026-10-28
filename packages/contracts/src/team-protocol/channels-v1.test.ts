@@ -129,6 +129,14 @@ describe("channel-chats-v1 payloads", () => {
     const summary = { ...channel, unreadCount: 0, activeTasks: 0, lastMessage: { ...preview, authorName: name } };
     expect(channelResponse(CHANNEL_ROUTES.list, 200, [summary])).toEqual([summary]);
   });
+  it("preserves the stable identity shared by linked device authors", () => {
+    const author = { kind: "member", id: "reader-membership", name: "Owner profile", identityId: "owner-profile" };
+    const message = { ...page.messages[0], author };
+    expect(channelResponse(CHANNEL_ROUTES.read, 200, { ...page, messages: [message] })).toEqual({
+      ...page,
+      messages: [message],
+    });
+  });
 
   it("carries the update flag of a settings save, and only that flag", () => {
     const save = {
