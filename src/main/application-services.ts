@@ -1604,6 +1604,15 @@ export async function createApplicationServices({
       localOnlyNetworking,
       selfHostedApiOrigin: selfHostedApiOrigin(centralAuthApiUrl),
       appVersion: app.getVersion(),
+      onRemoteViewerDiagnostic: (event) => {
+        Effect.runFork(
+          appendRemoteDiagnosticLog(
+            join(app.getPath("userData"), "logs", "remote"),
+            "remote-viewer-proxy",
+            `${JSON.stringify(event)}\n`,
+          ),
+        );
+      },
       getLocalHostId: () => teamStore.getIdentity()?.serverId ?? null,
       hostedServers: {
         unavailable: (serverId, wake) => hostedServers.unavailableHost(serverId, wake),

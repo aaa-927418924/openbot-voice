@@ -79,6 +79,7 @@ import {
   decodeDirectThreadSummaries,
 } from "./remote-conversation-decoding";
 import { decodeRemoteDesktopSetupFromHost, decodeRemoteDesktopTestFromHost } from "./remote-desktop-setup-decoding";
+import type { RemoteViewerDiagnosticEvent } from "./remote-desktop-support-log";
 import { decodeRemoteDesktopSession } from "./remote-device-decoding";
 import { decodeVoid, type ResponseDecoder } from "./remote-host-decoding";
 import { type RemoteRequestInit, RemoteServerClient } from "./remote-server-client";
@@ -181,6 +182,7 @@ interface RemoteServerManagerOptions {
   selfHostedApiOrigin?: string | undefined;
   appVersion?: string;
   webrtcTransport?: TeamWebRtcClientTransport;
+  onRemoteViewerDiagnostic?: (event: RemoteViewerDiagnosticEvent) => void;
   getLocalHostId?: () => string | null;
   /** The account service's hosted servers. Each joined host can be one. */
   hostedServers?: HostedServerWakeHooks;
@@ -334,6 +336,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       ? new RemoteViewerProxy({
           transport: this.#webrtcTransport,
           fetchResource: (serverId, path, init) => this.fetchRemoteViewerResource(serverId, path, init),
+          onDiagnostic: options.onRemoteViewerDiagnostic,
         })
       : null;
     this.#webrtcTransport?.on("connected", (serverId) => {

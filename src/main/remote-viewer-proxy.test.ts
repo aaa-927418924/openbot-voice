@@ -51,6 +51,53 @@ describe("RemoteViewerProxy", () => {
     await runCauseEffect(proxy.stop());
   });
 
+  it("forwards the viewer grant from the WebSocket subprotocol without logging its value", async () => {
+    const transport = new FakeTransport();
+    const diagnostics: string[] = [];
+    const proxy = new RemoteViewerProxy({
+      transport,
+      fetchResource: () => Effect.sync(() => new Response()),
+      onDiagnostic: (event) => diagnostics.push(JSON.stringify(event)),
+    });
+    const viewerUrl = await runCauseEffect(proxy.viewerUrl("host-1", "/v1/remote-screen/sessions/session-1/viewer"));
+    const socketUrl = new URL(viewerUrl);
+    socketUrl.protocol = "ws:";
+    socketUrl.pathname = socketUrl.pathname.replace(/\/viewer$/u, "/stream");
+    const forwardedOpen = once(transport, "open-request");
+    const socket = new WebSocket(socketUrl, ["other-protocol", "openbot-viewer.safe_grant-123"]);
+    await once(socket, "open");
+    const [controlText] = await forwardedOpen;
+    if (!isString(controlText)) throw new Error("Expected a string remote desktop open frame.");
+    const control = decodeRemoteDesktopSignalControl(controlText);
+    assert(control.type === "open");
+    expect(control.path).toBe("/v1/remote-screen/sessions/session-1/stream?openbotViewer=safe_grant-123");
+    expect(diagnostics.map((line) => JSON.parse(line))).toContainEqual(
+      expect.objectContaining({ event: "websocket_upgrade", resource: "screen_stream", viewerGrantPresent: true }),
+    );
+    expect(diagnostics.join("\n")).not.toContain("safe_grant-123");
+    socket.close();
+    await runCauseEffect(proxy.stop());
+  });
+
+  it("does not forward malformed WebSocket viewer grants", async () => {
+    const transport = new FakeTransport();
+    const proxy = new RemoteViewerProxy({ transport, fetchResource: () => Effect.sync(() => new Response()) });
+    const viewerUrl = await runCauseEffect(proxy.viewerUrl("host-1", "/v1/remote-screen/sessions/session-1/viewer"));
+    const socketUrl = new URL(viewerUrl);
+    socketUrl.protocol = "ws:";
+    socketUrl.pathname = socketUrl.pathname.replace(/\/viewer$/u, "/stream");
+    const forwardedOpen = once(transport, "open-request");
+    const socket = new WebSocket(socketUrl, "openbot-viewer.bad.grant");
+    await once(socket, "open");
+    const [controlText] = await forwardedOpen;
+    if (!isString(controlText)) throw new Error("Expected a string remote desktop open frame.");
+    const control = decodeRemoteDesktopSignalControl(controlText);
+    assert(control.type === "open");
+    expect(control.path).toBe("/v1/remote-screen/sessions/session-1/stream");
+    socket.close();
+    await runCauseEffect(proxy.stop());
+  });
+
   it("serves viewer resources on loopback and bridges Moonlight signal frames without Base64", async () => {
     const transport = new FakeTransport();
     const proxy = new RemoteViewerProxy({
@@ -137,6 +184,7 @@ class FakeTransport extends EventEmitter {
       if (isString(data)) {
         const control = decodeRemoteDesktopSignalControl(data);
         if (control.type === "open") {
+          this.emit("open-request", data);
           queueMicrotask(() =>
             this.emit(
               "desktopData",

@@ -22,6 +22,7 @@ import {
   encodeRemoteDesktopSignalBinary,
   encodeRemoteDesktopSignalControl,
 } from "./remote-desktop-signal";
+import type { RemoteViewerDiagnosticEvent } from "./remote-desktop-support-log";
 import { RemoteWorkflowError, remoteCall } from "./remote-service-effects";
 import { rawDataBytes, rawDataSize, rawDataText, sendableCloseCode } from "./ws-raw-data";
 
@@ -39,11 +40,13 @@ interface RemoteViewerTransport {
 interface RemoteViewerProxyOptions {
   transport: RemoteViewerTransport;
   fetchResource: (serverId: string, path: string, init: RequestInit) => Effect.Effect<Response, RemoteWorkflowError>;
+  onDiagnostic?: (event: RemoteViewerDiagnosticEvent) => void;
 }
 
 interface ViewerStream {
   serverId: string;
   socket: Ws.WebSocket;
+  resource: RemoteViewerDiagnosticEvent["resource"];
   opened: boolean;
   pending: Array<{ data: Ws.RawData; binary: boolean }>;
   pendingBytes: number;
@@ -118,17 +121,22 @@ export class RemoteViewerProxy {
       );
       server.on("upgrade", (request, socket, head) => {
         const route = this.#route(request.url ?? "/");
+        const resource = route ? remoteViewerResource(route.upstreamPath) : "other";
         const tunneled =
           route &&
           (/^\/v1\/remote-screen\/sessions\/[A-Za-z0-9-]+\/stream$/u.test(route.upstreamPath) ||
             browserViewStreamSessionId(route.upstreamPath) !== null);
         if (!route || !tunneled) {
+          this.#diagnose("websocket_rejected", { resource });
           socket.write("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
           socket.destroy();
           return;
         }
+        const grant = viewerGrantFromSubprotocol(request.headers["sec-websocket-protocol"]);
+        const upstreamPath = remoteViewerPathWithGrant(route.upstreamPath, grant);
+        this.#diagnose("websocket_upgrade", { resource, viewerGrantPresent: grant !== undefined });
         this.#webSockets.handleUpgrade(request, socket, head, (webSocket) =>
-          this.#openStream(route.serverId, route.upstreamPath, webSocket),
+          this.#openStream(route.serverId, upstreamPath, webSocket, resource),
         );
       });
       listenLoopback(server, () => new Error(sourceText("error.remote.viewerProxyNoPort"))).then((port) => {
@@ -149,12 +157,20 @@ export class RemoteViewerProxy {
   ): Effect.fn.Return<void, RemoteWorkflowError> {
     const route = this.#route(request.url ?? "/");
     if (!route) return sendText(response, 404, "Not found");
+    const resource = remoteViewerResource(route.upstreamPath);
+    const grant = viewerGrantFromHeader(request.headers["x-openbot-viewer"]);
+    const startedAt = Date.now();
+    this.#diagnose("http_request", {
+      resource,
+      method: safeHttpMethod(request.method),
+      viewerGrantPresent: grant !== undefined,
+    });
     return yield* Effect.gen({ self: this }, function* () {
       const body =
         request.method === "GET" || request.method === "HEAD" ? undefined : yield* remoteCall(() => readBody(request));
       const upstream = yield* this.#options.fetchResource(
         route.serverId,
-        remoteViewerPathWithGrant(route.upstreamPath, request.headers["x-openbot-viewer"]),
+        remoteViewerPathWithGrant(route.upstreamPath, grant),
         {
           method: request.method === "HEAD" ? "GET" : request.method,
           headers: { "Content-Type": request.headers["content-type"] ?? "application/octet-stream" },
@@ -162,6 +178,7 @@ export class RemoteViewerProxy {
         },
       );
       if (upstream.status === 204) {
+        this.#diagnose("http_response", { resource, status: upstream.status, durationMs: Date.now() - startedAt });
         response.writeHead(204, { "Cache-Control": "no-store" });
         response.end();
         return;
@@ -193,20 +210,28 @@ export class RemoteViewerProxy {
       }
       response.writeHead(upstream.status, responseHeaders);
       response.end(request.method === "HEAD" ? undefined : Buffer.from(bytes));
+      this.#diagnose("http_response", { resource, status: upstream.status, durationMs: Date.now() - startedAt });
     }).pipe(
       Effect.catch(() =>
         Effect.sync(() => {
+          this.#diagnose("http_error", { resource, durationMs: Date.now() - startedAt });
           sendText(response, 502, "Remote viewer resource unavailable");
         }),
       ),
     );
   });
 
-  #openStream(serverId: string, upstreamPath: string, socket: Ws.WebSocket): void {
+  #openStream(
+    serverId: string,
+    upstreamPath: string,
+    socket: Ws.WebSocket,
+    resource: RemoteViewerDiagnosticEvent["resource"],
+  ): void {
     const streamId = crypto.randomUUID();
     const stream: ViewerStream = {
       serverId,
       socket,
+      resource,
       opened: false,
       pending: [],
       pendingBytes: 0,
@@ -228,6 +253,7 @@ export class RemoteViewerProxy {
     });
     socket.once("close", (code, reason) => {
       this.#streams.delete(streamId);
+      this.#diagnose("stream_closed", { resource, code });
       void Effect.runPromise(
         this.#owned(
           this.#options.transport
@@ -243,7 +269,14 @@ export class RemoteViewerProxy {
       this.#owned(
         this.#options.transport
           .sendDesktop(serverId, encodeRemoteDesktopSignalControl({ type: "open", streamId, path: upstreamPath }))
-          .pipe(Effect.catch(() => Effect.sync(() => socket.close(1011, "Remote desktop signal failed")))),
+          .pipe(
+            Effect.catch(() =>
+              Effect.sync(() => {
+                this.#diagnose("stream_error", { resource });
+                socket.close(1011, "Remote desktop signal failed");
+              }),
+            ),
+          ),
       ),
     ).catch(() => undefined);
   }
@@ -323,6 +356,7 @@ export class RemoteViewerProxy {
       if (!stream || stream.serverId !== serverId) return;
       if (control.type === "opened") {
         stream.opened = true;
+        this.#diagnose("stream_opened", { resource: stream.resource });
         for (const frame of stream.pending.splice(0))
           this.#queueFrame(control.streamId, stream, frame.data, frame.binary);
         stream.pendingBytes = 0;
@@ -331,6 +365,7 @@ export class RemoteViewerProxy {
       } else if (control.type === "close") {
         stream.socket.close(sendableCloseCode(control.code), control.reason);
       } else if (control.type === "error") {
+        this.#diagnose("stream_error", { resource: stream.resource });
         stream.socket.close(1011, control.message);
       }
     } catch {
@@ -354,6 +389,17 @@ export class RemoteViewerProxy {
   #basePath(serverId: string): string {
     return `/${this.#token}/${encodeURIComponent(serverId)}`;
   }
+
+  #diagnose(
+    event: RemoteViewerDiagnosticEvent["event"],
+    details: Omit<RemoteViewerDiagnosticEvent, "at" | "event">,
+  ): void {
+    try {
+      this.#options.onDiagnostic?.({ at: new Date().toISOString(), event, ...details });
+    } catch {
+      // Optional diagnostics must never change the viewer's transport behavior.
+    }
+  }
 }
 
 async function readBody(request: IncomingMessage): Promise<Buffer> {
@@ -362,19 +408,54 @@ async function readBody(request: IncomingMessage): Promise<Buffer> {
   return body;
 }
 
-function remoteViewerPathWithGrant(path: string, header: string | string[] | undefined): string {
-  if (typeof header !== "string" || header.length === 0 || header.length > 256 || !/^[A-Za-z0-9_-]+$/u.test(header))
-    return path;
+function remoteViewerPathWithGrant(path: string, grant: string | undefined): string {
+  if (!grant || grant.length > 256 || !/^[A-Za-z0-9_-]+$/u.test(grant)) return path;
   try {
     const url = new URL(path, "http://127.0.0.1");
-    if (!url.pathname.startsWith(`${TEAM_API_ROUTES.remoteScreen.prefix}/sessions/`)) return path;
+    if (
+      !/^\/v1\/remote-screen\/sessions\/[A-Za-z0-9-]+\/(?:viewer|authorize|viewer-state|stream|moonlight(?:\/.*)?)$/u.test(
+        url.pathname,
+      )
+    )
+      return path;
     // WebRTC V2 carries request paths but not arbitrary headers. Forward only this short-lived grant
     // through the scoped remote-screen route; the host still validates it against the active session.
-    url.searchParams.set("openbotViewer", header);
+    url.searchParams.set("openbotViewer", grant);
     return `${url.pathname}${url.search}`;
   } catch {
     return path;
   }
+}
+
+function viewerGrantFromHeader(header: string | string[] | undefined): string | undefined {
+  if (typeof header !== "string") return undefined;
+  return header.length > 0 && header.length <= 256 && /^[A-Za-z0-9_-]+$/u.test(header) ? header : undefined;
+}
+
+function viewerGrantFromSubprotocol(header: string | string[] | undefined): string | undefined {
+  const values = (Array.isArray(header) ? header : header ? [header] : []).flatMap((value) => value.split(","));
+  const protocol = values.map((value) => value.trim()).find((value) => value.startsWith("openbot-viewer."));
+  if (!protocol) return undefined;
+  return viewerGrantFromHeader(protocol.slice("openbot-viewer.".length));
+}
+
+function remoteViewerResource(path: string): RemoteViewerDiagnosticEvent["resource"] {
+  let pathname = path;
+  try {
+    pathname = new URL(path, "http://127.0.0.1").pathname;
+  } catch {
+    // Keep the fixed fallback below; never log the original path.
+  }
+  if (/^\/v1\/remote-screen\/sessions\/[A-Za-z0-9-]+\/viewer$/u.test(pathname)) return "viewer";
+  if (/^\/v1\/remote-screen\/sessions\/[A-Za-z0-9-]+\/authorize$/u.test(pathname)) return "authorize";
+  if (/^\/v1\/remote-screen\/sessions\/[A-Za-z0-9-]+\/viewer-state$/u.test(pathname)) return "viewer_state";
+  if (/^\/v1\/remote-screen\/sessions\/[A-Za-z0-9-]+\/stream$/u.test(pathname)) return "screen_stream";
+  if (/^\/v1\/remote-screen\/sessions\/[A-Za-z0-9-]+\/moonlight(?:\/.*)?$/u.test(pathname)) return "moonlight";
+  return browserViewStreamSessionId(path) !== null ? "browser_view_stream" : "other";
+}
+
+function safeHttpMethod(method: string | undefined): string {
+  return method && /^(?:GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS)$/u.test(method) ? method : "OTHER";
 }
 
 function sendText(response: ServerResponse, status: number, body: string): void {
