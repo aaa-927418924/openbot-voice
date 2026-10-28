@@ -325,7 +325,7 @@ export class DirectTailnetTeamClient {
     method: string,
     path: string,
     decode: (value: unknown) => T,
-    body: unknown = {},
+    body?: unknown,
     upload?: RemoteFileUpload,
     onUploadProgress?: (fraction: number) => void,
   ): Promise<T> {

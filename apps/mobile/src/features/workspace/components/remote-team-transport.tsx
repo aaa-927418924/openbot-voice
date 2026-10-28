@@ -215,7 +215,7 @@ export const RemoteTeamTransport = forwardRef<RemoteTeamTransportRef, RemoteTeam
           method: string,
           path: string,
           decode: (value: unknown) => T,
-          body: TeamProtocolV2Json = {},
+          body?: TeamProtocolV2Json,
           upload?: RemoteFileUpload,
           onUploadProgress?: (fraction: number) => void,
         ): Promise<T> => {
@@ -246,7 +246,7 @@ export const RemoteTeamTransport = forwardRef<RemoteTeamTransportRef, RemoteTeam
           // if Android's hidden DOM WebView stops processing commands altogether.
           const bridgeTimeout = innerTimeout === undefined ? undefined : innerTimeout + 5_000;
           const result = await enqueue(
-            { type: "request", method, path, body, upload },
+            { type: "request", method, path, body: body ?? {}, upload },
             onUploadProgress,
             bridgeTimeout,
           );

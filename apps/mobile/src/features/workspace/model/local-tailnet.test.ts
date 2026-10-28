@@ -3,6 +3,7 @@ import { createOpenBotInviteUrl } from "@openbot/contracts/invite-links";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import { teamHttpCodec } from "@openbot/contracts/team-protocol/http-codecs";
 import {
+  decodeTeamProtocolSupportV1,
   TEAM_APP_VERSION_HEADER,
   TEAM_CAPABILITIES_HEADER,
   TEAM_PROTOCOL_VERSION_HEADER,
@@ -168,6 +169,34 @@ describe("Android direct Tailscale pairing", () => {
       pairTailnetInvite(inviteUrl("a".repeat(43)), { appVersion: "1.1.0", fetch: host.fetcher, randomBytes }),
     ).rejects.toThrow("identity could not be verified");
     expect(host.calls.some((call) => call.path === TEAM_API_ROUTES.join.server)).toBe(false);
+  });
+
+  it("sends direct Tailnet GET requests without a JSON body or content type", async () => {
+    const host = await createHostFetch();
+    const client = new DirectTailnetTeamClient(
+      {
+        hostId: serverId,
+        name: "Tailnet host",
+        logoKey: null,
+        apiUrl,
+        publicKey: "unused",
+        fingerprint: host.fingerprint,
+        sessionToken: "local-session-token",
+        membershipId: "member-id",
+        role: "member",
+      },
+      { appVersion: "1.1.0", fetch: host.fetcher, randomBytes },
+    );
+
+    await client.connect();
+    await expect(
+      client.request("GET", TEAM_API_ROUTES.compatibility, decodeTeamProtocolSupportV1),
+    ).resolves.toMatchObject({ protocol: { minimum: 1, maximum: 6 } });
+
+    const compatibilityRequests = host.calls.filter((call) => call.path === TEAM_API_ROUTES.compatibility);
+    expect(compatibilityRequests).toHaveLength(2);
+    expect(compatibilityRequests.every((call) => call.body === undefined)).toBe(true);
+    expect(compatibilityRequests.every((call) => call.headers.get("Content-Type") === null)).toBe(true);
   });
 
   it("rejects an event socket that closes before opening and records safe connection details", async () => {
