@@ -4,7 +4,9 @@ import { createRequire } from "node:module";
 import { connect } from "node:net";
 import { dirname, join } from "node:path";
 import type { Duplex } from "node:stream";
+import { runInNewContext } from "node:vm";
 import type { RemoteDesktopIceServer } from "@openbot/contracts/ipc";
+import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import { Effect } from "effect";
 import { afterEach, assert, describe, expect, it, vi } from "vitest";
 import type * as Ws from "ws";
@@ -364,7 +366,9 @@ describe("RemoteScreenGateway", () => {
     const { origin, close } = await serveGateway(gateway);
     const session = await createSession(gateway, origin);
     const viewer = await fetch(`${session.viewerUrl}?openbotRelay=1#${session.viewerGrant}`);
-    expect(await viewer.text()).toContain(`&openbotRelay=1`);
+    const viewerHtml = await viewer.text();
+    expect(viewerHtml).toContain(`&openbotRelay=1`);
+    expect(viewerHtml).toContain('"+"#"+encodeURIComponent(grant)');
     const authorize = await fetch(`${origin}/v1/remote-screen/sessions/${session.id}/authorize`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -380,7 +384,58 @@ describe("RemoteScreenGateway", () => {
       `${origin}/v1/remote-screen/sessions/${session.id}/moonlight/openbot-relay.js?openbotRelay=1`,
       { headers: { Cookie: cookie } },
     );
-    expect(await relayScript.text()).toContain("openbot-remote-desktop-socket-v1");
+    const relaySource = await relayScript.text();
+    expect(relaySource).toContain("openbot-remote-desktop-socket-v1");
+
+    const messages: Array<{ type: string; path?: string }> = [];
+    const parent = { postMessage: (message: { type: string; path?: string }) => messages.push(message) };
+    const location = new URL(
+      `${origin}${TEAM_API_ROUTES.remoteScreen.session(session.id)}/moonlight/stream.html?hostId=12&appId=1&openbotRelay=1#${session.viewerGrant}`,
+    );
+    class NativeWebSocket extends EventTarget {
+      readonly url: string;
+      readonly protocols?: string | string[];
+
+      constructor(url: string, protocols?: string | string[]) {
+        super();
+        this.url = url;
+        this.protocols = protocols;
+      }
+    }
+    const relayWindow = { WebSocket: NativeWebSocket, addEventListener: () => undefined };
+    const history = { replaceState: vi.fn() };
+    runInNewContext(relaySource, {
+      window: relayWindow,
+      location,
+      history,
+      parent,
+      URL,
+      EventTarget,
+      Event,
+      MessageEvent,
+      DOMException,
+      Math,
+      Date,
+      btoa,
+      atob,
+      ArrayBuffer,
+      Uint8Array,
+      Blob,
+    });
+    new relayWindow.WebSocket(
+      `${origin.replace(/^http/u, "ws")}${TEAM_API_ROUTES.remoteScreen.session(session.id)}/stream?hostId=12&appId=1`,
+      ["openbot-viewer-v1"],
+    );
+    expect(messages[0]).toMatchObject({
+      type: "open",
+      path: `${TEAM_API_ROUTES.remoteScreen.session(session.id)}/stream?hostId=12&appId=1&openbotViewer=${session.viewerGrant}`,
+    });
+    new relayWindow.WebSocket(
+      `${origin.replace(/^http/u, "ws")}${TEAM_API_ROUTES.remoteScreen.session(session.id)}/moonlight/other-socket`,
+      ["openbot-viewer-v1"],
+    );
+    expect(messages[1]?.path).not.toContain("openbotViewer=");
+    expect(history.replaceState).toHaveBeenCalledOnce();
     const standard = await fetch(
       `${origin}/v1/remote-screen/sessions/${session.id}/moonlight/stream.html?hostId=12&appId=1`,
       { headers: { Cookie: cookie } },
@@ -389,6 +444,33 @@ describe("RemoteScreenGateway", () => {
     await runCauseEffect(gateway.stop());
     await close();
     await new Promise<void>((resolve) => upstreamServer.close(() => resolve()));
+  });
+
+  it("accepts the scoped viewer grant on a relayed WebSocket request", async () => {
+    const gateway = createGateway();
+    const { origin, close } = await serveGateway(gateway);
+    const session = await createSession(gateway, origin);
+    const authorize = await fetch(`${origin}${TEAM_API_ROUTES.remoteScreen.session(session.id)}/authorize`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ grant: session.viewerGrant }),
+    });
+    expect(authorize.status).toBe(204);
+
+    const client = new webSockets.WebSocket(
+      `${origin.replace(/^http/u, "ws")}${TEAM_API_ROUTES.remoteScreen.session(session.id)}/stream?openbotViewer=${encodeURIComponent(session.viewerGrant)}`,
+      { headers: { "X-OpenBot-WebRTC-Session": "not-the-current-session" } },
+    );
+    try {
+      await new Promise<void>((resolve, reject) => {
+        client.once("open", resolve);
+        client.once("error", reject);
+      });
+    } finally {
+      client.close();
+      await runCauseEffect(gateway.stop());
+      await close();
+    }
   });
 
   it("refuses a session the host may not record, instead of opening one that never shows a frame", async () => {
