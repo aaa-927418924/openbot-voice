@@ -105,9 +105,9 @@ function RootNavigator() {
                   headerBackButtonDisplayMode: "minimal",
                   headerShadowVisible: false,
                   headerTransparent: isIOS,
-                  // Let nested stacks choose their own orientation. The authenticated stack keeps
-                  // regular app screens portrait and opts only Remote Desktop into rotation.
-                  orientation: "default",
+                  // Keep native startup and route transitions in portrait. The authenticated
+                  // Remote Desktop screen opts into rotation in its nested stack.
+                  orientation: "portrait",
                 }}
               >
                 <Stack.Screen name="index" options={{ headerShown: false, orientation: "portrait" }} />
