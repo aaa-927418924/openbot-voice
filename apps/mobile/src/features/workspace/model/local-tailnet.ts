@@ -173,6 +173,18 @@ function randomPassword(randomBytes: TailnetRandomBytes): string {
   return base64Url(randomBytes(32));
 }
 
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  }
+  return btoa(binary);
+}
+
+function isAgentAvatarPath(path: string): boolean {
+  return /^\/v1\/agents\/[^/]+\/avatar$/u.test(path);
+}
+
 export function parseTailnetInvite(value: string): InviteLinkPayload {
   const invite = parseInviteUrl(value, { allowTailscaleApiUrl: true });
   if (!isTailscaleApiUrl(invite.apiUrl)) throw new Error("Only Tailscale host invitations can be used in local mode.");
@@ -361,13 +373,24 @@ export class DirectTailnetTeamClient {
       headers,
       ...(requestBody === undefined ? {} : { body: requestBody }),
     });
-    const value = response.status === 204 ? undefined : await response.json();
+    const avatarResponse = method === "GET" && response.ok && isAgentAvatarPath(route);
+    const value =
+      response.status === 204
+        ? undefined
+        : avatarResponse
+          ? {
+              mimeType: response.headers.get("Content-Type")?.split(";", 1)[0]?.trim() ?? "",
+              base64: bytesToBase64(new Uint8Array(await response.arrayBuffer())),
+            }
+          : await response.json();
     const decoded =
       value === undefined
         ? undefined
-        : sideRoute
-          ? sideRoute.response(route, response.status, value)
-          : teamHttpCodec(protocol).decodeResponse(method, route, response.status, value);
+        : avatarResponse
+          ? value
+          : sideRoute
+            ? sideRoute.response(route, response.status, value)
+            : teamHttpCodec(protocol).decodeResponse(method, route, response.status, value);
     if (!response.ok) throw new DirectTailnetHttpError(response.status);
     onUploadProgress?.(1);
     return decode(decoded);

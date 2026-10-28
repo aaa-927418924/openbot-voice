@@ -106,6 +106,10 @@ async function createHostFetch() {
       if (!sideRoute) throw new Error("Channel route codec is unavailable.");
       return Response.json(sideRoute.response(url.pathname, 200, []));
     }
+    if (url.pathname === TEAM_API_ROUTES.agent.avatar("agent-1"))
+      return new Response(Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]), {
+        headers: { "Content-Type": "image/png" },
+      });
     if (url.pathname === TEAM_API_ROUTES.join.server) {
       const joined = {
         member: {
@@ -200,6 +204,13 @@ describe("Android direct Tailscale pairing", () => {
       client.request("GET", TEAM_API_ROUTES.compatibility, decodeTeamProtocolSupportV1),
     ).resolves.toMatchObject({ protocol: { minimum: 1, maximum: 6 } });
     await expect(client.request("GET", CHANNEL_ROUTES.list, (value) => value)).resolves.toEqual([]);
+    await expect(
+      client.request("GET", TEAM_API_ROUTES.agent.avatar("agent-1"), (value) => {
+        if (typeof value !== "object" || value === null || !("mimeType" in value) || !("base64" in value))
+          throw new Error("Invalid avatar response.");
+        return `data:${value.mimeType};base64,${value.base64}`;
+      }),
+    ).resolves.toBe("data:image/png;base64,iVBORw0KGgo=");
 
     const compatibilityRequests = host.calls.filter((call) => call.path === TEAM_API_ROUTES.compatibility);
     expect(compatibilityRequests).toHaveLength(2);
