@@ -19,6 +19,7 @@ import {
   parseRemoteDesktopDisplay,
   parseRemoteDesktopSetupAction,
   parseRemoteDesktopTest,
+  parseRemoteDesktopViewerDiagnostic,
   parseReorderServers,
   parseSendDirectMessage,
   parseSetServerMuted,
@@ -192,6 +193,9 @@ export function teamIpcHandlers({
       connect: payloadHandler(parseRemoteDesktopConnect, (request) => runCauseEffect(remoteDesktop.connect(request))),
       selectDisplay: payloadHandler(parseRemoteDesktopDisplay, (request) =>
         runCauseEffect(remoteDesktop.selectDisplay(request.serverId, request.displayId)),
+      ),
+      reportViewerDiagnostic: payloadHandler(parseRemoteDesktopViewerDiagnostic, (request) =>
+        remoteDesktop.reportViewerDiagnostic(request),
       ),
       disconnect: payloadHandler(stringPayload("sessionId"), (sessionId) =>
         runCauseEffect(remoteDesktop.disconnect(sessionId)),

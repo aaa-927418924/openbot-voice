@@ -1,4 +1,9 @@
 export type RemoteViewerDiagnosticEventName =
+  | "session_request_started"
+  | "session_created"
+  | "session_request_failed"
+  | "viewer_frame_loaded"
+  | "viewer_state"
   | "http_request"
   | "http_response"
   | "http_error"
@@ -26,9 +31,16 @@ export interface RemoteViewerDiagnosticEvent {
   status?: number;
   durationMs?: number;
   code?: number;
+  transport?: "direct" | "webrtc-v2";
+  viewerState?: "connecting" | "connected" | "error";
 }
 
 const EVENT_NAMES = [
+  "session_request_started",
+  "session_created",
+  "session_request_failed",
+  "viewer_frame_loaded",
+  "viewer_state",
   "http_request",
   "http_response",
   "http_error",
@@ -58,6 +70,8 @@ interface RawDiagnosticEvent {
   status?: unknown;
   durationMs?: unknown;
   code?: unknown;
+  transport?: unknown;
+  viewerState?: unknown;
 }
 
 /**
@@ -119,6 +133,9 @@ function parseEventLine(line: string): RemoteViewerDiagnosticEvent | null {
   if (isResourceName(record.resource)) event.resource = record.resource;
   if (isHttpMethod(record.method)) event.method = record.method;
   if (typeof record.viewerGrantPresent === "boolean") event.viewerGrantPresent = record.viewerGrantPresent;
+  if (record.transport === "direct" || record.transport === "webrtc-v2") event.transport = record.transport;
+  if (record.viewerState === "connecting" || record.viewerState === "connected" || record.viewerState === "error")
+    event.viewerState = record.viewerState;
   if (
     typeof record.status === "number" &&
     Number.isInteger(record.status) &&
@@ -157,6 +174,8 @@ function formatEventLine(event: RemoteViewerDiagnosticEvent): string {
     event.status !== undefined ? `status=${event.status}` : undefined,
     event.durationMs !== undefined ? `durationMs=${event.durationMs}` : undefined,
     event.code !== undefined ? `code=${event.code}` : undefined,
+    event.transport ? `transport=${event.transport}` : undefined,
+    event.viewerState ? `viewerState=${event.viewerState}` : undefined,
   ].filter((field): field is string => field !== undefined);
   return `${event.at} ${event.event}${fields.length ? ` ${fields.join(" ")}` : ""}`;
 }

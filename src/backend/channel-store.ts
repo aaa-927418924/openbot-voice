@@ -72,9 +72,22 @@ interface ChannelChange {
   assignments: ChannelAssignment[];
 }
 
+interface ChannelAuthorIdentity {
+  id: string;
+  name: string;
+  memberIds: string[];
+}
+
 /** Owns durable channel records. Every change and its retry receipt commit together. */
 export class ChannelStore {
+  #resolveMemberIdentity: ((memberId: string) => ChannelAuthorIdentity | null) | null = null;
+
   constructor(readonly database: OpenBotDatabase) {}
+
+  /** Connects the display projection to the host's explicit device identity links. */
+  setMemberIdentityResolver(resolver: (memberId: string) => ChannelAuthorIdentity | null): void {
+    this.#resolveMemberIdentity = resolver;
+  }
 
   get(channelId: string): Channel {
     const row = databaseRow(
@@ -121,7 +134,10 @@ export class ChannelStore {
     // The sidebar is rebuilt on every `channels-changed`, and a streaming reply emits those while
     // it arrives. One query returns every summary: the previous per-channel latest-message, unread,
     // and task queries made this O(channels x queries) per stream frame.
-    const excludedId = signedOutMessagesAreTheirs ? SIGNED_OUT_CHANNEL_MEMBER_ID : memberId;
+    const memberIds = new Set(this.#resolveMemberIdentity?.(memberId)?.memberIds ?? [memberId]);
+    memberIds.add(memberId);
+    if (signedOutMessagesAreTheirs) memberIds.add(SIGNED_OUT_CHANNEL_MEMBER_ID);
+    const excludedMemberPlaceholders = [...memberIds].map(() => "?").join(", ");
     const rows = databaseRows(
       this.database.connection
         .prepare(
@@ -137,8 +153,7 @@ export class ChannelStore {
                 AND m.sequence > COALESCE(
                   (SELECT r.through_sequence FROM projection_channel_reads AS r
                     WHERE r.channel_id = c.channel_id AND r.member_id = ?), 0)
-                AND json_extract(m.message_json, '$.author.id') IS NOT ?
-                AND json_extract(m.message_json, '$.author.id') IS NOT ?
+                AND json_extract(m.message_json, '$.author.id') NOT IN (${excludedMemberPlaceholders})
                 AND COALESCE(json_extract(m.message_json, '$.message.itemType'), '') != 'plan'
                 AND COALESCE(json_extract(m.message_json, '$.message.itemType'), '') NOT LIKE 'live-voice-session-end:%'
                 AND COALESCE(json_extract(m.message_json, '$.message.itemType'), '') NOT IN ('live-voice-session-start', 'channel-message-deleted', 'channel-history-cleared')
@@ -148,7 +163,7 @@ export class ChannelStore {
                 AND json_extract(t.task_json, '$.state') = 'running') AS running
             FROM projection_channels AS c ORDER BY c.rowid`,
         )
-        .all(memberId, memberId, excludedId, `${CHANNEL_ROUTING_EVENT_ITEM_TYPE_PREFIX}%`),
+        .all(memberId, ...memberIds, `${CHANNEL_ROUTING_EVENT_ITEM_TYPE_PREFIX}%`),
     );
     return rows.map((row) => {
       const channel = decodeChannel(JSON.parse(requiredStringColumn(row, "channel_json")));
@@ -158,7 +173,7 @@ export class ChannelStore {
           ? (() => {
               const value = JSON.parse(latestJson);
               if (!isChannelMessage(value)) throw new Error("Invalid stored channel message.");
-              return value;
+              return this.#displayMessage(value);
             })()
           : undefined;
       return {
@@ -324,11 +339,17 @@ export class ChannelStore {
     return {
       channel: this.get(channelId),
       tasks: this.tasks(channelId),
-      messages,
+      messages: messages.map((message) => this.#displayMessage(message)),
       olderCursor,
       throughSequence: this.messages(channelId, undefined, 1)[0]?.sequence ?? 0,
       ...(olderCursor === null ? {} : this.olderExtent(channelId, olderCursor)),
     };
+  }
+
+  #displayMessage(message: ChannelMessage): ChannelMessage {
+    if (message.author.kind !== "member") return message;
+    const identity = this.#resolveMemberIdentity?.(message.author.id);
+    return identity ? { ...message, author: { ...message.author, id: identity.id, name: identity.name } } : message;
   }
 
   /**

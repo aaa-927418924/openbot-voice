@@ -437,6 +437,7 @@ export function createMockTeam(
       );
       emitRemoteDesktopSessions(remoteDesktopSessions);
     },
+    reportViewerDiagnostic: async () => undefined,
     disconnect: async (sessionId) => {
       remoteDesktopSessions = remoteDesktopSessions.filter((session) => session.id !== sessionId);
       emitRemoteDesktopSessions(remoteDesktopSessions);

@@ -310,6 +310,10 @@ describe("RemoteScreenGateway", () => {
       const authScriptText = await authScript.text();
       expect(authScript.status).toBe(200);
       expect(authScriptText).toContain("X-OpenBot-Viewer");
+      expect(authScriptText).toContain('pageUrl.searchParams.get("openbotViewer")');
+      expect(authScriptText).toContain('target.searchParams.set("openbotViewer",grant)');
+      expect(authScriptText).toContain("new Request(target.toString(),input)");
+      expect(authScriptText).toContain('target.pathname!==prefix+"stream"');
       expect(authScriptText).not.toContain(session.viewerGrant);
 
       const state = await fetch(

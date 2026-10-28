@@ -1,4 +1,9 @@
-import type { RemoteDesktopConnectResult, RemoteDesktopErrorCode, RemoteDesktopSession } from "@openbot/contracts/ipc";
+import type {
+  RemoteDesktopConnectResult,
+  RemoteDesktopErrorCode,
+  RemoteDesktopSession,
+  RemoteDesktopViewerDiagnosticInput,
+} from "@openbot/contracts/ipc";
 import { currentText } from "@openbot/ui/text";
 import { createEffect, createMemo, createSignal, flush, onSettled } from "solid-js";
 import { desktopAnalytics } from "../../analytics";
@@ -118,6 +123,14 @@ const RemoteDesktop = createSimpleContext({
           failure_code: "display_select_failed",
         });
         throw error;
+      }
+    }
+
+    async function reportRemoteDesktopViewerDiagnostic(input: RemoteDesktopViewerDiagnosticInput): Promise<void> {
+      try {
+        await remoteDesktopPort().remoteDesktop.reportViewerDiagnostic(input);
+      } catch {
+        // Diagnostics are best effort and must not change the viewer state.
       }
     }
 
@@ -303,6 +316,7 @@ const RemoteDesktop = createSimpleContext({
       retryRemoteDesktopWorkspace,
       disconnectRemoteDesktopWorkspace,
       selectRemoteDesktopDisplay,
+      reportRemoteDesktopViewerDiagnostic,
     };
   },
 });

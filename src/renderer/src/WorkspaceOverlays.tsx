@@ -683,6 +683,7 @@ function RemoteDesktop() {
     hideRemoteDesktopWorkspace,
     retryRemoteDesktopWorkspace,
     selectRemoteDesktopDisplay,
+    reportRemoteDesktopViewerDiagnostic,
   } = useRemoteDesktop();
 
   return (
@@ -700,6 +701,7 @@ function RemoteDesktop() {
             onHide={hideRemoteDesktopWorkspace}
             onRetry={retryRemoteDesktopWorkspace}
             onSelectDisplay={selectRemoteDesktopDisplay}
+            onViewerDiagnostic={(event) => void reportRemoteDesktopViewerDiagnostic({ serverId: server.id, event })}
           />
         </Loading>
       )}

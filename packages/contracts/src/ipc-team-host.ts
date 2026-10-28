@@ -497,5 +497,10 @@ export interface RemoteDesktopSelectDisplayInput {
   displayId: string;
 }
 
+export interface RemoteDesktopViewerDiagnosticInput {
+  serverId: string;
+  event: "frame_loaded" | "connecting" | "connected" | "error";
+}
+
 import { INPUT_LIMITS } from "./input-limits";
 import { isBoolean, isDynamicRecord, isNumber, isString } from "./runtime-values";

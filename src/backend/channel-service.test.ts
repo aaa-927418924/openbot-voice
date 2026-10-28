@@ -328,6 +328,38 @@ describe("shared channel coordination", () => {
       text: "Request 104",
     });
   });
+  it("shows linked device messages under one profile without changing their stored authors", () => {
+    const memberIds = ["linux-device", "android-device", "windows-device"];
+    service.store.setMemberIdentityResolver((memberId) =>
+      memberIds.includes(memberId) ? { id: "profile-owner", name: actor.name, memberIds } : null,
+    );
+    const message: ChannelMessage = {
+      id: "device-message",
+      channelId: "channel-1",
+      sequence: 1,
+      author: { kind: "member", id: "windows-device", name: "Windows device" },
+      taskId: null,
+      superseded: false,
+      message: {
+        id: "device-message",
+        author: "user",
+        text: "A message from another device",
+        createdAt: new Date().toISOString(),
+        status: "completed",
+      },
+    };
+    service.store.update(service.store.get("channel-1"), { messages: [message] });
+
+    expect(service.store.page("channel-1").messages[0]?.author).toEqual({
+      kind: "member",
+      id: "profile-owner",
+      name: actor.name,
+    });
+    expect(service.store.messages("channel-1")[0]?.author.id).toBe("windows-device");
+    expect(service.store.list("linux-device")[0]?.unreadCount).toBe(0);
+    expect(service.store.list("other-member")[0]?.unreadCount).toBe(1);
+    expect(service.store.list("android-device")[0]?.lastMessage?.authorName).toBe(actor.name);
+  });
   it("removes a member the deletion of its agent left behind, and still refuses a new one", async () => {
     // Both members are deleted agents. The draft the settings panel sends holds the other one.
     vi.spyOn(data.store, "list").mockReturnValue([]);

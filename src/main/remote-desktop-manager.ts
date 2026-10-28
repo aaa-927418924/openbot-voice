@@ -4,8 +4,10 @@ import {
   type RemoteDesktopConnectInput,
   type RemoteDesktopConnectResult,
   type RemoteDesktopSession,
+  type RemoteDesktopViewerDiagnosticInput,
 } from "@openbot/contracts/ipc";
 import { Effect, Result } from "effect";
+import type { RemoteViewerDiagnosticEvent } from "./remote-desktop-support-log";
 import { RemoteRequestError } from "./remote-server-errors";
 import type { RemoteWorkflowError } from "./remote-service-effects";
 
@@ -21,11 +23,28 @@ interface RemoteDesktopServers {
 
 export class RemoteDesktopManager extends EventEmitter<RemoteDesktopEvents> {
   readonly #servers: RemoteDesktopServers;
+  readonly #onDiagnostic: ((event: RemoteViewerDiagnosticEvent) => void) | undefined;
   readonly #sessions = new Map<string, RemoteDesktopSession>();
 
-  constructor(servers: RemoteDesktopServers) {
+  constructor(servers: RemoteDesktopServers, onDiagnostic?: (event: RemoteViewerDiagnosticEvent) => void) {
     super();
     this.#servers = servers;
+    this.#onDiagnostic = onDiagnostic;
+  }
+
+  reportViewerDiagnostic(input: RemoteDesktopViewerDiagnosticInput): void {
+    if (![...this.#sessions.values()].some((session) => session.serverId === input.serverId)) return;
+    const event: RemoteViewerDiagnosticEvent = {
+      at: new Date().toISOString(),
+      event: input.event === "frame_loaded" ? "viewer_frame_loaded" : "viewer_state",
+      resource: "viewer",
+      ...(input.event === "frame_loaded" ? {} : { viewerState: input.event }),
+    };
+    try {
+      this.#onDiagnostic?.(event);
+    } catch {
+      // A diagnostic write must never interrupt a viewer session.
+    }
   }
 
   list(): RemoteDesktopSession[] {

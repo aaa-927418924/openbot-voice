@@ -21,12 +21,18 @@ const session: RemoteDesktopSession = {
   grantExpiresAt: "2026-08-21T12:01:00.000Z",
 };
 
-function createManager(createRemoteDesktopSession: () => Promise<RemoteDesktopSession>) {
-  return new RemoteDesktopManager({
-    createRemoteDesktopSession: () => remoteCall(createRemoteDesktopSession),
-    closeRemoteDesktopSession: vi.fn(() => Effect.void),
-    selectRemoteDesktopDisplay: vi.fn(() => Effect.void),
-  });
+function createManager(
+  createRemoteDesktopSession: () => Promise<RemoteDesktopSession>,
+  onDiagnostic?: (event: import("./remote-desktop-support-log").RemoteViewerDiagnosticEvent) => void,
+) {
+  return new RemoteDesktopManager(
+    {
+      createRemoteDesktopSession: () => remoteCall(createRemoteDesktopSession),
+      closeRemoteDesktopSession: vi.fn(() => Effect.void),
+      selectRemoteDesktopDisplay: vi.fn(() => Effect.void),
+    },
+    onDiagnostic,
+  );
 }
 
 describe("RemoteDesktopManager.connect", () => {
@@ -65,5 +71,25 @@ describe("RemoteDesktopManager.connect", () => {
       session,
     });
     expect(manager.list()).toEqual([session]);
+  });
+
+  it("records only allowlisted viewer state for an active session", async () => {
+    const onDiagnostic = vi.fn();
+    const manager = createManager(async () => structuredClone(session), onDiagnostic);
+    await runCauseEffect(manager.connect({ serverId: "remote-1" }));
+
+    manager.reportViewerDiagnostic({ serverId: "remote-1", event: "frame_loaded" });
+    manager.reportViewerDiagnostic({ serverId: "remote-1", event: "error" });
+    manager.reportViewerDiagnostic({ serverId: "unknown-server", event: "connected" });
+
+    expect(onDiagnostic).toHaveBeenCalledTimes(2);
+    expect(onDiagnostic).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ event: "viewer_frame_loaded", resource: "viewer" }),
+    );
+    expect(onDiagnostic).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ event: "viewer_state", resource: "viewer", viewerState: "error" }),
+    );
   });
 });

@@ -1308,6 +1308,7 @@ export async function createApplicationServices({
     join(app.getPath("userData"), TEAM_FILE),
   );
   await runCauseEffect(teamStore.initialize());
+  service.channels.store.setMemberIdentityResolver((memberId) => teamStore.getChannelIdentity(memberId));
   if (localOnlyNetworking && !teamStore.configured) {
     await runCauseEffect(teamStore.activateLocalHost());
   }
@@ -1675,21 +1676,32 @@ export async function createApplicationServices({
     },
   });
   teardown.push(TEARDOWN_ORDER.browserView, "the live browser view", () => runCauseEffect(browserView.stop()));
-  const remoteDesktop = new RemoteDesktopManager({
-    createRemoteDesktopSession: (serverId) =>
-      serverId === "local"
-        ? host.createLocalRemoteDesktopTestSession()
-        : remoteServers.createRemoteDesktopSession(serverId),
-    closeRemoteDesktopSession: (serverId, sessionId) =>
-      serverId === "local"
-        ? host.closeLocalRemoteDesktopTestSession(sessionId)
-        : remoteServers.closeRemoteDesktopSession(serverId, sessionId),
-    selectRemoteDesktopDisplay: (serverId, displayId) => {
-      if (serverId === "local")
-        return Effect.fail(new RemoteWorkflowError({ cause: new Error(sourceText("error.app.finishLocalTest")) }));
-      return remoteServers.selectRemoteDesktopDisplay(serverId, displayId);
+  const remoteDesktop = new RemoteDesktopManager(
+    {
+      createRemoteDesktopSession: (serverId) =>
+        serverId === "local"
+          ? host.createLocalRemoteDesktopTestSession()
+          : remoteServers.createRemoteDesktopSession(serverId),
+      closeRemoteDesktopSession: (serverId, sessionId) =>
+        serverId === "local"
+          ? host.closeLocalRemoteDesktopTestSession(sessionId)
+          : remoteServers.closeRemoteDesktopSession(serverId, sessionId),
+      selectRemoteDesktopDisplay: (serverId, displayId) => {
+        if (serverId === "local")
+          return Effect.fail(new RemoteWorkflowError({ cause: new Error(sourceText("error.app.finishLocalTest")) }));
+        return remoteServers.selectRemoteDesktopDisplay(serverId, displayId);
+      },
     },
-  });
+    (event) => {
+      Effect.runFork(
+        appendRemoteDiagnosticLog(
+          join(app.getPath("userData"), "logs", "remote"),
+          "remote-viewer-proxy",
+          `${JSON.stringify(event)}\n`,
+        ),
+      );
+    },
+  );
   teardown.push(TEARDOWN_ORDER.remoteDesktop, "remote desktop", () => Effect.runPromise(remoteDesktop.stop()));
   const voice = new VoiceTranscriptionService({
     resourcesRoot: app.isPackaged ? join(process.resourcesPath, "whisper") : resolve(".openbot-build/whisper"),

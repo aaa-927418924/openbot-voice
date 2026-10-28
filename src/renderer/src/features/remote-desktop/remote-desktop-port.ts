@@ -7,7 +7,7 @@ import type { OpenBotDesktopApi } from "@openbot/contracts/ipc";
 export interface RemoteDesktopPort {
   remoteDesktop: Pick<
     OpenBotDesktopApi["remoteDesktop"],
-    "connect" | "disconnect" | "list" | "onEvent" | "selectDisplay"
+    "connect" | "disconnect" | "list" | "onEvent" | "selectDisplay" | "reportViewerDiagnostic"
   >;
 }
 

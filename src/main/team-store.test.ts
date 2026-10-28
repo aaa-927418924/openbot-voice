@@ -59,6 +59,47 @@ describe("TeamStore", () => {
     expect(raw).not.toContain(login.sessionToken);
   });
 
+  it("restores one channel display identity while keeping device memberships separate", async () => {
+    const { store, path } = await createStore();
+    await runCauseEffect(
+      store.configureWithAccount("Studio Mac", {
+        id: "owner-account",
+        email: "owner@example.com",
+        name: "Owner profile",
+        avatarUrl: null,
+      }),
+    );
+    const firstInvite = await runCauseEffect(store.createInvite("admin"));
+    const first = await runCauseEffect(store.acceptInvite(firstInvite.token, "windows-device", "a secure password"));
+    const secondInvite = await runCauseEffect(store.createInvite("admin"));
+    const second = await runCauseEffect(
+      store.acceptInvite(secondInvite.token, "android-device", "another secure password"),
+    );
+    const saved: {
+      hosts: Array<{ members: Array<{ id: string; role: string; channelIdentityId?: string }> }>;
+    } = JSON.parse(await readFile(path, "utf8"));
+    const members = saved.hosts[0]?.members ?? [];
+    const owner = members.find((member) => member.role === "owner");
+    expect(owner).toBeDefined();
+    for (const member of [first.member, second.member]) {
+      const stored = members.find((candidate) => candidate.id === member.id);
+      expect(stored).toBeDefined();
+      if (stored && owner) stored.channelIdentityId = owner.id;
+    }
+    await writeFile(path, JSON.stringify(saved));
+
+    const restored = new TeamStore(path);
+    await runCauseEffect(restored.initialize());
+    const identity = restored.getChannelIdentity(first.member.id);
+    expect(identity).toEqual({
+      id: owner?.id,
+      name: "Owner profile",
+      memberIds: [owner?.id, first.member.id, second.member.id],
+    });
+    expect(restored.getMember(first.member.id)?.id).toBe(first.member.id);
+    expect(restored.getMember(second.member.id)?.id).toBe(second.member.id);
+  });
+
   it("can reactivate an unowned host after an account id was left in the profile file", async () => {
     const { store, path } = await createStore();
     const identity = await runCauseEffect(store.configure("Studio Mac", "owner", "correct horse battery"));

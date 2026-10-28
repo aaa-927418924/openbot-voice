@@ -879,6 +879,7 @@ const openbotApi: OpenBotDesktopApi = {
     list: decodeRemoteDesktopSessions,
     connect: decodeRemoteDesktopConnectResult,
     selectDisplay: decodeVoid,
+    reportViewerDiagnostic: decodeVoid,
     disconnect: decodeVoid,
     event: decodeRemoteDesktopSessions,
   }),

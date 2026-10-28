@@ -11,6 +11,7 @@ interface RemoteDesktopWorkspaceProps {
   testControls?: JSX.Element;
   viewOnly?: boolean;
   onViewerState?: (state: ViewerState) => void;
+  onViewerDiagnostic?: (event: "frame_loaded" | "connecting" | "connected" | "error") => void;
   visible: boolean;
   platform: "darwin" | "win32" | "linux";
   server: ServerSummary;
@@ -105,6 +106,7 @@ export function RemoteDesktopWorkspace(props: RemoteDesktopWorkspaceProps) {
         setViewerState("error");
         setViewerError(t("remoteDesktop.streamNotReady"));
         props.onViewerState?.("error");
+        props.onViewerDiagnostic?.("error");
       }, STREAM_READY_TIMEOUT_MS);
       return () => clearTimeout(timer);
     },
@@ -119,6 +121,7 @@ export function RemoteDesktopWorkspace(props: RemoteDesktopWorkspaceProps) {
     if (!parsed.success || parsed.data.sessionId !== session.id) return;
     setViewerState(parsed.data.state);
     props.onViewerState?.(parsed.data.state);
+    props.onViewerDiagnostic?.(parsed.data.state);
     setViewerError(
       parsed.data.state === "error" ? errorMessage(parsed.data.message, t("remoteDesktop.controlFailed")) : null,
     );
@@ -225,11 +228,16 @@ export function RemoteDesktopWorkspace(props: RemoteDesktopWorkspaceProps) {
                 src={source()}
                 sandbox="allow-scripts allow-forms allow-same-origin allow-pointer-lock"
                 allow="fullscreen; keyboard-map"
-                onLoad={() => setViewerState("connecting")}
+                onLoad={() => {
+                  setViewerState("connecting");
+                  props.onViewerDiagnostic?.("frame_loaded");
+                  props.onViewerDiagnostic?.("connecting");
+                }}
                 onError={() => {
                   setViewerState("error");
                   setViewerError(t("remoteDesktop.viewerLoadFailed"));
                   props.onViewerState?.("error");
+                  props.onViewerDiagnostic?.("error");
                 }}
               />
             )}

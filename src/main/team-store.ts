@@ -70,6 +70,8 @@ export class TeamStoreError extends Schema.TaggedError<TeamStoreError>()("TeamSt
 
 interface StoredMember extends TeamMemberSummary {
   accountId?: string;
+  /** A user-selected channel author identity shared by several signed-in devices. */
+  channelIdentityId?: string;
   passwordSalt?: string;
   passwordHash?: string;
 }
@@ -163,6 +165,12 @@ export interface AuthenticatedMember {
   member: TeamMemberSummary;
   sessionToken: string;
   sessionExpiresAt: string;
+}
+
+export interface ChannelMemberIdentity {
+  id: string;
+  name: string;
+  memberIds: string[];
 }
 
 export interface RemoteDirectoryMember {
@@ -909,6 +917,31 @@ export class TeamStore {
   getMember(memberId: string): TeamMemberSummary | null {
     const member = this.#state?.members.find((candidate) => candidate.id === memberId);
     return member ? publicMember(member) : null;
+  }
+
+  /** Returns the display identity shared by a member and any linked device memberships. */
+  getChannelIdentity(memberId: string): ChannelMemberIdentity | null {
+    const members = this.#state?.members;
+    if (!members) return null;
+    const resolve = (start: StoredMember): StoredMember => {
+      let member = start;
+      const visited = new Set<string>([member.id]);
+      while (member.channelIdentityId) {
+        const next = members.find((candidate) => candidate.id === member.channelIdentityId);
+        if (!next || visited.has(next.id)) break;
+        visited.add(next.id);
+        member = next;
+      }
+      return member;
+    };
+    const selected = members.find((candidate) => candidate.id === memberId);
+    if (!selected) return null;
+    const canonical = resolve(selected);
+    return {
+      id: canonical.id,
+      name: canonical.name?.trim() || "Team member",
+      memberIds: members.filter((candidate) => resolve(candidate).id === canonical.id).map((candidate) => candidate.id),
+    };
   }
 
   listInvites(): TeamInviteSummary[] {

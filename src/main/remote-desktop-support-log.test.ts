@@ -57,4 +57,41 @@ describe("remote desktop support log export", () => {
     expect(report).toContain("Events: 0");
     expect(report).toContain("Reproduce the connection issue and export this file again.");
   });
+
+  it("records direct viewer startup and state without including a session or grant", () => {
+    const report = formatRemoteDesktopSupportLog({
+      generatedAt: "2026-10-28T12:01:00.000Z",
+      appVersion: "0.30.0",
+      platform: "win32",
+      log: [
+        JSON.stringify({
+          at: "2026-10-28T12:00:00.000Z",
+          event: "session_request_started",
+          resource: "viewer",
+          transport: "direct",
+        }),
+        JSON.stringify({
+          at: "2026-10-28T12:00:01.000Z",
+          event: "session_created",
+          resource: "viewer",
+          transport: "direct",
+          durationMs: 19,
+          sessionId: "private-session-id",
+          viewerGrant: "private-viewer-grant",
+        }),
+        JSON.stringify({
+          at: "2026-10-28T12:00:02.000Z",
+          event: "viewer_state",
+          resource: "viewer",
+          viewerState: "error",
+        }),
+      ].join("\n"),
+    });
+
+    expect(report).toContain("session_request_started resource=viewer transport=direct");
+    expect(report).toContain("session_created resource=viewer durationMs=19 transport=direct");
+    expect(report).toContain("viewer_state resource=viewer viewerState=error");
+    expect(report).not.toContain("private-session-id");
+    expect(report).not.toContain("private-viewer-grant");
+  });
 });

@@ -251,6 +251,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   readonly #hostedStartExpired = new Set<string>();
   #appFocused = true;
   readonly #remoteViewerProxy: RemoteViewerProxy | null;
+  readonly #onRemoteViewerDiagnostic: ((event: RemoteViewerDiagnosticEvent) => void) | undefined;
   #selections = Semaphore.makeUnsafe(1);
   #muteExpiryTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -281,6 +282,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     };
     this.#webrtcTransport = this.#localOnlyNetworking ? null : (options.webrtcTransport ?? null);
     this.#getLocalHostId = options.getLocalHostId ?? (() => null);
+    this.#onRemoteViewerDiagnostic = options.onRemoteViewerDiagnostic;
     this.#hostedServers = options.hostedServers ?? null;
     this.#client = new RemoteServerClient({
       appVersion: this.#appVersion,
@@ -1401,12 +1403,30 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       serverId: string,
     ): Effect.fn.Return<RemoteDesktopSession, RemoteWorkflowError, RemoteRequest> {
       const viewerProxy = this.#remoteViewerProxy;
-
-      const session = yield* this.request(serverId, TEAM_API_ROUTES.remoteScreen.sessions, decodeRemoteDesktopSession, {
+      const server = yield* remoteDecode(() => this.#servers.require(serverId));
+      const transport = server.transport === "webrtc-v2" ? "webrtc-v2" : "direct";
+      const startedAt = Date.now();
+      this.#diagnoseRemoteDesktop("session_request_started", { resource: "viewer", transport });
+      const result = yield* this.request(serverId, TEAM_API_ROUTES.remoteScreen.sessions, decodeRemoteDesktopSession, {
         method: "POST",
         body: {},
+      }).pipe(Effect.result);
+      if (Result.isFailure(result)) {
+        this.#diagnoseRemoteDesktop("session_request_failed", {
+          resource: "viewer",
+          transport,
+          durationMs: Date.now() - startedAt,
+          ...(result.failure.cause instanceof RemoteRequestError ? { status: result.failure.cause.status } : {}),
+        });
+        return yield* result.failure;
+      }
+      const session = result.success;
+      this.#diagnoseRemoteDesktop("session_created", {
+        resource: "viewer",
+        transport,
+        durationMs: Date.now() - startedAt,
       });
-      if ((yield* remoteDecode(() => this.#servers.require(serverId))).transport !== "webrtc-v2") return session;
+      if (transport !== "webrtc-v2") return session;
       if (!viewerProxy)
         return yield* new RemoteWorkflowError({
           cause: new Error(sourceText("error.remote.viewerProxyUnavailable")),
@@ -1418,6 +1438,17 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     },
     (operation) => this.#owned(operation),
   ).bind(this);
+
+  #diagnoseRemoteDesktop(
+    event: RemoteViewerDiagnosticEvent["event"],
+    details: Omit<RemoteViewerDiagnosticEvent, "at" | "event">,
+  ): void {
+    try {
+      this.#onRemoteViewerDiagnostic?.({ at: new Date().toISOString(), event, ...details });
+    } catch {
+      // A diagnostic write must never interrupt a remote session request.
+    }
+  }
 
   readonly fetchRemoteViewerResource = Effect.fn("RemoteManager.fetchRemoteViewerResource")(
     function* (

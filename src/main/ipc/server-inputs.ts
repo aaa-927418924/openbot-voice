@@ -11,6 +11,7 @@ import type {
   RemoteDesktopSelectDisplayInput,
   RemoteDesktopSetupAction,
   RemoteDesktopTestInput,
+  RemoteDesktopViewerDiagnosticInput,
   ReorderServersInput,
   SendDirectMessageInput,
   SetServerMutedInput,
@@ -199,6 +200,16 @@ export function parseRemoteDesktopDisplay(input: unknown): RemoteDesktopSelectDi
   return {
     serverId: requireString(input.serverId, "serverId"),
     displayId: requireString(input.displayId, "displayId"),
+  };
+}
+
+export function parseRemoteDesktopViewerDiagnostic(input: unknown): RemoteDesktopViewerDiagnosticInput {
+  if (!isObject(input) || !isOneOf(["frame_loaded", "connecting", "connected", "error"] as const, input.event)) {
+    throw new Error("Invalid remote desktop viewer diagnostic.");
+  }
+  return {
+    serverId: requireString(input.serverId, "serverId", INPUT_LIMITS.identifier),
+    event: input.event,
   };
 }
 
