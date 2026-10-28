@@ -116,6 +116,7 @@ interface Harness {
   iceUrl: string;
   iceToken: string;
   observedSunshineHttpPorts: number[];
+  observedSunshineConfigHomes: string[];
   sunshineHits: Array<{ path: string; localPort: number }>;
   pinBodies: string[];
   pairingName: string;
@@ -284,6 +285,7 @@ function createHarness(stateDirectory: string): Harness {
     iceUrl: "",
     iceToken: "",
     observedSunshineHttpPorts: [],
+    observedSunshineConfigHomes: [],
     sunshineHits: [],
     pinBodies: [],
     pairingName: "",
@@ -301,6 +303,7 @@ function createHarness(stateDirectory: string): Harness {
     const spawn = (executable: string, args: string[], options: SpawnOptions): FakeChild => {
       if (args.some((arg) => arg.includes("test-password"))) throw new Error("Password exposed in child arguments.");
       if (executable === TEST_PATHS.sunshine) {
+        harness.observedSunshineConfigHomes.push(options.env?.XDG_CONFIG_HOME ?? "");
         const config = readFileSync(args[0] ?? "", "utf8");
         const base = Number(/^\s*port\s*=\s*(\d+)\s*$/m.exec(config)?.[1]);
         if (!Number.isInteger(base)) throw new Error("Fake Sunshine did not receive a base port in sunshine.conf.");
@@ -409,6 +412,7 @@ describe("Sunshine capture configuration", () => {
       const sunshineConfig = await readFile(join(harness.stateDirectory, "sunshine.conf"), "utf8");
       expect(sunshineConfig).toContain("capture = portal");
       expect(sunshineConfig).toContain("encoder = software");
+      expect(harness.observedSunshineConfigHomes).toEqual([join(harness.stateDirectory, "xdg-config")]);
     } finally {
       await disposeRuntime(runtime, harness);
     }

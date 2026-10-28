@@ -1,7 +1,7 @@
 import { type ChildProcess, spawn as nodeSpawn, type SpawnOptions } from "node:child_process";
 import { createHash, randomBytes, timingSafeEqual, X509Certificate } from "node:crypto";
 import { createSocket } from "node:dgram";
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { createServer, request as httpRequest, type IncomingMessage, type Server } from "node:http";
 import https from "node:https";
 import { createServer as createTcpServer } from "node:net";
@@ -68,6 +68,9 @@ const READINESS_ATTEMPT_TIMEOUT_MS = 5_000;
 const SUNSHINE_START_TIMEOUT_MS = 20_000;
 const SUNSHINE_PORTAL_START_TIMEOUT_MS = 120_000;
 const SUNSHINE_START_ATTEMPTS = 3;
+const SUNSHINE_PORTAL_TOKEN_LOADED = "[portalgrab] Loaded portal restore token from disk";
+const SUNSHINE_PORTAL_TOKEN_SAVED = "[portalgrab] Saved portal restore token to disk";
+const SUNSHINE_PORTAL_STREAM_READY = "[portalgrab] Found stream for display id/name:";
 const MOONLIGHT_WEBRTC_RANGE_SIZE = 32;
 const MOONLIGHT_WEBRTC_RANGE_START = 40_000;
 // Sunshine keeps running when the operating system refuses it screen capture: it prints this, fails
@@ -101,6 +104,22 @@ export function sunshineStartupPolicy(
     return { timeoutMs: SUNSHINE_PORTAL_START_TIMEOUT_MS, attempts: 1 };
   }
   return { timeoutMs: SUNSHINE_START_TIMEOUT_MS, attempts: SUNSHINE_START_ATTEMPTS };
+}
+
+export function shouldResetSunshinePortalTokenAfterFailedStart(input: {
+  platform: "darwin" | "win32" | "linux";
+  linuxCaptureMethod?: "portal" | "x11";
+  restoreTokenLoaded: boolean;
+  restoreTokenSaved: boolean;
+  captureStreamStarted: boolean;
+}): boolean {
+  return (
+    input.platform === "linux" &&
+    input.linuxCaptureMethod === "portal" &&
+    input.restoreTokenLoaded &&
+    !input.restoreTokenSaved &&
+    !input.captureStreamStarted
+  );
 }
 
 export function sunshineHttpPortForBase(basePort: number): number {
@@ -373,6 +392,9 @@ export class SunshineMoonlightRuntime {
   readonly #pairingName = `openbot-remote-${randomBytes(16).toString("hex")}`;
   #state: SunshineMoonlightRuntimeState | null = null;
   #screenCaptureDenied = false;
+  #portalRestoreTokenLoaded = false;
+  #portalRestoreTokenSaved = false;
+  #portalCaptureStreamStarted = false;
   readonly #moonlightHeader = `X-OpenBot-Remote-${randomBytes(32).toString("hex")}`;
   #selectedDisplayId: string | null = null;
   readonly #lifecycle = new LifecycleGate<SunshineMoonlightRuntimeState, RemoteDesktopOperationError>();
@@ -784,18 +806,33 @@ export class SunshineMoonlightRuntime {
   ): Effect.fn.Return<void, RemoteDesktopOperationError> {
     let lastError: unknown;
     const { attempts } = sunshineStartupPolicy(this.#options.platform, this.#options.linuxCaptureMethod);
-    for (let attempt = 0; attempt < attempts; attempt += 1) {
+    for (let attempt = 0; ; attempt += 1) {
       yield* desktopSync(() => this.#throwIfStopRequested());
       const result = yield* Effect.result(this.#startSunshineOnceEffect());
       if (Result.isSuccess(result)) return;
       lastError = result.failure.cause;
+      const resetStalePortalToken =
+        attempt === 0 &&
+        shouldResetSunshinePortalTokenAfterFailedStart({
+          platform: this.#options.platform,
+          linuxCaptureMethod: this.#options.linuxCaptureMethod,
+          restoreTokenLoaded: this.#portalRestoreTokenLoaded,
+          restoreTokenSaved: this.#portalRestoreTokenSaved,
+          captureStreamStarted: this.#portalCaptureStreamStarted,
+        });
+      if (!resetStalePortalToken && attempt + 1 >= attempts) break;
       const sunshine = this.#sunshine;
       if (sunshine) {
         yield* stopRemoteProcess(sunshine).pipe(Effect.catch(() => Effect.void));
         this.#sunshine = null;
       }
-      if (attempt + 1 >= attempts) break;
-      if (this.#ownsSunshineAllocation && this.#sunshineBasePort !== null) {
+      if (resetStalePortalToken) {
+        yield* this.#resetSunshinePortalTokenEffect();
+        this.#options.onDiagnostic?.(
+          "sunshine",
+          "OpenBot: the saved XDG Portal screen token did not restore a display; cleared the OpenBot-only token and retrying for fresh host consent.\n",
+        );
+      } else if (this.#ownsSunshineAllocation && this.#sunshineBasePort !== null) {
         releaseSunshineBasePort(this.#sunshineBasePort);
         this.#sunshineBasePort = yield* allocateSunshineBasePort();
       }
@@ -810,10 +847,20 @@ export class SunshineMoonlightRuntime {
     // A restart is how a newly granted permission takes effect, so the verdict is this process's
     // alone -- carrying the previous one over would keep reporting a grant the user has already made.
     this.#screenCaptureDenied = false;
+    this.#portalRestoreTokenLoaded = false;
+    this.#portalRestoreTokenSaved = false;
+    this.#portalCaptureStreamStarted = false;
+    const usesPortal = this.#options.platform === "linux" && this.#options.linuxCaptureMethod === "portal";
+    const xdgConfigHome = join(this.#options.stateDirectory, "xdg-config");
+    if (usesPortal) yield* desktopCall(() => mkdir(xdgConfigHome, { recursive: true, mode: 0o700 }));
     this.#sunshine = yield* desktopSync(() =>
       this.#spawn(this.#options.paths.sunshine, [join(this.#options.stateDirectory, "sunshine.conf")], {
         cwd: dirname(this.#options.paths.sunshine),
-        env: { ...process.env, OPENBOT_REMOTE_SETUP: "1" },
+        env: {
+          ...process.env,
+          ...(usesPortal ? { XDG_CONFIG_HOME: xdgConfigHome } : {}),
+          OPENBOT_REMOTE_SETUP: "1",
+        },
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,
       }),
@@ -1143,6 +1190,23 @@ export class SunshineMoonlightRuntime {
     });
   }
 
+  readonly #resetSunshinePortalTokenEffect = Effect.fn("SunshineMoonlightRuntime.resetPortalToken")(function* (
+    this: SunshineMoonlightRuntime,
+  ): Effect.fn.Return<void, RemoteDesktopOperationError> {
+    const tokenDirectory = join(this.#options.stateDirectory, "xdg-config", "sunshine");
+    const names = yield* desktopCall(() =>
+      readdir(tokenDirectory).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return [];
+        throw error;
+      }),
+    );
+    const tokens = names.filter((name) => name === "portal_token" || name.startsWith("portal_token."));
+    yield* Effect.forEach(tokens, (name) => desktopCall(() => unlink(join(tokenDirectory, name))), {
+      concurrency: "unbounded",
+      discard: true,
+    });
+  }).bind(this);
+
   #pipeDiagnostics(process: ChildProcess, source: "sunshine" | "moonlight"): void {
     for (const stream of [process.stdout, process.stderr]) {
       // Sunshine writes to both streams and they interleave, so each keeps its own carry-over: one
@@ -1151,9 +1215,14 @@ export class SunshineMoonlightRuntime {
       stream?.on("data", (chunk) => {
         if (source === "sunshine" && saidCaptureDenied(chunk.toString("utf8"))) this.#screenCaptureDenied = true;
       });
-      forwardDiagnosticLines(stream, (text) =>
-        this.#options.onDiagnostic?.(source, text.replaceAll(this.#moonlightHeader, "[REDACTED]")),
-      );
+      forwardDiagnosticLines(stream, (text) => {
+        if (source === "sunshine") {
+          this.#portalRestoreTokenLoaded ||= text.includes(SUNSHINE_PORTAL_TOKEN_LOADED);
+          this.#portalRestoreTokenSaved ||= text.includes(SUNSHINE_PORTAL_TOKEN_SAVED);
+          this.#portalCaptureStreamStarted ||= text.includes(SUNSHINE_PORTAL_STREAM_READY);
+        }
+        this.#options.onDiagnostic?.(source, text.replaceAll(this.#moonlightHeader, "[REDACTED]"));
+      });
     }
   }
 }

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { createScreenCaptureDenialWatcher, sunshineStartupPolicy } from "./sunshine-moonlight-runtime";
+import {
+  createScreenCaptureDenialWatcher,
+  shouldResetSunshinePortalTokenAfterFailedStart,
+  sunshineStartupPolicy,
+} from "./sunshine-moonlight-runtime";
 
 // A refused Screen Recording grant is visible only in what Sunshine prints, and the pipe splits that
 // text wherever it happens to fill. Missing the marker leaves a member's session at "connecting"
@@ -16,6 +20,38 @@ describe("createScreenCaptureDenialWatcher", () => {
     const saidCaptureDenied = createScreenCaptureDenialWatcher();
     expect(saidCaptureDenied("Found H.264 encoder: h264_videotoolbox\n")).toBe(false);
     expect(saidCaptureDenied("Starting main loop\n")).toBe(false);
+  });
+});
+
+describe("Sunshine Portal token recovery", () => {
+  it("resets only an OpenBot Wayland Portal token that loaded but never restored a stream", () => {
+    expect(
+      shouldResetSunshinePortalTokenAfterFailedStart({
+        platform: "linux",
+        linuxCaptureMethod: "portal",
+        restoreTokenLoaded: true,
+        restoreTokenSaved: false,
+        captureStreamStarted: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldResetSunshinePortalTokenAfterFailedStart({
+        platform: "linux",
+        linuxCaptureMethod: "portal",
+        restoreTokenLoaded: true,
+        restoreTokenSaved: true,
+        captureStreamStarted: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldResetSunshinePortalTokenAfterFailedStart({
+        platform: "linux",
+        linuxCaptureMethod: "x11",
+        restoreTokenLoaded: true,
+        restoreTokenSaved: false,
+        captureStreamStarted: false,
+      }),
+    ).toBe(false);
   });
 });
 
