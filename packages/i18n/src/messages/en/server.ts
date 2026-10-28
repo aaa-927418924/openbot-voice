@@ -265,6 +265,8 @@ export const messages = defineMessages("server", {
   "server.members.actionsFor": "Actions for {name}",
   "server.members.makeMember": "Make member",
   "server.members.makeAdmin": "Make admin",
+  "server.members.showAsMyMessages": "Show this device's channel messages as mine",
+  "server.members.showAsSeparateMember": "Show this device as a separate member",
   "server.invite.invalidEmail": "Enter a valid email address.",
   "server.invite.title": "Invite people",
   "server.invite.description":

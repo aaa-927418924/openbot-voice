@@ -55,7 +55,11 @@ import {
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import { AGENT_IMPORT_ROUTES } from "@openbot/contracts/team-protocol/agent-import-v1";
 import { decodeBrowserViewSessionResponse } from "@openbot/contracts/team-protocol/browser-view-v1";
-import { TEAM_MEMBER_LEAVE_CAPABILITY, type TeamCurrentCapability } from "@openbot/contracts/team-protocol/current";
+import {
+  TEAM_CHANNEL_IDENTITY_ADMIN_CAPABILITY,
+  TEAM_MEMBER_LEAVE_CAPABILITY,
+  type TeamCurrentCapability,
+} from "@openbot/contracts/team-protocol/current";
 import type { HostRestartEvent } from "@openbot/contracts/team-protocol/host-update-v1";
 import type { LiveVoiceWireEvent } from "@openbot/contracts/team-protocol/live-voice-v1";
 import { decodeTeamProtocolV1CurrentHttpResponse } from "@openbot/contracts/team-protocol/v1-adapter";
@@ -106,7 +110,13 @@ import {
   remoteDecode,
   toRemoteWorkflowError,
 } from "./remote-service-effects";
-import { decodeInvitePreview, decodeJoinResult, decodeTeamPresenceSnapshot } from "./remote-team-decoding";
+import {
+  decodeInvitePreview,
+  decodeJoinResult,
+  decodeTeamMember,
+  decodeTeamMembers,
+  decodeTeamPresenceSnapshot,
+} from "./remote-team-decoding";
 import { RemoteTeamDirectory } from "./remote-team-directory";
 import { RemoteViewerProxy } from "./remote-viewer-proxy";
 import { fingerprint } from "./team-store";
@@ -1265,10 +1275,41 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   ).bind(this);
 
   listMembers(serverId: string): Effect.Effect<TeamMemberSummary[], RemoteWorkflowError> {
-    return this.#owned(this.#team.listMembers(serverId));
+    return this.#owned(
+      Effect.gen({ self: this }, function* () {
+        const server = yield* remoteDecode(() => this.#servers.require(serverId));
+        const compatibility = yield* this.#client.ensureCompatibility(server);
+        if (!compatibility.capabilities.includes(TEAM_CHANNEL_IDENTITY_ADMIN_CAPABILITY)) {
+          return yield* this.#team.listMembers(serverId);
+        }
+        return yield* this.#client.request(serverId, TEAM_API_ROUTES.team.members, decodeTeamMembers);
+      }),
+    );
   }
 
   updateMember(serverId: string, input: UpdateTeamMemberInput): Effect.Effect<TeamMemberSummary, RemoteWorkflowError> {
+    if (input.channelIdentityId !== undefined) {
+      return this.#owned(
+        Effect.gen({ self: this }, function* () {
+          if (input.role !== undefined || input.disabled !== undefined) {
+            return yield* remoteDecode(() => {
+              throw new Error(sourceText("error.team.channelIdentityInvalid"));
+            });
+          }
+          const server = yield* remoteDecode(() => this.#servers.require(serverId));
+          const compatibility = yield* this.#client.ensureCompatibility(server);
+          if (!compatibility.capabilities.includes(TEAM_CHANNEL_IDENTITY_ADMIN_CAPABILITY)) {
+            return yield* remoteDecode(() => {
+              throw new Error(sourceText("error.team.channelIdentityUnsupported"));
+            });
+          }
+          return yield* this.#client.request(serverId, TEAM_API_ROUTES.team.member(input.memberId), decodeTeamMember, {
+            method: "PATCH",
+            body: { channelIdentityId: input.channelIdentityId },
+          });
+        }),
+      );
+    }
     return this.#owned(this.#team.updateMember(serverId, input));
   }
 

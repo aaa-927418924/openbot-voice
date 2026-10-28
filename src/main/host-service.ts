@@ -908,23 +908,25 @@ export class HostService extends EventEmitter<HostEvents> {
         // An account switch while the directory loaded makes this list the previous
         // account's. Answer with the now-active host's own members rather than failing a
         // read with the store's cross-account guard.
-        if (!this.#isActiveHost(hostId)) return this.#options.store.listMembers();
+        if (!this.#isActiveHost(hostId)) return this.#exposeChannelIdentities(this.#options.store.listMembers());
         yield* this.#options.store.syncRemoteDirectory(hostId, members);
         // Recording the directory is a write, and the switch can land during it. The names,
         // addresses and roles below are the previous account's if it did.
-        if (!this.#isActiveHost(hostId)) return this.#options.store.listMembers();
-        return members.map((member) => ({
-          id: member.membershipId,
-          username: member.email,
-          email: member.email,
-          name: member.name,
-          avatarUrl: member.avatarUrl,
-          role: member.role,
-          createdAt: new Date(member.createdAt).toISOString(),
-          disabled: member.status !== "active",
-        }));
+        if (!this.#isActiveHost(hostId)) return this.#exposeChannelIdentities(this.#options.store.listMembers());
+        return this.#exposeChannelIdentities(
+          members.map((member) => ({
+            id: member.membershipId,
+            username: member.email,
+            email: member.email,
+            name: member.name,
+            avatarUrl: member.avatarUrl,
+            role: member.role,
+            createdAt: new Date(member.createdAt).toISOString(),
+            disabled: member.status !== "active",
+          })),
+        );
       }
-      return this.#options.store.listMembers();
+      return this.#exposeChannelIdentities(this.#options.store.listMembers());
     },
     (operation) => this.#provide(operation),
   ).bind(this);
@@ -1052,6 +1054,23 @@ export class HostService extends EventEmitter<HostEvents> {
       this: HostService,
       input: UpdateTeamMemberInput,
     ): Effect.fn.Return<TeamMemberSummary, RemoteWorkflowError> {
+      if (input.channelIdentityId !== undefined) {
+        const ownerId = this.#options.store.getOwnerMemberId();
+        if (!ownerId || this.#findCurrentMemberId() !== ownerId) {
+          return yield* new RemoteWorkflowError({ cause: new Error(sourceText("error.team.ownerRequired")) });
+        }
+        if (input.role !== undefined || input.disabled !== undefined) {
+          return yield* new RemoteWorkflowError({ cause: new Error(sourceText("error.team.channelIdentityInvalid")) });
+        }
+        const member = yield* this.#options.store.updateMember(input.memberId, {
+          channelIdentityId: input.channelIdentityId,
+        });
+        this.#api.refreshPresence();
+        return {
+          ...member,
+          channelIdentityId: this.#options.store.getChannelIdentity(member.id)?.id ?? member.id,
+        };
+      }
       const optionalListRemoteMembers = this.#options.listRemoteMembers;
       const optionalUpdateRemoteMember = this.#options.updateRemoteMember;
       const optionalRemoveRemoteMember = this.#options.removeRemoteMember;
@@ -1432,6 +1451,15 @@ export class HostService extends EventEmitter<HostEvents> {
     } catch {
       return null;
     }
+  }
+
+  #exposeChannelIdentities(members: TeamMemberSummary[]): TeamMemberSummary[] {
+    const ownerId = this.#options.store.getOwnerMemberId();
+    if (!ownerId || this.#findCurrentMemberId() !== ownerId) return members;
+    return members.map((member) => ({
+      ...member,
+      channelIdentityId: this.#options.store.getChannelIdentity(member.id)?.id ?? member.id,
+    }));
   }
 
   #requiredOwnerMemberId(): string {

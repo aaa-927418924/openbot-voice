@@ -1,8 +1,10 @@
+import { INPUT_LIMITS } from "../input-limits";
 import { decodeAgentAnalytics } from "../ipc-agent-analytics";
 import { BROWSER_SECRET_RESPONSE_PATH, parseBrowserSecretResponse } from "../ipc-browser-secret";
 import { decodeHostAnalytics } from "../ipc-host-analytics";
 import { isCodexLiveVoice } from "../ipc-live-voice";
 import { isBoolean, isDynamicRecord, isOneOf, isString } from "../runtime-values";
+import { TEAM_API_ROUTES } from "../team-api-routes";
 import { decodeAnalyticsV1Response } from "./analytics-v1";
 import {
   decodeBrowserDisplayResponse,
@@ -172,7 +174,12 @@ export function encodeTeamProtocolV6CurrentHttpRequest(
   method: string,
   path: string,
   value: unknown,
-  options: { preserveSemanticTags?: boolean; agentCreateModel?: boolean; agentLiveVoiceSettings?: boolean } = {},
+  options: {
+    preserveSemanticTags?: boolean;
+    agentCreateModel?: boolean;
+    agentLiveVoiceSettings?: boolean;
+    teamChannelIdentityAdmin?: boolean;
+  } = {},
 ): string {
   if (isRemoteDesktopSetupRoute(method, path)) return JSON.stringify(decodeRemoteDesktopSetupRequest(path, value));
   if (method === "POST" && path === BROWSER_SECRET_RESPONSE_PATH)
@@ -186,6 +193,9 @@ export function encodeTeamProtocolV6CurrentHttpRequest(
   if (isConversationUnreadRoute(method, path)) return JSON.stringify(decodeUnreadRequest(value));
   if (scopedUsageRoute(method, path)) {
     return JSON.stringify(decodeScopedUsageRequest(value));
+  }
+  if (isTeamMemberIdentityUpdateRoute(method, path) && options.teamChannelIdentityAdmin) {
+    return JSON.stringify(decodeTeamChannelIdentityUpdate(value));
   }
   if (!duplicateRoute(method, path)) {
     if (isAgentUpdateRoute(method, path) && options.agentLiveVoiceSettings) {
@@ -218,7 +228,12 @@ export function decodeTeamProtocolV6CurrentHttpRequest(
   method: string,
   path: string,
   value: unknown,
-  options: { preserveSemanticTags?: boolean; agentCreateModel?: boolean; agentLiveVoiceSettings?: boolean } = {},
+  options: {
+    preserveSemanticTags?: boolean;
+    agentCreateModel?: boolean;
+    agentLiveVoiceSettings?: boolean;
+    teamChannelIdentityAdmin?: boolean;
+  } = {},
 ): TeamProtocolV6BaseJsonObject {
   if (isRemoteDesktopSetupRoute(method, path)) return decodeRemoteDesktopSetupRequest(path, value);
   if (method === "POST" && path === BROWSER_SECRET_RESPONSE_PATH) return { ...parseBrowserSecretResponse(value) };
@@ -230,6 +245,9 @@ export function decodeTeamProtocolV6CurrentHttpRequest(
   if (isConversationUnreadRoute(method, path)) return decodeUnreadRequest(value);
   if (scopedUsageRoute(method, path)) {
     return decodeScopedUsageRequest(value);
+  }
+  if (isTeamMemberIdentityUpdateRoute(method, path) && options.teamChannelIdentityAdmin) {
+    return decodeTeamChannelIdentityUpdate(value);
   }
   if (!duplicateRoute(method, path)) {
     const agentLiveVoiceUpdate = isAgentUpdateRoute(method, path) && options.agentLiveVoiceSettings;
@@ -272,7 +290,11 @@ export function encodeTeamProtocolV6CurrentHttpResponse(
   path: string,
   status: number,
   value: unknown,
-  options: { preserveSemanticTags?: boolean; agentLiveVoiceSettings?: boolean } = {},
+  options: {
+    preserveSemanticTags?: boolean;
+    agentLiveVoiceSettings?: boolean;
+    teamChannelIdentityAdmin?: boolean;
+  } = {},
 ): string {
   if (isRemoteDesktopSetupRoute(method, path) && status < 400)
     return JSON.stringify(decodeRemoteDesktopSetupResponse(path, value));
@@ -318,6 +340,10 @@ export function encodeTeamProtocolV6CurrentHttpResponse(
     return encodeTeamProtocolV6BaseCurrentHttpResponse(method, readPath(path), status, value, options);
   if (scopedUsageRoute(method, path) || isAgentAnalyticsRoute(method, path) || isHostAnalyticsRoute(method, path)) {
     return encodeTeamProtocolV6BaseCurrentHttpResponse(method, "/v1/agents/usage", status, value, options);
+  }
+  if (options.teamChannelIdentityAdmin && isTeamMemberIdentityResponseRoute(method, path) && status < 400) {
+    const encoded = encodeTeamProtocolV6BaseCurrentHttpResponse(method, path, status, value, options);
+    return JSON.stringify(withTeamChannelIdentity(JSON.parse(encoded), value));
   }
   if (!duplicateRoute(method, path)) {
     const encoded = encodeTeamProtocolV6BaseCurrentHttpResponse(method, path, status, value, options);
@@ -370,6 +396,9 @@ export function decodeTeamProtocolV6CurrentHttpResponse(
   if (scopedUsageRoute(method, path) || isAgentAnalyticsRoute(method, path) || isHostAnalyticsRoute(method, path)) {
     return decodeTeamProtocolV6BaseCurrentHttpResponse(method, "/v1/agents/usage", status, value);
   }
+  if (isTeamMemberIdentityResponseRoute(method, path) && status < 400) {
+    return withTeamChannelIdentity(decodeTeamProtocolV6BaseCurrentHttpResponse(method, path, status, value), value);
+  }
   if (!duplicateRoute(method, path)) {
     const decoded = decodeTeamProtocolV6BaseCurrentHttpResponse(method, path, status, value);
     return status < 400 && isAgentSummaryResponseRoute(method, path) ? withCodexLiveVoice(decoded, value) : decoded;
@@ -388,6 +417,39 @@ const V6_REASONING_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 
 function isAgentUpdateRoute(method: string, path: string): boolean {
   return method === "PATCH" && /^\/v1\/agents\/[^/]+$/u.test(new URL(path, "http://openbot.invalid").pathname);
+}
+
+function isTeamMemberIdentityUpdateRoute(method: string, path: string): boolean {
+  return method === "PATCH" && /^\/v1\/team\/members\/[^/]+$/u.test(new URL(path, "http://openbot.invalid").pathname);
+}
+
+function isTeamMemberIdentityResponseRoute(method: string, path: string): boolean {
+  const pathname = new URL(path, "http://openbot.invalid").pathname;
+  return (
+    (method === "GET" && pathname === TEAM_API_ROUTES.team.members) || isTeamMemberIdentityUpdateRoute(method, path)
+  );
+}
+
+function decodeTeamChannelIdentityUpdate(value: unknown): TeamProtocolV6BaseJsonObject {
+  if (!isDynamicRecord(value) || Object.keys(value).length !== 1 || !Object.hasOwn(value, "channelIdentityId")) {
+    throw new Error("Invalid device identity update.");
+  }
+  const identity = value.channelIdentityId;
+  if (identity === null) return { channelIdentityId: null };
+  if (!isString(identity) || !identity.trim() || identity.length > INPUT_LIMITS.identifier) {
+    throw new Error("Invalid device identity update.");
+  }
+  return { channelIdentityId: identity };
+}
+
+function withTeamChannelIdentity(projected: TeamProtocolV6BaseJsonValue, source: unknown): TeamProtocolV6BaseJsonValue {
+  if (Array.isArray(projected) && Array.isArray(source)) {
+    return projected.map((entry, index) => withTeamChannelIdentity(entry, source[index]));
+  }
+  if (!isV6JsonObject(projected) || !isDynamicRecord(source) || source.channelIdentityId === undefined) {
+    return projected;
+  }
+  return { ...projected, ...decodeTeamChannelIdentityUpdate({ channelIdentityId: source.channelIdentityId }) };
 }
 
 /**

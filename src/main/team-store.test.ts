@@ -100,6 +100,42 @@ describe("TeamStore", () => {
     expect(restored.getMember(second.member.id)?.id).toBe(second.member.id);
   });
 
+  it("lets the owner link a device membership to their channel identity and unlink it durably", async () => {
+    const { store, path } = await createStore();
+    await runCauseEffect(
+      store.configureWithAccount("Studio Mac", {
+        id: "owner-account",
+        email: "owner@example.com",
+        name: "Owner profile",
+        avatarUrl: null,
+      }),
+    );
+    const invite = await runCauseEffect(store.createInvite("member"));
+    const device = await runCauseEffect(store.acceptInvite(invite.token, "android-device", "a secure password"));
+    const ownerId = store.getOwnerMemberId();
+    expect(ownerId).toBeTruthy();
+
+    await runCauseEffect(store.updateMember(device.member.id, { channelIdentityId: ownerId }));
+    expect(store.getMember(device.member.id)?.id).toBe(device.member.id);
+    expect(store.getChannelIdentity(device.member.id)).toMatchObject({
+      id: ownerId,
+      name: "Owner profile",
+      memberIds: [ownerId, device.member.id],
+    });
+    expect(
+      store.listMembersWithChannelIdentity().find((member) => member.id === device.member.id)?.channelIdentityId,
+    ).toBe(ownerId);
+
+    const restarted = new TeamStore(path);
+    await runCauseEffect(restarted.initialize());
+    expect(restarted.getChannelIdentity(device.member.id)?.id).toBe(ownerId);
+    await runCauseEffect(restarted.updateMember(device.member.id, { channelIdentityId: null }));
+    expect(restarted.getChannelIdentity(device.member.id)?.id).toBe(device.member.id);
+    await expect(
+      runCauseEffect(restarted.updateMember(device.member.id, { channelIdentityId: "another-member" })),
+    ).rejects.toThrow("device identity update is invalid");
+  });
+
   it("can reactivate an unowned host after an account id was left in the profile file", async () => {
     const { store, path } = await createStore();
     const identity = await runCauseEffect(store.configure("Studio Mac", "owner", "correct horse battery"));

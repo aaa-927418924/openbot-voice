@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { isAgentSummary } from "../ipc-agents";
-import { AGENT_LIVE_VOICE_SETTINGS_CAPABILITY, TEAM_CURRENT_CAPABILITIES } from "./current";
+import {
+  AGENT_LIVE_VOICE_SETTINGS_CAPABILITY,
+  TEAM_CHANNEL_IDENTITY_ADMIN_CAPABILITY,
+  TEAM_CURRENT_CAPABILITIES,
+} from "./current";
 import request from "./fixtures/v6/client-http-request.json";
 import response from "./fixtures/v6/host-http-response.json";
 import models from "./fixtures/v6/host-models-response.json";
@@ -25,6 +29,44 @@ import {
 } from "./v6-webrtc-adapter";
 
 describe("Team protocol v6", () => {
+  it("carries owner-authorized device identity only in the current v6 projection", () => {
+    const path = "/v1/team/members/device-member";
+    const update = { channelIdentityId: "owner-member" };
+    const options = { teamChannelIdentityAdmin: true };
+    const encodedRequest = JSON.parse(encodeTeamProtocolV6CurrentHttpRequest("PATCH", path, update, options));
+    expect(encodedRequest).toEqual(update);
+    expect(decodeTeamProtocolV6CurrentHttpRequest("PATCH", path, encodedRequest, options)).toEqual(update);
+    expect(encodeTeamProtocolV6WebRtcHttpRequest("PATCH", path, update, options)).toEqual(update);
+    expect(decodeTeamProtocolV6WebRtcHttpRequest("PATCH", path, update, options)).toEqual(update);
+
+    const member = {
+      id: "device-member",
+      username: "android-device",
+      email: null,
+      name: "Android",
+      avatarUrl: null,
+      role: "member",
+      createdAt: "2026-10-28T00:00:00.000Z",
+      disabled: false,
+      channelIdentityId: "owner-member",
+    };
+    const encodedResponse = JSON.parse(
+      encodeTeamProtocolV6CurrentHttpResponse("GET", "/v1/team/members", 200, [member], options),
+    );
+    expect(encodedResponse[0].channelIdentityId).toBe("owner-member");
+    expect(decodeTeamProtocolV6CurrentHttpResponse("GET", "/v1/team/members", 200, encodedResponse)).toMatchObject([
+      { channelIdentityId: "owner-member" },
+    ]);
+    expect(decodeTeamProtocolV6WebRtcHttpResponse("GET", "/v1/team/members", 200, encodedResponse)).toMatchObject([
+      { channelIdentityId: "owner-member" },
+    ]);
+    const legacyMembers = decodeTeamProtocolV5CurrentHttpResponse("GET", "/v1/team/members", 200, encodedResponse);
+    expect(Array.isArray(legacyMembers)).toBe(true);
+    if (!Array.isArray(legacyMembers)) throw new Error("Expected the V5 member list projection.");
+    expect(legacyMembers[0]).not.toHaveProperty("channelIdentityId");
+    expect(TEAM_CURRENT_CAPABILITIES).toContain(TEAM_CHANNEL_IDENTITY_ADMIN_CAPABILITY);
+  });
+
   it("carries the optional Codex Live voice only for hosts that advertise the setting", () => {
     const patch = { agentId: "agent-cursor", codexLiveVoice: "maple" };
     const route = "/v1/agents/agent-cursor?source=settings";

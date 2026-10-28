@@ -9,6 +9,7 @@ import {
   AGENT_LIVE_VOICE_SETTINGS_CAPABILITY,
   supportsTeamSemanticTags,
   TEAM_AGENT_CREATE_MODEL_CAPABILITY,
+  TEAM_CHANNEL_IDENTITY_ADMIN_CAPABILITY,
   TEAM_CURRENT_CAPABILITIES,
 } from "@openbot/contracts/team-protocol/current";
 import { optionalTeamEvent } from "@openbot/contracts/team-protocol/optional-events";
@@ -72,7 +73,11 @@ const MAXIMUM_DESKTOP_STREAMS = 6;
 
 /** GPT Live voice is carried by the V6 adapters, so advertising its capability selects V6. */
 function usesTeamProtocolV6(capabilities: ReadonlySet<string>): boolean {
-  return capabilities.has(TEAM_CURSOR_CLINE_CAPABILITY) || capabilities.has(AGENT_LIVE_VOICE_SETTINGS_CAPABILITY);
+  return (
+    capabilities.has(TEAM_CURSOR_CLINE_CAPABILITY) ||
+    capabilities.has(AGENT_LIVE_VOICE_SETTINGS_CAPABILITY) ||
+    capabilities.has(TEAM_CHANNEL_IDENTITY_ADMIN_CAPABILITY)
+  );
 }
 
 export interface TeamWebRtcHostPeerOptions {
@@ -611,6 +616,7 @@ export class TeamWebRtcHostPeer {
                         preserveSemanticTags,
                         agentCreateModel: peerCapabilities.has(TEAM_AGENT_CREATE_MODEL_CAPABILITY),
                         agentLiveVoiceSettings: peerCapabilities.has(AGENT_LIVE_VOICE_SETTINGS_CAPABILITY),
+                        teamChannelIdentityAdmin: peerCapabilities.has(TEAM_CHANNEL_IDENTITY_ADMIN_CAPABILITY),
                       }),
                 ),
               );
@@ -685,6 +691,7 @@ export class TeamWebRtcHostPeer {
                       : encodeTeamProtocolV3WebRtcHttpResponse)(input.method, input.path, response.status, body, {
                   preserveSemanticTags,
                   agentLiveVoiceSettings: peerCapabilities.has(AGENT_LIVE_VOICE_SETTINGS_CAPABILITY),
+                  teamChannelIdentityAdmin: peerCapabilities.has(TEAM_CHANNEL_IDENTITY_ADMIN_CAPABILITY),
                 }),
           }));
         }),

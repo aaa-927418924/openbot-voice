@@ -179,6 +179,15 @@ describe("HostService account binding", () => {
     expect(status).toMatchObject({ configured: true, serverName: "Tailnet host", phase: "idle" });
     expect(store.listMembers()).toHaveLength(1);
     expect(store.listMembers()[0]).toMatchObject({ username: "owner", email: null, role: "owner" });
+    const ownerId = store.getOwnerMemberId();
+    expect(ownerId).toBeTruthy();
+    const invite = await runCauseEffect(store.createInvite("member"));
+    const { member } = await runCauseEffect(store.acceptInvite(invite.token, "android-device", "member-password"));
+    await runCauseEffect(service.updateMember({ memberId: member.id, channelIdentityId: ownerId }));
+    expect(store.getChannelIdentity(member.id)?.id).toBe(ownerId);
+    expect(await runCauseEffect(service.listMembers())).toContainEqual(
+      expect.objectContaining({ id: member.id, channelIdentityId: ownerId }),
+    );
     await expect(runCauseEffect(service.updateIdentity({ serverName: "Renamed host" }))).resolves.toMatchObject({
       serverName: "Renamed host",
     });

@@ -27,7 +27,12 @@ export function encodeTeamProtocolV6WebRtcHttpRequest(
   method: string,
   path: string,
   value: unknown,
-  options: { preserveSemanticTags?: boolean; agentCreateModel?: boolean; agentLiveVoiceSettings?: boolean } = {},
+  options: {
+    preserveSemanticTags?: boolean;
+    agentCreateModel?: boolean;
+    agentLiveVoiceSettings?: boolean;
+    teamChannelIdentityAdmin?: boolean;
+  } = {},
 ) {
   // A GET reaches the v3 frame, whose frozen no-body route list cannot learn a route added after it.
   // The display route carries no request body at all, so its frame is the empty object.
@@ -42,7 +47,12 @@ export function decodeTeamProtocolV6WebRtcHttpRequest(
   method: string,
   path: string,
   value: unknown,
-  options: { preserveSemanticTags?: boolean; agentCreateModel?: boolean; agentLiveVoiceSettings?: boolean } = {},
+  options: {
+    preserveSemanticTags?: boolean;
+    agentCreateModel?: boolean;
+    agentLiveVoiceSettings?: boolean;
+    teamChannelIdentityAdmin?: boolean;
+  } = {},
 ) {
   if (isBrowserDisplayRoute(method, path) || isBrowserViewSessionRoute(method, path)) return {};
   if (method === "GET" || method === "DELETE" || isRoutineTestRequest(method, path) || isRemoteViewerRoute(path))
@@ -58,6 +68,7 @@ export function encodeTeamProtocolV6WebRtcHttpResponse(
     preserveSemanticTags?: boolean;
     preserveBrowserSecrets?: boolean;
     agentLiveVoiceSettings?: boolean;
+    teamChannelIdentityAdmin?: boolean;
   } = {},
 ) {
   if (status === 204) return {};

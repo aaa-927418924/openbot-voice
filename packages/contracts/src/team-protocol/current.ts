@@ -56,6 +56,8 @@ export const TEAM_EML_ATTACHMENTS_CAPABILITY = "eml-attachments";
  * Widening any of it needs a second capability string.
  */
 export const TEAM_MEMBER_LEAVE_CAPABILITY = "member-leave-v1";
+/** Owners may link device memberships to the owner's channel author identity. */
+export const TEAM_CHANNEL_IDENTITY_ADMIN_CAPABILITY = "channel-identity-admin-v1";
 export {
   AGENT_ADMIN_CAPABILITY,
   AGENT_IMPORT_CAPABILITY,
@@ -125,6 +127,7 @@ export const TEAM_CURRENT_CAPABILITIES = [
   HOST_ADMIN_CAPABILITY,
   AGENT_UPDATE_CAPABILITY,
   TEAM_MEMBER_LEAVE_CAPABILITY,
+  TEAM_CHANNEL_IDENTITY_ADMIN_CAPABILITY,
   CONTEXT_RESET_CAPABILITY,
   HOST_UPDATE_CAPABILITY,
   AGENT_IMPORT_CAPABILITY,

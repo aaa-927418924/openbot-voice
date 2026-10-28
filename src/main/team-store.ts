@@ -71,7 +71,7 @@ export class TeamStoreError extends Schema.TaggedError<TeamStoreError>()("TeamSt
 interface StoredMember extends TeamMemberSummary {
   accountId?: string;
   /** A user-selected channel author identity shared by several signed-in devices. */
-  channelIdentityId?: string;
+  channelIdentityId?: string | null;
   passwordSalt?: string;
   passwordHash?: string;
 }
@@ -812,6 +812,14 @@ export class TeamStore {
     return members;
   }
 
+  /** The identity controls are returned only by owner-authorized host routes. */
+  listMembersWithChannelIdentity(): TeamMemberSummary[] {
+    return this.listMembers().map((member) => ({
+      ...member,
+      channelIdentityId: this.getChannelIdentity(member.id)?.id ?? member.id,
+    }));
+  }
+
   /**
    * `serverId` names the host the caller loaded this directory for. Signing into another
    * account swaps the active host, so a directory that was already in flight would
@@ -838,6 +846,9 @@ export class TeamStore {
         }
         const previousOwnerId = localOwner.id;
         localOwner.id = remoteOwner.membershipId;
+        for (const member of state.members) {
+          if (member.channelIdentityId === previousOwnerId) member.channelIdentityId = remoteOwner.membershipId;
+        }
         for (const session of state.sessions) {
           if (session.memberId === previousOwnerId) session.memberId = remoteOwner.membershipId;
         }
@@ -1257,7 +1268,11 @@ export class TeamStore {
     function* (
       this: TeamStore,
       memberId: string,
-      patch: { role?: Exclude<TeamRole, "owner">; disabled?: boolean },
+      patch: {
+        role?: Exclude<TeamRole, "owner">;
+        disabled?: boolean;
+        channelIdentityId?: string | null;
+      },
     ): Effect.fn.Return<TeamMemberSummary, RemoteWorkflowError, TeamStoreFiles> {
       const state = yield* remoteDecode(() => this.#requireState());
       const member = state.members.find((candidate) => candidate.id === memberId);
@@ -1267,6 +1282,26 @@ export class TeamStore {
         return yield* new RemoteWorkflowError({
           cause: new TeamStoreError(sourceText("error.team.ownerCannotChange")),
         });
+      if (patch.channelIdentityId !== undefined) {
+        if (patch.role !== undefined || patch.disabled !== undefined) {
+          return yield* new RemoteWorkflowError({
+            cause: new TeamStoreError(sourceText("error.team.channelIdentityInvalid")),
+          });
+        }
+        const ownerId = state.members.find((candidate) => candidate.role === "owner")?.id;
+        if (patch.channelIdentityId !== null && patch.channelIdentityId !== ownerId) {
+          return yield* new RemoteWorkflowError({
+            cause: new TeamStoreError(sourceText("error.team.channelIdentityInvalid")),
+          });
+        }
+        if (patch.channelIdentityId === null) delete member.channelIdentityId;
+        else member.channelIdentityId = patch.channelIdentityId;
+        yield* this.#persistEffect();
+        return {
+          ...publicMember(member),
+          channelIdentityId: this.getChannelIdentity(member.id)?.id ?? member.id,
+        };
+      }
       if (patch.disabled === false && member.disabled) yield* remoteDecode(() => requireMemberSeat(state));
       if (patch.role !== undefined) {
         if (patch.role !== "admin" && patch.role !== "member")

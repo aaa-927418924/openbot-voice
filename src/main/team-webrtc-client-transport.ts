@@ -314,6 +314,7 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
       preserveSemanticTags?: boolean;
       agentCreateModel?: boolean;
       agentLiveVoiceSettings?: boolean;
+      teamChannelIdentityAdmin?: boolean;
     } = {},
   ): Effect.fn.Return<TeamProtocolV2Json | undefined, RemoteWorkflowError> {
     return yield* this.#owned(
@@ -334,6 +335,7 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
       preserveSemanticTags?: boolean;
       agentCreateModel?: boolean;
       agentLiveVoiceSettings?: boolean;
+      teamChannelIdentityAdmin?: boolean;
     } = {},
   ): Effect.fn.Return<
     {
@@ -374,6 +376,7 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
                       preserveSemanticTags: init.preserveSemanticTags,
                       agentCreateModel: init.agentCreateModel,
                       agentLiveVoiceSettings: init.agentLiveVoiceSettings,
+                      teamChannelIdentityAdmin: init.teamChannelIdentityAdmin,
                     }),
               capabilities: [...TEAM_CURRENT_CAPABILITIES],
               ...(bodyTransferId ? { bodyTransferId } : {}),

@@ -26,6 +26,7 @@ import {
   isAgentCreateRoute,
   supportsTeamSemanticTags,
   TEAM_AGENT_CREATE_MODEL_CAPABILITY,
+  TEAM_CHANNEL_IDENTITY_ADMIN_CAPABILITY,
   TEAM_CURRENT_CAPABILITIES,
   type TeamCurrentCapability,
 } from "@openbot/contracts/team-protocol/current";
@@ -71,6 +72,7 @@ export interface RemoteHostRequestTransport {
       preserveSemanticTags?: boolean;
       agentCreateModel?: boolean;
       agentLiveVoiceSettings?: boolean;
+      teamChannelIdentityAdmin?: boolean;
     },
   ) => Effect.Effect<unknown, RemoteWorkflowError>;
   requestResponse: (
@@ -168,6 +170,7 @@ export class RemoteServerClient {
           preserveSemanticTags: supportsTeamSemanticTags(compatibility.capabilities),
           agentCreateModel: this.supportsAgentCreateModel(path, init, compatibility.capabilities),
           agentLiveVoiceSettings: this.supportsAgentLiveVoiceSettings(path, init, compatibility.capabilities),
+          teamChannelIdentityAdmin: compatibility.capabilities.includes(TEAM_CHANNEL_IDENTITY_ADMIN_CAPABILITY),
         });
         // Decoding is outside the transport's catch on purpose. A frame that arrived intact and then
         // failed its route decoder is a protocol failure, not a request that happened to fail, and
@@ -298,17 +301,21 @@ export class RemoteServerClient {
     appVersion?: string;
     capabilities?: readonly TeamCurrentCapability[];
     preserveSemanticTags?: boolean;
+    teamChannelIdentityAdmin?: boolean;
   } {
     // GPT Live voice is an additive V6 field. A host advertising the setting must receive the V6
     // envelope even if a stale compatibility record still names an older protocol.
-    const negotiatedProtocol = compatibility.capabilities.includes(AGENT_LIVE_VOICE_SETTINGS_CAPABILITY)
-      ? Math.max(TEAM_PROTOCOL_V6, compatibility.negotiatedProtocol ?? TEAM_PROTOCOL_V6)
-      : (compatibility.negotiatedProtocol ?? undefined);
+    const negotiatedProtocol =
+      compatibility.capabilities.includes(AGENT_LIVE_VOICE_SETTINGS_CAPABILITY) ||
+      compatibility.capabilities.includes(TEAM_CHANNEL_IDENTITY_ADMIN_CAPABILITY)
+        ? Math.max(TEAM_PROTOCOL_V6, compatibility.negotiatedProtocol ?? TEAM_PROTOCOL_V6)
+        : (compatibility.negotiatedProtocol ?? undefined);
     return {
       protocol: negotiatedProtocol,
       appVersion: this.#appVersion ?? undefined,
       capabilities: this.#appVersion ? TEAM_CURRENT_CAPABILITIES : undefined,
       preserveSemanticTags: supportsTeamSemanticTags(compatibility.capabilities),
+      teamChannelIdentityAdmin: compatibility.capabilities.includes(TEAM_CHANNEL_IDENTITY_ADMIN_CAPABILITY),
     };
   }
 
@@ -616,6 +623,7 @@ export class RemoteServerClient {
       preserveSemanticTags?: boolean;
       agentCreateModel?: boolean;
       agentLiveVoiceSettings?: boolean;
+      teamChannelIdentityAdmin?: boolean;
     } = {},
   ): Effect.fn.Return<unknown, RemoteWorkflowError> {
     return yield* Effect.gen({ self: this }, function* () {

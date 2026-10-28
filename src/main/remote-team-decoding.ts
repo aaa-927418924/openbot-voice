@@ -1,5 +1,6 @@
 // Team identity, membership and invitations, as a host or the account service sends them.
 
+import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { inviteUseCount, isPermanentInvite } from "@openbot/contracts/invite-links";
 import type {
   InvitePreview,
@@ -11,7 +12,7 @@ import type {
 } from "@openbot/contracts/ipc";
 import { isTeamRealtimeEvent } from "@openbot/contracts/ipc";
 import { decodeRecord, nullableString, requiredBoolean, requiredString } from "@openbot/contracts/ipc-decoding";
-import { isOneOf } from "@openbot/contracts/runtime-values";
+import { isOneOf, isString } from "@openbot/contracts/runtime-values";
 
 export function decodeJoinResult(value: unknown): { member: { role: TeamRole }; sessionToken: string } {
   const record = decodeRecord(value, "join response");
@@ -56,6 +57,7 @@ export function decodeTeamMember(value: unknown): TeamMemberSummary {
   const record = decodeRecord(value, "team member");
   const role = requiredString(record, "role");
   if (role !== "owner" && role !== "admin" && role !== "member") throw new Error("Invalid team member role.");
+  const channelIdentity = optionalChannelIdentityId(record);
   return {
     id: requiredString(record, "id"),
     username: requiredString(record, "username"),
@@ -65,7 +67,18 @@ export function decodeTeamMember(value: unknown): TeamMemberSummary {
     role,
     createdAt: requiredString(record, "createdAt"),
     disabled: requiredBoolean(record, "disabled"),
+    ...channelIdentity,
   };
+}
+
+function optionalChannelIdentityId(record: ReturnType<typeof decodeRecord>): { channelIdentityId?: string | null } {
+  const value = record.channelIdentityId;
+  if (value === undefined) return {};
+  if (value === null) return { channelIdentityId: null };
+  if (!isString(value) || !value.trim() || value.length > INPUT_LIMITS.identifier) {
+    throw new Error("Invalid channel identity.");
+  }
+  return { channelIdentityId: value };
 }
 
 export function decodeTeamMembers(value: unknown): TeamMemberSummary[] {

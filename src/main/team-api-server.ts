@@ -49,6 +49,7 @@ import {
   STORAGE_CAPABILITY,
   supportsTeamSemanticTags,
   TEAM_AGENT_ACTIVITY_CAPABILITY,
+  TEAM_CHANNEL_IDENTITY_ADMIN_CAPABILITY,
   TEAM_CURRENT_CAPABILITIES,
   type TeamCurrentCapability,
 } from "@openbot/contracts/team-protocol/current";
@@ -1274,6 +1275,7 @@ export class TeamApiServer {
     const options = {
       preserveSemanticTags: supportsTeamSemanticTags(route.capabilities),
       agentLiveVoiceSettings: route.capabilities.has(AGENT_LIVE_VOICE_SETTINGS_CAPABILITY),
+      teamChannelIdentityAdmin: route.capabilities.has(TEAM_CHANNEL_IDENTITY_ADMIN_CAPABILITY),
     };
     // The body is encoded before the head is written. A response the negotiated protocol cannot
     // represent - a route its frozen adapter does not classify - makes the encoder throw, and with

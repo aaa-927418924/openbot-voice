@@ -443,6 +443,20 @@ describe("server IPC input parsing", () => {
       memberId: "member-1",
       disabled: false,
     });
+    expect(parseUpdateTeamMember({ memberId: "member-1", channelIdentityId: "owner-1" })).toEqual({
+      memberId: "member-1",
+      channelIdentityId: "owner-1",
+    });
+    expect(parseUpdateTeamMember({ memberId: "member-1", channelIdentityId: null })).toEqual({
+      memberId: "member-1",
+      channelIdentityId: null,
+    });
+    expect(() => parseUpdateTeamMember({ memberId: "member-1", channelIdentityId: " " })).toThrowError(
+      "Invalid channel identity.",
+    );
+    expect(() =>
+      parseUpdateTeamMember({ memberId: "member-1", channelIdentityId: null, disabled: false }),
+    ).toThrowError("Channel identity cannot be changed with another member setting.");
   });
 
   it("keeps server input error messages", () => {

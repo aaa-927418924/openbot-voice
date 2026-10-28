@@ -4,6 +4,7 @@
 // Each decoder checks every field the contract type requires and keeps each optional field it
 // carries, so a value the renderer reads always has the shape its type says.
 
+import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import {
   type DirectConversationPage,
   type DirectConversationReadState,
@@ -360,6 +361,7 @@ function teamMember(member: DynamicRecord): TeamMemberSummary {
   if (avatarUrl !== undefined && avatarUrl !== null && !isString(avatarUrl)) {
     throw new Error("Invalid avatarUrl.");
   }
+  const channelIdentity = optionalChannelIdentityId(member);
   return {
     id: requiredString(member, "id"),
     username: requiredString(member, "username"),
@@ -369,7 +371,18 @@ function teamMember(member: DynamicRecord): TeamMemberSummary {
     role: teamRole(member.role),
     createdAt: requiredString(member, "createdAt"),
     disabled: requiredBoolean(member, "disabled"),
+    ...channelIdentity,
   };
+}
+
+function optionalChannelIdentityId(member: DynamicRecord): { channelIdentityId?: string | null } {
+  const value = member.channelIdentityId;
+  if (value === undefined) return {};
+  if (value === null) return { channelIdentityId: null };
+  if (!isString(value) || !value.trim() || value.length > INPUT_LIMITS.identifier) {
+    throw new Error("Invalid channel identity.");
+  }
+  return { channelIdentityId: value };
 }
 
 function presenceMember(member: DynamicRecord): TeamPresenceMember {

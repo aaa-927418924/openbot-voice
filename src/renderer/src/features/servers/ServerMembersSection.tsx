@@ -1,5 +1,6 @@
 import { DEFAULT_TEAM_MEMBER_LIMIT, INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type { InviteSummary, TeamPresenceMember, TeamRole } from "@openbot/contracts/ipc";
+import { TEAM_CHANNEL_IDENTITY_ADMIN_CAPABILITY } from "@openbot/contracts/team-protocol/current";
 import { normalizeEmailAddress } from "@openbot/contracts/validation";
 import type { AppTextKey } from "@openbot/i18n";
 import {
@@ -46,7 +47,7 @@ import { useText } from "@openbot/ui/text";
 import { prefersReducedMotion } from "@openbot/ui/utils";
 import type { JSX } from "@solidjs/web";
 import { createEffect, createMemo, createSignal, createStore, For, onCleanup, Show, untrack } from "solid-js";
-import { serverRoleCanAdminister } from "./server-capabilities";
+import { serverCanAdminister, serverRoleCanAdminister } from "./server-capabilities";
 import type { ServerSettingsSectionHost } from "./server-settings-section";
 
 type InviteMode = "link" | "email" | "perma";
@@ -123,6 +124,11 @@ export function createServerMembersSection(host: ServerSettingsSectionHost): Ser
    */
   const permanentSupported = () => local() || props.server.apiUrl === null;
   const canManage = () => configured() && serverRoleCanAdminister(props.server);
+  const ownerMember = createMemo(() => props.members.find((member) => member.role === "owner") ?? null);
+  const canLinkChannelIdentity = () =>
+    configured() &&
+    (local() || props.server.role === "owner") &&
+    serverCanAdminister(props.server, TEAM_CHANNEL_IDENTITY_ADMIN_CAPABILITY);
   const activeInvites = createMemo(() =>
     props.invites.filter(
       (item) => (item.permanent || item.usedAt === null) && (item.permanent || Date.parse(item.expiresAt) > now()),
@@ -588,8 +594,15 @@ export function createServerMembersSection(host: ServerSettingsSectionHost): Ser
               <MemberActionsMenu
                 member={member}
                 mount={host.menuMount()}
+                ownerMemberId={ownerMember()?.id ?? null}
+                canLinkChannelIdentity={canLinkChannelIdentity()}
                 onRoleChange={(role) =>
                   void run(`member:${member.id}`, () => props.onUpdateMember({ memberId: member.id, role }))
+                }
+                onChannelIdentityChange={(channelIdentityId) =>
+                  void run(`identity:${member.id}`, () =>
+                    props.onUpdateMember({ memberId: member.id, channelIdentityId }),
+                  )
                 }
                 onRemove={(trigger) => {
                   // The confirmation returns focus to the element focused when it opens.
@@ -707,7 +720,10 @@ export function createServerMembersSection(host: ServerSettingsSectionHost): Ser
 function MemberActionsMenu(props: {
   member: TeamPresenceMember;
   mount: HTMLElement | undefined;
+  ownerMemberId: string | null;
+  canLinkChannelIdentity: boolean;
   onRoleChange: (role: InviteRole) => void;
+  onChannelIdentityChange: (channelIdentityId: string | null) => void;
   onRemove: (trigger: HTMLElement) => void;
 }) {
   const { t } = useText();
@@ -725,6 +741,21 @@ function MemberActionsMenu(props: {
       {/* A portal without a mount uses the document body. */}
       <DropdownMenu.Portal mount={props.mount ?? document.body}>
         <DropdownMenu.Content class="server-settings-member-menu">
+          <Show when={props.canLinkChannelIdentity && props.ownerMemberId && props.member.role !== "owner"}>
+            <DropdownMenu.Item
+              onSelect={() => {
+                const ownerId = props.ownerMemberId;
+                if (!ownerId) return;
+                props.onChannelIdentityChange(props.member.channelIdentityId === ownerId ? null : ownerId);
+              }}
+            >
+              <UserRound aria-hidden="true" />
+              {props.member.channelIdentityId === props.ownerMemberId
+                ? t("server.members.showAsSeparateMember")
+                : t("server.members.showAsMyMessages")}
+            </DropdownMenu.Item>
+            <DropdownMenu.Separator />
+          </Show>
           <Show when={!props.member.disabled}>
             <DropdownMenu.Item onSelect={() => props.onRoleChange(props.member.role === "admin" ? "member" : "admin")}>
               {props.member.role === "admin" ? <UserRound aria-hidden="true" /> : <ShieldCheck aria-hidden="true" />}

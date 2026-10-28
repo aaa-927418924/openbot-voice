@@ -137,10 +137,27 @@ export function parseUpdateTeamMember(value: unknown): UpdateTeamMemberInput {
   if (disabled !== undefined && !isBoolean(disabled)) {
     throw new Error("Invalid team member state.");
   }
+  const hasChannelIdentity = Object.hasOwn(value, "channelIdentityId");
+  const channelIdentityId = value.channelIdentityId;
+  let channelIdentityPatch: { channelIdentityId?: string | null } = {};
+  if (hasChannelIdentity) {
+    if (channelIdentityId === null) channelIdentityPatch = { channelIdentityId: null };
+    else if (
+      isString(channelIdentityId) &&
+      channelIdentityId.trim() &&
+      channelIdentityId.length <= INPUT_LIMITS.identifier
+    ) {
+      channelIdentityPatch = { channelIdentityId };
+    } else throw new Error("Invalid channel identity.");
+  }
+  if (hasChannelIdentity && (role !== undefined || disabled !== undefined)) {
+    throw new Error("Channel identity cannot be changed with another member setting.");
+  }
   return {
     memberId: requireString(value.memberId, "memberId"),
     ...(role ? { role } : {}),
     ...(disabled === undefined ? {} : { disabled }),
+    ...channelIdentityPatch,
   };
 }
 

@@ -189,6 +189,8 @@ export const messages = {
   "server.members.actionsFor": "{name} の操作",
   "server.members.makeMember": "メンバーにする",
   "server.members.makeAdmin": "管理者にする",
+  "server.members.showAsMyMessages": "この端末のチャンネル投稿を自分の投稿として表示",
+  "server.members.showAsSeparateMember": "この端末を別メンバーとして表示",
   "server.invite.invalidEmail": "有効なメールアドレスを入力してください。",
   "server.invite.title": "ユーザーを招待",
   "server.invite.description":

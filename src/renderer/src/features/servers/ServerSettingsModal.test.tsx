@@ -919,6 +919,53 @@ describe("ServerSettingsModal", () => {
     await waitFor(() => expect(onUpdateMember).toHaveBeenCalledWith({ memberId: "alice-1", role: "admin" }));
   });
 
+  it("offers cross-device channel identity linking only to the remote owner", async () => {
+    const supportedOwner = {
+      ...remoteServer,
+      role: "owner" as const,
+      compatibility: {
+        localAppVersion: "0.5.0",
+        hostAppVersion: "0.5.0",
+        localProtocol: { minimum: 1, maximum: 6 },
+        hostProtocol: { minimum: 1, maximum: 6 },
+        negotiatedProtocol: 6,
+        capabilities: ["channel-identity-admin-v1"],
+      },
+    };
+    const onUpdateMember = vi.fn(async () => undefined);
+    const rendered = render(() => (
+      <ServerSettingsModal {...props({ server: supportedOwner, members, onUpdateMember })} />
+    ));
+
+    await fireEvent.click(screen.getByRole("tab", { name: "Members" }));
+    const actions = screen.getByRole("button", { name: "Actions for Alice Chen" });
+    await fireEvent.pointerDown(actions, { button: 0 });
+    await fireEvent.pointerUp(actions, { button: 0 });
+    await fireEvent.pointerUp(
+      await screen.findByRole("menuitem", { name: "Show this device's channel messages as mine" }),
+      {
+        button: 0,
+      },
+    );
+    await waitFor(() =>
+      expect(onUpdateMember).toHaveBeenCalledWith({ memberId: "alice-1", channelIdentityId: "owner-1" }),
+    );
+
+    rendered.unmount();
+    onUpdateMember.mockClear();
+    render(() => (
+      <ServerSettingsModal {...props({ server: { ...supportedOwner, role: "admin" }, members, onUpdateMember })} />
+    ));
+    await fireEvent.click(screen.getByRole("tab", { name: "Members" }));
+    const adminActions = screen.getByRole("button", { name: "Actions for Alice Chen" });
+    await fireEvent.pointerDown(adminActions, { button: 0 });
+    await fireEvent.pointerUp(adminActions, { button: 0 });
+    expect(
+      screen.queryByRole("menuitem", { name: "Show this device's channel messages as mine" }),
+    ).not.toBeInTheDocument();
+    expect(onUpdateMember).not.toHaveBeenCalled();
+  });
+
   it("hides removed members and excludes them from the member count", async () => {
     render(() => (
       <ServerSettingsModal

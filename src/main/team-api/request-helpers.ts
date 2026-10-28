@@ -37,6 +37,7 @@ import {
   isTeamCurrentCapability,
   supportsTeamSemanticTags,
   TEAM_AGENT_CREATE_MODEL_CAPABILITY,
+  TEAM_CHANNEL_IDENTITY_ADMIN_CAPABILITY,
 } from "@openbot/contracts/team-protocol/current";
 import { teamHttpCodec } from "@openbot/contracts/team-protocol/http-codecs";
 import { teamSideRouteCodec } from "@openbot/contracts/team-protocol/side-routes";
@@ -209,6 +210,7 @@ export async function readJson(request: IncomingMessage): Promise<DynamicRecord>
       preserveSemanticTags: supportsTeamSemanticTags(capabilities),
       agentCreateModel: capabilities.has(TEAM_AGENT_CREATE_MODEL_CAPABILITY),
       agentLiveVoiceSettings: capabilities.has(AGENT_LIVE_VOICE_SETTINGS_CAPABILITY),
+      teamChannelIdentityAdmin: capabilities.has(TEAM_CHANNEL_IDENTITY_ADMIN_CAPABILITY),
     });
   } catch {
     throw new HttpError(400, "A valid JSON object is required.");

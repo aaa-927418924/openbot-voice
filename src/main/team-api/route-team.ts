@@ -11,6 +11,7 @@ import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type { TeamPresenceSnapshot } from "@openbot/contracts/ipc";
 import { isBoolean } from "@openbot/contracts/runtime-values";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
+import { TEAM_CHANNEL_IDENTITY_ADMIN_CAPABILITY } from "@openbot/contracts/team-protocol/current";
 import { sourceText } from "@openbot/i18n/source";
 import { runCauseEffect } from "../../backend/effect-boundary";
 import type { TeamStore } from "../team-store";
@@ -26,6 +27,7 @@ export interface TeamRouteDependencies {
     | "changePassword"
     | "resolveLogo"
     | "listMembers"
+    | "listMembersWithChannelIdentity"
     | "updateMember"
     | "removeMember"
     | "listInvites"
@@ -44,7 +46,7 @@ export async function routeTeam(
   context: TeamApiRequestContext,
   { store, remoteScreen, createInvite, onSessionRevoked, getPresence, refreshPresence }: TeamRouteDependencies,
 ): Promise<RouteOutcome> {
-  const { method, url, request, response, member, token, sessionId, json, empty } = context;
+  const { method, url, request, response, member, token, sessionId, capabilities, json, empty } = context;
 
   /** What removing a member does, whether an admin removes them or they leave. */
   async function removeMember(memberId: string): Promise<void> {
@@ -112,7 +114,12 @@ export async function routeTeam(
 
   if (method === "GET" && url.pathname === TEAM_API_ROUTES.team.members) {
     requireAdmin(member);
-    return json(200, store.listMembers());
+    return json(
+      200,
+      member.role === "owner" && capabilities.has(TEAM_CHANNEL_IDENTITY_ADMIN_CAPABILITY)
+        ? store.listMembersWithChannelIdentity()
+        : store.listMembers(),
+    );
   }
   const memberMatch = url.pathname.match(/^\/v1\/team\/members\/([^/]+)$/);
   if (method === "PATCH" && memberMatch) {
@@ -120,6 +127,32 @@ export async function routeTeam(
     const body = await readJson(request);
     const role = body.role;
     const disabled = body.disabled;
+    const hasChannelIdentity = Object.hasOwn(body, "channelIdentityId");
+    if (hasChannelIdentity) {
+      if (!capabilities.has(TEAM_CHANNEL_IDENTITY_ADMIN_CAPABILITY)) {
+        throw new HttpError(404, sourceText("error.team.channelIdentityUnsupported"));
+      }
+      if (member.role !== "owner") throw new HttpError(403, sourceText("error.team.ownerRequired"));
+      if (role !== undefined || disabled !== undefined) {
+        throw new HttpError(400, sourceText("error.team.channelIdentityInvalid"));
+      }
+      const channelIdentityId = body.channelIdentityId;
+      if (
+        channelIdentityId !== null &&
+        (typeof channelIdentityId !== "string" ||
+          !channelIdentityId.trim() ||
+          channelIdentityId.length > INPUT_LIMITS.identifier)
+      ) {
+        throw new HttpError(400, sourceText("error.team.channelIdentityInvalid"));
+      }
+      const updated = await runCauseEffect(
+        store.updateMember(pathIdentifier(memberMatch[1], "memberId"), { channelIdentityId }),
+      );
+      const withIdentity = store.listMembersWithChannelIdentity().find((candidate) => candidate.id === updated.id);
+      if (!withIdentity) throw new HttpError(404, sourceText("error.team.memberNotFound"));
+      refreshPresence();
+      return json(200, withIdentity);
+    }
     if (role !== undefined && role !== "admin" && role !== "member") {
       throw new HttpError(400, "Invalid role.");
     }

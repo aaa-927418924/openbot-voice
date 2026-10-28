@@ -5,6 +5,8 @@ import { Effect } from "effect";
 
 import { EventEmitter } from "node:events";
 import type { TeamPresenceSnapshot } from "@openbot/contracts/ipc";
+import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
+import { TEAM_CHANNEL_IDENTITY_ADMIN_CAPABILITY } from "@openbot/contracts/team-protocol/current";
 import { afterEach, describe, expect, it } from "vitest";
 import { OpenBotDatabase } from "../backend/openbot-database";
 import { TeamChatStore } from "../backend/team-chat-store";
@@ -21,6 +23,85 @@ import {
 afterEach(stopTeamApiFixtures);
 
 describe("TeamApiServer team", () => {
+  it("limits cross-device channel identity linking to the owner and the advertised capability", async () => {
+    const { store, start, signIn } = await createTeamApiFixture("channel-identity", { configure: true });
+    const { base } = await start({ agents: createAgents() });
+    const ownerToken = await signIn({ protocol: 6, appVersion: "0.30.0" });
+    const invite = await Effect.runPromise(store.createInvite("admin"));
+    const joined = await jsonRequest<{ member: { id: string }; sessionToken: string }>(base, "/v1/join", {
+      body: { inviteToken: invite.token, username: "android-device", password: "a secure team password" },
+    });
+    const ownerId = store.getOwnerMemberId();
+    expect(ownerId).toBeTruthy();
+    const capabilityRequest = {
+      capabilities: [TEAM_CHANNEL_IDENTITY_ADMIN_CAPABILITY],
+      protocol: 6,
+      appVersion: "0.30.0",
+    };
+
+    const visibleMembers = await jsonRequest<Array<{ id: string; channelIdentityId?: string }>>(
+      base,
+      TEAM_API_ROUTES.team.members,
+      { token: ownerToken, ...capabilityRequest },
+    );
+    expect(visibleMembers.find((member) => member.id === joined.member.id)?.channelIdentityId).toBe(joined.member.id);
+
+    const linkResponse = await fetch(`${base}${TEAM_API_ROUTES.team.member(joined.member.id)}`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${ownerToken}`,
+        "Content-Type": "application/json",
+        "OpenBot-Protocol-Version": "6",
+        "OpenBot-App-Version": "0.30.0",
+        "OpenBot-Capabilities": TEAM_CHANNEL_IDENTITY_ADMIN_CAPABILITY,
+      },
+      body: JSON.stringify({ channelIdentityId: ownerId }),
+    });
+    expect(linkResponse.status, await linkResponse.clone().text()).toBe(200);
+    const linked: { id: string; channelIdentityId: string } = await linkResponse.json();
+    expect(linked.channelIdentityId).toBe(ownerId);
+    expect(store.getChannelIdentity(joined.member.id)?.id).toBe(ownerId);
+    expect(store.getMember(joined.member.id)?.id).toBe(joined.member.id);
+
+    const hiddenMembers = await jsonRequest<Array<{ id: string; channelIdentityId?: string | null }>>(
+      base,
+      TEAM_API_ROUTES.team.members,
+      {
+        token: ownerToken,
+        protocol: 6,
+        appVersion: "0.30.0",
+        capabilities: [],
+      },
+    );
+    expect(hiddenMembers.find((member) => member.id === joined.member.id)).not.toHaveProperty("channelIdentityId");
+
+    const adminResponse = await fetch(`${base}${TEAM_API_ROUTES.team.member(joined.member.id)}`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${joined.sessionToken}`,
+        "Content-Type": "application/json",
+        "OpenBot-Protocol-Version": "6",
+        "OpenBot-App-Version": "0.30.0",
+        "OpenBot-Capabilities": TEAM_CHANNEL_IDENTITY_ADMIN_CAPABILITY,
+      },
+      body: JSON.stringify({ channelIdentityId: ownerId }),
+    });
+    expect(adminResponse.status).toBe(403);
+
+    const unsupportedResponse = await fetch(`${base}${TEAM_API_ROUTES.team.member(joined.member.id)}`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${ownerToken}`,
+        "Content-Type": "application/json",
+        "OpenBot-Protocol-Version": "6",
+        "OpenBot-App-Version": "0.30.0",
+      },
+      body: JSON.stringify({ channelIdentityId: null }),
+    });
+    expect(unsupportedResponse.status).toBe(400);
+    expect(store.getChannelIdentity(joined.member.id)?.id).toBe(ownerId);
+  });
+
   it("joins an email-bound invitation with a verified OpenBot account", async () => {
     const { root, store, start } = await createTeamApiFixture("account");
     await Effect.runPromise(

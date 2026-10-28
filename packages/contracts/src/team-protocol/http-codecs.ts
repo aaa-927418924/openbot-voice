@@ -45,6 +45,8 @@ export interface TeamHttpCodecOptions {
   agentCreateModel?: boolean;
   /** Read only by V6 when the client supports the optional Codex Live voice preference. */
   agentLiveVoiceSettings?: boolean;
+  /** Read only by V6 for the owner-only cross-device channel identity control. */
+  teamChannelIdentityAdmin?: boolean;
 }
 
 type DecodedRequest =

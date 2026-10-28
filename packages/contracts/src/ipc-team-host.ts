@@ -150,6 +150,8 @@ export interface TeamMemberSummary {
   role: TeamRole;
   createdAt: string;
   disabled: boolean;
+  /** Present only in an owner-authorized member list; this device's channel author identity. */
+  channelIdentityId?: string | null;
 }
 
 export interface TeamPresenceMember extends TeamMemberSummary {
@@ -415,6 +417,8 @@ export interface UpdateTeamMemberInput {
   memberId: string;
   role?: Exclude<TeamRole, "owner">;
   disabled?: boolean;
+  /** Owner-only; null restores this membership's separate channel identity. */
+  channelIdentityId?: string | null;
 }
 
 export interface RemoteDesktopDisplay {

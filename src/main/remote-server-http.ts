@@ -11,6 +11,7 @@
 import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import {
   AGENT_LIVE_VOICE_SETTINGS_CAPABILITY,
+  TEAM_CHANNEL_IDENTITY_ADMIN_CAPABILITY,
   type TeamCurrentCapability,
 } from "@openbot/contracts/team-protocol/current";
 import { teamHttpCodec } from "@openbot/contracts/team-protocol/http-codecs";
@@ -40,6 +41,7 @@ export interface RemoteJsonRequestOptions {
   preserveSemanticTags?: boolean;
   agentCreateModel?: boolean;
   agentLiveVoiceSettings?: boolean;
+  teamChannelIdentityAdmin?: boolean;
   timeoutMs?: number;
 }
 
@@ -57,9 +59,16 @@ export const requestJson = Effect.fn("RemoteHttp.requestJson")(function* <T>(
   const sideRoute = teamSideRouteCodec(path);
   // The voice preference is a V6 extension. Keep the wire codec, protocol header and capability
   // header aligned even when a caller reaches this shared boundary with cached V1 metadata.
-  const protocol = options.agentLiveVoiceSettings ? TEAM_PROTOCOL_V6 : options.protocol;
-  const capabilities = options.agentLiveVoiceSettings
-    ? [...new Set([...(options.capabilities ?? []), AGENT_LIVE_VOICE_SETTINGS_CAPABILITY])]
+  const needsV6 = options.agentLiveVoiceSettings || options.teamChannelIdentityAdmin;
+  const protocol = needsV6 ? TEAM_PROTOCOL_V6 : options.protocol;
+  const capabilities = needsV6
+    ? [
+        ...new Set([
+          ...(options.capabilities ?? []),
+          ...(options.agentLiveVoiceSettings ? [AGENT_LIVE_VOICE_SETTINGS_CAPABILITY] : []),
+          ...(options.teamChannelIdentityAdmin ? [TEAM_CHANNEL_IDENTITY_ADMIN_CAPABILITY] : []),
+        ]),
+      ]
     : options.capabilities;
   const codec = teamHttpCodec(protocol);
   const response = yield* remoteFetch(
@@ -84,6 +93,7 @@ export const requestJson = Effect.fn("RemoteHttp.requestJson")(function* <T>(
                 preserveSemanticTags: options.preserveSemanticTags,
                 agentCreateModel: options.agentCreateModel,
                 agentLiveVoiceSettings: options.agentLiveVoiceSettings,
+                teamChannelIdentityAdmin: options.teamChannelIdentityAdmin,
               }),
     },
     options.timeoutMs,
