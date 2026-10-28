@@ -267,6 +267,13 @@ export const messages = defineMessages("server", {
   "server.members.makeAdmin": "Make admin",
   "server.members.showAsMyMessages": "Show this device's channel messages as mine",
   "server.members.showAsSeparateMember": "Show this device as a separate member",
+  "server.members.identityDescription":
+    "Link your device accounts to your owner profile to show their channel messages as one person. Each device keeps its own sign-in and access role.",
+  "server.members.linkedDeviceAccounts": "Linked device accounts ({count})",
+  "server.members.linkToProfile": "Link to me",
+  "server.members.unlinkFromProfile": "Unlink",
+  "server.members.identityAccountCount": "Linked identities: {identities} · member accounts: {accounts}",
+  "server.members.identityAccountLimitCount": "Linked identities: {identities} · member accounts: {accounts} / {limit}",
   "server.invite.invalidEmail": "Enter a valid email address.",
   "server.invite.title": "Invite people",
   "server.invite.description":

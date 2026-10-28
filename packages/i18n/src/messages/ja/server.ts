@@ -191,6 +191,13 @@ export const messages = {
   "server.members.makeAdmin": "管理者にする",
   "server.members.showAsMyMessages": "この端末のチャンネル投稿を自分の投稿として表示",
   "server.members.showAsSeparateMember": "この端末を別メンバーとして表示",
+  "server.members.identityDescription":
+    "自分の端末アカウントをオーナープロフィールにリンクすると、チャンネルでは同じ人として表示されます。各端末のログインと権限は個別のままです。",
+  "server.members.linkedDeviceAccounts": "リンク済み端末アカウント（{count}）",
+  "server.members.linkToProfile": "自分にリンク",
+  "server.members.unlinkFromProfile": "リンク解除",
+  "server.members.identityAccountCount": "同一プロフィール {identities} 人 · メンバー登録 {accounts} 件",
+  "server.members.identityAccountLimitCount": "同一プロフィール {identities} 人 · メンバー登録 {accounts} / {limit} 件",
   "server.invite.invalidEmail": "有効なメールアドレスを入力してください。",
   "server.invite.title": "ユーザーを招待",
   "server.invite.description":

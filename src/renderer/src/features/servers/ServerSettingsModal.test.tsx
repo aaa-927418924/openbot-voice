@@ -938,15 +938,8 @@ describe("ServerSettingsModal", () => {
     ));
 
     await fireEvent.click(screen.getByRole("tab", { name: "Members" }));
-    const actions = screen.getByRole("button", { name: "Actions for Alice Chen" });
-    await fireEvent.pointerDown(actions, { button: 0 });
-    await fireEvent.pointerUp(actions, { button: 0 });
-    await fireEvent.pointerUp(
-      await screen.findByRole("menuitem", { name: "Show this device's channel messages as mine" }),
-      {
-        button: 0,
-      },
-    );
+    expect(screen.getByRole("button", { name: "Link to me" })).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Link to me" }));
     await waitFor(() =>
       expect(onUpdateMember).toHaveBeenCalledWith({ memberId: "alice-1", channelIdentityId: "owner-1" }),
     );
@@ -957,13 +950,55 @@ describe("ServerSettingsModal", () => {
       <ServerSettingsModal {...props({ server: { ...supportedOwner, role: "admin" }, members, onUpdateMember })} />
     ));
     await fireEvent.click(screen.getByRole("tab", { name: "Members" }));
-    const adminActions = screen.getByRole("button", { name: "Actions for Alice Chen" });
-    await fireEvent.pointerDown(adminActions, { button: 0 });
-    await fireEvent.pointerUp(adminActions, { button: 0 });
-    expect(
-      screen.queryByRole("menuitem", { name: "Show this device's channel messages as mine" }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Link to me" })).not.toBeInTheDocument();
     expect(onUpdateMember).not.toHaveBeenCalled();
+  });
+
+  it("groups explicitly linked device memberships beneath one profile", async () => {
+    const supportedOwner = {
+      ...remoteServer,
+      role: "owner" as const,
+      compatibility: {
+        localAppVersion: "0.5.0",
+        hostAppVersion: "0.5.0",
+        localProtocol: { minimum: 1, maximum: 6 },
+        hostProtocol: { minimum: 1, maximum: 6 },
+        negotiatedProtocol: 6,
+        capabilities: ["channel-identity-admin-v1"],
+      },
+    };
+    const ownerFixture = members.find((member) => member.role === "owner");
+    const deviceFixture = members.find((member) => member.id === "alice-1");
+    if (!ownerFixture || !deviceFixture) throw new Error("Member fixtures are incomplete.");
+    const linkedMembers: TeamPresenceMember[] = [
+      ownerFixture,
+      {
+        ...deviceFixture,
+        id: "windows-1",
+        username: "device-windows",
+        email: null,
+        name: "Windows device",
+        channelIdentityId: "owner-1",
+      },
+      {
+        ...deviceFixture,
+        id: "android-1",
+        username: "device-android",
+        email: null,
+        name: "Android device",
+        channelIdentityId: "owner-1",
+      },
+    ];
+    render(() => <ServerSettingsModal {...props({ server: supportedOwner, members: linkedMembers })} />);
+    await fireEvent.click(screen.getByRole("tab", { name: "Members" }));
+
+    expect(screen.getByText("Linked identities: 1 · member accounts: 3")).toBeInTheDocument();
+    const linkedAccounts = screen.getByText("Linked device accounts (2)");
+    expect(linkedAccounts).toBeInTheDocument();
+    await fireEvent.click(linkedAccounts);
+    expect(screen.getByText("Windows device")).toBeInTheDocument();
+    expect(screen.getByText("Android device")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Unlink" })).toHaveLength(2);
   });
 
   it("hides removed members and excludes them from the member count", async () => {

@@ -77,6 +77,11 @@ interface MembersPanel {
   search: string;
 }
 
+interface MemberIdentityGroup {
+  member: TeamPresenceMember;
+  linkedDevices: TeamPresenceMember[];
+}
+
 /**
  * The Members section's state. Each group's fields are written together - switching invite mode
  * clears three of the composer's fields - so they are one store rather than a signal each, and
@@ -154,23 +159,51 @@ export function createServerMembersSection(host: ServerSettingsSectionHost): Ser
     const limit = memberLimit();
     return limit !== null && activeMembers().length >= limit;
   };
+  const activeMemberGroups = createMemo<MemberIdentityGroup[]>(() => {
+    const roster = activeMembers();
+    const owner = ownerMember();
+    if (!owner || !canLinkChannelIdentity()) return roster.map((member) => ({ member, linkedDevices: [] }));
+
+    const linkedIds = new Set(
+      roster
+        .filter((member) => member.id !== owner.id && member.channelIdentityId === owner.id)
+        .map((member) => member.id),
+    );
+    const linkedDevices = roster.filter((member) => linkedIds.has(member.id));
+    return roster
+      .filter((member) => !linkedIds.has(member.id))
+      .map((member) => ({ member, linkedDevices: member.id === owner.id ? linkedDevices : [] }));
+  });
+  const filteredMemberGroups = createMemo(() => {
+    const query = panels.members.search.trim().toLowerCase();
+    const groups = activeMemberGroups();
+    if (!query) return groups;
+    return groups.flatMap((group) => {
+      const matches = (member: TeamPresenceMember) =>
+        [teamMemberName(member), member.email, member.username].some((value) => value?.toLowerCase().includes(query));
+      if (matches(group.member)) return [group];
+      const matchingDevices = group.linkedDevices.filter(matches);
+      return matchingDevices.length > 0 ? [{ ...group, linkedDevices: matchingDevices }] : [];
+    });
+  });
   const membersCount = () => {
-    const count = activeMembers().length;
+    const accounts = activeMembers().length;
+    const identities = activeMemberGroups().length;
     const limit = memberLimit();
-    return limit === null ? t("server.members.count", { count }) : t("server.members.limitCount", { count, limit });
+    if (canLinkChannelIdentity() && identities < accounts) {
+      return limit === null
+        ? t("server.members.identityAccountCount", { identities, accounts })
+        : t("server.members.identityAccountLimitCount", { identities, accounts, limit });
+    }
+    return limit === null
+      ? t("server.members.count", { count: accounts })
+      : t("server.members.limitCount", { count: accounts, limit });
   };
   const inactiveLegacyMembers = createMemo(() =>
     props.server.kind === "remote" && /^https?:\/\//u.test(props.server.apiUrl ?? "")
       ? props.members.filter((member) => member.disabled && member.role !== "owner")
       : [],
   );
-  const filteredMembers = createMemo(() => {
-    const query = panels.members.search.trim().toLowerCase();
-    if (!query) return activeMembers();
-    return activeMembers().filter((member) =>
-      [teamMemberName(member), member.email, member.username].some((value) => value?.toLowerCase().includes(query)),
-    );
-  });
   const removeMember = createMemo(() => props.members.find((member) => member.id === panels.members.removeId) ?? null);
   const canInvite = createMemo(
     () =>
@@ -307,6 +340,7 @@ export function createServerMembersSection(host: ServerSettingsSectionHost): Ser
         <Show when={canManage()}>{inviteComposer()}</Show>
         <SettingsSection
           class="server-settings-members-section"
+          description={canLinkChannelIdentity() ? t("server.members.identityDescription") : undefined}
           title={
             <span class="server-settings-members-title">
               {t("server.members.title")}
@@ -333,7 +367,7 @@ export function createServerMembersSection(host: ServerSettingsSectionHost): Ser
         >
           <ItemGroup class="settings-modal-card server-settings-members-list">
             <Show
-              when={filteredMembers().length > 0}
+              when={filteredMemberGroups().length > 0}
               fallback={
                 <Item class="server-settings-empty-row">
                   <ItemContent>
@@ -342,7 +376,23 @@ export function createServerMembersSection(host: ServerSettingsSectionHost): Ser
                 </Item>
               }
             >
-              <For each={filteredMembers()}>{(member) => memberRow(member)}</For>
+              <For each={filteredMemberGroups()}>
+                {(group) => (
+                  <div class="server-settings-member-identity-group">
+                    {memberRow(group.member)}
+                    <Show when={group.linkedDevices.length > 0}>
+                      <details class="server-settings-linked-devices">
+                        <summary>
+                          {t("server.members.linkedDeviceAccounts", { count: group.linkedDevices.length })}
+                        </summary>
+                        <div class="server-settings-linked-device-rows">
+                          <For each={group.linkedDevices}>{(member) => memberRow(member, true)}</For>
+                        </div>
+                      </details>
+                    </Show>
+                  </div>
+                )}
+              </For>
             </Show>
           </ItemGroup>
         </SettingsSection>
@@ -578,15 +628,42 @@ export function createServerMembersSection(host: ServerSettingsSectionHost): Ser
     );
   }
 
-  function memberRow(member: TeamPresenceMember) {
+  function memberRow(member: TeamPresenceMember, linkedDevice = false) {
     return (
-      <Item class="server-settings-member-row" data-disabled={member.disabled ? "" : undefined}>
+      <Item
+        class="server-settings-member-row"
+        data-disabled={member.disabled ? "" : undefined}
+        data-linked-device={linkedDevice ? "" : undefined}
+      >
         <ItemContent>
           <ItemTitle>{teamMemberName(member)}</ItemTitle>
           <ItemDescription class="server-settings-member-meta">{member.email ?? member.username}</ItemDescription>
         </ItemContent>
         <ItemActions class="server-settings-member-actions">
           <Show when={member.role !== "owner"} fallback={<Badge tone="accent">{t(ROLE_LABELS.owner)}</Badge>}>
+            <Show when={canLinkChannelIdentity() && ownerMember() && member.role !== "owner"}>
+              <Button
+                class="server-settings-member-identity-action"
+                type="button"
+                size="sm"
+                variant={member.channelIdentityId === ownerMember()?.id ? "secondary" : "ghost"}
+                disabled={!actionsAvailable() || Boolean(busy())}
+                onClick={() => {
+                  const ownerId = ownerMember()?.id;
+                  if (!ownerId) return;
+                  void run(`identity:${member.id}`, () =>
+                    props.onUpdateMember({
+                      memberId: member.id,
+                      channelIdentityId: member.channelIdentityId === ownerId ? null : ownerId,
+                    }),
+                  );
+                }}
+              >
+                {member.channelIdentityId === ownerMember()?.id
+                  ? t("server.members.unlinkFromProfile")
+                  : t("server.members.linkToProfile")}
+              </Button>
+            </Show>
             <Text variant="label-sm" tone="secondary">
               {t(ROLE_LABELS[member.role])}
             </Text>
@@ -594,15 +671,8 @@ export function createServerMembersSection(host: ServerSettingsSectionHost): Ser
               <MemberActionsMenu
                 member={member}
                 mount={host.menuMount()}
-                ownerMemberId={ownerMember()?.id ?? null}
-                canLinkChannelIdentity={canLinkChannelIdentity()}
                 onRoleChange={(role) =>
                   void run(`member:${member.id}`, () => props.onUpdateMember({ memberId: member.id, role }))
-                }
-                onChannelIdentityChange={(channelIdentityId) =>
-                  void run(`identity:${member.id}`, () =>
-                    props.onUpdateMember({ memberId: member.id, channelIdentityId }),
-                  )
                 }
                 onRemove={(trigger) => {
                   // The confirmation returns focus to the element focused when it opens.
@@ -720,10 +790,7 @@ export function createServerMembersSection(host: ServerSettingsSectionHost): Ser
 function MemberActionsMenu(props: {
   member: TeamPresenceMember;
   mount: HTMLElement | undefined;
-  ownerMemberId: string | null;
-  canLinkChannelIdentity: boolean;
   onRoleChange: (role: InviteRole) => void;
-  onChannelIdentityChange: (channelIdentityId: string | null) => void;
   onRemove: (trigger: HTMLElement) => void;
 }) {
   const { t } = useText();
@@ -741,21 +808,6 @@ function MemberActionsMenu(props: {
       {/* A portal without a mount uses the document body. */}
       <DropdownMenu.Portal mount={props.mount ?? document.body}>
         <DropdownMenu.Content class="server-settings-member-menu">
-          <Show when={props.canLinkChannelIdentity && props.ownerMemberId && props.member.role !== "owner"}>
-            <DropdownMenu.Item
-              onSelect={() => {
-                const ownerId = props.ownerMemberId;
-                if (!ownerId) return;
-                props.onChannelIdentityChange(props.member.channelIdentityId === ownerId ? null : ownerId);
-              }}
-            >
-              <UserRound aria-hidden="true" />
-              {props.member.channelIdentityId === props.ownerMemberId
-                ? t("server.members.showAsSeparateMember")
-                : t("server.members.showAsMyMessages")}
-            </DropdownMenu.Item>
-            <DropdownMenu.Separator />
-          </Show>
           <Show when={!props.member.disabled}>
             <DropdownMenu.Item onSelect={() => props.onRoleChange(props.member.role === "admin" ? "member" : "admin")}>
               {props.member.role === "admin" ? <UserRound aria-hidden="true" /> : <ShieldCheck aria-hidden="true" />}
