@@ -26,7 +26,7 @@ import type { BusyMessageModePreferenceStore } from "../busy-message-mode-prefer
 import type { LanguageService } from "../language-service";
 import type { LogoColorService } from "../logo-color-service";
 import { MAC_PERMISSION_URLS } from "../mac-permission-urls";
-import { exportDiagnostics, exportOpenBotData } from "../maintenance-service";
+import { exportDiagnostics, exportOpenBotData, exportRemoteDesktopSupportLog } from "../maintenance-service";
 import { readSetupState, writeSetupState } from "../setup-store";
 import type { UpdateService } from "../update-service";
 import type { WindowsStartupController } from "../windows-startup";
@@ -190,6 +190,14 @@ export function appIpcHandlers({
             browser,
             updater,
             trace,
+            parentWindow: getMainWindow(),
+            translate: language.translate,
+          }),
+        ),
+      ),
+      exportRemoteDesktopSupportLog: handler(() =>
+        runCauseEffect(
+          exportRemoteDesktopSupportLog({
             parentWindow: getMainWindow(),
             translate: language.translate,
           }),

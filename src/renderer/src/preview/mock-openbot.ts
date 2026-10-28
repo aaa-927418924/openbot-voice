@@ -1700,6 +1700,7 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
     maintenance: {
       exportData: async () => ({ saved: true }),
       exportDiagnostics: async () => ({ saved: true }),
+      exportRemoteDesktopSupportLog: async () => ({ saved: true }),
     },
     servers: mockTeam.servers,
     plugins: {

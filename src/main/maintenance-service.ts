@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { copyFile, mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { arch, release as osRelease, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
@@ -12,6 +12,7 @@ import type { AgentService } from "../backend/agent-service";
 import type { BrowserHost } from "../backend/browser-host";
 import type { MailboxStore } from "../backend/mailbox-store";
 import { type ArchiveOperationError, archiveCall, archiveFailure, archiveSync } from "./archive-effects";
+import { formatRemoteDesktopSupportLog } from "./remote-desktop-support-log";
 import type { TraceFile } from "./trace-file";
 import type { UpdateService } from "./update-service";
 
@@ -213,6 +214,43 @@ export const exportDiagnostics = Effect.fn("Archive.exportDiagnostics")(function
   ).pipe(Effect.uninterruptible);
   return { saved: true };
 });
+
+export const exportRemoteDesktopSupportLog = Effect.fn("Archive.exportRemoteDesktopSupportLog")(function* (
+  context: Pick<MaintenanceContext, "parentWindow" | "translate">,
+): Effect.fn.Return<ExportResult, ArchiveOperationError> {
+  const destination = yield* chooseExportDestinationEffect(
+    context.parentWindow,
+    `OpenBot-remote-desktop-${new Date().toISOString().slice(0, 10)}.txt`,
+    [{ name: context.translate("dialog.filter.textDocument"), extensions: ["txt"] }],
+  );
+  if (!destination) return { saved: false };
+
+  const logPath = join(app.getPath("userData"), "logs", "remote", "remote-viewer-proxy.log");
+  const log = yield* archiveCall(() => readRemoteViewerLog(logPath));
+  const text = formatRemoteDesktopSupportLog({
+    generatedAt: new Date().toISOString(),
+    appVersion: app.getVersion(),
+    platform: process.platform,
+    log,
+  });
+  yield* archiveCall(() => writeFile(destination, text, { encoding: "utf8", mode: 0o600 })).pipe(
+    Effect.uninterruptible,
+  );
+  return { saved: true };
+});
+
+async function readRemoteViewerLog(path: string): Promise<string> {
+  try {
+    return (await readFile(path, "utf8")).slice(-1_048_576);
+  } catch (cause) {
+    if (isMissingFileError(cause)) return "";
+    throw cause;
+  }
+}
+
+function isMissingFileError(cause: unknown): boolean {
+  return typeof cause === "object" && cause !== null && "code" in cause && cause.code === "ENOENT";
+}
 
 const KB_PER_MB = 1_024;
 const BYTES_PER_MB = 1_024 * 1_024;

@@ -1021,6 +1021,7 @@ export function installOpenbotStub(): void {
     maintenance: stubGroup("maintenance", {
       exportData: vi.fn().mockResolvedValue({ saved: true }),
       exportDiagnostics: vi.fn().mockResolvedValue({ saved: true }),
+      exportRemoteDesktopSupportLog: vi.fn().mockResolvedValue({ saved: true }),
     }),
     servers: {
       reorder: notStubbed("servers.reorder"),

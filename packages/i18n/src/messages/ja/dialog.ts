@@ -10,6 +10,7 @@ export const messages = {
   "dialog.filter.attachment": "添付ファイル",
   "dialog.filter.zipArchive": "ZIP アーカイブ",
   "dialog.filter.jsonDocument": "JSON ドキュメント",
+  "dialog.filter.textDocument": "テキストファイル",
   "dialog.chooseAgentExport": "エージェントのエクスポートを選択",
   "dialog.filter.agentExports": "エージェントのエクスポート",
   "dialog.saveExportSkill": "エクスポート用スキルを保存",

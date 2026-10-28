@@ -629,6 +629,7 @@ function AppSettings(props: AccountProps) {
         turboModePending={turboModePending()}
         onTestNotification={sendTestNotification}
         onOpenNotificationSettings={openNotificationSettings}
+        onExportRemoteDesktopSupportLog={() => appPort().maintenance.exportRemoteDesktopSupportLog()}
         hiddenServers={hiddenServers()}
         onUnhideServer={unhideServer}
         onUnhideAllServers={unhideAllServers}

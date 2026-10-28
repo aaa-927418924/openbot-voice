@@ -5,6 +5,7 @@ import type {
   BillingDesktopApi,
   CentralAuthUser,
   DynamicIslandGeometry,
+  ExportResult,
   HostedServersDesktopApi,
   MobileConnectedDevice,
   MobileConnectTicket,
@@ -69,6 +70,7 @@ export interface SettingsModalProps {
   hiddenServers?: { readonly id: string; readonly name: string }[];
   onUnhideServer?: (serverId: string) => void;
   onUnhideAllServers?: () => void;
+  onExportRemoteDesktopSupportLog?: () => Promise<ExportResult>;
   restoreFocusTarget?: HTMLElement | null;
   /** The tab shown when the modal is created. Read once; the user moves between tabs after that. */
   initialTab?: SettingsTab;
@@ -209,6 +211,7 @@ export function SettingsModal(props: SettingsModalProps) {
             hiddenServers={props.hiddenServers ?? []}
             onUnhideServer={props.onUnhideServer ?? (() => {})}
             onUnhideAllServers={props.onUnhideAllServers ?? (() => {})}
+            onExportRemoteDesktopSupportLog={props.onExportRemoteDesktopSupportLog}
           />
         </Tabs.Content>
 

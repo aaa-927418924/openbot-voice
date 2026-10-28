@@ -466,6 +466,7 @@ export const IPC_ENDPOINTS = {
   maintenance: {
     exportData: request<undefined, ExportResult>()("maintenance:export-data"),
     exportDiagnostics: request<undefined, ExportResult>()("maintenance:export-diagnostics"),
+    exportRemoteDesktopSupportLog: request<undefined, ExportResult>()("maintenance:export-remote-desktop-support-log"),
   },
   providers: {
     connectProvider: request<AgentProviderId, AgentStatus>()("app:connect-provider"),

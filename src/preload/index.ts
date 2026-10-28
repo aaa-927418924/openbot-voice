@@ -816,6 +816,7 @@ const openbotApi: OpenBotDesktopApi = {
   maintenance: bridgeGroup(IPC_ENDPOINTS.maintenance, {
     exportData: decodeExportResult,
     exportDiagnostics: decodeExportResult,
+    exportRemoteDesktopSupportLog: decodeExportResult,
   }),
   servers: {
     ...serversGroup,

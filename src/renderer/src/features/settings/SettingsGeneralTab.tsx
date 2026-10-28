@@ -1,4 +1,4 @@
-import type { AppVariant } from "@openbot/contracts/ipc";
+import type { AppVariant, ExportResult } from "@openbot/contracts/ipc";
 import type { AppTextKey } from "@openbot/i18n";
 import {
   Button,
@@ -59,6 +59,7 @@ interface SettingsGeneralTabProps {
   windowsStartupSupported?: boolean;
   onUnhideServer?: (serverId: string) => void;
   onUnhideAllServers?: () => void;
+  onExportRemoteDesktopSupportLog?: () => Promise<ExportResult>;
 }
 
 export function SettingsGeneralTab(props: SettingsGeneralTabProps) {
@@ -80,7 +81,20 @@ export function SettingsGeneralTab(props: SettingsGeneralTabProps) {
         ? i18n.t("settings.windowsStartup.shown")
         : "";
   const [confirmingTurbo, setConfirmingTurbo] = createSignal(false);
+  const [savingRemoteDesktopLog, setSavingRemoteDesktopLog] = createSignal(false);
   const logoColor = useLogoColorChoice();
+  const exportRemoteDesktopLog = async () => {
+    if (!props.onExportRemoteDesktopSupportLog || savingRemoteDesktopLog()) return;
+    setSavingRemoteDesktopLog(true);
+    try {
+      const result = await props.onExportRemoteDesktopSupportLog();
+      if (result.saved) toast.success(i18n.t("settings.remoteDesktopSupport.saved"));
+    } catch {
+      toast.error(i18n.t("settings.remoteDesktopSupport.saveFailed"));
+    } finally {
+      setSavingRemoteDesktopLog(false);
+    }
+  };
   return (
     <>
       <SettingsSection title={i18n.t("settings.appearance.title")}>
@@ -251,6 +265,34 @@ export function SettingsGeneralTab(props: SettingsGeneralTabProps) {
           </Show>
         </ItemGroup>
       </SettingsSection>
+
+      <Show when={props.platform === "win32"}>
+        <SettingsSection title={i18n.t("settings.remoteDesktopSupport.title")}>
+          <ItemGroup class="settings-modal-card">
+            <Item class="settings-modal-row">
+              <ItemContent>
+                <ItemTitle>{i18n.t("settings.remoteDesktopSupport.logTitle")}</ItemTitle>
+                <ItemDescription>{i18n.t("settings.remoteDesktopSupport.description")}</ItemDescription>
+              </ItemContent>
+              <ItemActions>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={savingRemoteDesktopLog() || !props.onExportRemoteDesktopSupportLog}
+                  onClick={() => void exportRemoteDesktopLog()}
+                >
+                  {i18n.t(
+                    savingRemoteDesktopLog()
+                      ? "settings.remoteDesktopSupport.saving"
+                      : "settings.remoteDesktopSupport.action",
+                  )}
+                </Button>
+              </ItemActions>
+            </Item>
+          </ItemGroup>
+        </SettingsSection>
+      </Show>
 
       <SettingsSection title={i18n.t("settings.autonomy.title")}>
         <ItemGroup class="settings-modal-card">
