@@ -209,6 +209,8 @@ export interface DevelopmentRemoteServerConnection {
 }
 
 const REMOTE_DUPLICATION_TIMEOUT_MS = TEAM_WEBRTC_REMOTE_REQUEST_TIMEOUT_MILLISECONDS;
+/** A cold screen-capture runtime may need up to 120 seconds before its viewer session is ready. */
+export const REMOTE_DESKTOP_SESSION_START_TIMEOUT_MS = 180_000;
 /** An export of up to 100 MB goes up and is read in one request, and apply creates many agents. */
 export const AGENT_IMPORT_UPLOAD_TIMEOUT_MS = TEAM_WEBRTC_REMOTE_REQUEST_TIMEOUT_MILLISECONDS;
 // How long a host that restarts into an update keeps the fast retry after Signal first misses it. A
@@ -1410,6 +1412,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       const result = yield* this.request(serverId, TEAM_API_ROUTES.remoteScreen.sessions, decodeRemoteDesktopSession, {
         method: "POST",
         body: {},
+        timeoutMs: REMOTE_DESKTOP_SESSION_START_TIMEOUT_MS,
       }).pipe(Effect.result);
       if (Result.isFailure(result)) {
         this.#diagnoseRemoteDesktop("session_request_failed", {

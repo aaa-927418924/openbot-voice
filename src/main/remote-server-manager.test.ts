@@ -7,12 +7,14 @@ import { generateKeyPairSync, sign } from "node:crypto";
 import { mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { RemoteDesktopSession } from "@openbot/contracts/ipc";
+import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import { TEAM_CURRENT_CAPABILITIES } from "@openbot/contracts/team-protocol/current";
 import type { TeamProtocolV2Json } from "@openbot/contracts/team-protocol/v2";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runCauseEffect } from "../backend/effect-boundary";
 import { decodeBrowserPreviewFromHost, decodeBrowserTab } from "./remote-device-decoding";
-import { RemoteServerManager } from "./remote-server-manager";
+import { REMOTE_DESKTOP_SESSION_START_TIMEOUT_MS, RemoteServerManager } from "./remote-server-manager";
 import {
   createRemoteManager,
   deferredRoute,
@@ -64,6 +66,36 @@ describe("remote browser responses", () => {
         height: 600,
       }),
     ).toThrowError("Invalid remote browser preview.");
+  });
+});
+
+describe("remote desktop session startup", () => {
+  it("allows a cold host time to start its screen-capture runtime", async () => {
+    const fixture = await createRemoteManager({ servers: [storedHttpsServer("viewer-host")] });
+    const session: RemoteDesktopSession = {
+      id: "session-1",
+      serverId: "viewer-host",
+      viewerUrl: "http://127.0.0.1:8080",
+      viewerGrant: "viewer-grant",
+      displays: [],
+      selectedDisplayId: null,
+      phase: "starting_host",
+      transport: "unknown",
+      errorCode: null,
+      message: null,
+      createdAt: "2026-10-28T00:00:00.000Z",
+      grantExpiresAt: "2026-10-28T00:03:00.000Z",
+    };
+    const request = vi.spyOn(fixture.manager, "request").mockReturnValue(Effect.succeed(session));
+
+    await expect(runCauseEffect(fixture.manager.createRemoteDesktopSession("viewer-host"))).resolves.toEqual(session);
+
+    expect(request).toHaveBeenCalledWith("viewer-host", TEAM_API_ROUTES.remoteScreen.sessions, expect.any(Function), {
+      method: "POST",
+      body: {},
+      timeoutMs: REMOTE_DESKTOP_SESSION_START_TIMEOUT_MS,
+    });
+    expect(REMOTE_DESKTOP_SESSION_START_TIMEOUT_MS).toBe(180_000);
   });
 });
 
