@@ -105,14 +105,20 @@ function RootNavigator() {
                   headerBackButtonDisplayMode: "minimal",
                   headerShadowVisible: false,
                   headerTransparent: isIOS,
-                  orientation: "portrait",
+                  // Let nested stacks choose their own orientation. The authenticated stack keeps
+                  // regular app screens portrait and opts only Remote Desktop into rotation.
+                  orientation: "default",
                 }}
               >
-                <Stack.Screen name="index" options={{ headerShown: false }} />
+                <Stack.Screen name="index" options={{ headerShown: false, orientation: "portrait" }} />
                 <Stack.Protected guard={!session}>
                   <Stack.Screen
                     name="scan-qr-code"
-                    options={{ animation: "slide_from_right", title: t("mobile.app.route.scanQrCode") }}
+                    options={{
+                      animation: "slide_from_right",
+                      orientation: "portrait",
+                      title: t("mobile.app.route.scanQrCode"),
+                    }}
                   />
                 </Stack.Protected>
                 <Stack.Protected guard={Boolean(session)}>
@@ -126,7 +132,7 @@ function RootNavigator() {
                     }}
                   />
                 </Stack.Protected>
-                <Stack.Screen name="incoming-link" options={{ headerShown: false }} />
+                <Stack.Screen name="incoming-link" options={{ headerShown: false, orientation: "portrait" }} />
               </Stack>
             </View>
           </View>
