@@ -181,6 +181,26 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
+function isAttachmentDownloadPath(path: string): boolean {
+  return /^\/v1\/attachments\/[^/]+$/u.test(path);
+}
+
+function attachmentDownloadName(response: Response, path: string): string {
+  const disposition = response.headers.get("Content-Disposition") ?? "";
+  const encoded = disposition.match(/(?:^|;)\s*filename\*\s*=\s*UTF-8''([^;]+)/iu)?.[1];
+  if (encoded) {
+    try {
+      return decodeURIComponent(encoded.trim().replace(/^"|"$/gu, ""));
+    } catch {
+      // A malformed optional filename must not prevent the file bytes from being downloaded.
+    }
+  }
+  const plain = disposition.match(/(?:^|;)\s*filename\s*=\s*(?:"([^"]*)"|([^;]+))/iu);
+  const name = plain?.[1] ?? plain?.[2]?.trim();
+  if (name) return name;
+  return decodeURIComponent(path.slice(path.lastIndexOf("/") + 1));
+}
+
 function isAgentAvatarPath(path: string): boolean {
   return /^\/v1\/agents\/[^/]+\/avatar$/u.test(path);
 }
@@ -374,11 +394,16 @@ export class DirectTailnetTeamClient {
       ...(requestBody === undefined ? {} : { body: requestBody }),
     });
     const avatarResponse = method === "GET" && response.ok && isAgentAvatarPath(route);
+    // Attachments (including 206 byte-range responses) are streamed as raw bytes by the host.
+    // Parsing them as JSON yields the Android Unexpected end of input error and prevents both
+    // progressive video playback and the download action from receiving their expected envelope.
+    const attachmentResponse = method === "GET" && response.ok && isAttachmentDownloadPath(route);
     const value =
       response.status === 204
         ? undefined
-        : avatarResponse
+        : avatarResponse || attachmentResponse
           ? {
+              ...(attachmentResponse ? { name: attachmentDownloadName(response, route) } : {}),
               mimeType: response.headers.get("Content-Type")?.split(";", 1)[0]?.trim() ?? "",
               base64: bytesToBase64(new Uint8Array(await response.arrayBuffer())),
             }
@@ -386,7 +411,7 @@ export class DirectTailnetTeamClient {
     const decoded =
       value === undefined
         ? undefined
-        : avatarResponse
+        : avatarResponse || attachmentResponse
           ? value
           : sideRoute
             ? sideRoute.response(route, response.status, value)

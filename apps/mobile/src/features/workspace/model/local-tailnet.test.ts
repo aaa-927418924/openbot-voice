@@ -110,6 +110,16 @@ async function createHostFetch() {
       return new Response(Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]), {
         headers: { "Content-Type": "image/png" },
       });
+    if (url.pathname === TEAM_API_ROUTES.attachment("video-1")) {
+      const range = url.searchParams.has("offset");
+      return new Response(Uint8Array.from([0, 0, 0, range ? 2 : 1, 102, 116, 121, 112]), {
+        status: range ? 206 : 200,
+        headers: {
+          "Content-Type": "video/mp4",
+          "Content-Disposition": "attachment; filename*=UTF-8''%E6%97%85%E8%A1%8C%E3%83%93%E3%83%87%E3%82%AA.mp4",
+        },
+      });
+    }
     if (url.pathname === TEAM_API_ROUTES.join.server) {
       const joined = {
         member: {
@@ -211,6 +221,30 @@ describe("Android direct Tailscale pairing", () => {
         return `data:${value.mimeType};base64,${value.base64}`;
       }),
     ).resolves.toBe("data:image/png;base64,iVBORw0KGgo=");
+
+    const decodeFile = (value: unknown) => {
+      if (
+        typeof value !== "object" ||
+        value === null ||
+        !("name" in value) ||
+        !("mimeType" in value) ||
+        !("base64" in value)
+      )
+        throw new Error("Invalid attachment response.");
+      return value;
+    };
+    await expect(client.request("GET", TEAM_API_ROUTES.attachment("video-1"), decodeFile)).resolves.toMatchObject({
+      name: "旅行ビデオ.mp4",
+      mimeType: "video/mp4",
+      base64: "AAAAAWZ0eXA=",
+    });
+    await expect(
+      client.request("GET", `${TEAM_API_ROUTES.attachment("video-1")}?offset=0&length=4`, decodeFile),
+    ).resolves.toMatchObject({
+      name: "旅行ビデオ.mp4",
+      mimeType: "video/mp4",
+      base64: "AAAAAmZ0eXA=",
+    });
 
     const compatibilityRequests = host.calls.filter((call) => call.path === TEAM_API_ROUTES.compatibility);
     expect(compatibilityRequests).toHaveLength(2);
