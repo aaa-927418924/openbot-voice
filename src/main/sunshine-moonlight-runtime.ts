@@ -67,9 +67,9 @@ const SUNSHINE_ALLOCATION_ATTEMPTS = 64;
 const READINESS_ATTEMPT_TIMEOUT_MS = 5_000;
 const SUNSHINE_START_TIMEOUT_MS = 20_000;
 const SUNSHINE_PORTAL_START_TIMEOUT_MS = 120_000;
+const SUNSHINE_PORTAL_TOKEN_RECOVERY_TIMEOUT_MS = 5_000;
 const SUNSHINE_START_ATTEMPTS = 3;
 const SUNSHINE_PORTAL_TOKEN_LOADED = "[portalgrab] Loaded portal restore token from disk";
-const SUNSHINE_PORTAL_TOKEN_SAVED = "[portalgrab] Saved portal restore token to disk";
 const SUNSHINE_PORTAL_STREAM_READY = "[portalgrab] Found stream for display id/name:";
 const MOONLIGHT_WEBRTC_RANGE_SIZE = 32;
 const MOONLIGHT_WEBRTC_RANGE_START = 40_000;
@@ -110,15 +110,30 @@ export function shouldResetSunshinePortalTokenAfterFailedStart(input: {
   platform: "darwin" | "win32" | "linux";
   linuxCaptureMethod?: "portal" | "x11";
   restoreTokenLoaded: boolean;
-  restoreTokenSaved: boolean;
   captureStreamStarted: boolean;
 }): boolean {
   return (
     input.platform === "linux" &&
     input.linuxCaptureMethod === "portal" &&
     input.restoreTokenLoaded &&
-    !input.restoreTokenSaved &&
     !input.captureStreamStarted
+  );
+}
+
+export function shouldFailForUnrestoredSunshinePortalToken(input: {
+  platform: "darwin" | "win32" | "linux";
+  linuxCaptureMethod?: "portal" | "x11";
+  restoreTokenLoadedAt: number | null;
+  captureStreamStarted: boolean;
+  now: number;
+  graceMs: number;
+}): boolean {
+  return (
+    input.platform === "linux" &&
+    input.linuxCaptureMethod === "portal" &&
+    input.restoreTokenLoadedAt !== null &&
+    !input.captureStreamStarted &&
+    input.now - input.restoreTokenLoadedAt >= input.graceMs
   );
 }
 
@@ -393,7 +408,7 @@ export class SunshineMoonlightRuntime {
   #state: SunshineMoonlightRuntimeState | null = null;
   #screenCaptureDenied = false;
   #portalRestoreTokenLoaded = false;
-  #portalRestoreTokenSaved = false;
+  #portalRestoreTokenLoadedAt: number | null = null;
   #portalCaptureStreamStarted = false;
   readonly #moonlightHeader = `X-OpenBot-Remote-${randomBytes(32).toString("hex")}`;
   #selectedDisplayId: string | null = null;
@@ -817,7 +832,6 @@ export class SunshineMoonlightRuntime {
           platform: this.#options.platform,
           linuxCaptureMethod: this.#options.linuxCaptureMethod,
           restoreTokenLoaded: this.#portalRestoreTokenLoaded,
-          restoreTokenSaved: this.#portalRestoreTokenSaved,
           captureStreamStarted: this.#portalCaptureStreamStarted,
         });
       if (!resetStalePortalToken && attempt + 1 >= attempts) break;
@@ -848,7 +862,7 @@ export class SunshineMoonlightRuntime {
     // alone -- carrying the previous one over would keep reporting a grant the user has already made.
     this.#screenCaptureDenied = false;
     this.#portalRestoreTokenLoaded = false;
-    this.#portalRestoreTokenSaved = false;
+    this.#portalRestoreTokenLoadedAt = null;
     this.#portalCaptureStreamStarted = false;
     const usesPortal = this.#options.platform === "linux" && this.#options.linuxCaptureMethod === "portal";
     const xdgConfigHome = join(this.#options.stateDirectory, "xdg-config");
@@ -872,6 +886,13 @@ export class SunshineMoonlightRuntime {
       join(this.#options.stateDirectory, "sunshine-cert.pem"),
       this.#sunshine,
       sunshineStartupPolicy(this.#options.platform, this.#options.linuxCaptureMethod).timeoutMs,
+      usesPortal
+        ? () => ({
+            restoreTokenLoadedAt: this.#portalRestoreTokenLoadedAt,
+            captureStreamStarted: this.#portalCaptureStreamStarted,
+          })
+        : undefined,
+      SUNSHINE_PORTAL_TOKEN_RECOVERY_TIMEOUT_MS,
     );
   });
 
@@ -1217,8 +1238,10 @@ export class SunshineMoonlightRuntime {
       });
       forwardDiagnosticLines(stream, (text) => {
         if (source === "sunshine") {
-          this.#portalRestoreTokenLoaded ||= text.includes(SUNSHINE_PORTAL_TOKEN_LOADED);
-          this.#portalRestoreTokenSaved ||= text.includes(SUNSHINE_PORTAL_TOKEN_SAVED);
+          if (text.includes(SUNSHINE_PORTAL_TOKEN_LOADED) && !this.#portalRestoreTokenLoaded) {
+            this.#portalRestoreTokenLoaded = true;
+            this.#portalRestoreTokenLoadedAt = Date.now();
+          }
           this.#portalCaptureStreamStarted ||= text.includes(SUNSHINE_PORTAL_STREAM_READY);
         }
         this.#options.onDiagnostic?.(source, text.replaceAll(this.#moonlightHeader, "[REDACTED]"));
@@ -1419,10 +1442,28 @@ const waitForHttpsEffect = Effect.fn("RemoteDesktop.waitForHttps")(function* (
   certificatePath: string,
   child?: WatchedChild | null,
   timeoutMs = SUNSHINE_START_TIMEOUT_MS,
+  stalePortalTokenState?: () => { restoreTokenLoadedAt: number | null; captureStreamStarted: boolean },
+  stalePortalTokenGraceMs = SUNSHINE_PORTAL_TOKEN_RECOVERY_TIMEOUT_MS,
 ) {
   const deadline = Date.now() + timeoutMs;
+  const hasUnrestoredPortalToken = (now: number) => {
+    const state = stalePortalTokenState?.();
+    return (
+      state !== undefined &&
+      shouldFailForUnrestoredSunshinePortalToken({
+        platform: "linux",
+        linuxCaptureMethod: "portal",
+        ...state,
+        now,
+        graceMs: stalePortalTokenGraceMs,
+      })
+    );
+  };
   let lastError: unknown;
   while (Date.now() < deadline) {
+    if (hasUnrestoredPortalToken(Date.now())) {
+      return yield* desktopFailure(new Error("The saved XDG Portal token did not restore a display stream."));
+    }
     if (childEnded(child))
       return yield* desktopFailure(
         new Error(sourceText("error.backend.sunshineExited", { port }), { cause: lastError }),
@@ -1448,8 +1489,12 @@ const waitForHttpsEffect = Effect.fn("RemoteDesktop.waitForHttps")(function* (
         );
       }),
     );
-    if (Result.isSuccess(ready)) return;
-    lastError = ready.failure.cause;
+    if (Result.isSuccess(ready)) {
+      if (!hasUnrestoredPortalToken(Date.now())) return;
+      lastError = new Error("The saved XDG Portal token did not restore a display stream.");
+    } else {
+      lastError = ready.failure.cause;
+    }
     yield* Effect.sleep(200);
   }
   const message =

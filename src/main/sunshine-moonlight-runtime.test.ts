@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createScreenCaptureDenialWatcher,
+  shouldFailForUnrestoredSunshinePortalToken,
   shouldResetSunshinePortalTokenAfterFailedStart,
   sunshineStartupPolicy,
 } from "./sunshine-moonlight-runtime";
@@ -24,13 +25,12 @@ describe("createScreenCaptureDenialWatcher", () => {
 });
 
 describe("Sunshine Portal token recovery", () => {
-  it("resets only an OpenBot Wayland Portal token that loaded but never restored a stream", () => {
+  it("resets an OpenBot Wayland Portal token that loaded but never restored a stream", () => {
     expect(
       shouldResetSunshinePortalTokenAfterFailedStart({
         platform: "linux",
         linuxCaptureMethod: "portal",
         restoreTokenLoaded: true,
-        restoreTokenSaved: false,
         captureStreamStarted: false,
       }),
     ).toBe(true);
@@ -39,8 +39,7 @@ describe("Sunshine Portal token recovery", () => {
         platform: "linux",
         linuxCaptureMethod: "portal",
         restoreTokenLoaded: true,
-        restoreTokenSaved: true,
-        captureStreamStarted: false,
+        captureStreamStarted: true,
       }),
     ).toBe(false);
     expect(
@@ -48,8 +47,27 @@ describe("Sunshine Portal token recovery", () => {
         platform: "linux",
         linuxCaptureMethod: "x11",
         restoreTokenLoaded: true,
-        restoreTokenSaved: false,
         captureStreamStarted: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("starts the recovery grace period when Sunshine reads the saved token", () => {
+    const base = {
+      platform: "linux" as const,
+      linuxCaptureMethod: "portal" as const,
+      restoreTokenLoadedAt: 1_000,
+      captureStreamStarted: false,
+      graceMs: 5_000,
+    };
+    expect(shouldFailForUnrestoredSunshinePortalToken({ ...base, now: 5_999 })).toBe(false);
+    expect(shouldFailForUnrestoredSunshinePortalToken({ ...base, now: 6_000 })).toBe(true);
+    expect(shouldFailForUnrestoredSunshinePortalToken({ ...base, now: 6_000, captureStreamStarted: true })).toBe(false);
+    expect(
+      shouldFailForUnrestoredSunshinePortalToken({
+        ...base,
+        platform: "win32",
+        now: 6_000,
       }),
     ).toBe(false);
   });
