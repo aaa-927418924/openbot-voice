@@ -1160,6 +1160,7 @@ export class RemoteScreenGateway {
     const authHeader = this.#runtimeState.authHeader;
     const injectRelay = upstreamPath === "/stream.html" && new URLSearchParams(search).get("openbotRelay") === "1";
     const injectViewerAuth = upstreamPath === "/stream.html" && !injectRelay;
+    const injectViewerGrantIntoStream = upstreamPath === "/stream/index.js";
     yield* Effect.callback<void>((resume) => {
       const resolve = () => resume(Effect.void);
       const upstream = httpRequest(
@@ -1176,28 +1177,45 @@ export class RemoteScreenGateway {
         (upstreamResponse) => {
           const headers = { ...upstreamResponse.headers };
           delete headers["set-cookie"];
-          if (injectRelay || injectViewerAuth) {
+          if (injectRelay || injectViewerAuth || injectViewerGrantIntoStream) {
             const chunks: Buffer[] = [];
             upstreamResponse.on("data", (chunk: Buffer | string) => chunks.push(Buffer.from(chunk)));
             upstreamResponse.once("end", () => {
               const source = Buffer.concat(chunks).toString("utf8");
+              let body = source;
+              if (injectViewerGrantIntoStream) {
+                try {
+                  body = injectRemoteViewerGrantIntoMoonlightStream(source);
+                } catch {
+                  this.#options.onDiagnostic?.(
+                    "moonlight",
+                    "OpenBot: the pinned Moonlight stream asset did not match the viewer authentication hook.\n",
+                  );
+                  sendText(response, 502, "Moonlight viewer authentication is unavailable.");
+                  resolve();
+                  return;
+                }
+              }
               const scripts = [
                 ...(injectViewerAuth ? ['<script src="openbot-viewer-auth.js"></script>'] : []),
                 ...(injectRelay ? ['<script src="openbot-relay.js?openbotRelay=1"></script>'] : []),
               ].join("");
-              const html = source.includes("</head>")
-                ? source.replace("</head>", `${scripts}</head>`)
-                : `${scripts}${source}`;
+              const output =
+                injectRelay || injectViewerAuth
+                  ? body.includes("</head>")
+                    ? body.replace("</head>", `${scripts}</head>`)
+                    : `${scripts}${body}`
+                  : body;
               delete headers["content-encoding"];
               delete headers["content-length"];
               delete headers["transfer-encoding"];
               delete headers.etag;
               response.writeHead(upstreamResponse.statusCode ?? 502, {
                 ...headers,
-                "content-length": String(Buffer.byteLength(html)),
+                "content-length": String(Buffer.byteLength(output)),
                 "cache-control": "no-store",
               });
-              response.end(html);
+              response.end(output);
               resolve();
             });
             upstreamResponse.once("error", () => {
@@ -1350,7 +1368,26 @@ function sendViewer(
 
 function remoteDesktopViewerAuthScript(sessionId: string): string {
   const sessionPath = TEAM_API_ROUTES.remoteScreen.session(sessionId);
-  return `(()=>{const pageUrl=new URL(location.href),grant=pageUrl.hash.slice(1)||pageUrl.searchParams.get("openbotViewer")||"";if(!grant||grant.length>256)return;pageUrl.hash="";pageUrl.searchParams.delete("openbotViewer");history.replaceState(null,"",pageUrl.pathname+pageUrl.search);const prefix=${JSON.stringify(`${sessionPath}/`)};const nativeFetch=window.fetch.bind(window);window.fetch=(input,init)=>{const raw=input instanceof Request?input.url:String(input);const target=new URL(raw,location.href);if(target.origin!==location.origin||!target.pathname.startsWith(prefix))return nativeFetch(input,init);const headers=new Headers(input instanceof Request?input.headers:undefined);new Headers(init&&init.headers).forEach((value,key)=>headers.set(key,value));headers.set("X-OpenBot-Viewer",grant);target.searchParams.set("openbotViewer",grant);const request=input instanceof Request?new Request(target.toString(),input):target.toString();return nativeFetch(request,{...init,headers})};const NativeWebSocket=window.WebSocket;window.WebSocket=class extends NativeWebSocket{constructor(url,protocols){const target=new URL(String(url),location.href);const origin=target.protocol==="ws:"?"http:"+target.host:target.protocol==="wss:"?"https:"+target.host:target.origin;if(origin!==location.origin||target.pathname!==prefix+"stream"){super(url,protocols);return}const offered=protocols===undefined?[]:Array.isArray(protocols)?[...protocols]:[protocols];if(offered.length===0)offered.push("openbot-viewer-v1");if(!offered.some((protocol)=>protocol.startsWith("openbot-viewer.")))offered.push("openbot-viewer."+grant);target.searchParams.set("openbotViewer",grant);super(target.toString(),offered)}}})();`;
+  return `(()=>{const pageUrl=new URL(location.href),grant=pageUrl.hash.slice(1)||pageUrl.searchParams.get("openbotViewer")||"";if(!grant||grant.length>256)return;pageUrl.hash="";pageUrl.searchParams.delete("openbotViewer");history.replaceState(null,"",pageUrl.pathname+pageUrl.search);window.__openbotViewerGrant=grant;const prefix=${JSON.stringify(`${sessionPath}/`)};const nativeFetch=window.fetch.bind(window);window.fetch=(input,init)=>{const raw=input instanceof Request?input.url:String(input);const target=new URL(raw,location.href);if(target.origin!==location.origin||!target.pathname.startsWith(prefix))return nativeFetch(input,init);const headers=new Headers(input instanceof Request?input.headers:undefined);new Headers(init&&init.headers).forEach((value,key)=>headers.set(key,value));headers.set("X-OpenBot-Viewer",grant);target.searchParams.set("openbotViewer",grant);const request=input instanceof Request?new Request(target.toString(),input):target.toString();return nativeFetch(request,{...init,headers})};const NativeWebSocket=window.WebSocket;window.WebSocket=class extends NativeWebSocket{constructor(url,protocols){const target=new URL(String(url),location.href);const origin=target.protocol==="ws:"?"http:"+target.host:target.protocol==="wss:"?"https:"+target.host:target.origin;if(origin!==location.origin||target.pathname!==prefix+"stream"){super(url,protocols);return}const offered=protocols===undefined?[]:Array.isArray(protocols)?[...protocols]:[protocols];if(offered.length===0)offered.push("openbot-viewer-v1");if(!offered.some((protocol)=>protocol.startsWith("openbot-viewer.")))offered.push("openbot-viewer."+grant);target.searchParams.set("openbotViewer",grant);super(target.toString(),offered)}}})();`;
+}
+
+function injectRemoteViewerGrantIntoMoonlightStream(source: string): string {
+  const socketConstruction = /const ws = new WebSocket\(`\$\{wsOrigin\}\$\{streamPath\}`\);/u;
+  if (!socketConstruction.test(source)) {
+    if (source.includes("window.__openbotViewerGrant")) return source;
+    throw new Error("Moonlight stream WebSocket construction was not found.");
+  }
+  return source.replace(
+    socketConstruction,
+    [
+      "const streamUrl = new URL(String(wsOrigin) + String(streamPath));",
+      "const viewerGrant = window.__openbotViewerGrant;",
+      'if (typeof viewerGrant === "string" && /^[A-Za-z0-9_-]{1,256}$/.test(viewerGrant)) {',
+      '    streamUrl.searchParams.set("openbotViewer", viewerGrant);',
+      "}",
+      "const ws = new WebSocket(streamUrl.toString());",
+    ].join("\n"),
+  );
 }
 
 /** The mobile Expo DOM owns the authenticated peer. Relay the viewer socket to that page. */

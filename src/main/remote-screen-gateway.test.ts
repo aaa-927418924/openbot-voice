@@ -264,7 +264,12 @@ describe("RemoteScreenGateway", () => {
   });
 
   it("authorizes a cross-site viewer with its consumed grant when third-party cookies are absent", async () => {
-    const upstreamServer = createServer((_request, response) => {
+    const upstreamServer = createServer((request, response) => {
+      if (request.url === "/stream/index.js") {
+        response.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8" });
+        response.end(`const ws = new WebSocket(\`\${wsOrigin}\${streamPath}\`);`);
+        return;
+      }
       response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       response.end("<!doctype html><html><head></head><body>Viewer</body></html>");
     });
@@ -321,10 +326,18 @@ describe("RemoteScreenGateway", () => {
       expect(authScript.status).toBe(200);
       expect(authScriptText).toContain("X-OpenBot-Viewer");
       expect(authScriptText).toContain('pageUrl.searchParams.get("openbotViewer")');
+      expect(authScriptText).toContain("window.__openbotViewerGrant=grant");
       expect(authScriptText).toContain('target.searchParams.set("openbotViewer",grant)');
       expect(authScriptText).toContain("new Request(target.toString(),input)");
       expect(authScriptText).toContain('target.pathname!==prefix+"stream"');
       expect(authScriptText).not.toContain(session.viewerGrant);
+
+      const moonlightStream = await fetch(`${origin}${sessionPath}/moonlight/stream/index.js`);
+      const moonlightStreamSource = await moonlightStream.text();
+      expect(moonlightStream.status).toBe(200);
+      expect(moonlightStreamSource).toContain("window.__openbotViewerGrant");
+      expect(moonlightStreamSource).toContain('streamUrl.searchParams.set("openbotViewer", viewerGrant)');
+      expect(moonlightStreamSource).toContain("new WebSocket(streamUrl.toString())");
 
       const state = await fetch(
         `${origin}${sessionPath}/viewer-state?openbotViewer=${encodeURIComponent(session.viewerGrant)}`,
