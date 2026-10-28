@@ -24,6 +24,9 @@ export function isForeignReasoningError(message: string): boolean {
 }
 
 export function isMissingProviderSessionError(error: unknown, provider: AgentProvider): boolean {
+  if (provider === "codex") {
+    return error instanceof AppServerError && /^thread not loaded:\s+\S+$/iu.test(error.message.trim());
+  }
   if (
     (provider !== "grok" &&
       provider !== "opencode" &&
