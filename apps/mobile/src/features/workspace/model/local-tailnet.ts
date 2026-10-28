@@ -6,6 +6,7 @@ import { TEAM_CURRENT_CAPABILITIES } from "@openbot/contracts/team-protocol/curr
 import { teamHttpCodec } from "@openbot/contracts/team-protocol/http-codecs";
 import type { LiveVoiceWireEvent } from "@openbot/contracts/team-protocol/live-voice-v1";
 import { optionalTeamEvent } from "@openbot/contracts/team-protocol/optional-events";
+import { teamSideRouteCodec } from "@openbot/contracts/team-protocol/side-routes";
 import {
   decodeTeamProtocolSupportV1,
   highestCommonTeamProtocol,
@@ -342,6 +343,7 @@ export class DirectTailnetTeamClient {
       headers.set(TEAM_APP_VERSION_HEADER, this.#appVersion);
       headers.set(TEAM_CAPABILITIES_HEADER, TEAM_CURRENT_CAPABILITIES.join(","));
     }
+    const sideRoute = teamSideRouteCodec(route);
     let requestBody: BodyInit | undefined;
     if (upload) {
       const binary = atob(upload.base64);
@@ -350,7 +352,9 @@ export class DirectTailnetTeamClient {
       requestBody = bytes.buffer;
     } else if (body !== undefined) {
       headers.set("Content-Type", "application/json");
-      requestBody = teamHttpCodec(protocol).encodeRequest(method, route, body, { preserveSemanticTags: true });
+      requestBody = sideRoute
+        ? JSON.stringify(sideRoute.request(route, body))
+        : teamHttpCodec(protocol).encodeRequest(method, route, body, { preserveSemanticTags: true });
     }
     const response = await this.#fetch(url, {
       method,
@@ -359,7 +363,11 @@ export class DirectTailnetTeamClient {
     });
     const value = response.status === 204 ? undefined : await response.json();
     const decoded =
-      value === undefined ? undefined : teamHttpCodec(protocol).decodeResponse(method, route, response.status, value);
+      value === undefined
+        ? undefined
+        : sideRoute
+          ? sideRoute.response(route, response.status, value)
+          : teamHttpCodec(protocol).decodeResponse(method, route, response.status, value);
     if (!response.ok) throw new DirectTailnetHttpError(response.status);
     onUploadProgress?.(1);
     return decode(decoded);

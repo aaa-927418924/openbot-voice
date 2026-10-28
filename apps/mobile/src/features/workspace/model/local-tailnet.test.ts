@@ -1,7 +1,9 @@
 // @vitest-environment node
 import { createOpenBotInviteUrl } from "@openbot/contracts/invite-links";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
+import { CHANNEL_ROUTES } from "@openbot/contracts/team-protocol/channels-v1";
 import { teamHttpCodec } from "@openbot/contracts/team-protocol/http-codecs";
+import { teamSideRouteCodec } from "@openbot/contracts/team-protocol/side-routes";
 import {
   decodeTeamProtocolSupportV1,
   TEAM_APP_VERSION_HEADER,
@@ -99,6 +101,11 @@ async function createHostFetch() {
       const preview = { role: "member", expiresAt: new Date(Date.now() + 60_000).toISOString(), emailBound: false };
       return Response.json(JSON.parse(codec.encodeResponse("POST", url.pathname, 200, preview, {})));
     }
+    if (url.pathname === CHANNEL_ROUTES.list) {
+      const sideRoute = teamSideRouteCodec(url.pathname);
+      if (!sideRoute) throw new Error("Channel route codec is unavailable.");
+      return Response.json(sideRoute.response(url.pathname, 200, []));
+    }
     if (url.pathname === TEAM_API_ROUTES.join.server) {
       const joined = {
         member: {
@@ -192,6 +199,7 @@ describe("Android direct Tailscale pairing", () => {
     await expect(
       client.request("GET", TEAM_API_ROUTES.compatibility, decodeTeamProtocolSupportV1),
     ).resolves.toMatchObject({ protocol: { minimum: 1, maximum: 6 } });
+    await expect(client.request("GET", CHANNEL_ROUTES.list, (value) => value)).resolves.toEqual([]);
 
     const compatibilityRequests = host.calls.filter((call) => call.path === TEAM_API_ROUTES.compatibility);
     expect(compatibilityRequests).toHaveLength(2);
