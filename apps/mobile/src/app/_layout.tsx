@@ -105,6 +105,7 @@ function RootNavigator() {
                   headerBackButtonDisplayMode: "minimal",
                   headerShadowVisible: false,
                   headerTransparent: isIOS,
+                  orientation: "portrait",
                 }}
               >
                 <Stack.Screen name="index" options={{ headerShown: false }} />
@@ -117,7 +118,12 @@ function RootNavigator() {
                 <Stack.Protected guard={Boolean(session)}>
                   <Stack.Screen
                     name="(app)"
-                    options={{ animation: "fade", gestureEnabled: false, headerShown: false }}
+                    options={{
+                      animation: "fade",
+                      gestureEnabled: false,
+                      headerShown: false,
+                      orientation: "default",
+                    }}
                   />
                 </Stack.Protected>
                 <Stack.Screen name="incoming-link" options={{ headerShown: false }} />

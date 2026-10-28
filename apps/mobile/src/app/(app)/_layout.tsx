@@ -76,6 +76,7 @@ function AuthenticatedStack() {
           headerBackButtonDisplayMode: "minimal",
           headerShadowVisible: false,
           headerTransparent: isIOS,
+          orientation: "portrait",
           sheetExpandsWhenScrolledToEdge: false,
         }}
       >
@@ -110,6 +111,7 @@ function AuthenticatedStack() {
             fullScreenGestureEnabled: false,
             gestureEnabled: true,
             headerShown: false,
+            orientation: "all",
           }}
         />
         <Stack.Screen

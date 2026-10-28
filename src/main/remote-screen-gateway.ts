@@ -1160,6 +1160,7 @@ export class RemoteScreenGateway {
     const authHeader = this.#runtimeState.authHeader;
     const injectRelay = upstreamPath === "/stream.html" && new URLSearchParams(search).get("openbotRelay") === "1";
     const injectViewerAuth = upstreamPath === "/stream.html" && !injectRelay;
+    const injectViewerPresentation = upstreamPath === "/stream.html";
     const injectViewerGrantIntoStream = upstreamPath === "/stream/index.js";
     yield* Effect.callback<void>((resume) => {
       const resolve = () => resume(Effect.void);
@@ -1177,7 +1178,7 @@ export class RemoteScreenGateway {
         (upstreamResponse) => {
           const headers = { ...upstreamResponse.headers };
           delete headers["set-cookie"];
-          if (injectRelay || injectViewerAuth || injectViewerGrantIntoStream) {
+          if (injectRelay || injectViewerAuth || injectViewerPresentation || injectViewerGrantIntoStream) {
             const chunks: Buffer[] = [];
             upstreamResponse.on("data", (chunk: Buffer | string) => chunks.push(Buffer.from(chunk)));
             upstreamResponse.once("end", () => {
@@ -1199,9 +1200,10 @@ export class RemoteScreenGateway {
               const scripts = [
                 ...(injectViewerAuth ? ['<script src="openbot-viewer-auth.js"></script>'] : []),
                 ...(injectRelay ? ['<script src="openbot-relay.js?openbotRelay=1"></script>'] : []),
+                ...(injectViewerPresentation ? [remoteDesktopVideoPresentation()] : []),
               ].join("");
               const output =
-                injectRelay || injectViewerAuth
+                injectRelay || injectViewerAuth || injectViewerPresentation
                   ? body.includes("</head>")
                     ? body.replace("</head>", `${scripts}</head>`)
                     : `${scripts}${body}`
@@ -1364,6 +1366,40 @@ function sendViewer(
     "Cache-Control": "no-store",
   });
   response.end(html);
+}
+
+function remoteDesktopVideoPresentation(): string {
+  return `
+<style id="openbot-remote-video-waiting-style">
+  video.video-stream:not([data-openbot-video-frame-ready]) {
+    visibility: hidden !important;
+  }
+</style>
+<script id="openbot-remote-video-waiting-script">
+(() => {
+  const observeVideos = () => {
+    document.querySelectorAll("video.video-stream:not([data-openbot-video-watch])").forEach((video) => {
+      video.dataset.openbotVideoWatch = "true";
+      const revealFrame = () => {
+        if (
+          video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
+          video.videoWidth > 0 &&
+          video.videoHeight > 0
+        ) {
+          video.setAttribute("data-openbot-video-frame-ready", "true");
+        }
+      };
+      for (const eventName of ["loadeddata", "playing", "resize"]) {
+        video.addEventListener(eventName, revealFrame, { passive: true });
+      }
+      revealFrame();
+    });
+  };
+
+  new MutationObserver(observeVideos).observe(document.documentElement, { childList: true, subtree: true });
+  observeVideos();
+})();
+</script>`;
 }
 
 function remoteDesktopViewerAuthScript(sessionId: string): string {
