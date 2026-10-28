@@ -7,7 +7,6 @@ import { Effect } from "effect";
 
 import { IPC_ENDPOINTS, LOCAL_SERVER_ID, type StorageUsage } from "@openbot/contracts/ipc";
 import { STORAGE_ROUTES } from "@openbot/contracts/team-protocol/storage-v1";
-import { translateFor } from "@openbot/i18n";
 import { describe, expect, it, vi } from "vitest";
 import type { ResponseDecoder } from "../remote-host-decoding";
 import type { RemoteRequestInit } from "../remote-server-client";
@@ -70,11 +69,9 @@ function setup(options: { capable: boolean; answer?: unknown }) {
   registerIpcGroup(
     "storage",
     storageIpcHandlers({
-      translate: translateFor("en"),
       storage,
       mailbox,
       remoteServers,
-      getMainWindow: () => null,
       agents: () => [{ id: "chief", workspacePath: "/workspaces/chief" }],
       openPath,
     }).storage,

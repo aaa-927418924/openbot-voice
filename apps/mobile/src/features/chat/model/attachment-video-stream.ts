@@ -12,6 +12,7 @@ interface RangeRequest {
 interface NativeVideoStreamModule {
   addListener(eventName: "rangeRequested", listener: (event: RangeRequest) => void): { remove(): void };
   start(streamId: string, attachmentId: string, size: number, mimeType: string): Promise<string>;
+  saveToDownloads(sourceUri: string, name: string, mimeType: string): Promise<void>;
   respond(requestId: string, base64: string): Promise<void>;
   fail(requestId: string): Promise<void>;
   stop(streamId: string): Promise<void>;
@@ -26,6 +27,13 @@ function getNativeModule(): NativeVideoStreamModule | null {
     nativeModule = requireOptionalNativeModule<NativeVideoStreamModule>("OpenBotAttachmentVideoStream");
   }
   return nativeModule;
+}
+
+/** Writes an app-owned temporary file into Android's public Downloads collection. */
+export async function saveAttachmentToDownloads(sourceUri: string, name: string, mimeType: string): Promise<void> {
+  const module = getNativeModule();
+  if (!module) throw new Error("Downloads saving is unavailable in this app build.");
+  await module.saveToDownloads(sourceUri, name, mimeType);
 }
 
 function observeRanges(module: NativeVideoStreamModule) {

@@ -4,7 +4,6 @@ import type { MobileTranslate } from "@openbot/i18n/mobile";
 import { MOBILE_ATTACHMENT_BYTES, type RemoteFileUpload } from "@openbot/team-client/remote-peer";
 import { useQuery } from "@tanstack/react-query";
 import { File, Paths } from "expo-file-system";
-import * as FileSystemLegacy from "expo-file-system/legacy";
 import { Image } from "expo-image";
 import * as Sharing from "expo-sharing";
 import { useThemeColor } from "heroui-native/hooks";
@@ -194,6 +193,9 @@ export function useAttachmentFile(serverId: string, attachment: AttachmentSummar
   }
   /** Saves the image to the photo library. It reports its own failure and returns whether it saved. */
   async function saveToPhotos(): Promise<boolean> {
+    // Android images and other attachments use the same silent Downloads action. iOS keeps its
+    // existing photo-library behavior.
+    if (Platform.OS === "android") return saveToDownloads();
     setSharing(true);
     let file: File | null = null;
     try {
@@ -224,33 +226,24 @@ export function useAttachmentFile(serverId: string, attachment: AttachmentSummar
       setSharing(false);
     }
   }
-  /** Opens Android's folder picker at Downloads and writes the video to the chosen location. */
+  /** Saves the attachment directly to Android's system Downloads folder. */
   async function saveToDownloads(): Promise<boolean> {
     if (Platform.OS !== "android") {
       await share();
       return false;
     }
     setSharing(true);
+    let file: File | null = null;
     try {
       const result = query.data ? { data: query.data, error: null } : await query.refetch();
       if (result.error) throw result.error;
       if (!result.data) throw new Error(t("mobile.chat.attachment.unavailable"));
 
-      const downloads = FileSystemLegacy.StorageAccessFramework.getUriForDirectoryInRoot("Download");
-      const selected = await FileSystemLegacy.StorageAccessFramework.requestDirectoryPermissionsAsync(downloads);
-      if (!selected.granted) return false;
-
       const safeName = attachment.name.replace(/[/\\\p{Cc}]/gu, "_");
-      const extension = attachmentFileExtension(safeName);
-      const nameWithoutExtension = extension ? safeName.slice(0, -(extension.length + 1)) : safeName;
-      const target = await FileSystemLegacy.StorageAccessFramework.createFileAsync(
-        selected.directoryUri,
-        nameWithoutExtension || "video",
-        result.data.mimeType || attachment.mimeType || "video/mp4",
-      );
-      await FileSystemLegacy.StorageAccessFramework.writeAsStringAsync(target, result.data.base64, {
-        encoding: FileSystemLegacy.EncodingType.Base64,
-      });
+      file = new File(Paths.cache, `${Date.now()}-${safeName || "attachment"}`);
+      file.write(result.data.base64, { encoding: "base64" });
+      const { saveAttachmentToDownloads } = await import("../model/attachment-video-stream");
+      await saveAttachmentToDownloads(file.uri, safeName || "attachment", result.data.mimeType || attachment.mimeType);
       return true;
     } catch (error) {
       void haptics.notification("error");
@@ -260,6 +253,7 @@ export function useAttachmentFile(serverId: string, attachment: AttachmentSummar
       );
       return false;
     } finally {
+      if (file?.exists) file.delete();
       setSharing(false);
     }
   }

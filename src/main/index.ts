@@ -575,8 +575,6 @@ function registerIpcHandlers({
       storage: storageUsage,
       mailbox,
       remoteServers,
-      getMainWindow,
-      translate: language.translate,
       agents: () => service.listAgents(),
       openPath: (path) => shell.openPath(path),
     }),

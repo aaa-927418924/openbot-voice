@@ -1,10 +1,17 @@
 package run.openbot.mobile.attachmentvideo
 
+import android.content.ContentValues
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import android.util.Base64
+import expo.modules.kotlin.functions.Coroutine
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.FileInputStream
 import java.io.RandomAccessFile
 import java.net.InetAddress
 import java.net.ServerSocket
@@ -20,6 +27,8 @@ import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /** Serves MP4 bytes to Media3 while fetching only the ranges the player reads from the host. */
 class AttachmentVideoStreamModule : Module() {
@@ -61,6 +70,47 @@ class AttachmentVideoStreamModule : Module() {
       streams[streamId] = cachedVideo(attachmentId, size.toLong())
       val address = ensureServer()
       "http://127.0.0.1:$address/video/$streamId"
+    }
+
+    AsyncFunction("saveToDownloads") Coroutine { sourceUri: String, displayName: String, mimeType: String ->
+      withContext(Dispatchers.IO) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+          throw IllegalStateException("Saving directly to Downloads requires Android 10 or newer.")
+        }
+        val context = appContext.reactContext ?: throw IllegalStateException("React context is not available")
+        val uri = Uri.parse(sourceUri)
+        if (uri.scheme != "file") throw IllegalArgumentException("Only a temporary app file can be saved.")
+        val source = File(uri.path ?: throw IllegalArgumentException("The temporary file path is invalid.")).canonicalFile
+        val cacheRoot = context.cacheDir.canonicalFile.path + File.separator
+        if (!source.path.startsWith(cacheRoot) || !source.isFile) {
+          throw IllegalArgumentException("The download source is outside the app cache.")
+        }
+
+        val safeName = uniqueDownloadName(context.contentResolver, displayName)
+        val safeMimeType = mimeType.takeIf {
+          it.matches(Regex("^[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+$"))
+        } ?: "application/octet-stream"
+        val values = ContentValues().apply {
+          put(MediaStore.MediaColumns.DISPLAY_NAME, safeName)
+          put(MediaStore.MediaColumns.MIME_TYPE, safeMimeType)
+          put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+          put(MediaStore.MediaColumns.IS_PENDING, 1)
+        }
+        val target = context.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+          ?: throw IllegalStateException("Android could not create a Downloads entry.")
+        try {
+          val output = context.contentResolver.openOutputStream(target, "w")
+            ?: throw IllegalStateException("Android could not open the Downloads entry.")
+          FileInputStream(source).use { input -> output.use { input.copyTo(it) } }
+          val published = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
+          if (context.contentResolver.update(target, published, null, null) != 1) {
+            throw IllegalStateException("Android could not publish the downloaded file.")
+          }
+        } catch (error: Exception) {
+          context.contentResolver.delete(target, null, null)
+          throw error
+        }
+      }
     }
 
     AsyncFunction("respond") { requestId: String, base64: String ->
@@ -120,6 +170,34 @@ class AttachmentVideoStreamModule : Module() {
       }
     }
     opened.localPort
+  }
+
+  private fun uniqueDownloadName(resolver: android.content.ContentResolver, requestedName: String): String {
+    val cleaned = requestedName
+      .replace('/', '_')
+      .replace('\\', '_')
+      .replace(Regex("[<>:\"|?*]"), "_")
+      .filterNot { it.isISOControl() }
+      .trim()
+      .trimEnd('.', ' ')
+      .ifBlank { "attachment" }
+    val extensionIndex = cleaned.lastIndexOf('.').takeIf { it > 0 } ?: cleaned.length
+    val stem = cleaned.substring(0, extensionIndex).ifBlank { "attachment" }
+    val extension = cleaned.substring(extensionIndex)
+    for (suffix in 1..10_000) {
+      val candidate = if (suffix == 1) cleaned else "$stem ($suffix)$extension"
+      val cursor = resolver.query(
+        MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+        arrayOf(MediaStore.MediaColumns._ID),
+        "${MediaStore.MediaColumns.DISPLAY_NAME}=? AND ${MediaStore.MediaColumns.RELATIVE_PATH}=?",
+        arrayOf(candidate, "${Environment.DIRECTORY_DOWNLOADS}/"),
+        null,
+      ) ?: return candidate
+      cursor.use {
+        if (!it.moveToFirst()) return candidate
+      }
+    }
+    throw IllegalStateException("Could not find an unused name in Downloads.")
   }
 
   private fun cachedVideo(attachmentId: String, size: Long): CachedVideo {

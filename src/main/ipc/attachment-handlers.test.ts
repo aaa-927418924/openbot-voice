@@ -29,6 +29,8 @@ vi.mock("electron", () => ({
 const { AttachmentArchiveFailed, saveAttachmentArchive, attachmentIpcHandlers } = await import("./attachment-handlers");
 const directories: string[] = [];
 afterEach(async () => {
+  userData.path = "";
+  saveDialog.mockClear();
   await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
 async function destination() {
@@ -86,19 +88,24 @@ describe("attachment ZIP downloads", () => {
     expect(await readFile(path, "utf8")).toBe("existing");
     expect(await readdir(join(path, ".."))).toEqual(["attachments.zip"]);
   });
-  it("removes the temporary archive if the destination cannot be replaced", async () => {
+  it("uses a collision-safe archive name without overwriting an existing download", async () => {
     const path = await destination();
-    const directory = join(path, "..");
-    await expect(
-      runCauseEffect(
-        saveAttachmentArchive(
-          input,
-          () => Effect.succeed(directory),
-          () => Effect.succeed(new Uint8Array([1])),
-        ),
+    const directory = dirname(path);
+    await writeFile(path, "existing");
+    await runCauseEffect(
+      saveAttachmentArchive(
+        input,
+        () => Effect.succeed(path),
+        () => Effect.succeed(new Uint8Array([1])),
       ),
-    ).rejects.toThrow();
-    expect(await readdir(directory)).toEqual([]);
+    );
+    expect(await readFile(path, "utf8")).toBe("existing");
+    expect(Object.keys(unzipSync(await readFile(join(directory, "attachments (2).zip"))))).toEqual([
+      "./report.txt",
+      "./report (2).txt",
+      "./REPORT (2) (2).txt",
+    ]);
+    expect((await readdir(directory)).sort()).toEqual(["attachments (2).zip", "attachments.zip"]);
   });
 });
 
@@ -138,16 +145,20 @@ describe("ZIP attachment IPC", () => {
     return invoke;
   }
   it.each(["local", "remote-host"])("downloads managed attachments from %s", async (serverId) => {
-    const path = await destination();
+    const directory = await mkdtemp(join(tmpdir(), "attachment-downloads-"));
+    directories.push(directory);
+    userData.path = directory;
+    const path = join(directory, "attachments.zip");
     const sourcePath = join(path, "..", "source.txt");
     await writeFile(sourcePath, "local file");
-    saveDialog.mockResolvedValue({ canceled: false, filePath: path });
+    saveDialog.mockClear();
     const invoke = register(sourcePath);
     await invoke({ senderFrame: { url: "openbot-app://app/index.html" } }, { serverId, payload: input });
     const files = unzipSync(await readFile(path));
     expect(Object.values(files).map((bytes) => strFromU8(bytes))).toEqual(
       input.attachments.map((item) => (serverId === "local" ? "local file" : `${serverId}:${item.id}`)),
     );
+    expect(saveDialog).not.toHaveBeenCalled();
   });
   it("rejects an untrusted sender before opening a save dialog", async () => {
     saveDialog.mockClear();
@@ -258,22 +269,38 @@ describe("single attachment download", () => {
     return invoke;
   }
 
-  it("suggests the original file name instead of a mime-derived name", async () => {
+  it("saves into Downloads without a dialog and preserves an existing file", async () => {
     const directory = await mkdtemp(join(tmpdir(), "attachment-single-"));
     directories.push(directory);
-    const sourcePath = join(directory, "launch-brief.md");
+    userData.path = directory;
+    const sourcePath = join(directory, "source-launch-brief.md");
     await writeFile(sourcePath, "brief");
-    const targetPath = join(directory, "saved.md");
+    await writeFile(join(directory, "launch-brief.md"), "original");
     saveDialog.mockClear();
-    saveDialog.mockResolvedValue({ canceled: false, filePath: targetPath });
     const invoke = registerSingle({ path: sourcePath, mimeType: "text/markdown", name: "launch-brief.md" });
     await invoke(
       { senderFrame: { url: "openbot-app://app/index.html" } },
       { serverId: "local", payload: { attachmentId: "some-id", action: "download" } },
     );
-    expect(saveDialog).toHaveBeenCalledOnce();
-    expect(saveDialog.mock.calls[0]?.[0]).toMatchObject({ defaultPath: expect.stringMatching(/launch-brief\.md$/) });
-    expect(await readFile(targetPath, "utf8")).toBe("brief");
+    expect(saveDialog).not.toHaveBeenCalled();
+    expect(await readFile(join(directory, "launch-brief.md"), "utf8")).toBe("original");
+    expect(await readFile(join(directory, "launch-brief (2).md"), "utf8")).toBe("brief");
+  });
+
+  it("saves remote attachments directly into Downloads", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "attachment-remote-download-"));
+    directories.push(directory);
+    userData.path = directory;
+    const invoke = registerSingle(
+      { path: "unused", mimeType: "text/plain", name: "unused" },
+      vi.fn(() => Effect.sync(() => ({ name: "report.pdf", mimeType: "application/pdf", bytes: new Uint8Array([1]) }))),
+    );
+    await invoke(
+      { senderFrame: { url: "openbot-app://app/index.html" } },
+      { serverId: "remote-host", payload: { attachmentId: "some-id", action: "download" } },
+    );
+    expect(await readFile(join(directory, "report.pdf"))).toEqual(Buffer.from([1]));
+    expect(saveDialog).not.toHaveBeenCalled();
   });
 
   it("keeps a remote attachment inside the cache folder when its id is a path", async () => {

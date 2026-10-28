@@ -2,8 +2,9 @@
 // Every path here crosses to the local filesystem, so the parsers are the boundary.
 
 import { createHash, randomUUID } from "node:crypto";
-import { chmod, copyFile, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { basename, extname, join } from "node:path";
+import { constants as fsConstants } from "node:fs";
+import { chmod, copyFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { basename, dirname, extname, join } from "node:path";
 import {
   assertSupportedAttachmentName,
   attachmentFileExtension,
@@ -100,8 +101,9 @@ export function attachmentIpcHandlers({
       return;
     }
     if (action === "download") {
-      const filePath = await chooseSavePath(getMainWindow(), translate, basename(name) || basename(path));
-      if (filePath) await copyFile(path, filePath);
+      await writeUniqueDownload(basename(name) || basename(path), (filePath) =>
+        copyFile(path, filePath, fsConstants.COPYFILE_EXCL),
+      );
       return;
     }
     await open();
@@ -114,8 +116,9 @@ export function attachmentIpcHandlers({
     action: FileAction | undefined,
   ) {
     if (action === "download") {
-      const filePath = await chooseSavePath(getMainWindow(), translate, basename(downloaded.name) || "file");
-      if (filePath) await writeFile(filePath, downloaded.bytes, { mode: 0o600 });
+      await writeUniqueDownload(basename(downloaded.name) || "file", (filePath) =>
+        writeFile(filePath, downloaded.bytes, { mode: 0o600, flag: "wx" }),
+      );
       return;
     }
     const cached = await cacheRemoteFile(directory, cacheKey, downloaded);
@@ -180,7 +183,7 @@ export function attachmentIpcHandlers({
         await runCauseEffect(
           saveAttachmentArchive(
             parsed,
-            () => archiveIO(() => chooseSavePath(getMainWindow(), translate, "attachments.zip")),
+            () => archiveIO(async () => join(app.getPath("downloads"), "attachments.zip")),
             // `routeToServer` answers a Promise, and this port takes an Effect, so the branch is written out.
             (item) =>
               scoped.serverId === LOCAL_SERVER_ID
@@ -201,7 +204,7 @@ export function attachmentIpcHandlers({
         );
       }),
       openAttachment: payloadHandler(agentRequest(parseOpenAttachment), (scoped) =>
-        openAttachmentForServer({ mailbox, remoteServers, getMainWindow, translate }, scoped.serverId, scoped.payload),
+        openAttachmentForServer({ mailbox, remoteServers }, scoped.serverId, scoped.payload),
       ),
       openSharedFile: scopedHandler(parseOpenSharedFile, {
         local: async (parsed) => {
@@ -270,7 +273,7 @@ export function attachmentIpcHandlers({
   };
 }
 
-export type OpenAttachmentDependencies = Pick<AttachmentIpcDependencies, "getMainWindow" | "translate"> & {
+export type OpenAttachmentDependencies = {
   mailbox: Pick<MailboxStore, "resolveAttachment">;
   remoteServers: Pick<RemoteServerManager, "downloadAttachment">;
 };
@@ -280,7 +283,7 @@ export type OpenAttachmentDependencies = Pick<AttachmentIpcDependencies, "getMai
  * chat and the storage surfaces both reach a file by its attachment id, so they share this.
  */
 export function openAttachmentForServer(
-  { mailbox, remoteServers, getMainWindow, translate }: OpenAttachmentDependencies,
+  { mailbox, remoteServers }: OpenAttachmentDependencies,
   serverId: string,
   input: OpenAttachmentInput,
 ): Promise<void> {
@@ -291,9 +294,9 @@ export function openAttachmentForServer(
       if (input.action === "download") {
         const safeId = basename(input.attachmentId).replace(/[^a-z0-9_-]/gi, "-") || "attachment";
         const suggestedName = basename(attachment.name) || `attachment-${safeId}`;
-        const filePath = await chooseSavePath(getMainWindow(), translate, suggestedName);
-        if (!filePath) return;
-        await copyFile(attachment.path, filePath);
+        await writeUniqueDownload(suggestedName, (filePath) =>
+          copyFile(attachment.path, filePath, fsConstants.COPYFILE_EXCL),
+        );
         return;
       }
       if (input.action === "reveal") {
@@ -306,9 +309,9 @@ export function openAttachmentForServer(
       const downloaded = await runCauseEffect(remoteServers.downloadAttachment(input.attachmentId, target));
       const suggestedName = basename(downloaded.name) || `attachment-${input.attachmentId}`;
       if (input.action === "download") {
-        const filePath = await chooseSavePath(getMainWindow(), translate, suggestedName);
-        if (!filePath) return;
-        await writeFile(filePath, downloaded.bytes, { mode: 0o600 });
+        await writeUniqueDownload(suggestedName, (filePath) =>
+          writeFile(filePath, downloaded.bytes, { mode: 0o600, flag: "wx" }),
+        );
         return;
       }
       const cached = await cacheRemoteFile("remote-attachments", `${target}:${input.attachmentId}`, {
@@ -343,23 +346,18 @@ async function openPath(path: string): Promise<void> {
   if (error) throw new Error(error);
 }
 
-// Returns the chosen path, or undefined when the user cancelled.
-async function chooseSavePath(
-  mainWindow: BrowserWindow | null,
-  translate: AppTranslate,
-  suggestedName: string,
-): Promise<string | undefined> {
-  const extension = extname(suggestedName).slice(1).toLowerCase();
-  const options: Electron.SaveDialogOptions = {
-    defaultPath: join(app.getPath("downloads"), suggestedName),
-    filters: [{ name: translate("dialog.filter.attachment"), extensions: extension ? [extension] : ["*"] }],
-    showsTagField: false,
-  };
-  const result =
-    mainWindow && !mainWindow.isDestroyed()
-      ? await dialog.showSaveDialog(mainWindow, options)
-      : await dialog.showSaveDialog(options);
-  return result.canceled ? undefined : result.filePath || undefined;
+// Downloads always go straight into the OS Downloads folder. Exclusive creation prevents an
+// existing file from being overwritten; collisions get a familiar " (2)" suffix instead.
+async function writeUniqueDownload(suggestedName: string, write: (path: string) => Promise<unknown>): Promise<string> {
+  return writeUniquePath(app.getPath("downloads"), suggestedName, write);
+}
+
+function safeDownloadName(input: string): string {
+  const name = basename(input.replaceAll("\\", "/"))
+    .replace(/[<>:"|?*\\/\p{Cc}]/gu, "-")
+    .replace(/[. ]+$/g, "");
+  if (!name || name === "." || name === "..") return "attachment";
+  return /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/iu.test(name) ? `_${name}` : name;
 }
 
 const uploadRemotePaths = Effect.fn("AttachmentIpc.uploadRemotePaths")(function* (
@@ -533,9 +531,43 @@ export const saveAttachmentArchive = Effect.fn("Attachments.saveArchive")(functi
       resume(error ? Effect.fail(new AttachmentArchiveFailed({ cause: error })) : Effect.succeed(data)),
     );
   });
+  yield* archiveIO(() => mkdir(dirname(destination), { recursive: true }));
   const temporary = `${destination}.${randomUUID()}.tmp`;
   yield* archiveIO(() => writeFile(temporary, archive, { mode: 0o600, flag: "wx" })).pipe(
-    Effect.andThen(archiveIO(() => rename(temporary, destination))),
+    Effect.andThen(
+      archiveIO(() =>
+        writeUniquePath(dirname(destination), basename(destination), (path) =>
+          copyFile(temporary, path, fsConstants.COPYFILE_EXCL),
+        ),
+      ),
+    ),
     Effect.ensuring(Effect.promise(() => rm(temporary, { force: true }))),
   );
 });
+
+async function writeUniquePath(
+  directory: string,
+  suggestedName: string,
+  write: (path: string) => Promise<unknown>,
+): Promise<string> {
+  await mkdir(directory, { recursive: true });
+  const safeName = safeDownloadName(suggestedName);
+  const extension = extname(safeName);
+  const stem = safeName.slice(0, safeName.length - extension.length) || "attachment";
+  for (let suffix = 1; suffix <= 10_000; suffix += 1) {
+    const name = suffix === 1 ? safeName : `${stem} (${suffix})${extension}`;
+    const path = join(directory, name);
+    try {
+      await write(path);
+      return path;
+    } catch (error) {
+      if (isFileExistsError(error)) continue;
+      throw error;
+    }
+  }
+  throw new Error("Could not find an unused filename.");
+}
+
+function isFileExistsError(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "EEXIST";
+}
