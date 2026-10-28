@@ -331,7 +331,7 @@ export class ChannelStore {
     return row ? decodeAssignment(JSON.parse(requiredStringColumn(row, "assignment_json"))) : null;
   }
 
-  page(channelId: string, before?: number): ChannelPage {
+  page(channelId: string, before?: number, readerMemberId?: string): ChannelPage {
     const messages = this.messages(channelId, before, 101);
     const hasOlder = messages.length > 100;
     if (hasOlder) messages.shift();
@@ -339,17 +339,24 @@ export class ChannelStore {
     return {
       channel: this.get(channelId),
       tasks: this.tasks(channelId),
-      messages: messages.map((message) => this.#displayMessage(message)),
+      messages: messages.map((message) => this.#displayMessage(message, readerMemberId)),
       olderCursor,
       throughSequence: this.messages(channelId, undefined, 1)[0]?.sequence ?? 0,
       ...(olderCursor === null ? {} : this.olderExtent(channelId, olderCursor)),
     };
   }
 
-  #displayMessage(message: ChannelMessage): ChannelMessage {
+  #displayMessage(message: ChannelMessage, readerMemberId?: string): ChannelMessage {
     if (message.author.kind !== "member") return message;
     const identity = this.#resolveMemberIdentity?.(message.author.id);
-    return identity ? { ...message, author: { ...message.author, id: identity.id, name: identity.name } } : message;
+    if (!identity) return message;
+    const readerIdentity = readerMemberId ? this.#resolveMemberIdentity?.(readerMemberId) : null;
+    const authorIsReader =
+      readerMemberId !== undefined && (message.author.id === readerMemberId || readerIdentity?.id === identity.id);
+    return {
+      ...message,
+      author: { ...message.author, id: authorIsReader ? readerMemberId : identity.id, name: identity.name },
+    };
   }
 
   /**

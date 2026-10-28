@@ -355,6 +355,21 @@ describe("shared channel coordination", () => {
       id: "profile-owner",
       name: actor.name,
     });
+    expect(service.store.page("channel-1", undefined, "linux-device").messages[0]?.author).toEqual({
+      kind: "member",
+      id: "linux-device",
+      name: actor.name,
+    });
+    expect(service.store.page("channel-1", undefined, "android-device").messages[0]?.author).toEqual({
+      kind: "member",
+      id: "android-device",
+      name: actor.name,
+    });
+    expect(service.store.page("channel-1", undefined, "other-member").messages[0]?.author).toEqual({
+      kind: "member",
+      id: "profile-owner",
+      name: actor.name,
+    });
     expect(service.store.messages("channel-1")[0]?.author.id).toBe("windows-device");
     expect(service.store.list("linux-device")[0]?.unreadCount).toBe(0);
     expect(service.store.list("other-member")[0]?.unreadCount).toBe(1);

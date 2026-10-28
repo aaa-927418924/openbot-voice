@@ -87,7 +87,7 @@ export async function routeChannels(
   if (list) return json(200, channels.store.list(member.id));
   if (read) {
     const input = parseChannelRead(channelRequest(url.pathname, await readJson(request)));
-    return json(200, channels.store.page(input.channelId, input.beforeSequence));
+    return json(200, channels.store.page(input.channelId, input.beforeSequence, member.id));
   }
   if (remove) {
     if (!capabilities.has(CHANNEL_DELETE_CAPABILITY))
