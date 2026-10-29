@@ -89,6 +89,13 @@ export const messages = {
     "このスマートフォンの機能の使用状況と接続結果を共有します。メッセージの内容とファイルは送信されません。",
   "mobile.settings.privacy.analytics": "製品の分析データを共有",
   "mobile.settings.privacy.retry": "プライバシー設定をもう一度保存",
+  "mobile.settings.identityServer.title": "アカウントサーバー",
+  "mobile.settings.identityServer.change": "サーバーアドレスを変更",
+  "mobile.settings.identityServer.description":
+    "サーバーを変更するとサインアウトします。新しいサーバーに再度サインインしてください。",
+  "mobile.settings.identityServer.apply": "このサーバーを使用",
+  "mobile.settings.identityServer.applying": "サーバーを変更中…",
+  "mobile.settings.identityServer.saveFailed": "サーバーを変更できませんでした。もう一度お試しください。",
   "mobile.settings.conversations.title": "会話",
   "mobile.settings.servers.hiddenTitle": "非表示のサーバー",
   "mobile.settings.servers.hiddenDescription":

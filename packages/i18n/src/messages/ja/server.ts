@@ -290,8 +290,6 @@ export const messages = {
   "server.localAdmin.serviceInstalled": "このユーザーの自動起動を有効にしました。",
   "server.localAdmin.lingerRequired":
     "ログイン前にも起動するにはlingerを有効にします: sudo loginctl enable-linger {user}",
-  "server.localAdmin.setupRequired":
-    "`bun scripts/openbot-server.ts setup`を実行してサーバーのログインを設定してください。",
   "server.localAdmin.noStatus": "サーバーの状態はまだありません。",
   "server.localAdmin.setupTitle": "OpenBot共通ログインを設定",
   "server.localAdmin.emailPrompt": "メールアドレス: ",

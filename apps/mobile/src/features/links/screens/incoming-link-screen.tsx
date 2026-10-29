@@ -27,7 +27,7 @@ function IncomingLinkContent({ request }: { request?: string }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [paired, setPaired] = useState(false);
-  const restoreWorkspace = Boolean(session && (!request || !link));
+  const restoreWorkspace = Boolean(session?.sessionToken && (!request || !link));
   usePreventRemove(busy, () => {
     // Redemption saves a session. Keep this screen until that operation settles.
   });
@@ -40,7 +40,7 @@ function IncomingLinkContent({ request }: { request?: string }) {
     router.replace(pending ? { pathname: "/incoming-link", params: { request: pending } } : "/connected");
   }, [paired, busy]);
   const opened = useRef(false);
-  const signedIn = Boolean(session);
+  const signedIn = Boolean(session?.sessionToken);
   useEffect(() => {
     if (currentLink.kind !== "template" || !signedIn || opened.current) return;
     opened.current = true;
@@ -62,11 +62,11 @@ function IncomingLinkContent({ request }: { request?: string }) {
   function close() {
     if (locked.current) return;
     forgetIncomingLink(request);
-    router.replace(session ? "/connected" : "/");
+    router.replace(session?.sessionToken ? "/connected" : "/");
   }
 
   async function pair() {
-    if (currentLink.kind !== "pairing" || session || locked.current) return;
+    if (currentLink.kind !== "pairing" || session?.sessionToken || locked.current) return;
     locked.current = true;
     setBusy(true);
     setError(null);
@@ -94,7 +94,7 @@ function IncomingLinkContent({ request }: { request?: string }) {
   }
 
   if (currentLink.kind === "invite") {
-    if (session) return <Redirect href={{ pathname: "/add-server", params: { request } }} />;
+    if (session?.sessionToken) return <Redirect href={{ pathname: "/add-server", params: { request } }} />;
     return (
       <SignInScreen
         notice={{
@@ -109,7 +109,7 @@ function IncomingLinkContent({ request }: { request?: string }) {
   }
 
   if (currentLink.kind === "template") {
-    if (session) return null;
+    if (session?.sessionToken) return null;
     return (
       <SignInScreen
         notice={{
@@ -138,7 +138,7 @@ function IncomingLinkContent({ request }: { request?: string }) {
       </Typography.Heading>
       <Typography.Paragraph>
         {currentLink.kind === "pairing"
-          ? session
+          ? session?.sessionToken
             ? t("mobile.link.pairing.alreadySignedIn")
             : t("mobile.link.pairing.description")
           : currentLink.kind === "plugin"
@@ -146,7 +146,7 @@ function IncomingLinkContent({ request }: { request?: string }) {
             : t("mobile.link.unavailable.description")}
       </Typography.Paragraph>
       {error ? <Typography.Paragraph className="text-danger-text">{error}</Typography.Paragraph> : null}
-      {currentLink.kind === "pairing" && !session ? (
+      {currentLink.kind === "pairing" && !session?.sessionToken ? (
         <Button isDisabled={busy} onPress={() => void pair()}>
           <Button.Label>{busy ? t("common.connecting") : t("mobile.link.pairing.connect")}</Button.Label>
         </Button>

@@ -23,9 +23,11 @@ import { normalizeMobileConnectLink } from "../model/mobile-connect-url";
 
 const MOBILE_SESSION_KEY = "openbot.mobile.session.v1";
 const LOCAL_IDENTITY_SESSION_KEY = "openbot.local-identity.session.v1";
+const LOCAL_IDENTITY_API_URL_KEY = "openbot.local-identity.api-url.v1";
 const MOBILE_REVOCATIONS_KEY = "openbot.mobile.pending-revocations.v1";
 const MOBILE_DEVICE_ID_KEY = "openbot.mobile.device-id.v1";
 const MOBILE_AUTH_REQUEST_TIMEOUT_MS = 10_000;
+const LOCAL_IDENTITY_DEFAULT_PORT = "43124";
 
 let mobileSessionStorageTail = Promise.resolve();
 let mobileProfileTail = Promise.resolve();
@@ -121,10 +123,103 @@ export async function readMobileSession(): Promise<MobileSession | null> {
   return serializeMobileSessionStorage(() => readStoredSessionAndRevokeInvalid(false));
 }
 
-/** Restores only the QR-paired identity held by the user's Tailscale host, never an OpenBot account session. */
+/** Restores only the identity held by the user's self-hosted account server. */
 export async function readLocalIdentitySession(): Promise<MobileSession | null> {
   void retryMobileSessionRevocations();
   return serializeMobileSessionStorage(() => readStoredLocalIdentitySession());
+}
+
+/** Returns the last server address used for self-hosted account sign-in. */
+export async function readSavedIdentityServerAddress(): Promise<string> {
+  const saved = await SecureStore.getItemAsync(LOCAL_IDENTITY_API_URL_KEY);
+  if (!saved) return "";
+  try {
+    return normalizeSelfHostedIdentityApiUrl(saved);
+  } catch {
+    await SecureStore.deleteItemAsync(LOCAL_IDENTITY_API_URL_KEY);
+    return "";
+  }
+}
+
+/** Stores a validated server address without storing account credentials. */
+export async function saveIdentityServerAddress(value: string): Promise<string> {
+  const apiUrl = normalizeSelfHostedIdentityApiUrl(value);
+  await SecureStore.setItemAsync(LOCAL_IDENTITY_API_URL_KEY, apiUrl, {
+    keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+  });
+  return apiUrl;
+}
+
+export function normalizeIdentityServerAddress(value: string): string | null {
+  try {
+    return normalizeSelfHostedIdentityApiUrl(value);
+  } catch {
+    return null;
+  }
+}
+
+export async function loginToSelfHostedIdentityServer(
+  serverAddress: string,
+  email: string,
+  password: string,
+): Promise<MobileSession> {
+  if (mobileConnectInFlight) throw new Error(currentText().t("mobile.auth.error.connectionInProgress"));
+  mobileConnectInFlight = true;
+  try {
+    let apiUrl: string;
+    try {
+      apiUrl = normalizeSelfHostedIdentityApiUrl(serverAddress);
+    } catch {
+      throw new Error(currentText().t("mobile.auth.error.identityServerAddressInvalid"));
+    }
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail || !password)
+      throw new Error(currentText().t("mobile.auth.error.identityCredentialsRequired"));
+
+    let response: Response;
+    let body: unknown;
+    try {
+      const device = await mobileDeviceIdentity();
+      ({ response, body } = await withMobileAuthRequestTimeout(async (signal) => {
+        const request = await fetch(new URL("/v1/auth/login", apiUrl).toString(), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email: normalizedEmail,
+            password,
+            deviceId: device.id,
+            deviceName: device.name,
+            platform: device.platform,
+          }),
+          signal,
+        });
+        return { response: request, body: await readResponseBody(request, signal) };
+      }));
+    } catch {
+      throw new Error(currentText().t("mobile.auth.error.identityServerUnreachable"));
+    }
+
+    if (response.status === 401 || response.status === 403) {
+      throw new Error(currentText().t("mobile.auth.error.identityLoginFailed"));
+    }
+    if (response.status === 429) {
+      throw new Error(currentText().t("mobile.auth.error.identityLoginRateLimited"));
+    }
+    if (response.status === 404) {
+      throw new Error(currentText().t("mobile.auth.error.identityServerUnsupported"));
+    }
+    if (!response.ok) {
+      throw new Error(currentText().t("mobile.auth.error.identityServerUnreachable"));
+    }
+
+    const session = decodeMobileSession(body, apiUrl);
+    if (!session.localOnly) throw new Error(currentText().t("mobile.auth.error.identityServerUnsupported"));
+    await saveMobileSession(session);
+    await saveIdentityServerAddress(apiUrl);
+    return session;
+  } finally {
+    mobileConnectInFlight = false;
+  }
 }
 
 async function readStoredLocalIdentitySession(): Promise<MobileSession | null> {
@@ -133,7 +228,8 @@ async function readStoredLocalIdentitySession(): Promise<MobileSession | null> {
   let session: MobileSession;
   try {
     session = decodeStoredMobileSession(JSON.parse(stored));
-    if (!session.localOnly || !isTailscaleApiUrl(session.apiUrl)) throw new Error("Invalid local identity session.");
+    if (!session.localOnly) throw new Error("Invalid local identity session.");
+    session.apiUrl = normalizeSelfHostedIdentityApiUrl(session.apiUrl);
   } catch {
     await SecureStore.deleteItemAsync(LOCAL_IDENTITY_SESSION_KEY);
     return null;
@@ -576,17 +672,65 @@ async function mobileDeviceIdentity(): Promise<{
   return { id, name: name || "Mobile device", platform };
 }
 
+function normalizeSelfHostedIdentityApiUrl(value: string): string {
+  if (value.trim().length === 0 || value.length > 2048) throw new Error("Invalid server address.");
+  const url = new URL(value.trim());
+  if (
+    (url.protocol !== "http:" && url.protocol !== "https:") ||
+    url.username !== "" ||
+    url.password !== "" ||
+    (url.pathname !== "" && url.pathname !== "/") ||
+    url.search !== "" ||
+    url.hash !== ""
+  ) {
+    throw new Error("Invalid server address.");
+  }
+  if (url.protocol === "http:") {
+    if (!url.port) url.port = LOCAL_IDENTITY_DEFAULT_PORT;
+    if (!isPrivateIdentityHost(url.hostname) && !isTailscaleApiUrl(url.toString())) {
+      throw new Error("Use HTTPS outside a private network.");
+    }
+  }
+  return url.origin;
+}
+
+function isPrivateIdentityHost(hostname: string): boolean {
+  const address =
+    hostname
+      .replace(/^\[|\]$/gu, "")
+      .split("%", 1)[0]
+      ?.toLowerCase() ?? "";
+  if (address === "localhost" || address === "::1" || address.endsWith(".ts.net")) return true;
+  const v4 = address.split(".").map(Number);
+  if (v4.length === 4 && v4.every((part) => Number.isInteger(part) && part >= 0 && part <= 255)) {
+    const first = v4[0] ?? -1;
+    const second = v4[1] ?? -1;
+    return (
+      first === 10 ||
+      (first === 172 && second >= 16 && second <= 31) ||
+      (first === 192 && second === 168) ||
+      (first === 100 && second >= 64 && second <= 127) ||
+      (first === 127 && second === 0) ||
+      (first === 169 && second === 254)
+    );
+  }
+  const firstGroup = Number.parseInt(address.split(":", 1)[0] ?? "", 16);
+  return address.includes(":") && (address === "::1" || (firstGroup >= 0xfc00 && firstGroup <= 0xfdff));
+}
+
 function decodeMobileSession(value: unknown, apiUrl: string): MobileSession {
   if (!isDynamicRecord(value) || !isString(value.sessionToken) || value.sessionToken.length > 512) {
     throw new Error("The account service returned an invalid mobile session.");
   }
-  if (!isMobileConnectHostBinding(value.host)) throw new Error("The mobile session host is invalid.");
+  const localOnly = value.localOnly === true;
+  if (!localOnly && !isMobileConnectHostBinding(value.host)) throw new Error("The mobile session host is invalid.");
+  const host = isMobileConnectHostBinding(value.host) ? value.host : undefined;
   return {
     apiUrl,
     sessionToken: value.sessionToken,
     user: decodeUser(value.user),
-    host: value.host,
-    ...(value.localOnly === true ? { localOnly: true } : {}),
+    ...(host ? { host } : {}),
+    ...(localOnly ? { localOnly: true } : {}),
   };
 }
 
@@ -605,11 +749,17 @@ function decodeStoredMobileCredential(value: unknown): MobileCredential {
     value.sessionToken.length > 512
   )
     throw new Error("Invalid stored mobile credential.");
-  const parsed = parseMobileConnectUrl(
-    `openbot://mobile-connect?api=${encodeURIComponent(value.apiUrl)}&ticket=${"x".repeat(32)}`,
-  );
-  if (!parsed) throw new Error("Invalid stored account API.");
-  return { apiUrl: parsed.apiUrl, sessionToken: value.sessionToken };
+  let apiUrl: string;
+  try {
+    apiUrl = normalizeSelfHostedIdentityApiUrl(value.apiUrl);
+  } catch {
+    const parsed = parseMobileConnectUrl(
+      `openbot://mobile-connect?api=${encodeURIComponent(value.apiUrl)}&ticket=${"x".repeat(32)}`,
+    );
+    if (!parsed) throw new Error("Invalid stored account API.");
+    apiUrl = parsed.apiUrl;
+  }
+  return { apiUrl, sessionToken: value.sessionToken };
 }
 
 function decodeUser(value: unknown): CentralAuthUser {

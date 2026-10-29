@@ -38,9 +38,10 @@ interface MobileSessionContextValue {
 const MobileSessionContext = createContext<MobileSessionContextValue | null>(null);
 
 export function MobileSessionProvider({ children }: PropsWithChildren) {
-  // The device profile only supplies account presentation. It must not block the workspace while
-  // the native file system hydrates it, so start with an in-memory profile and replace it on success.
+  // Keep the previous device profile available for presentation, but do not treat it as an
+  // authenticated account. The workspace stays gated until a saved identity session is restored.
   const [sessionState, setSessionState] = useState<MobileSession | null>(() => createEphemeralLocalMobileProfile());
+  const [loading, setLoading] = useState(true);
   const sessionRef = useRef<MobileSession | null>(sessionState);
   const sessionScope = useRef(0);
   const refreshProfile = useCallback(async () => undefined, []);
@@ -61,13 +62,24 @@ export function MobileSessionProvider({ children }: PropsWithChildren) {
     let active = true;
     const scope = sessionScope.current;
     mobileAnalytics.setEnabled(false);
-    void readLocalIdentitySession()
-      .then((identitySession) => identitySession ?? readLocalMobileProfile())
+    void (async () => {
+      try {
+        const identitySession = await readLocalIdentitySession();
+        if (identitySession) return identitySession;
+      } catch {
+        // A damaged or unreachable identity server must not prevent the sign-in screen from opening.
+      }
+      try {
+        return await readLocalMobileProfile();
+      } catch {
+        return sessionRef.current ?? createEphemeralLocalMobileProfile();
+      }
+    })()
       .then((stored) => {
         if (active && scope === sessionScope.current) setCurrentSession(stored);
       })
-      .catch(() => {
-        // Keep the in-memory profile active without replacing a damaged file or blocking app startup.
+      .finally(() => {
+        if (active) setLoading(false);
       });
     return () => {
       active = false;
@@ -98,7 +110,7 @@ export function MobileSessionProvider({ children }: PropsWithChildren) {
 
   const value = useMemo<MobileSessionContextValue>(
     () => ({
-      loading: false,
+      loading,
       session: sessionState,
       sessionScope: sessionScope.current,
       refreshProfile,
@@ -110,7 +122,7 @@ export function MobileSessionProvider({ children }: PropsWithChildren) {
       signOut,
       updateProfile,
     }),
-    [sessionState, setCurrentSession, signOut, updateProfile, handleSessionError, refreshProfile],
+    [loading, sessionState, setCurrentSession, signOut, updateProfile, handleSessionError, refreshProfile],
   );
 
   return <MobileSessionContext.Provider value={value}>{children}</MobileSessionContext.Provider>;

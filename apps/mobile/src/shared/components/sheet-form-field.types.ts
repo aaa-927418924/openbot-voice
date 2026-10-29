@@ -20,5 +20,6 @@ export interface SheetFormFieldProps {
   onSubmitEditing?: () => void;
   placeholder?: string;
   returnKeyType?: TextInputProps["returnKeyType"];
+  secureTextEntry?: TextInputProps["secureTextEntry"];
   value: string;
 }

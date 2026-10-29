@@ -86,6 +86,13 @@ export const messages = defineMessages("mobile.settings", {
     "Share feature use and connection results from this phone. Message contents and files are not sent.",
   "mobile.settings.privacy.analytics": "Share product analytics",
   "mobile.settings.privacy.retry": "Retry saving privacy setting",
+  "mobile.settings.identityServer.title": "Account server",
+  "mobile.settings.identityServer.change": "Change server address",
+  "mobile.settings.identityServer.description":
+    "Changing the server signs you out. Sign in again to use the new server.",
+  "mobile.settings.identityServer.apply": "Use this server",
+  "mobile.settings.identityServer.applying": "Changing server…",
+  "mobile.settings.identityServer.saveFailed": "Could not change the server. Try again.",
   "mobile.settings.conversations.title": "Conversations",
   "mobile.settings.servers.hiddenTitle": "Hidden servers",
   "mobile.settings.servers.hiddenDescription":

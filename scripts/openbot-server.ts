@@ -101,7 +101,7 @@ function drawStatus(status: OpenBotServerStatus | null, now = Date.now()): void 
         const date = new Intl.DateTimeFormat(locale, { dateStyle: "short", timeStyle: "short" }).format(
           device.connectedAt,
         );
-        return `  ${name}  ·  ${platform}  ·  ${date}`;
+        return `  ${t("server.localAdmin.deviceRow", { name, platform, date })}`;
       })
     : [`  ${t("server.localAdmin.deviceNone")}`];
   const rows = [

@@ -3,22 +3,24 @@ import { useContext, useEffect } from "react";
 import { View } from "react-native";
 
 import { useMobileSession } from "@/features/auth/context/mobile-session-context";
+import { SignInScreen } from "@/features/auth/screens/sign-in-screen";
 import { SplashContentReadyContext } from "@/shared/lib/use-splash-gate";
 
 export default function IndexRoute() {
   const { loading, session } = useMobileSession();
   const reportContentReady = useContext(SplashContentReadyContext);
   useEffect(() => {
-    if (session) router.replace("/connected");
-  }, [session]);
+    if (!loading && session?.sessionToken) router.replace("/connected");
+  }, [loading, session?.sessionToken]);
 
-  // Local-only startup never exposes an account sign-in page. The splash covers this view while
-  // the on-device profile is loaded and the workspace route replaces it.
+  if (!loading && !session?.sessionToken) return <SignInScreen />;
+
+  // Keep the splash visible while the saved identity session is restored.
   return (
     <View
       className="flex-1 bg-background"
       onLayout={() => reportContentReady()}
-      accessibilityLabel={loading ? "Loading local profile" : undefined}
+      accessibilityLabel={loading ? "Restoring account" : undefined}
     />
   );
 }

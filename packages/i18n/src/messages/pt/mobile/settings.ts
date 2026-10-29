@@ -88,6 +88,12 @@ export const messages = {
     "Compartilhe o uso de recursos e os resultados de conexão deste celular. O conteúdo das mensagens e os arquivos não são enviados.",
   "mobile.settings.privacy.analytics": "Compartilhar análises do produto",
   "mobile.settings.privacy.retry": "Tentar salvar a configuração de privacidade novamente",
+  "mobile.settings.identityServer.title": "Servidor da conta",
+  "mobile.settings.identityServer.change": "Alterar endereço do servidor",
+  "mobile.settings.identityServer.description": "A alteração desconecta você. Entre novamente no novo servidor.",
+  "mobile.settings.identityServer.apply": "Usar este servidor",
+  "mobile.settings.identityServer.applying": "Alterando servidor…",
+  "mobile.settings.identityServer.saveFailed": "Não foi possível alterar o servidor. Tente novamente.",
   "mobile.settings.conversations.title": "Conversas",
   "mobile.settings.servers.hiddenTitle": "Servidores ocultos",
   "mobile.settings.servers.hiddenDescription":

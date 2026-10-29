@@ -7,6 +7,7 @@ import { MobileSessionProvider, useMobileSession } from "./mobile-session-contex
 
 const native = vi.hoisted(() => ({
   read: vi.fn<() => Promise<MobileSession>>(),
+  readIdentity: vi.fn<() => Promise<MobileSession | null>>(),
   createFallback: vi.fn<() => MobileSession>(),
   update: vi.fn<(session: MobileSession, change: { name?: string }) => Promise<MobileSession>>(),
   validate: vi.fn(),
@@ -15,6 +16,9 @@ const native = vi.hoisted(() => ({
 
 vi.mock("@/features/auth/api/mobile-auth", () => ({
   MobileSessionExpiredError: class extends Error {},
+  logoutMobileSession: native.signOut,
+  readLocalIdentitySession: native.readIdentity,
+  updateMobileProfile: native.update,
 }));
 vi.mock("@/features/auth/model/local-mobile-profile", () => ({
   createEphemeralLocalMobileProfile: native.createFallback,
@@ -38,6 +42,7 @@ let root = createRoot(container);
 
 beforeEach(async () => {
   native.read.mockReset().mockResolvedValue(localSession);
+  native.readIdentity.mockReset().mockResolvedValue(null);
   native.createFallback.mockReset().mockReturnValue(localSession);
   native.update.mockReset().mockImplementation(async (_session, change) => ({
     ...localSession,
@@ -60,7 +65,7 @@ afterEach(async () => {
   mobileAnalytics.setEnabled(false);
 });
 
-it("loads a device profile without validating or signing into a central account", () => {
+it("loads the device profile and keeps the workspace gated without a central account", () => {
   expect(current.loading).toBe(false);
   expect(current.session).toEqual(localSession);
   expect(native.read).toHaveBeenCalledOnce();
@@ -68,10 +73,16 @@ it("loads a device profile without validating or signing into a central account"
   expect(mobileAnalytics.isEnabled()).toBe(false);
 });
 
-it("keeps the workspace available while local profile storage is still pending", async () => {
+it("restores a saved self-hosted account before opening the workspace", async () => {
+  const identitySession: MobileSession = {
+    apiUrl: "http://100.100.135.107:43124",
+    sessionToken: "central-session",
+    localOnly: true,
+    user: { id: "account", email: "user@example.com", name: "User", avatarUrl: null },
+  };
   await act(() => root.unmount());
   root = createRoot(container);
-  native.read.mockReturnValueOnce(new Promise<MobileSession>(() => {}));
+  native.readIdentity.mockResolvedValueOnce(identitySession);
   await act(async () => {
     root.render(
       <MobileSessionProvider>
@@ -81,6 +92,22 @@ it("keeps the workspace available while local profile storage is still pending",
   });
 
   expect(current.loading).toBe(false);
+  expect(current.session).toEqual(identitySession);
+});
+
+it("keeps startup gated while a saved identity session is still being restored", async () => {
+  await act(() => root.unmount());
+  root = createRoot(container);
+  native.readIdentity.mockReturnValueOnce(new Promise<MobileSession | null>(() => {}));
+  await act(async () => {
+    root.render(
+      <MobileSessionProvider>
+        <Account />
+      </MobileSessionProvider>,
+    );
+  });
+
+  expect(current.loading).toBe(true);
   expect(current.session?.localOnly).toBe(true);
   expect(current.session?.user.name).toBe("OpenBot");
 });
@@ -89,6 +116,7 @@ it("keeps the app usable with a temporary local profile if saved profile data ca
   await act(() => root.unmount());
   root = createRoot(container);
   native.createFallback.mockClear();
+  native.readIdentity.mockRejectedValueOnce(new Error("identity server unavailable"));
   native.read.mockRejectedValueOnce(new Error("profile storage failure"));
   await act(async () => {
     root.render(

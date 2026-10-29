@@ -1,18 +1,23 @@
 import { useIsFocused } from "expo-router/react-navigation";
-import { Accordion, Typography } from "heroui-native";
+import { Accordion, Button, Typography } from "heroui-native";
 import { useThemeColor } from "heroui-native/hooks";
 import { type LucideIcon, X } from "lucide-react-native";
-import { useCallback, useContext, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Pressable, ScrollView, useWindowDimensions, View } from "react-native";
 import Animated, { useAnimatedStyle } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { mobileAnalytics } from "@/features/analytics/mobile-analytics";
-import { redeemMobileConnectUrl } from "@/features/auth/api/mobile-auth";
+import {
+  loginToSelfHostedIdentityServer,
+  readSavedIdentityServerAddress,
+  redeemMobileConnectUrl,
+} from "@/features/auth/api/mobile-auth";
 import { AppLogo } from "@/features/auth/components/app-logo";
 import { ScanQrButton } from "@/features/auth/components/scan-qr-button";
 import { type ScannerOrigin, ScanQrSheet } from "@/features/auth/components/scan-qr-sheet";
 import { useMobileSession } from "@/features/auth/context/mobile-session-context";
+import { SheetFormField } from "@/shared/components/sheet-form-field";
 import { SplashWallpaper } from "@/shared/components/splash-backdrop";
 import { SPLASH_LOGO_SIZE, SPLASH_MORPH_START, splashReveal, splashTravel } from "@/shared/lib/splash-motion";
 import { useText } from "@/shared/lib/text";
@@ -77,7 +82,7 @@ function SignInNoticeBanner({ notice, disabled }: { notice: SignInNotice; disabl
 }
 
 export function SignInScreen({ notice }: { notice?: SignInNotice }) {
-  const { t } = useText();
+  const { t, errorMessage } = useText();
   const reportContentReady = useContext(SplashContentReadyContext);
   const motion = useContext(SplashMotionContext);
   const insets = useSafeAreaInsets();
@@ -102,6 +107,12 @@ export function SignInScreen({ notice }: { notice?: SignInNotice }) {
   const { width: windowWidth } = useWindowDimensions();
   const buttonWidth = Math.min(240, windowWidth - 64);
   const { connect } = useMobileSession();
+  const [serverAddress, setServerAddress] = useState("");
+  const serverAddressEdited = useRef(false);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [signInBusy, setSignInBusy] = useState(false);
+  const [signInError, setSignInError] = useState<string | null>(null);
   const measurementDeadline = useRef<ReturnType<typeof setTimeout> | null>(null);
   const root = useRef<View>(null);
   const button = useRef<View>(null);
@@ -120,6 +131,18 @@ export function SignInScreen({ notice }: { notice?: SignInNotice }) {
   const contentTop = top + Math.max(32, (viewport.height - top - insets.bottom - closedHeight) / 2);
   const closeScanner = useCallback(() => {
     setOrigin(null);
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    void readSavedIdentityServerAddress()
+      .then((saved) => {
+        if (active && saved && !serverAddressEdited.current) setServerAddress(saved);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
   }, []);
 
   const reportHero = useCallback(() => {
@@ -152,6 +175,19 @@ export function SignInScreen({ notice }: { notice?: SignInNotice }) {
         setOrigin({ x: x - rootX, y: y - rootY, width, height });
       });
     });
+  }
+
+  async function signIn() {
+    if (signInBusy) return;
+    setSignInBusy(true);
+    setSignInError(null);
+    try {
+      connect(await loginToSelfHostedIdentityServer(serverAddress, email, password));
+    } catch (cause) {
+      setSignInError(errorMessage(cause, t("mobile.auth.error.identityServerUnreachable")));
+    } finally {
+      setSignInBusy(false);
+    }
   }
 
   return (
@@ -205,9 +241,57 @@ export function SignInScreen({ notice }: { notice?: SignInNotice }) {
                 {t("mobile.auth.signIn.subtitle")}
               </Typography.Paragraph>
             </Animated.View>
-            <Animated.View style={actionsStyle}>
-              <View ref={button} collapsable={false} style={{ width: buttonWidth, opacity: scannerOpen ? 0 : 1 }}>
-                <ScanQrButton width={buttonWidth} onPress={openScanner} />
+            <Animated.View style={actionsStyle} className="w-full gap-3">
+              <View className="w-full gap-3">
+                <SheetFormField
+                  label={t("mobile.auth.signIn.serverAddress")}
+                  hint={t("mobile.auth.signIn.serverHint")}
+                  inputMode="url"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  editable={!signInBusy && !scannerOpen}
+                  returnKeyType="next"
+                  value={serverAddress}
+                  onChangeText={(value) => {
+                    serverAddressEdited.current = true;
+                    setServerAddress(value);
+                  }}
+                />
+                <SheetFormField
+                  label={t("mobile.auth.signIn.email")}
+                  inputMode="email"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  editable={!signInBusy && !scannerOpen}
+                  returnKeyType="next"
+                  value={email}
+                  onChangeText={setEmail}
+                />
+                <SheetFormField
+                  label={t("mobile.auth.signIn.password")}
+                  secureTextEntry
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  editable={!signInBusy && !scannerOpen}
+                  returnKeyType="go"
+                  value={password}
+                  onChangeText={setPassword}
+                  onSubmitEditing={() => void signIn()}
+                />
+                {signInError ? (
+                  <Typography.Paragraph className="text-danger-text">{signInError}</Typography.Paragraph>
+                ) : null}
+                <Button isDisabled={signInBusy || scannerOpen} onPress={() => void signIn()}>
+                  <Button.Label>
+                    {t(signInBusy ? "mobile.auth.signIn.submitting" : "mobile.auth.signIn.submit")}
+                  </Button.Label>
+                </Button>
+                <Typography.Paragraph color="muted" align="center">
+                  {t("mobile.auth.signIn.orScan")}
+                </Typography.Paragraph>
+                <View ref={button} collapsable={false} style={{ width: buttonWidth, opacity: scannerOpen ? 0 : 1 }}>
+                  <ScanQrButton width={buttonWidth} onPress={openScanner} />
+                </View>
               </View>
             </Animated.View>
           </View>

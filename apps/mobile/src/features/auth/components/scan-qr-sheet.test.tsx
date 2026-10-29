@@ -136,7 +136,11 @@ vi.mock("expo-camera", () => ({
   },
 }));
 // Sign-in imports native storage and artwork with no DOM implementation or injectable seam.
-vi.mock("@/features/auth/api/mobile-auth", () => ({ redeemMobileConnectUrl: vi.fn() }));
+vi.mock("@/features/auth/api/mobile-auth", () => ({
+  loginToSelfHostedIdentityServer: vi.fn(),
+  readSavedIdentityServerAddress: vi.fn(async () => ""),
+  redeemMobileConnectUrl: vi.fn(),
+}));
 vi.mock("@/features/auth/context/mobile-session-context", () => ({ useMobileSession: () => ({ connect: vi.fn() }) }));
 vi.mock("@/features/auth/components/app-logo", () => ({ AppLogo: () => null }));
 vi.mock("@/shared/components/splash-backdrop", () => ({ SplashWallpaper: () => null }));
@@ -193,6 +197,26 @@ vi.mock("heroui-native", () => {
   return {
     Accordion,
     Button,
+    Input: ({
+      accessibilityLabel,
+      value,
+      onChangeText,
+      secureTextEntry,
+    }: {
+      accessibilityLabel?: string;
+      value?: string;
+      onChangeText?: (value: string) => void;
+      secureTextEntry?: boolean;
+    }) => (
+      <input
+        aria-label={accessibilityLabel}
+        type={secureTextEntry ? "password" : "text"}
+        value={value}
+        onChange={(event) => onChangeText?.(event.currentTarget.value)}
+      />
+    ),
+    TextArea: Box,
+    TextField: Box,
     Typography: Object.assign(Box, { Heading: Box, Paragraph: Box }),
     Card: Object.assign(Box, { Body: Box, Title: Box, Description: Box, Header: Box, Footer: Box }),
     Alert: Object.assign(Box, { Indicator: Box, Content: Box, Title: Box, Description: Box }),
@@ -258,6 +282,9 @@ describe("scanner sheet lifecycle", () => {
       });
       expect(ready).toHaveBeenCalledWith({ x: 159, y: 228, size: 72 });
       expect(screen.getByText("Your agents, anywhere.")).toBeTruthy();
+      expect(screen.getByLabelText("Server address")).toBeTruthy();
+      expect(screen.getByLabelText("Email")).toBeTruthy();
+      expect(screen.getByLabelText("Password")).toBeTruthy();
       expect(screen.getByRole("button", { name: "Scan QR code" })).toBeTruthy();
       expect(screen.queryByText("2. Go to Settings → Mobile Connect.")).toBeNull();
       await act(() => fireEvent.click(screen.getByRole("button", { name: "Where is the QR code?" })));

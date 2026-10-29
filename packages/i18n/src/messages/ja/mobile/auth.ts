@@ -27,7 +27,14 @@ export const messages = {
   "mobile.auth.camera.allow": "カメラへのアクセスを許可",
   "mobile.auth.camera.openSettings": "設定を開く",
   "mobile.auth.signIn.title": "エージェントを、どこでも。",
-  "mobile.auth.signIn.subtitle": "コンピューターの OpenBot に接続します。",
+  "mobile.auth.signIn.subtitle": "自分の OpenBot サーバーにサインインします。",
+  "mobile.auth.signIn.serverAddress": "サーバーアドレス",
+  "mobile.auth.signIn.serverHint": "TailscaleやプライベートネットワークではHTTP、それ以外ではHTTPSを使用してください。",
+  "mobile.auth.signIn.email": "メールアドレス",
+  "mobile.auth.signIn.password": "パスワード",
+  "mobile.auth.signIn.submit": "サインイン",
+  "mobile.auth.signIn.submitting": "サインイン中…",
+  "mobile.auth.signIn.orScan": "または QR コードで接続",
   "mobile.auth.signIn.helpTitle": "QRコードはどこにありますか?",
   "mobile.auth.signIn.helpStep1": "1. コンピューターで OpenBot を開きます。",
   "mobile.auth.signIn.helpStep2": "2. 設定 → Mobile Connect に移動します。",
@@ -39,6 +46,13 @@ export const messages = {
   "mobile.auth.error.codeOutdated": "最新のデスクトップアプリで新しい Mobile Connect コードを生成してください。",
   "mobile.auth.error.alreadySignedIn":
     "すでにサインインしています。別のアカウントを接続する前にサインアウトしてください。",
+  "mobile.auth.error.identityServerAddressInvalid":
+    "サーバーURLを入力してください。プライベートネットワーク外ではHTTPSが必要です。",
+  "mobile.auth.error.identityCredentialsRequired": "メールアドレスとパスワードを入力してください。",
+  "mobile.auth.error.identityLoginFailed": "メールアドレスまたはパスワードが正しくありません。",
+  "mobile.auth.error.identityLoginRateLimited": "試行回数が多すぎます。1分ほど待ってから再試行してください。",
+  "mobile.auth.error.identityServerUnsupported": "このサーバーは OpenBot のアカウントログインに対応していません。",
+  "mobile.auth.error.identityServerUnreachable": "サーバーに接続できません。アドレスとネットワークを確認してください。",
   "mobile.auth.error.desktopUnreachable":
     "OpenBot はデスクトップに接続できませんでした。両方の端末を同じ Wi-Fi ネットワークに接続し、ローカルネットワークへのアクセスを許可してください。",
   "mobile.auth.error.accountServiceUnreachable":

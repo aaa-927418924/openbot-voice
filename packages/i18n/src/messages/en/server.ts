@@ -433,7 +433,6 @@ export const messages = defineMessages("server", {
   "server.localAdmin.serviceUnavailable": "The user service manager is not available.",
   "server.localAdmin.serviceInstalled": "Autostart is enabled for this user.",
   "server.localAdmin.lingerRequired": "Enable login linger to start before sign-in: sudo loginctl enable-linger {user}",
-  "server.localAdmin.setupRequired": "Run `bun scripts/openbot-server.ts setup` to set the server login.",
   "server.localAdmin.noStatus": "The server has not published a status yet.",
   "server.localAdmin.setupTitle": "Set the shared OpenBot login",
   "server.localAdmin.emailPrompt": "Email address: ",

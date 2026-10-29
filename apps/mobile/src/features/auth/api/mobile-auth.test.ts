@@ -3,11 +3,14 @@ import { afterEach, assert, beforeEach, describe, expect, it, vi } from "vitest"
 import { resolveSessionValidation } from "../context/session-validation";
 import {
   listMobileAccountSessions,
+  loginToSelfHostedIdentityServer,
   logoutMobileSession,
   type MobileSession,
   MobileSessionExpiredError,
+  normalizeIdentityServerAddress,
   readLocalIdentitySession,
   readMobileSession,
+  readSavedIdentityServerAddress,
   redeemMobileConnectUrl,
   retryMobileSessionRevocations,
   revokeMobileAccountSession,
@@ -179,6 +182,69 @@ describe("mobile session revocation", () => {
     await logoutMobileSession(session);
     await retryMobileSessionRevocations();
     expect(await readMobileSession()).toEqual(replacement);
+  });
+});
+
+describe("self-hosted identity sign-in", () => {
+  const serverAddress = "http://100.100.135.107";
+  const password = "do-not-persist-this-password";
+  const identityUser = { id: "central-user", email: "user@example.com", name: "User", avatarUrl: null };
+
+  beforeEach(() => {
+    native.storage.set("openbot.mobile.device-id.v1", "mobile-device");
+  });
+
+  it("stores the signed-in identity and server address, then restores it on startup", async () => {
+    native.fetch.mockImplementation(async (url, init) => {
+      if (url === "http://100.100.135.107:43124/v1/auth/login" && init?.method === "POST") {
+        return Response.json({ sessionToken: "central-session", user: identityUser, localOnly: true });
+      }
+      if (url === "http://100.100.135.107:43124/v1/mobile-auth/session") return Response.json({ user: identityUser });
+      throw new Error("Unexpected request");
+    });
+
+    const signedIn = await loginToSelfHostedIdentityServer(serverAddress, " USER@EXAMPLE.COM ", password);
+    expect(signedIn).toEqual({
+      apiUrl: "http://100.100.135.107:43124",
+      sessionToken: "central-session",
+      user: identityUser,
+      localOnly: true,
+    });
+    expect(JSON.parse(String(native.fetch.mock.calls[0]?.[1]?.body))).toMatchObject({
+      email: "user@example.com",
+      password,
+      deviceId: "mobile-device",
+      platform: "ios",
+    });
+    expect(await readSavedIdentityServerAddress()).toBe("http://100.100.135.107:43124");
+    expect(JSON.stringify([...native.storage.entries()])).not.toContain(password);
+    expect(await readLocalIdentitySession()).toEqual(signedIn);
+  });
+
+  it("rejects a public HTTP server address before sending credentials", async () => {
+    await expect(
+      loginToSelfHostedIdentityServer("http://example.com:43124", "user@example.com", password),
+    ).rejects.toThrow("Enter a full server URL. Use HTTPS outside a private network.");
+    expect(native.fetch).not.toHaveBeenCalled();
+  });
+
+  it("normalizes private-network addresses and accepts HTTPS custom domains", () => {
+    expect(normalizeIdentityServerAddress("http://10.147.20.3")).toBe("http://10.147.20.3:43124");
+    expect(normalizeIdentityServerAddress("https://bot.example.net/")).toBe("https://bot.example.net");
+    expect(normalizeIdentityServerAddress("https://bot.example.net/openbot")).toBeNull();
+    expect(normalizeIdentityServerAddress("http://user:pass@10.147.20.3:43124")).toBeNull();
+  });
+
+  it("reports invalid credentials and rate limits without exposing the password", async () => {
+    native.fetch.mockResolvedValueOnce(Response.json({ error: "unauthorized" }, { status: 401 }));
+    await expect(loginToSelfHostedIdentityServer(serverAddress, "user@example.com", password)).rejects.toThrow(
+      "The email or password is incorrect.",
+    );
+    native.fetch.mockResolvedValueOnce(Response.json({ error: "rate_limited" }, { status: 429 }));
+    await expect(loginToSelfHostedIdentityServer(serverAddress, "user@example.com", password)).rejects.toThrow(
+      "Too many sign-in attempts. Wait a minute and try again.",
+    );
+    expect(JSON.stringify([...native.storage.entries()])).not.toContain(password);
   });
 });
 

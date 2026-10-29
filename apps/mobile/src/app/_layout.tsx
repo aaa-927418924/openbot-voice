@@ -119,7 +119,7 @@ function RootNavigator() {
                     title: t("mobile.app.route.scanQrCode"),
                   }}
                 />
-                <Stack.Protected guard={Boolean(session)}>
+                <Stack.Protected guard={Boolean(session?.sessionToken)}>
                   <Stack.Screen
                     name="(app)"
                     options={{

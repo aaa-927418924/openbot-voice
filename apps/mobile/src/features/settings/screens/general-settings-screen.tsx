@@ -250,6 +250,16 @@ export function GeneralSettingsScreen() {
         ) : null}
       </SettingsSection>
       <LiveActivitiesSection dark={theme === "dark"} />
+      {session?.localOnly && session.sessionToken ? (
+        <SettingsSection
+          title={t("mobile.settings.identityServer.title")}
+          footer={t("mobile.settings.identityServer.description")}
+        >
+          <SettingsRow supportingText={session.apiUrl} onPress={() => router.push("/settings/server-address")}>
+            <Typography.Paragraph>{t("mobile.settings.identityServer.change")}</Typography.Paragraph>
+          </SettingsRow>
+        </SettingsSection>
+      ) : null}
       {!session?.localOnly ? (
         <SettingsSection
           title={t("mobile.settings.privacy.title")}

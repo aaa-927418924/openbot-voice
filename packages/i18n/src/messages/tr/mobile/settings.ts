@@ -87,6 +87,13 @@ export const messages = {
     "Bu telefondan özellik kullanımını ve bağlantı sonuçlarını paylaşın. Mesaj içerikleri ve dosyalar gönderilmez.",
   "mobile.settings.privacy.analytics": "Ürün analizlerini paylaş",
   "mobile.settings.privacy.retry": "Gizlilik ayarını kaydetmeyi tekrar dene",
+  "mobile.settings.identityServer.title": "Hesap sunucusu",
+  "mobile.settings.identityServer.change": "Sunucu adresini değiştir",
+  "mobile.settings.identityServer.description":
+    "Sunucuyu değiştirmek oturumu kapatır. Yeni sunucuda tekrar oturum açın.",
+  "mobile.settings.identityServer.apply": "Bu sunucuyu kullan",
+  "mobile.settings.identityServer.applying": "Sunucu değiştiriliyor…",
+  "mobile.settings.identityServer.saveFailed": "Sunucu değiştirilemedi. Tekrar deneyin.",
   "mobile.settings.conversations.title": "Konuşmalar",
   "mobile.settings.servers.hiddenTitle": "Gizli sunucular",
   "mobile.settings.servers.hiddenDescription":

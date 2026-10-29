@@ -10,6 +10,9 @@
   changes this app's local list; it does not change membership or connection.
 - Install OpenBot Voice beside OpenBot as a separate Android app. It accepts existing `openbot://`
   desktop pairing links and `openbotvoice://mobile-connect` return links.
+- Sign in to a self-hosted OpenBot account server with its address, email, and password. The app
+  remembers the server and session without saving the password, and lets signed-in users change
+  the account server from Settings.
 
 ### Fixed
 
