@@ -1,8 +1,13 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import type { AccountServerRegistration } from "@openbot/contracts/account-server-directory";
 import { isTailscaleApiUrl } from "@openbot/contracts/invite-links";
-import type { CentralAuthUser } from "@openbot/contracts/ipc";
+import type { CentralAuthUser, TeamRole } from "@openbot/contracts/ipc";
 import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { Effect } from "effect";
+import {
+  AccountServerDirectoryError,
+  type SelfHostedAccountServerDirectory,
+} from "./self-hosted-account-server-directory";
 import type { SelfHostedAccount, SelfHostedIdentityAuthority } from "./self-hosted-identity-authority";
 import { listenOnTailscale, type TailnetBinding, tailnetUrl } from "./tailscale-network";
 
@@ -25,10 +30,16 @@ interface IdentityRequestBody {
   platform?: unknown;
   serverId?: unknown;
   name?: unknown;
+  apiUrl?: unknown;
+  publicKey?: unknown;
+  logoKey?: unknown;
+  membershipId?: unknown;
+  role?: unknown;
 }
 
 export interface SelfHostedIdentityApiOptions {
   readonly authority: SelfHostedIdentityAuthority;
+  readonly serverDirectory: SelfHostedAccountServerDirectory;
   readonly port?: number;
   readonly listen?: TailnetListener;
   readonly onProfileChanged?: (user: SelfHostedAccountUser) => Promise<void>;
@@ -112,6 +123,11 @@ async function readJson(request: IncomingMessage): Promise<IdentityRequestBody> 
     platform: value.platform,
     serverId: value.serverId,
     name: value.name,
+    apiUrl: value.apiUrl,
+    publicKey: value.publicKey,
+    logoKey: value.logoKey,
+    membershipId: value.membershipId,
+    role: value.role,
   };
 }
 
@@ -167,6 +183,7 @@ function failureStatus(code: string): 400 | 401 | 409 | 429 | 503 {
 
 export class SelfHostedIdentityApiServer {
   readonly #authority: SelfHostedIdentityAuthority;
+  readonly #serverDirectory: SelfHostedAccountServerDirectory;
   readonly #port: number;
   readonly #listen: TailnetListener;
   readonly #onProfileChanged: (user: SelfHostedAccountUser) => Promise<void>;
@@ -178,6 +195,7 @@ export class SelfHostedIdentityApiServer {
 
   constructor(options: SelfHostedIdentityApiOptions) {
     this.#authority = options.authority;
+    this.#serverDirectory = options.serverDirectory;
     this.#port = options.port ?? SELF_HOSTED_IDENTITY_API_PORT;
     this.#listen =
       options.listen ?? ((server, port) => listenOnTailscale(server, () => new Error("Tailscale bind failed."), port));
@@ -191,6 +209,7 @@ export class SelfHostedIdentityApiServer {
   async start(): Promise<string> {
     if (this.#apiUrl) return this.#apiUrl;
     if (this.#starting) return this.#starting;
+    await this.#serverDirectory.initialize();
     const server = createServer((request, response) => void this.#handle(request, response));
     this.#server = server;
     const starting = this.#listen(server, this.#port)
@@ -378,6 +397,57 @@ export class SelfHostedIdentityApiServer {
         return json(response, 200, asCentralAuthUser(account));
       }
 
+      if (method === "GET" && url.pathname === "/v1/me/servers") {
+        const token = bearer(request);
+        if (!token) throw new ApiError(401, "unauthorized");
+        const account = await Effect.runPromise(this.#authority.authenticateSession(token));
+        if (!account) throw new ApiError(401, "unauthorized");
+        return json(response, 200, { servers: await this.#serverDirectory.list(account.id) });
+      }
+
+      if (method === "PUT" && url.pathname === "/v1/me/servers") {
+        const token = bearer(request);
+        if (!token) throw new ApiError(401, "unauthorized");
+        const account = await Effect.runPromise(this.#authority.authenticateSession(token));
+        if (!account) throw new ApiError(401, "unauthorized");
+        const body = await readJson(request);
+        const role = body.role;
+        if (role !== "owner" && role !== "admin" && role !== "member") throw new ApiError(400, "invalid_request");
+        const registration: AccountServerRegistration = {
+          hostId: stringField(body, "hostId", 128),
+          name: stringField(body, "name", 128),
+          apiUrl: stringField(body, "apiUrl", 512),
+          fingerprint: stringField(body, "fingerprint", 64),
+          publicKey: stringField(body, "publicKey", 8192),
+          logoKey: body.logoKey === null ? null : stringField(body, "logoKey", 256),
+          membershipId: stringField(body, "membershipId", 128),
+          // A server directory entry is not a permission grant. The Team host remains the
+          // authority for real role checks; clients apply their locally paired role on this device.
+          role: "member" satisfies TeamRole,
+        };
+        return json(response, 200, {
+          servers: await this.#serverDirectory.register(account.id, registration),
+        });
+      }
+
+      const accountServerMatch = /^\/v1\/me\/servers\/([^/]+)$/u.exec(url.pathname);
+      if (method === "DELETE" && accountServerMatch) {
+        const token = bearer(request);
+        if (!token) throw new ApiError(401, "unauthorized");
+        const account = await Effect.runPromise(this.#authority.authenticateSession(token));
+        if (!account) throw new ApiError(401, "unauthorized");
+        let hostId: string;
+        try {
+          const encodedHostId = accountServerMatch[1];
+          if (!encodedHostId) throw new Error("Missing server id.");
+          hostId = decodeURIComponent(encodedHostId);
+        } catch {
+          throw new ApiError(400, "invalid_request");
+        }
+        await this.#serverDirectory.removeMembership(account.id, hostId);
+        return noContent(response);
+      }
+
       if (method === "PUT" && url.pathname === "/v1/me/credentials") {
         const token = bearer(request);
         if (!token) throw new ApiError(401, "unauthorized");
@@ -421,6 +491,7 @@ export class SelfHostedIdentityApiServer {
       return json(response, 404, { error: "not_found" });
     } catch (error) {
       if (error instanceof ApiError) return json(response, error.status, { error: error.code });
+      if (error instanceof AccountServerDirectoryError) return json(response, error.status, { error: error.code });
       const code = isDynamicRecord(error) && isString(error.code) ? error.code : null;
       if (code)
         return json(response, failureStatus(code), { error: failureStatus(code) === 503 ? "unavailable" : code });

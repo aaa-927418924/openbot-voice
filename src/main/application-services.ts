@@ -162,6 +162,7 @@ import { sendToRenderer } from "./renderer-ipc";
 import { RequestedUpdate, RequestedUpdateRefusal } from "./requested-update";
 import { RoutineFeedServer } from "./routine-feed-server";
 import { clearRoutineHold, ROUTINE_HOLD_FILE, takeRoutineHold, writeRoutineHold } from "./routine-hold-file";
+import { SelfHostedAccountServerDirectory } from "./self-hosted-account-server-directory";
 import { SelfHostedIdentityApiServer, selfHostedTeamProfile } from "./self-hosted-identity-api";
 import { SelfHostedIdentityAuthority } from "./self-hosted-identity-authority";
 import { ServerMode, type ServerModeEnvironment } from "./server-mode";
@@ -1354,8 +1355,12 @@ export async function createApplicationServices({
   }
   let selfHostedIdentityApi: SelfHostedIdentityApiServer | null = null;
   if (selfHostedIdentityReady && selfHostedIdentityAuthority) {
+    const serverDirectory = new SelfHostedAccountServerDirectory(
+      join(app.getPath("userData"), "self-hosted-account-server-directory-v1.json"),
+    );
     selfHostedIdentityApi = new SelfHostedIdentityApiServer({
       authority: selfHostedIdentityAuthority,
+      serverDirectory,
       onProfileChanged: async (user) => {
         try {
           const profile = selfHostedTeamProfile(user, selfHostedIdentityApi?.apiUrl ?? null);

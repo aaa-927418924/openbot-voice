@@ -213,6 +213,8 @@ tickets in D1. It returns a new plaintext secret only to the client that request
 app encrypts its account session token with the operating-system storage protection before it writes
 the token to disk.
 
+The separate self-hosted identity API stores the account's Team server directory in a local JSON file. It contains server IDs, names, Tailscale API addresses, public keys and fingerprints, logo keys, membership IDs, and role hints. It does not contain Team session tokens, conversations, attachments, or workspaces. Each device keeps its Team session token in that device's secure storage.
+
 Account avatar URLs are public, long-lived resources. A person who has the complete URL can request
 the avatar without an account session.
 

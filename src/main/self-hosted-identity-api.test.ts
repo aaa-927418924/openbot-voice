@@ -4,8 +4,10 @@ import type { Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isDynamicRecord } from "@openbot/contracts/runtime-values";
+import { remoteHostFingerprint } from "@openbot/team-client/remote-directory";
 import { Effect } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
+import { SelfHostedAccountServerDirectory } from "./self-hosted-account-server-directory";
 import { SelfHostedIdentityApiServer, selfHostedTeamProfile } from "./self-hosted-identity-api";
 import { SelfHostedIdentityAuthority } from "./self-hosted-identity-authority";
 
@@ -40,6 +42,7 @@ describe("SelfHostedIdentityApiServer", () => {
     const changed: unknown[] = [];
     const api = new SelfHostedIdentityApiServer({
       authority,
+      serverDirectory: new SelfHostedAccountServerDirectory(join(root, "server-directory.json")),
       port: 0,
       listen: (server: Server) =>
         new Promise((resolve, reject) => {
@@ -84,6 +87,93 @@ describe("SelfHostedIdentityApiServer", () => {
       expect(sessionToken).toMatch(/^[A-Za-z0-9_-]{43}$/u);
       expect(sessionBody.user).toMatchObject({ id: account.id, email: "owner@openbot.test" });
       expect(sessionBody.localOnly).toBe(true);
+
+      const publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockKeyForDirectoryTest";
+      const registration = await fetch(new URL("/v1/me/servers", apiUrl), {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${sessionToken}`,
+          "Content-Type": "application/json",
+          Connection: "close",
+        },
+        body: JSON.stringify({
+          hostId: "linux-team-host",
+          name: "Cloud host",
+          apiUrl: "http://100.100.10.2:43123",
+          fingerprint: remoteHostFingerprint(publicKey),
+          publicKey,
+          logoKey: null,
+          membershipId: "owner-membership",
+          role: "owner",
+        }),
+      });
+      expect(registration.status).toBe(200);
+      expect(await registration.json()).toMatchObject({
+        servers: [
+          {
+            hostId: "linux-team-host",
+            apiUrl: "http://100.100.10.2:43123",
+            isOwner: false,
+            role: "member",
+          },
+        ],
+      });
+      const rename = await fetch(new URL("/v1/me/servers", apiUrl), {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${sessionToken}`,
+          "Content-Type": "application/json",
+          Connection: "close",
+        },
+        body: JSON.stringify({
+          hostId: "linux-team-host",
+          name: "Renamed host",
+          apiUrl: "http://100.100.10.2:43123",
+          fingerprint: remoteHostFingerprint(publicKey),
+          publicKey,
+          logoKey: null,
+          membershipId: "owner-membership",
+          role: "owner",
+        }),
+      });
+      expect(await rename.json()).toMatchObject({ servers: [{ name: "Renamed host" }] });
+
+      const otherAccount = await Effect.runPromise(
+        authority.registerAccount({
+          email: "other@openbot.test",
+          password: "other-account-password",
+          name: "Other account",
+        }),
+      );
+      const otherList = await fetch(new URL("/v1/me/servers", apiUrl), {
+        headers: { Authorization: `Bearer ${otherAccount.token}`, Connection: "close" },
+      });
+      expect(await otherList.json()).toEqual({ servers: [] });
+      const otherRegistration = await fetch(new URL("/v1/me/servers", apiUrl), {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${otherAccount.token}`,
+          "Content-Type": "application/json",
+          Connection: "close",
+        },
+        body: JSON.stringify({
+          hostId: "linux-team-host",
+          name: "Renamed host",
+          apiUrl: "http://100.100.10.2:43123",
+          fingerprint: remoteHostFingerprint(publicKey),
+          publicKey,
+          logoKey: null,
+          membershipId: "other-membership",
+          role: "member",
+        }),
+      });
+      expect(otherRegistration.status).toBe(200);
+
+      const directoryReadback = new SelfHostedAccountServerDirectory(join(root, "server-directory.json"));
+      await directoryReadback.initialize();
+      expect(await directoryReadback.list(account.id)).toMatchObject([
+        { hostId: "linux-team-host", name: "Renamed host", isOwner: false, role: "member" },
+      ]);
       expect(
         selfHostedTeamProfile(
           { id: account.id, email: account.email, name: account.name, avatarUrl: account.avatarUrl },
@@ -119,6 +209,22 @@ describe("SelfHostedIdentityApiServer", () => {
       expect(changed).toEqual([
         { id: account.id, email: "owner@openbot.test", name: "Shared name", avatarUrl: profile.avatarUrl },
       ]);
+
+      const removeFromAccount = await fetch(new URL("/v1/me/servers/linux-team-host", apiUrl), {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${sessionToken}`, Connection: "close" },
+      });
+      expect(removeFromAccount.status).toBe(204);
+      const afterRemove = await fetch(new URL("/v1/me/servers", apiUrl), {
+        headers: { Authorization: `Bearer ${sessionToken}`, Connection: "close" },
+      });
+      expect(await afterRemove.json()).toEqual({ servers: [] });
+      const otherAccountAfterRemove = await fetch(new URL("/v1/me/servers", apiUrl), {
+        headers: { Authorization: `Bearer ${otherAccount.token}`, Connection: "close" },
+      });
+      expect(await otherAccountAfterRemove.json()).toMatchObject({
+        servers: [{ hostId: "linux-team-host", membershipId: "other-membership" }],
+      });
 
       const loginResponse = await fetch(new URL("/v1/auth/login", apiUrl), {
         method: "POST",
@@ -194,6 +300,7 @@ describe("SelfHostedIdentityApiServer", () => {
 
     const api = new SelfHostedIdentityApiServer({
       authority,
+      serverDirectory: new SelfHostedAccountServerDirectory(join(root, "server-directory.json")),
       port: 0,
       listen: (server: Server) =>
         new Promise((resolve, reject) => {
@@ -223,7 +330,7 @@ describe("SelfHostedIdentityApiServer", () => {
       const update = await fetch(new URL("/v1/me/credentials", apiUrl), {
         method: "PUT",
         headers: {
-          Authorization: "Bearer " + mobile.token,
+          Authorization: `Bearer ${mobile.token}`,
           "Content-Type": "application/json",
           Connection: "close",
         },

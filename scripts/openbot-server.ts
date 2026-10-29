@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 import { resolveLocale, translateFor } from "@openbot/i18n";
 import { Effect } from "effect";
 import { defaultLocalProfileName, LocalProfileStore } from "../src/main/local-profile-store";
+import { SelfHostedAccountServerDirectory } from "../src/main/self-hosted-account-server-directory";
 import { SELF_HOSTED_IDENTITY_API_PORT, SelfHostedIdentityApiServer } from "../src/main/self-hosted-identity-api";
 import type { LocalProfileBootstrap } from "../src/main/self-hosted-identity-authority";
 import { SelfHostedIdentityAuthority } from "../src/main/self-hosted-identity-authority";
@@ -286,7 +287,12 @@ async function serve(): Promise<void> {
   const authority = new SelfHostedIdentityAuthority({ path: identityPath });
   await Effect.runPromise(authority.initialize());
   await Effect.runPromise(authority.ensureLocalAccount(bootstrapProfile(profile)));
-  const api = new SelfHostedIdentityApiServer({ authority });
+  const api = new SelfHostedIdentityApiServer({
+    authority,
+    serverDirectory: new SelfHostedAccountServerDirectory(
+      resolve(userDataDirectory, "self-hosted-account-server-directory-v1.json"),
+    ),
+  });
   const startedAt = Date.now();
   const sampleHostMetrics = createHostMetricsSampler();
   let stopped = false;

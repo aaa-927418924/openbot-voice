@@ -1,9 +1,11 @@
 import { createMemberDeviceLinkUrl } from "@openbot/contracts/invite-links";
 import { createMobileConnectUrl } from "@openbot/contracts/mobile-connect";
+import { remoteHostFingerprint } from "@openbot/team-client/remote-directory";
 import { afterEach, assert, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveSessionValidation } from "../context/session-validation";
 import {
   configureMobileLoginCredentials,
+  listAccountServers,
   listMobileAccountSessions,
   loginToSelfHostedIdentityServer,
   logoutMobileSession,
@@ -14,6 +16,7 @@ import {
   readMobileSession,
   readSavedIdentityServerAddress,
   redeemMobileConnectUrl,
+  registerAccountServer,
   registerSelfHostedIdentityAccount,
   retryMobileSessionRevocations,
   revokeMobileAccountSession,
@@ -36,7 +39,9 @@ vi.mock("expo-crypto", () => ({
 }));
 vi.mock("expo-device", () => ({ deviceName: null, modelName: null }));
 vi.mock("@/shared/lib/mobile-features", () => ({ mobileAppVersion: () => "1.1.0-test" }));
-vi.mock("@/features/workspace/model/local-tailnet", () => ({ pairTailnetInvite: native.pairTailnetInvite }));
+vi.mock("@/features/workspace/model/local-tailnet", () => ({
+  pairTailnetInvite: native.pairTailnetInvite,
+}));
 vi.mock("@/features/workspace/model/local-tailnet-store", () => ({
   saveLocalTailnetServer: native.saveLocalTailnetServer,
 }));
@@ -614,6 +619,86 @@ describe("stored mobile desktop binding", () => {
     confirm(new Response(null, { status: 204 }));
     await pending;
     expect(native.storage.get(key)).toBe(legacy);
+  });
+});
+
+describe("account server directory sync", () => {
+  it("sends server metadata to the signed-in account without forwarding the device Team token", async () => {
+    const publicKey = "public-key";
+    const pairedHost = {
+      hostId: "11111111-1111-4111-8111-111111111111",
+      name: "Team server",
+      apiUrl: "http://100.100.10.2:43123",
+      fingerprint: remoteHostFingerprint(publicKey),
+      publicKey,
+      logoKey: null,
+      membershipId: "member-id",
+      role: "owner" as const,
+      sessionToken: "device-team-secret",
+    };
+    const { sessionToken: deviceToken, ...registration } = pairedHost;
+    const directoryEntry = { ...registration, role: "member" as const, isOwner: false };
+    const localIdentitySession: MobileSession = {
+      apiUrl: "http://100.100.10.2:43124",
+      sessionToken: "account-session-token",
+      user: { id: "account", email: "user@example.com", name: "User", avatarUrl: null },
+      localOnly: true,
+    };
+    native.fetch
+      .mockResolvedValueOnce(Response.json({ servers: [directoryEntry] }))
+      .mockResolvedValueOnce(Response.json({ servers: [directoryEntry] }));
+
+    await expect(registerAccountServer(localIdentitySession, registration)).resolves.toEqual([directoryEntry]);
+
+    const [url, request] = native.fetch.mock.calls[0] ?? [];
+    expect(url).toBe("http://100.100.10.2:43124/v1/me/servers");
+    expect(request?.headers).toMatchObject({ Authorization: "Bearer account-session-token" });
+    expect(request?.body).toBe(JSON.stringify(registration));
+    expect(request?.body).not.toContain(deviceToken);
+  });
+
+  it("retries a queued metadata-only server update before the next directory read", async () => {
+    const publicKey = "public-key";
+    const registration = {
+      hostId: "11111111-1111-4111-8111-111111111111",
+      name: "Team server",
+      apiUrl: "http://100.100.10.2:43123",
+      fingerprint: remoteHostFingerprint(publicKey),
+      publicKey,
+      logoKey: null,
+      membershipId: "member-id",
+      role: "member" as const,
+    };
+    const localIdentitySession: MobileSession = {
+      apiUrl: "http://100.100.10.2:43124",
+      sessionToken: "account-session-token",
+      user: { id: "account", email: "user@example.com", name: "User", avatarUrl: null },
+      localOnly: true,
+    };
+    const directoryEntry = { ...registration, isOwner: false };
+    native.fetch.mockRejectedValueOnce(new TypeError("Network request failed"));
+
+    await expect(registerAccountServer(localIdentitySession, registration)).rejects.toThrow();
+    expect(
+      [...native.storage.keys()].some((storedKey) =>
+        storedKey.startsWith("openbot.account-server.pending-changes.v1."),
+      ),
+    ).toBe(true);
+
+    native.fetch
+      .mockResolvedValueOnce(Response.json({ servers: [directoryEntry] }))
+      .mockResolvedValueOnce(Response.json({ servers: [directoryEntry] }));
+    await expect(listAccountServers(localIdentitySession)).resolves.toEqual([directoryEntry]);
+    expect(native.fetch.mock.calls.map(([url, request]) => [url, request?.method])).toEqual([
+      ["http://100.100.10.2:43124/v1/me/servers", "PUT"],
+      ["http://100.100.10.2:43124/v1/me/servers", "PUT"],
+      ["http://100.100.10.2:43124/v1/me/servers", "GET"],
+    ]);
+    expect(
+      [...native.storage.keys()].some((storedKey) =>
+        storedKey.startsWith("openbot.account-server.pending-changes.v1."),
+      ),
+    ).toBe(false);
   });
 });
 

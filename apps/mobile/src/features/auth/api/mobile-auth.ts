@@ -1,3 +1,7 @@
+import type {
+  AccountServerDirectoryEntry,
+  AccountServerRegistration,
+} from "@openbot/contracts/account-server-directory";
 import { type AvatarMimeType, isValidAvatarImage } from "@openbot/contracts/avatar-images";
 import { AVATAR_IMAGE_LIMITS } from "@openbot/contracts/input-limits";
 import { isTailscaleApiUrl } from "@openbot/contracts/invite-links";
@@ -11,23 +15,26 @@ import {
 } from "@openbot/contracts/mobile-connect";
 import { type DynamicRecord, isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { validateProfileName } from "@openbot/contracts/validation";
+import { remoteHostFingerprint } from "@openbot/team-client/remote-directory";
 import * as Crypto from "expo-crypto";
 import * as Device from "expo-device";
 import * as SecureStore from "expo-secure-store";
 import { z } from "zod";
-import { pairTailnetInvite } from "@/features/workspace/model/local-tailnet";
+import { type LocalTailnetServer, pairTailnetInvite } from "@/features/workspace/model/local-tailnet";
 import { saveLocalTailnetServer } from "@/features/workspace/model/local-tailnet-store";
 import { mobileAppVersion } from "@/shared/lib/mobile-features";
 import { isAndroid, isIOS } from "@/shared/lib/platform";
 import { currentText } from "@/shared/lib/text";
 // Relative: the Node test project resolves no `@/` path that the test does not mock.
 import { fetch } from "../../support/model/logged-fetch";
+import { serverOrderKey } from "../../workspace/model/server-order";
 import { normalizeMobileConnectLink } from "../model/mobile-connect-url";
 
 const MOBILE_SESSION_KEY = "openbot.mobile.session.v1";
 const LOCAL_IDENTITY_SESSION_KEY = "openbot.local-identity.session.v1";
 const LOCAL_IDENTITY_API_URL_KEY = "openbot.local-identity.api-url.v1";
 const MOBILE_REVOCATIONS_KEY = "openbot.mobile.pending-revocations.v1";
+const ACCOUNT_SERVER_CHANGES_KEY = "openbot.account-server.pending-changes.v1";
 const MOBILE_DEVICE_ID_KEY = "openbot.mobile.device-id.v1";
 const MOBILE_AUTH_REQUEST_TIMEOUT_MS = 10_000;
 const LOCAL_IDENTITY_DEFAULT_PORT = "43124";
@@ -35,6 +42,37 @@ const LOCAL_IDENTITY_DEFAULT_PORT = "43124";
 let mobileSessionStorageTail = Promise.resolve();
 let mobileProfileTail = Promise.resolve();
 let mobileConnectInFlight = false;
+
+type PendingAccountServerChange =
+  | { id: string; kind: "register"; server: AccountServerRegistration }
+  | { id: string; kind: "remove"; hostId: string };
+
+function decodePendingAccountServerChange(value: unknown): PendingAccountServerChange | null {
+  if (!isDynamicRecord(value) || !isString(value.id)) return null;
+  if (value.kind === "remove" && isString(value.hostId)) {
+    return { id: value.id, kind: "remove", hostId: value.hostId };
+  }
+  if (value.kind !== "register" || !isDynamicRecord(value.server)) return null;
+  try {
+    const server = decodeAccountServer({ ...value.server, isOwner: false });
+    return {
+      id: value.id,
+      kind: "register",
+      server: {
+        hostId: server.hostId,
+        name: server.name,
+        apiUrl: server.apiUrl,
+        fingerprint: server.fingerprint,
+        publicKey: server.publicKey,
+        logoKey: server.logoKey,
+        membershipId: server.membershipId,
+        role: server.role,
+      },
+    };
+  } catch {
+    return null;
+  }
+}
 
 export class MobileSessionExpiredError extends Error {
   constructor() {
@@ -49,6 +87,180 @@ export interface MobileSession {
   host?: MobileConnectHostBinding;
   /** Uses an on-device profile and direct Tailscale pairing instead of an account service. */
   localOnly?: boolean;
+}
+
+function decodeAccountServer(value: unknown): AccountServerDirectoryEntry {
+  if (
+    !isDynamicRecord(value) ||
+    !isString(value.hostId) ||
+    !isString(value.name) ||
+    !isString(value.apiUrl) ||
+    !isTailscaleApiUrl(value.apiUrl) ||
+    !isString(value.fingerprint) ||
+    !isString(value.publicKey) ||
+    remoteHostFingerprint(value.publicKey) !== value.fingerprint ||
+    !(value.logoKey === null || isString(value.logoKey)) ||
+    !isString(value.membershipId) ||
+    (value.role !== "owner" && value.role !== "admin" && value.role !== "member") ||
+    typeof value.isOwner !== "boolean"
+  ) {
+    throw new Error("The account service returned an invalid server list.");
+  }
+  return {
+    hostId: value.hostId,
+    name: value.name,
+    apiUrl: value.apiUrl,
+    fingerprint: value.fingerprint,
+    publicKey: value.publicKey,
+    logoKey: value.logoKey,
+    membershipId: value.membershipId,
+    role: value.role,
+    isOwner: value.isOwner,
+  };
+}
+
+function decodeAccountServerList(value: unknown): AccountServerDirectoryEntry[] {
+  if (!isDynamicRecord(value) || !Array.isArray(value.servers)) {
+    throw new Error("The account service returned an invalid server list.");
+  }
+  return value.servers.map(decodeAccountServer);
+}
+
+function accountServerRegistrationForHost(host: LocalTailnetServer): AccountServerRegistration {
+  return {
+    hostId: host.hostId,
+    name: host.name,
+    apiUrl: host.apiUrl,
+    fingerprint: host.fingerprint,
+    publicKey: host.publicKey,
+    logoKey: host.logoKey,
+    membershipId: host.membershipId,
+    role: host.role,
+  };
+}
+
+async function accountServerRequest(
+  session: MobileSession,
+  method: "GET" | "PUT" | "DELETE",
+  host?: AccountServerRegistration,
+  hostId?: string,
+  flushPending = true,
+): Promise<AccountServerDirectoryEntry[]> {
+  if (!session.localOnly || !session.sessionToken) {
+    throw new Error("Sign in to the self-hosted account server to sync the server list.");
+  }
+  if (flushPending && method === "GET") await flushPendingAccountServerChanges(session).catch(() => undefined);
+  const path = host
+    ? "/v1/me/servers"
+    : method === "DELETE"
+      ? `/v1/me/servers/${encodeURIComponent(hostId ?? "")}`
+      : "/v1/me/servers";
+  const { response, body } = await withMobileAuthRequestTimeout(async (signal) => {
+    const request = await fetch(new URL(path, session.apiUrl).toString(), {
+      method,
+      headers: {
+        Authorization: `Bearer ${session.sessionToken}`,
+        ...(method === "PUT" ? { "Content-Type": "application/json" } : {}),
+      },
+      body: method === "PUT" && host ? JSON.stringify(host) : undefined,
+      signal,
+    });
+    return { response: request, body: await readResponseBody(request, signal) };
+  });
+  await checkMobileAuthorization(response, session);
+  if (response.status === 204 && method === "DELETE") return [];
+  if (!response.ok) throw new Error(apiErrorMessage(body) ?? "The account server list could not be synchronized.");
+  return decodeAccountServerList(body);
+}
+
+export function listAccountServers(session: MobileSession): Promise<AccountServerDirectoryEntry[]> {
+  return accountServerRequest(session, "GET");
+}
+
+export function registerAccountServer(
+  session: MobileSession,
+  host: AccountServerRegistration,
+): Promise<AccountServerDirectoryEntry[]> {
+  return enqueueAccountServerChange(session, { id: Crypto.randomUUID(), kind: "register", server: host }).then(
+    async () => {
+      await flushPendingAccountServerChanges(session);
+      return accountServerRequest(session, "GET");
+    },
+  );
+}
+
+export function removeAccountServer(session: MobileSession, hostId: string): Promise<void> {
+  return enqueueAccountServerChange(session, { id: Crypto.randomUUID(), kind: "remove", hostId }).then(async () => {
+    await flushPendingAccountServerChanges(session);
+  });
+}
+
+async function enqueueAccountServerChange(session: MobileSession, change: PendingAccountServerChange): Promise<void> {
+  const key = `${ACCOUNT_SERVER_CHANGES_KEY}.${serverOrderKey(session.apiUrl, session.user.id)}`;
+  await serializeMobileSessionStorage(async () => {
+    const existing = await SecureStore.getItemAsync(key);
+    let pending: PendingAccountServerChange[] = [];
+    if (existing) {
+      try {
+        const decoded = JSON.parse(existing);
+        if (Array.isArray(decoded)) {
+          pending = decoded
+            .map(decodePendingAccountServerChange)
+            .filter((entry): entry is PendingAccountServerChange => entry !== null);
+        }
+      } catch {
+        pending = [];
+      }
+    }
+    const hostId = change.kind === "register" ? change.server.hostId : change.hostId;
+    const next = [
+      ...pending.filter((entry) => (entry.kind === "register" ? entry.server.hostId : entry.hostId) !== hostId),
+      change,
+    ];
+    await SecureStore.setItemAsync(key, JSON.stringify(next), {
+      keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+    });
+  });
+}
+
+async function flushPendingAccountServerChanges(session: MobileSession): Promise<void> {
+  const key = `${ACCOUNT_SERVER_CHANGES_KEY}.${serverOrderKey(session.apiUrl, session.user.id)}`;
+  for (;;) {
+    const change = await serializeMobileSessionStorage(async () => {
+      const stored = await SecureStore.getItemAsync(key);
+      if (!stored) return null;
+      try {
+        const decoded = JSON.parse(stored);
+        return Array.isArray(decoded) ? decodePendingAccountServerChange(decoded[0]) : null;
+      } catch {
+        return null;
+      }
+    });
+    if (!change) return;
+    if (change.kind === "register") {
+      await accountServerRequest(session, "PUT", change.server, undefined, false);
+    } else {
+      await accountServerRequest(session, "DELETE", undefined, change.hostId, false);
+    }
+    await serializeMobileSessionStorage(async () => {
+      const stored = await SecureStore.getItemAsync(key);
+      if (!stored) return;
+      try {
+        const decoded = JSON.parse(stored);
+        if (!Array.isArray(decoded)) return;
+        const remaining = decoded.filter((entry) => !isDynamicRecord(entry) || entry.id !== change.id);
+        if (remaining.length === 0) {
+          await SecureStore.deleteItemAsync(key);
+        } else {
+          await SecureStore.setItemAsync(key, JSON.stringify(remaining), {
+            keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+          });
+        }
+      } catch {
+        // Keep the saved queue intact if it cannot be decoded or rewritten.
+      }
+    });
+  }
 }
 
 type MobileCredential = Pick<MobileSession, "apiUrl" | "sessionToken">;
@@ -128,6 +340,8 @@ async function redeemMobileConnectSession(value: string): Promise<MobileSession>
       throw new Error("The Mobile Connect QR code contains a different Team server.");
     }
     await saveLocalTailnetServer(host);
+    // Sync only verified host metadata. The Team session token remains in this device's secure store.
+    await registerAccountServer(session, accountServerRegistrationForHost(host)).catch(() => undefined);
   }
   await saveMobileSession(session);
   return session;

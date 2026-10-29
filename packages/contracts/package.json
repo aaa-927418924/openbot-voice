@@ -9,6 +9,7 @@
     "./app-language": "./src/app-language.ts",
     "./app-logo-color": "./src/app-logo-color.ts",
     "./agent-template-links": "./src/agent-template-links.ts",
+    "./account-server-directory": "./src/account-server-directory.ts",
     "./attachment-files": "./src/attachment-files.ts",
     "./attachment-references": "./src/attachment-references.ts",
     "./avatar-images": "./src/avatar-images.ts",

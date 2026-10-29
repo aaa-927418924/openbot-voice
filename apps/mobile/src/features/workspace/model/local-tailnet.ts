@@ -1,3 +1,4 @@
+import type { AccountServerRegistration } from "@openbot/contracts/account-server-directory";
 import {
   createMemberDeviceLinkUrl,
   type InviteLinkPayload,
@@ -46,6 +47,20 @@ export interface LocalTailnetServer {
   sessionToken: string;
   membershipId: string;
   role: "owner" | "admin" | "member";
+}
+
+/** Strip the device-only Team session token before syncing host metadata to the account service. */
+export function accountServerRegistration(server: LocalTailnetServer): AccountServerRegistration {
+  return {
+    hostId: server.hostId,
+    name: server.name,
+    apiUrl: server.apiUrl,
+    fingerprint: server.fingerprint,
+    publicKey: server.publicKey,
+    logoKey: server.logoKey,
+    membershipId: server.membershipId,
+    role: server.role,
+  };
 }
 
 export type TailnetFetch = (input: string | URL, init?: RequestInit) => Promise<Response>;

@@ -78,6 +78,7 @@ import {
 import { Alert, View } from "react-native";
 import { mobileAnalytics } from "@/features/analytics/mobile-analytics";
 import { trackWorkspaceActions } from "@/features/analytics/workspace-actions";
+import { listAccountServers, registerAccountServer, removeAccountServer } from "@/features/auth/api/mobile-auth";
 import { useMobileSession } from "@/features/auth/context/mobile-session-context";
 import { MobileChannelStore } from "@/features/channels/model/channel-store";
 import { useLiveActivity } from "@/features/live-activity/use-live-activity";
@@ -115,6 +116,7 @@ import { conversationMessageId, decodeConversationPage } from "@/features/worksp
 import { MobileConversationStore } from "@/features/workspace/model/conversation-store";
 import { LiveWorkspaceStore } from "@/features/workspace/model/live-workspace-store";
 import {
+  accountServerRegistration,
   createTailnetMemberDeviceLinkUrl,
   decodeTailnetMemberDeviceLink,
   isTailnetMemberDeviceLink,
@@ -382,16 +384,74 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
           const localHosts = () =>
             Effect.tryPromise({
               try: async () => {
-                const hosts = await readLocalTailnetServers();
-                localTailnetHosts.current = new Map(hosts.map((host) => [host.hostId, host]));
-                return hosts.map((host) => ({
-                  hostId: host.hostId,
-                  name: host.name,
-                  logoKey: host.logoKey,
-                  devicePublicKey: host.publicKey,
-                  membershipId: host.membershipId,
-                  role: host.role,
-                }));
+                const deviceHosts = await readLocalTailnetServers();
+                if (!session.sessionToken) {
+                  localTailnetHosts.current = new Map(deviceHosts.map((host) => [host.hostId, host]));
+                  return deviceHosts.map((host) => ({
+                    hostId: host.hostId,
+                    name: host.name,
+                    logoKey: host.logoKey,
+                    devicePublicKey: host.publicKey,
+                    membershipId: host.membershipId,
+                    role: host.role,
+                  }));
+                }
+
+                // Seed a signed-in account's directory from existing device pairings once. After
+                // that first successful read the account service is authoritative, so a removed
+                // server does not silently reappear from another device's local cache.
+                const synced = await (async () => {
+                  try {
+                    let accountHosts = await listAccountServers(session);
+                    const seedKey = `openbot.account-server-directory-seeded.v1.${serverOrderKey(session.apiUrl, session.user.id)}`;
+                    if (!(await SecureStore.getItemAsync(seedKey))) {
+                      for (const host of deviceHosts) {
+                        if (accountHosts.some((entry) => entry.hostId === host.hostId)) continue;
+                        await registerAccountServer(session, accountServerRegistration(host));
+                      }
+                      await SecureStore.setItemAsync(seedKey, "1", {
+                        keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+                      });
+                      accountHosts = await listAccountServers(session);
+                    }
+                    return accountHosts;
+                  } catch {
+                    return null;
+                  }
+                })();
+                if (!synced) {
+                  localTailnetHosts.current = new Map(deviceHosts.map((host) => [host.hostId, host]));
+                  return deviceHosts.map((host) => ({
+                    hostId: host.hostId,
+                    name: host.name,
+                    logoKey: host.logoKey,
+                    devicePublicKey: host.publicKey,
+                    membershipId: host.membershipId,
+                    role: host.role,
+                  }));
+                }
+
+                const directoryById = new Map(synced.map((host) => [host.hostId, host]));
+                const pairedById = new Map(
+                  deviceHosts
+                    .filter((host) => {
+                      const shared = directoryById.get(host.hostId);
+                      return shared?.fingerprint === host.fingerprint && shared.publicKey === host.publicKey;
+                    })
+                    .map((host) => [host.hostId, host]),
+                );
+                localTailnetHosts.current = pairedById;
+                return synced.map((host) => {
+                  const local = pairedById.get(host.hostId);
+                  return {
+                    hostId: host.hostId,
+                    name: host.name,
+                    logoKey: host.logoKey,
+                    devicePublicKey: host.publicKey,
+                    membershipId: local?.membershipId ?? host.membershipId,
+                    role: local?.role ?? host.role,
+                  };
+                });
               },
               catch: (error) => new RemoteDirectoryError(500, error instanceof Error ? error.message : String(error)),
             });
@@ -432,7 +492,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
           setServerDirectoryState("ready");
         }),
       ),
-    [directory, installHosts, session.localOnly],
+    [directory, installHosts, session],
   );
   const refreshHosts = useCallback(() => runTeamEffect(directoryRefresh.refresh(true)), [directoryRefresh]);
   const refreshMemberships = useCallback(() => {
@@ -1224,6 +1284,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
         if (!server || (!session.localOnly && server.role === "owner"))
           throw new Error(currentText().t("mobile.workspace.error.leaveOwnServer"));
         if (session.localOnly) {
+          if (session.sessionToken) await removeAccountServer(session, server.id).catch(() => undefined);
           await removeLocalTailnetServer(server.id);
           localTailnetHosts.current.delete(server.id);
         } else {
@@ -1273,8 +1334,14 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
           setServers((current) =>
             current.map((candidate) => (candidate.id === serverId ? { ...candidate, name: serverName } : candidate)),
           );
-          if (session.localOnly && server.tailnet)
+          if (session.localOnly && server.tailnet) {
             await saveLocalTailnetServer({ ...server.tailnet, name: serverName });
+            if (session.sessionToken)
+              await registerAccountServer(
+                session,
+                accountServerRegistration({ ...server.tailnet, name: serverName }),
+              ).catch(() => undefined);
+          }
         }
         // Account-backed memberships refresh their directory metadata after a host identity change.
         if (!session.localOnly) await refreshMemberships().catch(() => undefined);
@@ -1304,6 +1371,8 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
               : {}),
           });
           await saveLocalTailnetServer(host);
+          if (session.sessionToken)
+            await registerAccountServer(session, accountServerRegistration(host)).catch(() => undefined);
           const localHosts = await readLocalTailnetServers();
           directoryGeneration.current += 1;
           directoryRefresh.invalidate();
@@ -1645,11 +1714,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
     orderedServers,
     orderKey,
     installLocalHosts,
-    session.localOnly,
-    session.apiUrl,
-    session.sessionToken,
-    session.user.id,
-    session.user.name,
+    session,
     sessionScope,
     queryClient,
     liveState,
