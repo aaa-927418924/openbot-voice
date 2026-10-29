@@ -84,6 +84,7 @@
     "api:build": "bun run --cwd apps/auth-api build",
     "api:images": "bun run --cwd apps/auth-api images",
     "api:deploy": "bun run --cwd apps/auth-api deploy",
+    "server:cli": "bun scripts/openbot-server.ts",
     "hosting:template": "bun scripts/hosting/build-boat-template.ts",
     "hosting:setup": "bun scripts/hosting/setup-account-server.ts",
     "api:deploy:test": "bun run --cwd apps/auth-api deploy:test",

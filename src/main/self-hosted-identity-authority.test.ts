@@ -140,6 +140,7 @@ describe("SelfHostedIdentityAuthority", () => {
     expect(account).toEqual({
       id: profile.id,
       username: "main.owner",
+      email: "",
       name: profile.name,
       avatarUrl: profile.avatarUrl,
     });
@@ -157,6 +158,37 @@ describe("SelfHostedIdentityAuthority", () => {
     const stored = JSON.parse(await readFile(path, "utf8"));
     expect(stored.accounts[0]).toMatchObject({ id: profile.id, name: profile.name, avatarUrl: profile.avatarUrl });
     expect(JSON.stringify(stored)).not.toContain(password);
+  });
+
+  it("adds email login without changing the local account ID or profile", async () => {
+    const { authority, path } = await newAuthority();
+    const original = await runEffect(authority.ensureLocalAccount(profile));
+    const configured = await runEffect(
+      authority.configureLoginCredentials({ email: "Owner@OpenBot.test", password: "central-password-123" }),
+    );
+    const session = await runEffect(
+      authority.signIn({
+        username: "OWNER@openbot.test",
+        password: "central-password-123",
+        deviceId: "main-pc-id",
+        deviceName: "Main PC",
+        platform: "unknown",
+      }),
+    );
+
+    expect(configured).toMatchObject({
+      id: original.id,
+      name: original.name,
+      avatarUrl: original.avatarUrl,
+      email: "owner@openbot.test",
+    });
+    expect(session.account.id).toBe(original.id);
+    expect(await runEffect(authority.listActiveDeviceSessions())).toMatchObject([
+      { deviceName: "Main PC", platform: "unknown" },
+    ]);
+    const stored = await readFile(path, "utf8");
+    expect(stored).toContain("owner@openbot.test");
+    expect(stored).not.toContain("central-password-123");
   });
 
   it("stores only a session token hash and revokes the session", async () => {

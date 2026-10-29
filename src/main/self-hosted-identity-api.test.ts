@@ -3,9 +3,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import type { Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { isDynamicRecord } from "@openbot/contracts/runtime-values";
 import { Effect } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
-import { z } from "zod";
 import { SelfHostedIdentityApiServer, selfHostedTeamProfile } from "./self-hosted-identity-api";
 import { SelfHostedIdentityAuthority } from "./self-hosted-identity-authority";
 
@@ -16,12 +16,6 @@ const profile = {
   name: "Linux owner",
   avatarUrl: `data:image/png;base64,${avatarBytes.toString("base64")}`,
 };
-const redeemedSessionSchema = z.object({
-  sessionToken: z.string(),
-  user: z.object({ id: z.string(), email: z.string() }),
-  localOnly: z.boolean(),
-});
-
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
@@ -33,6 +27,9 @@ describe("SelfHostedIdentityApiServer", () => {
     const authority = new SelfHostedIdentityAuthority({ path: join(root, "identity.json") });
     await Effect.runPromise(authority.initialize());
     const account = await Effect.runPromise(authority.ensureLocalAccount(profile));
+    await Effect.runPromise(
+      authority.configureLoginCredentials({ email: "Owner@OpenBot.test", password: "central-password-123" }),
+    );
     const pair = await Effect.runPromise(
       authority.issueMobileConnectTicket({
         accountId: account.id,
@@ -73,15 +70,23 @@ describe("SelfHostedIdentityApiServer", () => {
         }),
       });
       expect(redeem.status).toBe(200);
-      const sessionBody = redeemedSessionSchema.parse(await redeem.json());
-      expect(sessionBody).toMatchObject({
-        sessionToken: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/u),
-        user: { id: account.id, email: "" },
-        localOnly: true,
-      });
+      const sessionBody = await redeem.json();
+      if (
+        !isDynamicRecord(sessionBody) ||
+        typeof sessionBody.sessionToken !== "string" ||
+        !isDynamicRecord(sessionBody.user) ||
+        typeof sessionBody.user.id !== "string" ||
+        typeof sessionBody.user.email !== "string"
+      ) {
+        throw new Error("The login response has an invalid shape.");
+      }
+      const sessionToken = sessionBody.sessionToken;
+      expect(sessionToken).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+      expect(sessionBody.user).toMatchObject({ id: account.id, email: "owner@openbot.test" });
+      expect(sessionBody.localOnly).toBe(true);
       expect(
         selfHostedTeamProfile(
-          { id: account.id, email: "", name: account.name, avatarUrl: account.avatarUrl },
+          { id: account.id, email: account.email, name: account.name, avatarUrl: account.avatarUrl },
           "http://100.100.10.2:43124",
         ).avatarUrl,
       ).toBe("http://100.100.10.2:43124/v1/profile/avatar");
@@ -92,7 +97,7 @@ describe("SelfHostedIdentityApiServer", () => {
       const ticketResponse = await fetch(new URL("/v1/team-auth/ticket", apiUrl), {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${sessionBody.sessionToken}`,
+          Authorization: `Bearer ${sessionToken}`,
           "Content-Type": "application/json",
           Connection: "close",
         },
@@ -111,7 +116,38 @@ describe("SelfHostedIdentityApiServer", () => {
         body: JSON.stringify({ name: "Shared name" }),
       });
       expect(profileResponse.status).toBe(200);
-      expect(changed).toEqual([{ id: account.id, email: "", name: "Shared name", avatarUrl: profile.avatarUrl }]);
+      expect(changed).toEqual([
+        { id: account.id, email: "owner@openbot.test", name: "Shared name", avatarUrl: profile.avatarUrl },
+      ]);
+
+      const loginResponse = await fetch(new URL("/v1/auth/login", apiUrl), {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Connection: "close" },
+        body: JSON.stringify({
+          email: "OWNER@openbot.test",
+          password: "central-password-123",
+          deviceId: "desktop-stable-id",
+          deviceName: "Main PC",
+          platform: "unknown",
+        }),
+      });
+      expect(loginResponse.status).toBe(200);
+      const login = await loginResponse.json();
+      expect(login).toMatchObject({ user: { id: account.id, email: "owner@openbot.test" }, localOnly: true });
+      expect(login.sessionToken).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+      expect(await Effect.runPromise(authority.listActiveDeviceSessions())).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ deviceName: "Main PC", platform: "unknown" }),
+          expect.objectContaining({ deviceName: "Pixel 7a", platform: "android" }),
+        ]),
+      );
+
+      const badLogin = await fetch(new URL("/v1/auth/login", apiUrl), {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Connection: "close" },
+        body: JSON.stringify({ email: "owner@openbot.test", password: "not-the-password" }),
+      });
+      expect(badLogin.status).toBe(401);
 
       const replay = await fetch(new URL("/v1/mobile-auth/redeem", apiUrl), {
         method: "POST",

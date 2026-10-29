@@ -19,7 +19,7 @@
 //   - the sender check, the rule that keeps every registration behind it, and the rule that
 //     keeps the wrappers themselves reachable only from the binder.
 //
-// Verification is static because neither side can be imported: src/main/index.ts calls
+// Verification is static because neither side can be imported: src/main/desktop-main.ts calls
 // app.setPath, app.enableSandbox and protocol.registerSchemesAsPrivileged at module scope and
 // does not export its registrations, and src/preload/index.ts calls contextBridge.exposeInMainWorld
 // at module scope and exports nothing. The decoders it imports live beside it in src/preload, so the

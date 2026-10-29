@@ -46,8 +46,16 @@ export interface LocalProfileBootstrap {
 }
 
 export type SelfHostedAccount = Pick<CentralAuthUser, "id" | "name" | "avatarUrl"> & {
+  readonly email: string;
   readonly username: string;
 };
+
+export interface SelfHostedDeviceSession {
+  readonly deviceName: string;
+  readonly platform: "ios" | "android" | "unknown";
+  readonly connectedAt: number;
+  readonly expiresAt: number;
+}
 
 export interface SelfHostedSessionGrant {
   readonly account: SelfHostedAccount;
@@ -65,6 +73,7 @@ export interface SelfHostedTeamTicketGrant {
 interface StoredAccount {
   readonly id: string;
   readonly username: string;
+  readonly email?: string;
   readonly name: string;
   readonly avatarUrl: string | null;
   readonly passwordSalt: string;
@@ -116,6 +125,7 @@ interface AuthorityOptions {
 const storedAccountSchema = Schema.Struct({
   id: Schema.String,
   username: Schema.String,
+  email: Schema.optional(Schema.String),
   name: Schema.String,
   avatarUrl: Schema.NullOr(Schema.String),
   passwordSalt: Schema.String,
@@ -191,7 +201,9 @@ function decodeAccount(value: unknown): StoredAccount {
     throw new Error("The identity authority account is invalid.");
   }
   const avatarUrl = normalizeAvatarUrl(parsed.avatarUrl);
-  return { ...parsed, name: name.name, avatarUrl };
+  const email = parsed.email === undefined ? undefined : normalizeEmail(parsed.email);
+  if (parsed.email !== undefined && !email) throw new Error("The local account email is invalid.");
+  return { ...parsed, ...(email ? { email } : {}), name: name.name, avatarUrl };
 }
 
 function decodeSession(value: unknown): StoredSession {
@@ -253,6 +265,12 @@ function normalizeUsername(value: string): string | null {
   return USERNAME_PATTERN.test(normalized) ? normalized : null;
 }
 
+function normalizeEmail(value: string): string | null {
+  const normalized = value.trim().toLowerCase();
+  if (normalized.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(normalized)) return null;
+  return normalized;
+}
+
 function normalizeAvatarUrl(value: string | null): string | null {
   if (value === null) return null;
   const maxBase64Length = Math.ceil(AVATAR_IMAGE_LIMITS.storedBytes / 3) * 4;
@@ -308,6 +326,7 @@ function publicAccount(account: StoredAccount): SelfHostedAccount {
   return {
     id: account.id,
     username: account.username,
+    email: account.email ?? "",
     name: account.name,
     avatarUrl: account.avatarUrl,
   };
@@ -403,6 +422,55 @@ export class SelfHostedIdentityAuthority {
         return publicAccount(account);
       }),
     );
+  });
+
+  /** Set central email/password login without changing the existing account ID or profile. */
+  readonly configureLoginCredentials = Effect.fn("SelfHostedIdentityAuthority.configureLoginCredentials")(function* (
+    this: SelfHostedIdentityAuthority,
+    input: { readonly email: string; readonly password: string },
+  ): Effect.fn.Return<SelfHostedAccount, SelfHostedIdentityFailure> {
+    return yield* this.#writes.withPermit(
+      Effect.gen({ self: this }, function* () {
+        yield* this.#requireReady();
+        const account = this.#file.accounts[0];
+        const email = isString(input?.email) ? normalizeEmail(input.email) : null;
+        const password = isString(input?.password) ? input.password : "";
+        if (!account) return yield* failure("not_initialized");
+        if (!email || password.length < 12 || password.length > 256) return yield* failure("invalid_input");
+        registerSecretValue(password);
+        const passwordSalt = randomBytes(16).toString("base64url");
+        const passwordHash = (yield* derivePassword(password, passwordSalt)).toString("base64url");
+        const updated: StoredAccount = { ...account, email, passwordSalt, passwordHash };
+        const next = { ...this.#file, accounts: [updated] };
+        yield* this.#persist(next);
+        this.#file = next;
+        return publicAccount(updated);
+      }),
+    );
+  });
+
+  /** Return sanitized, unexpired device sessions for the local administration screen. */
+  readonly listActiveDeviceSessions = Effect.fn("SelfHostedIdentityAuthority.listActiveDeviceSessions")(function* (
+    this: SelfHostedIdentityAuthority,
+  ): Effect.fn.Return<readonly SelfHostedDeviceSession[], SelfHostedIdentityFailure> {
+    yield* this.#requireReady();
+    const now = this.#readNow();
+    return this.#file.sessions
+      .filter(
+        (
+          session,
+        ): session is StoredSession & {
+          readonly deviceName: string;
+          readonly platform: SelfHostedDeviceSession["platform"];
+        } => session.expiresAt > now && typeof session.deviceName === "string" && session.platform !== undefined,
+      )
+      .map((session) => ({
+        deviceName: session.deviceName,
+        platform: session.platform,
+        connectedAt: session.createdAt,
+        expiresAt: session.expiresAt,
+      }))
+      .sort((left, right) => right.connectedAt - left.connectedAt);
   });
 
   /** Read the canonical account from the trusted desktop process. */
@@ -590,6 +658,7 @@ export class SelfHostedIdentityAuthority {
     input: {
       readonly remoteAddress: string;
       readonly username: string;
+      readonly email?: string;
       readonly password: string;
       readonly profile: LocalProfileBootstrap;
     },
@@ -604,6 +673,8 @@ export class SelfHostedIdentityAuthority {
 
         const profile = input?.profile;
         const username = isString(input?.username) ? normalizeUsername(input.username) : null;
+        const email =
+          input?.email === undefined ? undefined : isString(input.email) ? normalizeEmail(input.email) : null;
         const name = isDynamicRecord(profile) && isString(profile.name) ? validateProfileName(profile.name) : null;
         let avatarUrl: string | null = null;
         try {
@@ -616,6 +687,7 @@ export class SelfHostedIdentityAuthority {
         }
         if (
           !username ||
+          (input?.email !== undefined && !email) ||
           !isDynamicRecord(profile) ||
           !isString(profile.id) ||
           !validAccountId(profile.id) ||
@@ -635,6 +707,7 @@ export class SelfHostedIdentityAuthority {
         const account: StoredAccount = {
           id: profile.id,
           username,
+          ...(email ? { email } : {}),
           name: name.name,
           avatarUrl,
           passwordSalt,
@@ -652,7 +725,13 @@ export class SelfHostedIdentityAuthority {
   /** Sign in with the canonical username and password and create an opaque bearer session. */
   readonly signIn = Effect.fn("SelfHostedIdentityAuthority.signIn")(function* (
     this: SelfHostedIdentityAuthority,
-    input: { readonly username: string; readonly password: string },
+    input: {
+      readonly username: string;
+      readonly password: string;
+      readonly deviceId?: string;
+      readonly deviceName?: string;
+      readonly platform?: "ios" | "android" | "unknown";
+    },
   ): Effect.fn.Return<SelfHostedSessionGrant, SelfHostedIdentityFailure> {
     return yield* this.#writes.withPermit(
       Effect.gen({ self: this }, function* () {
@@ -661,12 +740,27 @@ export class SelfHostedIdentityAuthority {
         if (password.length > 256) return yield* failure("invalid_credentials");
         registerSecretValue(password);
         const account = this.#file.accounts[0];
+        const emailMatches = account?.email && normalizeEmail(input?.username ?? "") === account.email;
+        const hasDeviceMetadata =
+          input?.deviceId !== undefined || input?.deviceName !== undefined || input?.platform !== undefined;
+        if (
+          hasDeviceMetadata &&
+          (!isString(input.deviceId) ||
+            input.deviceId.length < 1 ||
+            input.deviceId.length > 128 ||
+            !isString(input.deviceName) ||
+            input.deviceName.trim().length < 1 ||
+            input.deviceName.length > 80 ||
+            !["ios", "android", "unknown"].includes(input.platform ?? ""))
+        ) {
+          return yield* failure("invalid_input");
+        }
         const salt = account?.passwordSalt ?? randomBytes(16).toString("base64url");
         const candidate = yield* derivePassword(password, salt);
         if (
           !account ||
           !isString(input?.username) ||
-          normalizeUsername(input.username) !== account.username ||
+          (normalizeUsername(input.username) !== account.username && !emailMatches) ||
           password.length < 12 ||
           !safePasswordEqual(candidate, account.passwordHash)
         ) {
@@ -684,6 +778,9 @@ export class SelfHostedIdentityAuthority {
           tokenHash: hashOpaqueToken(token),
           createdAt: now,
           expiresAt: now + SESSION_TTL_MS,
+          ...(hasDeviceMetadata
+            ? { deviceId: input.deviceId, deviceName: input.deviceName?.trim(), platform: input.platform }
+            : {}),
         };
         const next = { ...pruned, sessions: [...pruned.sessions, session] };
         yield* this.#persist(next);

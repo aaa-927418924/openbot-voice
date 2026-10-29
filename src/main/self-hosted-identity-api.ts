@@ -15,6 +15,8 @@ type SelfHostedAccountUser = CentralAuthUser;
 type TailnetListener = (server: Server, port: number) => Promise<TailnetBinding>;
 
 interface IdentityRequestBody {
+  email?: unknown;
+  password?: unknown;
   ticket?: unknown;
   hostId?: unknown;
   fingerprint?: unknown;
@@ -33,7 +35,7 @@ export interface SelfHostedIdentityApiOptions {
 }
 
 function asCentralAuthUser(account: SelfHostedAccount): SelfHostedAccountUser {
-  return { id: account.id, email: "", name: account.name, avatarUrl: account.avatarUrl };
+  return { id: account.id, email: account.email, name: account.name, avatarUrl: account.avatarUrl };
 }
 
 /** Team records store a short URL; the identity API serves validated avatar bytes over Tailscale. */
@@ -98,6 +100,8 @@ async function readJson(request: IncomingMessage): Promise<IdentityRequestBody> 
   }
   if (!isDynamicRecord(value)) throw new ApiError(400, "invalid_request");
   return {
+    email: value.email,
+    password: value.password,
     ticket: value.ticket,
     hostId: value.hostId,
     fingerprint: value.fingerprint,
@@ -139,6 +143,7 @@ function failureStatus(code: string): 400 | 401 | 409 | 429 | 503 {
   switch (code) {
     case "invalid_session":
     case "invalid_ticket":
+    case "invalid_credentials":
       return 401;
     case "invalid_input":
       return 400;
@@ -157,6 +162,7 @@ export class SelfHostedIdentityApiServer {
   readonly #listen: TailnetListener;
   readonly #onProfileChanged: (user: SelfHostedAccountUser) => Promise<void>;
   readonly #requests = new Map<string, number[]>();
+  readonly #authenticationRequests = new Map<string, number[]>();
   #server: Server | null = null;
   #apiUrl: string | null = null;
   #starting: Promise<string> | null = null;
@@ -201,6 +207,7 @@ export class SelfHostedIdentityApiServer {
     this.#server = null;
     this.#apiUrl = null;
     this.#requests.clear();
+    this.#authenticationRequests.clear();
     if (!server) return;
     await new Promise<void>((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()));
@@ -221,6 +228,20 @@ export class SelfHostedIdentityApiServer {
     }
   }
 
+  #rateLimitAuthentication(request: IncomingMessage): void {
+    const address = request.socket.remoteAddress ?? "unknown";
+    const now = Date.now();
+    const recent = (this.#authenticationRequests.get(address) ?? []).filter((time) => now - time < RATE_WINDOW_MS);
+    if (recent.length >= 5) throw new ApiError(429, "rate_limited");
+    recent.push(now);
+    this.#authenticationRequests.set(address, recent);
+    if (this.#authenticationRequests.size > 512) {
+      for (const [key, entries] of this.#authenticationRequests) {
+        if (entries.every((time) => now - time >= RATE_WINDOW_MS)) this.#authenticationRequests.delete(key);
+      }
+    }
+  }
+
   async #handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
     try {
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
@@ -228,6 +249,27 @@ export class SelfHostedIdentityApiServer {
       this.#rateLimit(request);
 
       if (method === "GET" && url.pathname === "/health/live") return json(response, 200, { ok: true });
+
+      if (method === "POST" && url.pathname === "/v1/auth/login") {
+        this.#rateLimitAuthentication(request);
+        const body = await readJson(request);
+        const platform = body.platform === undefined ? undefined : decodePlatform(body.platform);
+        const grant = await Effect.runPromise(
+          this.#authority.signIn({
+            username: stringField(body, "email", 254).toLowerCase(),
+            password: stringField(body, "password", 256),
+            ...(body.deviceId === undefined ? {} : { deviceId: stringField(body, "deviceId", 128) }),
+            ...(body.deviceName === undefined ? {} : { deviceName: stringField(body, "deviceName", 80) }),
+            ...(platform === undefined ? {} : { platform }),
+          }),
+        );
+        return json(response, 200, {
+          sessionToken: grant.token,
+          user: asCentralAuthUser(grant.account),
+          localOnly: true,
+          expiresAt: grant.expiresAt,
+        });
+      }
 
       if (method === "GET" && url.pathname === "/v1/profile/avatar") {
         const avatarUrl = this.#authority.getLocalAccount()?.avatarUrl ?? null;

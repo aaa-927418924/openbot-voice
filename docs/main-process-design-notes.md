@@ -25,10 +25,12 @@ trusted wrapper names to that file too: the wrappers accept string channels, so 
 create an endpoint outside the declared groups. Direct `IPC_ENDPOINTS.group.name` references keep
 renderer sends visible to the same coverage checks.
 
-`index.ts` calls `app.setPath`, `app.enableSandbox` and
-`protocol.registerSchemesAsPrivileged` at module scope. Tests that import it need an Electron mock.
-Source coverage tests read the file instead. A service without an Electron dependency can use
-ordinary unit tests; an unnecessary import would force it into the Electron mock setup.
+`index.ts` is a small entrypoint. It starts the Linux server tray without loading the normal desktop
+modules, or imports `desktop-main.ts` for the normal app. `desktop-main.ts` calls `app.setPath`,
+`app.enableSandbox` and `protocol.registerSchemesAsPrivileged` at module scope. Tests that import it
+need an Electron mock. Source coverage tests read the file instead. A service without an Electron
+dependency can use ordinary unit tests; an unnecessary import would force it into the Electron mock
+setup.
 
 ## Test harnesses
 
