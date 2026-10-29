@@ -17,12 +17,18 @@ export function buildContentSecurityPolicy(
     ...new Set(tailnetViewerUrls.filter(isTailscaleApiUrl).map((value) => new URL(value).origin)),
   ].sort();
   const tailnetViewerSourceList = tailnetViewerSources.map((origin) => ` ${origin}`).join("");
+  // The self-hosted identity API uses a separate Tailnet port from the Team API. Permit profile
+  // images from the exact enrolled Tailnet host, while keeping arbitrary HTTP images blocked.
+  const tailnetImageSources = [
+    ...new Set(tailnetViewerUrls.filter(isTailscaleApiUrl).map((value) => `http://${new URL(value).hostname}:*`)),
+  ].sort();
+  const tailnetImageSourceList = tailnetImageSources.map((source) => ` ${source}`).join("");
 
   return [
     "default-src 'self'",
     "script-src 'self'",
     "style-src 'self' 'unsafe-inline'",
-    `img-src 'self' data: openbot-attachment: openbot-remote-attachment: openbot-avatar: openbot-remote-avatar: openbot-server-logo: openbot-remote-server-logo: https:${developmentImageSources}`,
+    `img-src 'self' data: openbot-attachment: openbot-remote-attachment: openbot-avatar: openbot-remote-avatar: openbot-server-logo: openbot-remote-server-logo: https:${developmentImageSources}${tailnetImageSourceList}`,
     "font-src 'self' data:",
     // The lightbox plays a recording from the attachment scheme, and the preview panel plays one
     // from an object URL of the bytes that the main process sent. Neither matches `default-src`.

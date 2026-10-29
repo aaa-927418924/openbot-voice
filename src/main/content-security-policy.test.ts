@@ -30,6 +30,10 @@ describe("buildContentSecurityPolicy", () => {
     expect(frame).toBe(
       "frame-src 'self' openbot-attachment: openbot-remote-attachment: https://*.openbot.run http://127.0.0.1:* http://localhost:* http://100.100.135.107:43123",
     );
+    const image = policy.split("; ").find((directive) => directive.startsWith("img-src "));
+    expect(image).toContain("http://100.100.135.107:*");
+    expect(image).not.toContain("http://100.63.1.2:*");
+    expect(image).not.toContain("http://192.168.1.2:*");
   });
 
   it("lets the renderer play an attachment recording, but only from the attachment schemes", () => {

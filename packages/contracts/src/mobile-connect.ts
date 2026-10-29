@@ -1,3 +1,5 @@
+import { isTailscaleApiUrl } from "./invite-links";
+
 const MOBILE_CONNECT_PROTOCOL = "openbot:";
 const MOBILE_CONNECT_HOST = "mobile-connect";
 
@@ -104,7 +106,11 @@ function normalizeMobileConnectApiUrl(value: string): string | null {
   try {
     const url = new URL(value);
     if (
-      (url.protocol !== "https:" && !(url.protocol === "http:" && isMobileConnectDevelopmentHost(url.hostname))) ||
+      (url.protocol !== "https:" &&
+        !(
+          url.protocol === "http:" &&
+          (isMobileConnectDevelopmentHost(url.hostname) || isTailscaleApiUrl(url.toString()))
+        )) ||
       url.pathname !== "/" ||
       url.search !== "" ||
       url.hash !== ""

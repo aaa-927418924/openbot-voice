@@ -445,7 +445,10 @@ function registerIpcHandlers({
   remoteServers,
   centralAuth,
   localProfile,
+  selfHostedIdentityAuthority,
+  selfHostedIdentityApi,
   localOnlyNetworking,
+  teamStore,
   skills,
   hostedSites,
   githubConnector,
@@ -502,7 +505,15 @@ function registerIpcHandlers({
     ...providerIpcHandlers({ service, providerRuntimes, credentials: providerCredentials }),
     ...voiceIpcHandlers(),
     ...liveVoiceIpcHandlers({ service, getMainWindow, channelActor: () => host.channelActor(), remoteServers }),
-    ...accountIpcHandlers({ centralAuth, host, localProfile: localOnlyNetworking ? localProfile : undefined }),
+    ...accountIpcHandlers({
+      centralAuth,
+      host,
+      localProfile: localOnlyNetworking ? localProfile : undefined,
+      selfHostedIdentity:
+        selfHostedIdentityAuthority && selfHostedIdentityApi
+          ? { authority: selfHostedIdentityAuthority, api: selfHostedIdentityApi, teamStore }
+          : undefined,
+    }),
     ...skillIpcHandlers({ skills, getMainWindow, translate: language.translate }),
     ...hostedSiteIpcHandlers({ hostedSites, remoteServers, getMainWindow, translate: language.translate }),
     ...githubConnectorIpcHandlers({ githubConnector }),
@@ -881,6 +892,11 @@ if (!hasSingleInstanceLock) {
         prepareForUpdateInstall,
       });
       services = built;
+      if (built.selfHostedIdentityAuthority) {
+        built.localProfile.on("changed", (state) => {
+          sendToRenderer(windows.getMainWindow(), IPC_ENDPOINTS.auth.event, state);
+        });
+      }
       performance.mark("openbot:services-built");
       // `forwardCentralAuth` reaches the host, the remote servers and analytics only through
       // `services`, so every account change announced during construction was dropped.

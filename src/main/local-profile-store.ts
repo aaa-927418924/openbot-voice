@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { EventEmitter } from "node:events";
 import { isAvatarMimeType, isValidAvatarImage } from "@openbot/contracts/avatar-images";
 import type { AvatarImageInput, CentralAuthState, CentralAuthUser } from "@openbot/contracts/ipc";
 import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
@@ -17,6 +18,10 @@ interface LocalProfileRecord {
   id: string;
   name: string;
   avatar: LocalAvatar | null;
+}
+
+interface LocalProfileEvents {
+  changed: [state: CentralAuthState];
 }
 
 function decodeProfile(value: unknown): LocalProfileRecord {
@@ -43,13 +48,14 @@ function decodeProfile(value: unknown): LocalProfileRecord {
 }
 
 /** A profile stored on this device. It has no email address or remote account session. */
-export class LocalProfileStore {
+export class LocalProfileStore extends EventEmitter<LocalProfileEvents> {
   readonly #path: string;
   readonly #writes = Semaphore.makeUnsafe(1);
   #record: LocalProfileRecord = { version: 1, id: randomUUID(), name: "OpenBot", avatar: null };
   #loadFailure: PreferenceFileFailure | null = null;
 
   constructor(path: string) {
+    super();
     this.#path = path;
   }
 
@@ -93,7 +99,9 @@ export class LocalProfileStore {
     const next = { ...this.#record, name: validation.name };
     yield* this.#persist(next);
     this.#record = next;
-    return this.getState();
+    const state = this.getState();
+    this.emit("changed", state);
+    return state;
   });
 
   readonly updateAvatar = Effect.fn("LocalProfileStore.updateAvatar")(function* (
@@ -106,7 +114,43 @@ export class LocalProfileStore {
     };
     yield* this.#persist(next);
     this.#record = next;
-    return this.getState();
+    const state = this.getState();
+    this.emit("changed", state);
+    return state;
+  });
+
+  /** Adopt the canonical account profile while retaining this host's separate local files. */
+  readonly synchronizeSharedProfile = Effect.fn("LocalProfileStore.synchronizeSharedProfile")(function* (
+    this: LocalProfileStore,
+    user: Pick<CentralAuthUser, "id" | "name" | "avatarUrl">,
+  ): Effect.fn.Return<CentralAuthState, PreferenceFileFailure> {
+    if (!user.id || user.id.length > 128) throw new Error("The shared OpenBot account ID is invalid.");
+    const name = validateProfileName(user.name ?? "");
+    if (name.error) throw new Error("The shared OpenBot profile name is invalid.");
+    let avatar: LocalAvatar | null = null;
+    if (user.avatarUrl !== null) {
+      const match = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/]+={0,2})$/u.exec(user.avatarUrl);
+      const mimeType = match?.[1];
+      const data = match?.[2];
+      if (!mimeType || !data) throw new Error("The shared OpenBot profile image is invalid.");
+      const bytes = Buffer.from(data, "base64");
+      if (!isAvatarMimeType(mimeType) || !isValidAvatarImage(mimeType, bytes))
+        throw new Error("The shared OpenBot profile image is invalid.");
+      avatar = { mimeType, data: bytes.toString("base64") };
+    }
+    const next: LocalProfileRecord = { version: 1, id: user.id, name: name.name, avatar };
+    if (
+      next.id === this.#record.id &&
+      next.name === this.#record.name &&
+      next.avatar?.data === this.#record.avatar?.data &&
+      next.avatar?.mimeType === this.#record.avatar?.mimeType
+    )
+      return this.getState();
+    yield* this.#persist(next);
+    this.#record = next;
+    const state = this.getState();
+    this.emit("changed", state);
+    return state;
   });
 
   #persist(record: LocalProfileRecord): Effect.Effect<void, PreferenceFileFailure> {

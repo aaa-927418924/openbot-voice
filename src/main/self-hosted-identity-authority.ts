@@ -78,6 +78,9 @@ interface StoredSession {
   readonly tokenHash: string;
   readonly createdAt: number;
   readonly expiresAt: number;
+  readonly deviceId?: string;
+  readonly deviceName?: string;
+  readonly platform?: "ios" | "android" | "unknown";
 }
 
 interface StoredTeamTicket {
@@ -88,11 +91,21 @@ interface StoredTeamTicket {
   readonly expiresAt: number;
 }
 
+interface StoredPairingTicket {
+  readonly tokenHash: string;
+  readonly accountId: string;
+  readonly hostId: string;
+  readonly fingerprint: string;
+  readonly createdAt: number;
+  readonly expiresAt: number;
+}
+
 interface IdentityFile {
   readonly version: 1;
   readonly accounts: readonly StoredAccount[];
   readonly sessions: readonly StoredSession[];
   readonly teamTickets: readonly StoredTeamTicket[];
+  readonly pairingTickets: readonly StoredPairingTicket[];
 }
 
 interface AuthorityOptions {
@@ -115,11 +128,22 @@ const storedSessionSchema = Schema.Struct({
   tokenHash: Schema.String,
   createdAt: Schema.Number,
   expiresAt: Schema.Number,
+  deviceId: Schema.optional(Schema.String),
+  deviceName: Schema.optional(Schema.String),
+  platform: Schema.optional(Schema.Literals(["ios", "android", "unknown"])),
 });
 const storedTeamTicketSchema = Schema.Struct({
   tokenHash: Schema.String,
   accountId: Schema.String,
   targetTeamServerId: Schema.String,
+  createdAt: Schema.Number,
+  expiresAt: Schema.Number,
+});
+const storedPairingTicketSchema = Schema.Struct({
+  tokenHash: Schema.String,
+  accountId: Schema.String,
+  hostId: Schema.String,
+  fingerprint: Schema.String,
   createdAt: Schema.Number,
   expiresAt: Schema.Number,
 });
@@ -136,15 +160,20 @@ function decodeIdentityFile(value: unknown): IdentityFile {
   const accountIds = new Set(accounts.map((account) => account.id));
   const sessions = value.sessions.map((entry) => decodeSession(entry));
   const teamTickets = value.teamTickets.map((entry) => decodeTeamTicket(entry));
+  const pairingTickets = Array.isArray(value.pairingTickets)
+    ? value.pairingTickets.map((entry) => decodePairingTicket(entry))
+    : [];
   if (
     sessions.length > MAX_SESSIONS ||
     teamTickets.length > MAX_PENDING_TICKETS ||
+    pairingTickets.length > MAX_PENDING_TICKETS ||
     sessions.some((session) => !accountIds.has(session.accountId)) ||
-    teamTickets.some((ticket) => !accountIds.has(ticket.accountId))
+    teamTickets.some((ticket) => !accountIds.has(ticket.accountId)) ||
+    pairingTickets.some((ticket) => !accountIds.has(ticket.accountId))
   ) {
     throw new Error("The identity authority file is invalid.");
   }
-  return { version: 1, accounts, sessions, teamTickets };
+  return { version: 1, accounts, sessions, teamTickets, pairingTickets };
 }
 
 function decodeAccount(value: unknown): StoredAccount {
@@ -175,6 +204,12 @@ function decodeSession(value: unknown): StoredSession {
   ) {
     throw new Error("The identity authority session is invalid.");
   }
+  if (
+    (parsed.deviceId !== undefined && (parsed.deviceId.length === 0 || parsed.deviceId.length > 128)) ||
+    (parsed.deviceName !== undefined && (parsed.deviceName.trim().length === 0 || parsed.deviceName.length > 80))
+  ) {
+    throw new Error("The identity authority device is invalid.");
+  }
   return parsed;
 }
 
@@ -187,6 +222,20 @@ function decodeTeamTicket(value: unknown): StoredTeamTicket {
     !validExpiry(parsed.createdAt, parsed.expiresAt)
   ) {
     throw new Error("The identity authority ticket is invalid.");
+  }
+  return parsed;
+}
+
+function decodePairingTicket(value: unknown): StoredPairingTicket {
+  const parsed = Schema.decodeUnknownSync(storedPairingTicketSchema)(value);
+  if (
+    !/^[A-Za-z0-9_-]{43}$/.test(parsed.tokenHash) ||
+    !validAccountId(parsed.accountId) ||
+    !TEAM_SERVER_ID_PATTERN.test(parsed.hostId) ||
+    !/^[A-Za-z0-9_-]{43}$/.test(parsed.fingerprint) ||
+    !validExpiry(parsed.createdAt, parsed.expiresAt)
+  ) {
+    throw new Error("The identity authority pairing ticket is invalid.");
   }
   return parsed;
 }
@@ -269,7 +318,7 @@ function failure(code: SelfHostedIdentityFailureCode): SelfHostedIdentityFailure
 }
 
 function emptyIdentityFile(): IdentityFile {
-  return { version: 1, accounts: [], sessions: [], teamTickets: [] };
+  return { version: 1, accounts: [], sessions: [], teamTickets: [], pairingTickets: [] };
 }
 
 /**
@@ -313,6 +362,221 @@ export class SelfHostedIdentityAuthority {
         }
         this.#unavailable = true;
         return yield* failure("storage_unavailable");
+      }),
+    );
+  });
+
+  /** Creates the initial shared account from the trusted desktop profile, once. */
+  readonly ensureLocalAccount = Effect.fn("SelfHostedIdentityAuthority.ensureLocalAccount")(function* (
+    this: SelfHostedIdentityAuthority,
+    profile: LocalProfileBootstrap,
+  ): Effect.fn.Return<SelfHostedAccount, SelfHostedIdentityFailure> {
+    return yield* this.#writes.withPermit(
+      Effect.gen({ self: this }, function* () {
+        yield* this.#requireReady();
+        const existing = this.#file.accounts[0];
+        if (existing) return publicAccount(existing);
+        const name = isString(profile.name) ? validateProfileName(profile.name) : null;
+        let avatarUrl: string | null = null;
+        try {
+          avatarUrl = normalizeAvatarUrl(profile.avatarUrl);
+        } catch {
+          return yield* failure("invalid_input");
+        }
+        if (!validAccountId(profile.id) || !name || name.error) return yield* failure("invalid_input");
+        const salt = randomBytes(16).toString("base64url");
+        const generatedPassword = randomBytes(32).toString("base64url");
+        registerSecretValue(generatedPassword);
+        const hash = (yield* derivePassword(generatedPassword, salt)).toString("base64url");
+        const account: StoredAccount = {
+          id: profile.id,
+          username: `local_${randomUUID().replaceAll("-", "").slice(0, 16)}`,
+          name: name.name,
+          avatarUrl,
+          passwordSalt: salt,
+          passwordHash: hash,
+          createdAt: this.#readNow(),
+        };
+        const next = { ...this.#file, accounts: [account] };
+        yield* this.#persist(next);
+        this.#file = next;
+        return publicAccount(account);
+      }),
+    );
+  });
+
+  /** Read the canonical account from the trusted desktop process. */
+  getLocalAccount(): SelfHostedAccount | null {
+    return this.#file.accounts[0] ? publicAccount(this.#file.accounts[0]) : null;
+  }
+
+  /** Synchronize a profile edit made in the trusted Linux desktop settings UI. */
+  readonly updateLocalProfile = Effect.fn("SelfHostedIdentityAuthority.updateLocalProfile")(function* (
+    this: SelfHostedIdentityAuthority,
+    profile: LocalProfileBootstrap,
+  ): Effect.fn.Return<SelfHostedAccount, SelfHostedIdentityFailure> {
+    return yield* this.#writes.withPermit(
+      Effect.gen({ self: this }, function* () {
+        yield* this.#requireReady();
+        const account = this.#file.accounts[0];
+        if (!account || account.id !== profile.id) return yield* failure("invalid_session");
+        const name = validateProfileName(profile.name);
+        let avatarUrl: string | null;
+        try {
+          avatarUrl = normalizeAvatarUrl(profile.avatarUrl);
+        } catch {
+          return yield* failure("invalid_input");
+        }
+        if (name.error) return yield* failure("invalid_input");
+        const updated = { ...account, name: name.name, avatarUrl };
+        const next = { ...this.#file, accounts: [updated] };
+        yield* this.#persist(next);
+        this.#file = next;
+        return publicAccount(updated);
+      }),
+    );
+  });
+
+  /** Issue a Team ticket for this desktop's owner; never exposed over HTTP. */
+  readonly issueOwnerTeamTicket = Effect.fn("SelfHostedIdentityAuthority.issueOwnerTeamTicket")(function* (
+    this: SelfHostedIdentityAuthority,
+    input: { readonly accountId: string; readonly targetTeamServerId: string },
+  ): Effect.fn.Return<SelfHostedTeamTicketGrant, SelfHostedIdentityFailure> {
+    return yield* this.#writes.withPermit(
+      Effect.gen({ self: this }, function* () {
+        yield* this.#requireReady();
+        const account = this.#file.accounts.find((candidate) => candidate.id === input.accountId);
+        if (!account) return yield* failure("invalid_session");
+        const grant = yield* this.#createTeamTicket(account, input.targetTeamServerId);
+        return grant;
+      }),
+    );
+  });
+
+  /** A QR pairing ticket can only create a session for the host displayed in that QR. */
+  readonly issueMobileConnectTicket = Effect.fn("SelfHostedIdentityAuthority.issueMobileConnectTicket")(function* (
+    this: SelfHostedIdentityAuthority,
+    input: { readonly accountId: string; readonly hostId: string; readonly fingerprint: string },
+  ): Effect.fn.Return<SelfHostedTeamTicketGrant, SelfHostedIdentityFailure> {
+    return yield* this.#writes.withPermit(
+      Effect.gen({ self: this }, function* () {
+        yield* this.#requireReady();
+        const account = this.#file.accounts.find((candidate) => candidate.id === input.accountId);
+        if (!account || !TEAM_SERVER_ID_PATTERN.test(input.hostId) || !/^[A-Za-z0-9_-]{43}$/.test(input.fingerprint))
+          return yield* failure("invalid_input");
+        const now = this.#readNow();
+        const pruned = this.#pruneExpired(now);
+        if (pruned.pairingTickets.length >= MAX_PENDING_TICKETS) return yield* failure("session_limit");
+        const ticket = randomBytes(32).toString("base64url");
+        registerSecretValue(ticket);
+        const grant = { ticket, expiresAt: now + TEAM_TICKET_TTL_MS };
+        const pairingTicket: StoredPairingTicket = {
+          tokenHash: hashOpaqueToken(ticket),
+          accountId: account.id,
+          hostId: input.hostId,
+          fingerprint: input.fingerprint,
+          createdAt: now,
+          expiresAt: grant.expiresAt,
+        };
+        const next = { ...pruned, pairingTickets: [...pruned.pairingTickets, pairingTicket] };
+        yield* this.#persist(next);
+        this.#file = next;
+        return grant;
+      }),
+    );
+  });
+
+  /** Redeem a pairing grant once and record only the stable device ID and OS-provided device name. */
+  readonly redeemMobileConnectTicket = Effect.fn("SelfHostedIdentityAuthority.redeemMobileConnectTicket")(function* (
+    this: SelfHostedIdentityAuthority,
+    input: {
+      readonly ticket: string;
+      readonly hostId: string;
+      readonly fingerprint: string;
+      readonly deviceId: string;
+      readonly deviceName: string;
+      readonly platform: "ios" | "android" | "unknown";
+    },
+  ): Effect.fn.Return<SelfHostedSessionGrant | null, SelfHostedIdentityFailure> {
+    return yield* this.#writes.withPermit(
+      Effect.gen({ self: this }, function* () {
+        yield* this.#requireReady();
+        if (
+          !TEAM_SERVER_ID_PATTERN.test(input.hostId) ||
+          !/^[A-Za-z0-9_-]{43}$/.test(input.fingerprint) ||
+          !isString(input.deviceId) ||
+          input.deviceId.length < 1 ||
+          input.deviceId.length > 128 ||
+          !isString(input.deviceName) ||
+          input.deviceName.trim().length < 1 ||
+          input.deviceName.length > 80 ||
+          !["ios", "android", "unknown"].includes(input.platform)
+        )
+          return yield* failure("invalid_input");
+        const now = this.#readNow();
+        const pruned = this.#pruneExpired(now);
+        const hash = hashIfOpaqueToken(input.ticket);
+        const matching = hash ? pruned.pairingTickets.find((item) => safeTextEqual(item.tokenHash, hash)) : null;
+        const account =
+          matching?.hostId === input.hostId && matching.fingerprint === input.fingerprint
+            ? pruned.accounts.find((item) => item.id === matching.accountId)
+            : null;
+        if (!matching || !account || matching.expiresAt <= now) {
+          if (matching) {
+            const next = { ...pruned, pairingTickets: pruned.pairingTickets.filter((item) => item !== matching) };
+            yield* this.#persist(next);
+            this.#file = next;
+          }
+          return null;
+        }
+        if (pruned.sessions.length >= MAX_SESSIONS) return yield* failure("session_limit");
+        const token = randomBytes(32).toString("base64url");
+        registerSecretValue(token);
+        const session: StoredSession = {
+          id: randomUUID(),
+          accountId: account.id,
+          tokenHash: hashOpaqueToken(token),
+          createdAt: now,
+          expiresAt: now + SESSION_TTL_MS,
+          deviceId: input.deviceId,
+          deviceName: input.deviceName.trim(),
+          platform: input.platform,
+        };
+        const next = {
+          ...pruned,
+          pairingTickets: pruned.pairingTickets.filter((item) => item !== matching),
+          sessions: [...pruned.sessions, session],
+        };
+        yield* this.#persist(next);
+        this.#file = next;
+        return { account: publicAccount(account), token, expiresAt: session.expiresAt };
+      }),
+    );
+  });
+
+  /** Update the shared display profile using a valid account session. */
+  readonly updateProfile = Effect.fn("SelfHostedIdentityAuthority.updateProfile")(function* (
+    this: SelfHostedIdentityAuthority,
+    input: { readonly sessionToken: string; readonly name?: string; readonly avatarUrl?: string | null },
+  ): Effect.fn.Return<SelfHostedAccount, SelfHostedIdentityFailure> {
+    return yield* this.#writes.withPermit(
+      Effect.gen({ self: this }, function* () {
+        yield* this.#requireReady();
+        const account = this.#findSessionAccount(input.sessionToken, this.#file);
+        if (!account) return yield* failure("invalid_session");
+        const name = input.name === undefined ? validateProfileName(account.name) : validateProfileName(input.name);
+        if (name.error) return yield* failure("invalid_input");
+        let avatarUrl = account.avatarUrl;
+        try {
+          if (input.avatarUrl !== undefined) avatarUrl = normalizeAvatarUrl(input.avatarUrl);
+        } catch {
+          return yield* failure("invalid_input");
+        }
+        const updated = { ...account, name: name.name, avatarUrl };
+        const next = { ...this.#file, accounts: [updated] };
+        yield* this.#persist(next);
+        this.#file = next;
+        return publicAccount(updated);
       }),
     );
   });
@@ -553,10 +817,15 @@ export class SelfHostedIdentityAuthority {
   #pruneExpired(now: number): IdentityFile {
     const sessions = this.#file.sessions.filter((session) => session.expiresAt > now);
     const teamTickets = this.#file.teamTickets.filter((ticket) => ticket.expiresAt > now);
-    if (sessions.length === this.#file.sessions.length && teamTickets.length === this.#file.teamTickets.length) {
+    const pairingTickets = this.#file.pairingTickets.filter((ticket) => ticket.expiresAt > now);
+    if (
+      sessions.length === this.#file.sessions.length &&
+      teamTickets.length === this.#file.teamTickets.length &&
+      pairingTickets.length === this.#file.pairingTickets.length
+    ) {
       return this.#file;
     }
-    return { ...this.#file, sessions, teamTickets };
+    return { ...this.#file, sessions, teamTickets, pairingTickets };
   }
 
   #findSessionAccount(token: string, file: IdentityFile): StoredAccount | null {
@@ -564,6 +833,33 @@ export class SelfHostedIdentityAuthority {
     if (!tokenHash) return null;
     const session = file.sessions.find((candidate) => safeTextEqual(candidate.tokenHash, tokenHash));
     return session ? (file.accounts.find((account) => account.id === session.accountId) ?? null) : null;
+  }
+
+  #createTeamTicket(
+    account: StoredAccount,
+    targetTeamServerId: string,
+  ): Effect.Effect<SelfHostedTeamTicketGrant, SelfHostedIdentityFailure> {
+    if (!isString(targetTeamServerId) || !TEAM_SERVER_ID_PATTERN.test(targetTeamServerId))
+      return Effect.fail(failure("invalid_input"));
+    const now = this.#readNow();
+    const pruned = this.#pruneExpired(now);
+    if (pruned.teamTickets.length >= MAX_PENDING_TICKETS) return Effect.fail(failure("session_limit"));
+    const ticket = randomBytes(32).toString("base64url");
+    registerSecretValue(ticket);
+    const stored: StoredTeamTicket = {
+      tokenHash: hashOpaqueToken(ticket),
+      accountId: account.id,
+      targetTeamServerId,
+      createdAt: now,
+      expiresAt: now + TEAM_TICKET_TTL_MS,
+    };
+    const next = { ...pruned, teamTickets: [...pruned.teamTickets, stored] };
+    return this.#persist(next).pipe(
+      Effect.map(() => {
+        this.#file = next;
+        return { ticket, expiresAt: stored.expiresAt };
+      }),
+    );
   }
 
   #persist(file: IdentityFile): Effect.Effect<void, SelfHostedIdentityFailure> {

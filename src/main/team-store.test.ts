@@ -16,6 +16,77 @@ afterEach(async () => {
 });
 
 describe("TeamStore", () => {
+  it("binds a self-hosted profile to the existing owner without creating a second member or email", async () => {
+    const { store, path } = await createStore();
+    await runCauseEffect(store.configure("Linux host", "owner", "correct horse battery"));
+    const ownerId = store.getOwnerMemberId();
+    const profile = {
+      id: "shared-profile-id",
+      email: "",
+      name: "あああ",
+      avatarUrl: "http://100.100.10.2:43124/v1/profile/avatar",
+    };
+
+    await runCauseEffect(store.syncSelfHostedOwner(profile));
+    const session = await runCauseEffect(store.loginWithAccount(profile));
+
+    expect(store.listMembers()).toHaveLength(1);
+    expect(session.member).toMatchObject({
+      id: ownerId,
+      email: null,
+      name: profile.name,
+      avatarUrl: profile.avatarUrl,
+      role: "owner",
+    });
+    expect(store.authenticate(session.sessionToken)?.id).toBe(ownerId);
+    expect((await readStoredHost(path)).members?.[0]?.accountId).toBe(profile.id);
+  });
+
+  it("migrates a legacy owner account link to the self-hosted account without changing the member ID", async () => {
+    const { store, path } = await createStore();
+    await runCauseEffect(
+      store.configureWithAccount("Linux host", {
+        id: "previous-account-id",
+        email: "owner@example.test",
+        name: "Previous owner name",
+        avatarUrl: null,
+      }),
+    );
+    const ownerId = store.getOwnerMemberId();
+    if (!ownerId) throw new Error("The local owner was not created.");
+    const profile = { id: "shared-profile-id", email: "", name: "Shared profile", avatarUrl: null };
+
+    await runCauseEffect(store.syncSelfHostedOwner(profile));
+    const session = await runCauseEffect(store.loginWithAccount(profile));
+
+    expect(store.listMembers()).toHaveLength(1);
+    expect(session.member).toMatchObject({ id: ownerId, email: null, name: profile.name, role: "owner" });
+    expect(store.authenticate(session.sessionToken)?.id).toBe(ownerId);
+    expect((await readStoredHost(path)).members?.[0]?.accountId).toBe(profile.id);
+  });
+
+  it("reuses the canonical owner membership when a paired device accepts a Team invitation", async () => {
+    const { store, path } = await createStore();
+    await runCauseEffect(store.configure("Linux host", "owner", "correct horse battery"));
+    const ownerId = store.getOwnerMemberId();
+    const profile = { id: "shared-profile-id", email: "", name: "Shared profile", avatarUrl: null };
+    await runCauseEffect(store.syncSelfHostedOwner(profile));
+    const invite = await runCauseEffect(store.createInvite("member"));
+
+    const joined = await runCauseEffect(store.acceptInviteWithAccount(invite.token, profile));
+
+    expect(joined.member).toMatchObject({
+      id: ownerId,
+      email: null,
+      username: expect.stringMatching(/^account-[a-f0-9]{16}$/u),
+      name: profile.name,
+      role: "owner",
+    });
+    expect(store.listMembers()).toHaveLength(1);
+    expect(store.authenticate(joined.sessionToken)?.id).toBe(ownerId);
+    expect((await readStoredHost(path)).members?.[0]?.accountId).toBe(profile.id);
+  });
+
   it("rejects server names above the shared limit", async () => {
     const { store } = await createStore();
 

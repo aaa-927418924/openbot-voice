@@ -6,6 +6,7 @@ import {
   logoutMobileSession,
   type MobileSession,
   MobileSessionExpiredError,
+  readLocalIdentitySession,
   readMobileSession,
   redeemMobileConnectUrl,
   retryMobileSessionRevocations,
@@ -182,6 +183,44 @@ describe("mobile session revocation", () => {
 });
 
 describe("Mobile Connect redemption", () => {
+  it("stores a Tailscale QR login separately and restores its shared profile while the host is offline", async () => {
+    native.storage.clear();
+    native.storage.set("openbot.mobile.device-id.v1", "stable-mobile-device-id");
+    const localUser = { id: "shared-account-id", email: "", name: "Shared profile", avatarUrl: null };
+    const localHost = { hostId: "linux-host", fingerprint: "f".repeat(43) };
+    const localApiUrl = "http://100.100.10.2:43124";
+    const code = createMobileConnectUrl({ apiUrl: localApiUrl, ticket: "p".repeat(43), host: localHost });
+    native.fetch.mockImplementation(async (url, init) => {
+      if (url === new URL("/v1/mobile-auth/redeem", localApiUrl).toString() && init?.method === "POST") {
+        const body = JSON.parse(String(init.body));
+        expect(body).toMatchObject({
+          ticket: "p".repeat(43),
+          hostId: localHost.hostId,
+          fingerprint: localHost.fingerprint,
+          deviceId: "stable-mobile-device-id",
+          platform: "ios",
+        });
+        return Response.json({ sessionToken: "l".repeat(43), user: localUser, host: localHost, localOnly: true });
+      }
+      throw new Error(`Unexpected request: ${String(url)}`);
+    });
+
+    await expect(redeemMobileConnectUrl(code)).resolves.toMatchObject({
+      apiUrl: localApiUrl,
+      localOnly: true,
+      user: localUser,
+    });
+    expect(native.storage.has("openbot.local-identity.session.v1")).toBe(true);
+    expect(native.storage.has(key)).toBe(false);
+
+    native.fetch.mockRejectedValue(new TypeError("Linux host is offline"));
+    await expect(readLocalIdentitySession()).resolves.toMatchObject({
+      apiUrl: localApiUrl,
+      localOnly: true,
+      user: localUser,
+    });
+  });
+
   it("rejects a concurrent redemption from any caller and preserves the first session", async () => {
     native.storage.clear();
     native.storage.set("openbot.mobile.device-id.v1", "existing-device");

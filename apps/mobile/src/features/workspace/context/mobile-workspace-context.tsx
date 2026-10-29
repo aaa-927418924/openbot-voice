@@ -1299,6 +1299,9 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
             randomBytes: (size) => Crypto.getRandomBytes(size),
             displayName: session.user.name,
             existingSessionToken,
+            ...(session.localOnly && session.sessionToken
+              ? { identitySession: { apiUrl: session.apiUrl, sessionToken: session.sessionToken } }
+              : {}),
           });
           await saveLocalTailnetServer(host);
           const localHosts = await readLocalTailnetServers();
@@ -1644,6 +1647,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
     installLocalHosts,
     session.localOnly,
     session.apiUrl,
+    session.sessionToken,
     session.user.id,
     session.user.name,
     sessionScope,

@@ -10,9 +10,12 @@ import {
 } from "react";
 import { mobileAnalytics } from "@/features/analytics/mobile-analytics";
 import {
+  logoutMobileSession,
   type MobileProfileChange,
   type MobileSession,
   MobileSessionExpiredError,
+  readLocalIdentitySession,
+  updateMobileProfile,
 } from "@/features/auth/api/mobile-auth";
 import {
   createEphemeralLocalMobileProfile,
@@ -58,7 +61,8 @@ export function MobileSessionProvider({ children }: PropsWithChildren) {
     let active = true;
     const scope = sessionScope.current;
     mobileAnalytics.setEnabled(false);
-    void readLocalMobileProfile()
+    void readLocalIdentitySession()
+      .then((identitySession) => identitySession ?? readLocalMobileProfile())
       .then((stored) => {
         if (active && scope === sessionScope.current) setCurrentSession(stored);
       })
@@ -70,12 +74,22 @@ export function MobileSessionProvider({ children }: PropsWithChildren) {
     };
   }, [setCurrentSession]);
 
-  const signOut = useCallback(async () => undefined, []);
+  const signOut = useCallback(async () => {
+    const current = sessionRef.current;
+    if (current?.localOnly && current.sessionToken) {
+      await logoutMobileSession(current);
+      setCurrentSession(await readLocalMobileProfile());
+    }
+  }, [setCurrentSession]);
 
   const updateProfile = useCallback(
     async (change: MobileProfileChange) => {
       const current = sessionRef.current;
       if (!current) throw new MobileSessionExpiredError();
+      if (current.localOnly && current.sessionToken) {
+        setCurrentSession(await updateMobileProfile(current, change));
+        return;
+      }
       if (!current.localOnly) throw new Error("Account profiles are disabled in local-only mode.");
       setCurrentSession(await updateLocalMobileProfile(current, change));
     },

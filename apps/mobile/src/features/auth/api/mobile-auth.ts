@@ -1,5 +1,6 @@
 import { type AvatarMimeType, isValidAvatarImage } from "@openbot/contracts/avatar-images";
 import { AVATAR_IMAGE_LIMITS } from "@openbot/contracts/input-limits";
+import { isTailscaleApiUrl } from "@openbot/contracts/invite-links";
 import type { CentralAuthUser } from "@openbot/contracts/ipc";
 import {
   isMobileConnectDevelopmentHost,
@@ -21,6 +22,7 @@ import { fetch } from "../../support/model/logged-fetch";
 import { normalizeMobileConnectLink } from "../model/mobile-connect-url";
 
 const MOBILE_SESSION_KEY = "openbot.mobile.session.v1";
+const LOCAL_IDENTITY_SESSION_KEY = "openbot.local-identity.session.v1";
 const MOBILE_REVOCATIONS_KEY = "openbot.mobile.pending-revocations.v1";
 const MOBILE_DEVICE_ID_KEY = "openbot.mobile.device-id.v1";
 const MOBILE_AUTH_REQUEST_TIMEOUT_MS = 10_000;
@@ -63,10 +65,13 @@ async function redeemMobileConnectSession(value: string): Promise<MobileSession>
     throw new Error(currentText().t("mobile.auth.error.invalidCode"));
   }
   if (!payload.host) throw new Error(currentText().t("mobile.auth.error.codeOutdated"));
+  const selfHostedTailnet = isTailscaleApiUrl(payload.apiUrl);
 
   // Do not consume a one-time ticket or overwrite a permanent legacy token before
   // its revocation is confirmed. Retry cleanup against the OLD account service.
-  const current = await serializeMobileSessionStorage(() => readStoredSessionAndRevokeInvalid(true));
+  const current = await serializeMobileSessionStorage(() =>
+    selfHostedTailnet ? readStoredLocalIdentitySession() : readStoredSessionAndRevokeInvalid(true),
+  );
   // A QR screen can still be finishing its animation after credentials are saved.
   // Protect that handoff too, before its caller updates the React session context.
   if (current) throw new Error(currentText().t("mobile.auth.error.alreadySignedIn"));
@@ -84,6 +89,7 @@ async function redeemMobileConnectSession(value: string): Promise<MobileSession>
           deviceId: device.id,
           deviceName: device.name,
           platform: device.platform,
+          ...(selfHostedTailnet ? { hostId: payload.host?.hostId, fingerprint: payload.host?.fingerprint } : {}),
         }),
         signal,
       });
@@ -103,6 +109,8 @@ async function redeemMobileConnectSession(value: string): Promise<MobileSession>
   }
 
   const session = decodeMobileSession(body, payload.apiUrl);
+  if (selfHostedTailnet && !session.localOnly)
+    throw new Error("The Tailscale identity service returned an invalid session.");
   session.host = validateMobileConnectHostBinding(payload.host, session.host);
   await saveMobileSession(session);
   return session;
@@ -111,6 +119,33 @@ async function redeemMobileConnectSession(value: string): Promise<MobileSession>
 export async function readMobileSession(): Promise<MobileSession | null> {
   void retryMobileSessionRevocations();
   return serializeMobileSessionStorage(() => readStoredSessionAndRevokeInvalid(false));
+}
+
+/** Restores only the QR-paired identity held by the user's Tailscale host, never an OpenBot account session. */
+export async function readLocalIdentitySession(): Promise<MobileSession | null> {
+  void retryMobileSessionRevocations();
+  return serializeMobileSessionStorage(() => readStoredLocalIdentitySession());
+}
+
+async function readStoredLocalIdentitySession(): Promise<MobileSession | null> {
+  const stored = await SecureStore.getItemAsync(LOCAL_IDENTITY_SESSION_KEY);
+  if (!stored) return null;
+  let session: MobileSession;
+  try {
+    session = decodeStoredMobileSession(JSON.parse(stored));
+    if (!session.localOnly || !isTailscaleApiUrl(session.apiUrl)) throw new Error("Invalid local identity session.");
+  } catch {
+    await SecureStore.deleteItemAsync(LOCAL_IDENTITY_SESSION_KEY);
+    return null;
+  }
+  try {
+    const validated = await refreshMobileProfile(session);
+    return validated?.localOnly ? validated : null;
+  } catch {
+    // Preserve the last shared profile while its Linux authority is offline. The stored bearer
+    // token remains encrypted; Team API requests still fail normally until the host returns.
+    return session;
+  }
 }
 
 // Called only inside the storage queue. Invalid sessions are never returned to
@@ -294,9 +329,10 @@ export async function logoutMobileSession(session: MobileSession): Promise<void>
       });
       revocationRetryRequested = true;
     }
-    const stored = await SecureStore.getItemAsync(MOBILE_SESSION_KEY);
+    const key = session.localOnly ? LOCAL_IDENTITY_SESSION_KEY : MOBILE_SESSION_KEY;
+    const stored = await SecureStore.getItemAsync(key);
     if (stored && sameCredential(decodeStoredMobileCredential(JSON.parse(stored)), session)) {
-      await SecureStore.deleteItemAsync(MOBILE_SESSION_KEY);
+      await SecureStore.deleteItemAsync(key);
     }
   });
   void retryMobileSessionRevocations();
@@ -474,23 +510,25 @@ async function readResponseBody(response: Response, signal: AbortSignal): Promis
 }
 
 async function saveMobileSession(session: MobileSession): Promise<void> {
+  const key = session.localOnly ? LOCAL_IDENTITY_SESSION_KEY : MOBILE_SESSION_KEY;
   await serializeMobileSessionStorage(() =>
-    SecureStore.setItemAsync(MOBILE_SESSION_KEY, JSON.stringify(session), {
+    SecureStore.setItemAsync(key, JSON.stringify(session), {
       keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
     }),
   );
 }
 
 async function saveMobileSessionIfCurrent(session: MobileSession): Promise<void> {
+  const key = session.localOnly ? LOCAL_IDENTITY_SESSION_KEY : MOBILE_SESSION_KEY;
   await serializeMobileSessionStorage(async () => {
-    const stored = await SecureStore.getItemAsync(MOBILE_SESSION_KEY);
+    const stored = await SecureStore.getItemAsync(key);
     if (!stored) return;
     try {
       if (decodeStoredMobileSession(JSON.parse(stored)).sessionToken !== session.sessionToken) return;
     } catch {
       return;
     }
-    await SecureStore.setItemAsync(MOBILE_SESSION_KEY, JSON.stringify(session), {
+    await SecureStore.setItemAsync(key, JSON.stringify(session), {
       keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
     });
   });
@@ -498,14 +536,16 @@ async function saveMobileSessionIfCurrent(session: MobileSession): Promise<void>
 
 async function deleteMobileSessionIfCurrent(sessionToken: string): Promise<void> {
   await serializeMobileSessionStorage(async () => {
-    const stored = await SecureStore.getItemAsync(MOBILE_SESSION_KEY);
-    if (!stored) return;
-    try {
-      if (decodeStoredMobileCredential(JSON.parse(stored)).sessionToken !== sessionToken) return;
-    } catch {
-      // Corrupt session data cannot represent a newer valid session while storage operations are serialized.
+    for (const key of [LOCAL_IDENTITY_SESSION_KEY, MOBILE_SESSION_KEY]) {
+      const stored = await SecureStore.getItemAsync(key);
+      if (!stored) continue;
+      try {
+        if (decodeStoredMobileCredential(JSON.parse(stored)).sessionToken === sessionToken)
+          await SecureStore.deleteItemAsync(key);
+      } catch {
+        // Corrupt credentials cannot identify the session that is being invalidated.
+      }
     }
-    await SecureStore.deleteItemAsync(MOBILE_SESSION_KEY);
   });
 }
 
@@ -546,6 +586,7 @@ function decodeMobileSession(value: unknown, apiUrl: string): MobileSession {
     sessionToken: value.sessionToken,
     user: decodeUser(value.user),
     host: value.host,
+    ...(value.localOnly === true ? { localOnly: true } : {}),
   };
 }
 

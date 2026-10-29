@@ -48,6 +48,80 @@ function runEffect<A>(operation: Effect.Effect<A, SelfHostedIdentityFailure>): P
 }
 
 describe("SelfHostedIdentityAuthority", () => {
+  it("creates one canonical account from the existing local profile and does not replace it on later boots", async () => {
+    const { authority } = await newAuthority();
+    const first = await runEffect(authority.ensureLocalAccount(profile));
+    const later = await runEffect(authority.ensureLocalAccount({ ...profile, name: "A different device name" }));
+
+    expect(first).toMatchObject({ id: profile.id, name: profile.name, avatarUrl: profile.avatarUrl });
+    expect(later).toEqual(first);
+    expect(authority.getLocalAccount()).toEqual(first);
+  });
+
+  it("binds mobile pairing tickets to the host fingerprint and consumes them once", async () => {
+    const { authority, path } = await newAuthority();
+    const account = await runEffect(authority.ensureLocalAccount(profile));
+    const input = {
+      accountId: account.id,
+      hostId: "linux-host-id",
+      fingerprint: "f".repeat(43),
+    };
+    const rejectedTicket = await runEffect(authority.issueMobileConnectTicket(input));
+    await expect(
+      runEffect(
+        authority.redeemMobileConnectTicket({
+          ticket: rejectedTicket.ticket,
+          hostId: input.hostId,
+          fingerprint: "x".repeat(43),
+          deviceId: "device-id-1",
+          deviceName: "Pixel 7a",
+          platform: "android",
+        }),
+      ),
+    ).resolves.toBeNull();
+    await expect(
+      runEffect(
+        authority.redeemMobileConnectTicket({
+          ticket: rejectedTicket.ticket,
+          hostId: input.hostId,
+          fingerprint: input.fingerprint,
+          deviceId: "device-id-1",
+          deviceName: "Pixel 7a",
+          platform: "android",
+        }),
+      ),
+    ).resolves.toBeNull();
+
+    const ticket = await runEffect(authority.issueMobileConnectTicket(input));
+    const session = await runEffect(
+      authority.redeemMobileConnectTicket({
+        ticket: ticket.ticket,
+        hostId: input.hostId,
+        fingerprint: input.fingerprint,
+        deviceId: "device-id-1",
+        deviceName: "Pixel 7a",
+        platform: "android",
+      }),
+    );
+    expect(session?.account).toEqual(account);
+    const stored = JSON.parse(await readFile(path, "utf8"));
+    expect(stored.sessions).toHaveLength(1);
+    expect(stored.sessions[0]).toMatchObject({ deviceId: "device-id-1", deviceName: "Pixel 7a", platform: "android" });
+    expect(JSON.stringify(stored)).not.toContain(session?.token);
+    await expect(
+      runEffect(
+        authority.redeemMobileConnectTicket({
+          ticket: ticket.ticket,
+          hostId: input.hostId,
+          fingerprint: input.fingerprint,
+          deviceId: "device-id-1",
+          deviceName: "Pixel 7a",
+          platform: "android",
+        }),
+      ),
+    ).resolves.toBeNull();
+  });
+
   it("bootstraps once from loopback and keeps the existing local profile identity", async () => {
     const { authority, path } = await newAuthority();
 

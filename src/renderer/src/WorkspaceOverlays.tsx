@@ -617,7 +617,9 @@ function AppSettings(props: AccountProps) {
         account={props.account()}
         onUpdateAccountName={auth.updateAccountName}
         onUpdateAccountAvatar={auth.updateAccountAvatar}
-        onCreateMobileConnect={props.account().email ? auth.createMobileConnect : undefined}
+        onCreateMobileConnect={
+          props.account().email || platform.appInfo()?.platform === "linux" ? auth.createMobileConnect : undefined
+        }
         onListMobileConnectedDevices={props.account().email ? auth.listMobileConnectedDevices : undefined}
         onRevokeMobileConnectedDevice={props.account().email ? auth.revokeMobileConnectedDevice : undefined}
         onListAccountSessions={props.account().email ? auth.listAccountSessions : undefined}

@@ -137,6 +137,20 @@ function decodeJoinedMember(value: unknown): {
   return { membershipId, role, sessionToken: value.sessionToken };
 }
 
+function decodeTeamAuthTicket(value: unknown): { ticket: string; expiresAt: number } {
+  if (
+    !isDynamicRecord(value) ||
+    !isString(value.ticket) ||
+    !/^[A-Za-z0-9_-]{43}$/u.test(value.ticket) ||
+    typeof value.expiresAt !== "number" ||
+    !Number.isSafeInteger(value.expiresAt) ||
+    value.expiresAt <= Date.now()
+  ) {
+    throw new Error("The local identity service returned an invalid host ticket.");
+  }
+  return { ticket: value.ticket, expiresAt: value.expiresAt };
+}
+
 async function readJson<T>(response: Response, decode: (value: unknown) => T): Promise<T> {
   const value = await response.json();
   if (!response.ok) {
@@ -352,6 +366,7 @@ export async function pairTailnetInvite(
     randomBytes: TailnetRandomBytes;
     displayName?: string | null;
     existingSessionToken?: string | null;
+    identitySession?: { apiUrl: string; sessionToken: string };
   },
 ): Promise<LocalTailnetServer> {
   const deviceLink = isTailnetMemberDeviceLink(inviteUrl);
@@ -378,25 +393,50 @@ export async function pairTailnetInvite(
       ),
     );
   } else {
-    const username = `device-${base64Url(randomBytes(12)).slice(0, 16)}`;
-    const password = randomPassword(randomBytes);
-    joined = decodeJoinedMember(
-      await requestJson(
-        invite.apiUrl,
-        appVersion,
-        protocol,
-        "POST",
-        TEAM_API_ROUTES.join.server,
-        null,
-        {
-          inviteToken: invite.token,
-          username,
-          password,
-          ...(options.displayName?.trim() ? { displayName: options.displayName.trim() } : {}),
+    if (options.identitySession?.sessionToken && isTailscaleApiUrl(options.identitySession.apiUrl)) {
+      const ticketResponse = await fetcher(new URL("/v1/team-auth/ticket", options.identitySession.apiUrl), {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${options.identitySession.sessionToken}`,
+          "Content-Type": "application/json",
         },
-        fetcher,
-      ),
-    );
+        body: JSON.stringify({ serverId: invite.serverId }),
+      });
+      if (!ticketResponse.ok) throw new DirectTailnetHttpError(ticketResponse.status);
+      const ticketBody = decodeTeamAuthTicket(await ticketResponse.json());
+      joined = decodeJoinedMember(
+        await requestJson(
+          invite.apiUrl,
+          appVersion,
+          protocol,
+          "POST",
+          TEAM_API_ROUTES.join.account,
+          null,
+          { inviteToken: invite.token, accountTicket: ticketBody.ticket },
+          fetcher,
+        ),
+      );
+    } else {
+      const username = `device-${base64Url(randomBytes(12)).slice(0, 16)}`;
+      const password = randomPassword(randomBytes);
+      joined = decodeJoinedMember(
+        await requestJson(
+          invite.apiUrl,
+          appVersion,
+          protocol,
+          "POST",
+          TEAM_API_ROUTES.join.server,
+          null,
+          {
+            inviteToken: invite.token,
+            username,
+            password,
+            ...(options.displayName?.trim() ? { displayName: options.displayName.trim() } : {}),
+          },
+          fetcher,
+        ),
+      );
+    }
   }
   return {
     hostId: proof.serverId,

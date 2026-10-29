@@ -148,6 +148,26 @@ async function createHostFetch() {
       };
       return Response.json(JSON.parse(codec.encodeResponse("POST", url.pathname, 201, joined, {})), { status: 201 });
     }
+    if (url.pathname === "/v1/team-auth/ticket") {
+      return Response.json({ ticket: "t".repeat(43), expiresAt: Date.now() + 120_000 });
+    }
+    if (url.pathname === TEAM_API_ROUTES.join.account) {
+      const joined = {
+        member: {
+          id: "shared-account-member-id",
+          username: "account-shared-account-id",
+          email: null,
+          name: "Shared profile",
+          avatarUrl: null,
+          role: "member",
+          createdAt: new Date().toISOString(),
+          disabled: false,
+        },
+        sessionToken: "shared-account-session-token",
+        sessionExpiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+      };
+      return Response.json(JSON.parse(codec.encodeResponse("POST", url.pathname, 201, joined, {})), { status: 201 });
+    }
     if (url.pathname === TEAM_MEMBER_DEVICE_LINK_ROUTES.redeem) {
       const sideRoute = teamSideRouteCodec(url.pathname);
       if (!sideRoute) throw new Error("Member device link route codec is unavailable.");
@@ -206,6 +226,32 @@ describe("Android direct Tailscale pairing", () => {
       expect(call.headers.get(TEAM_PROTOCOL_VERSION_HEADER)).toBe("6");
       expect(call.headers.get(TEAM_CAPABILITIES_HEADER)).toBeTruthy();
     }
+  });
+
+  it("joins an invited Team server with the canonical account ticket from the Tailscale identity host", async () => {
+    const host = await createHostFetch();
+    const identityApiUrl = "http://100.100.10.2:43124/";
+    await expect(
+      pairTailnetInvite(inviteUrl(host.fingerprint), {
+        appVersion: "1.1.0",
+        fetch: host.fetcher,
+        randomBytes,
+        identitySession: { apiUrl: identityApiUrl, sessionToken: "s".repeat(43) },
+      }),
+    ).resolves.toMatchObject({
+      hostId: serverId,
+      membershipId: "shared-account-member-id",
+      sessionToken: "shared-account-session-token",
+    });
+    expect(host.calls.find((call) => call.path === "/v1/team-auth/ticket")?.body).toEqual({ serverId });
+    expect(host.calls.find((call) => call.path === "/v1/team-auth/ticket")?.headers.get("Authorization")).toBe(
+      `Bearer ${"s".repeat(43)}`,
+    );
+    expect(host.calls.find((call) => call.path === TEAM_API_ROUTES.join.account)?.body).toEqual({
+      inviteToken: "b".repeat(43),
+      accountTicket: "t".repeat(43),
+    });
+    expect(host.calls.some((call) => call.path === TEAM_API_ROUTES.join.server)).toBe(false);
   });
 
   it("verifies and redeems a separate device link into the same member identity", async () => {

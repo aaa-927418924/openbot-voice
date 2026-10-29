@@ -1080,7 +1080,8 @@ export class TeamStore {
       user: CentralAuthUser,
     ): Effect.fn.Return<AuthenticatedMember, RemoteWorkflowError, TeamStoreFiles> {
       const state = yield* remoteDecode(() => this.#requireState());
-      const email = yield* remoteDecode(() => normalizeEmail(user.email));
+      const email = user.email.trim() ? yield* remoteDecode(() => normalizeEmail(user.email)) : null;
+      const username = email ?? accountUsername(user.id);
       const invite = yield* remoteDecode(() => this.#findUsableInvite(token));
       if (!invite)
         return yield* new RemoteWorkflowError({ cause: new TeamStoreError(sourceText("error.team.inviteInvalid")) });
@@ -1089,13 +1090,16 @@ export class TeamStore {
           cause: new TeamStoreError(sourceText("error.team.inviteEmailMismatch")),
         });
       }
-      const existingMember = state.members.find((member) => member.email === email || member.username === email);
+      const existingMember = state.members.find(
+        (member) =>
+          member.accountId === user.id || (email !== null && (member.email === email || member.username === email)),
+      );
       if (existingMember) {
         if (existingMember.disabled)
           return yield* new RemoteWorkflowError({ cause: new TeamStoreError(sourceText("error.team.memberDisabled")) });
         existingMember.email = email;
         existingMember.accountId = user.id;
-        existingMember.username = email;
+        existingMember.username = username;
         existingMember.name = yield* remoteDecode(() => normalizeName(user.name));
         existingMember.avatarUrl = yield* remoteDecode(() => normalizeAvatarUrl(user.avatarUrl));
         this.#consumeInvite(invite);
@@ -1107,7 +1111,7 @@ export class TeamStore {
       const member: StoredMember = {
         id: randomUUID(),
         accountId: user.id,
-        username: email,
+        username,
         email,
         name: yield* remoteDecode(() => normalizeName(user.name)),
         avatarUrl: yield* remoteDecode(() => normalizeAvatarUrl(user.avatarUrl)),
@@ -1131,15 +1135,19 @@ export class TeamStore {
       user: CentralAuthUser,
     ): Effect.fn.Return<AuthenticatedMember, RemoteWorkflowError, TeamStoreFiles> {
       const state = yield* remoteDecode(() => this.#requireState());
-      const email = yield* remoteDecode(() => normalizeEmail(user.email));
+      const email = user.email.trim() ? yield* remoteDecode(() => normalizeEmail(user.email)) : null;
+      const username = email ?? accountUsername(user.id);
       const member = state.members.find(
-        (candidate) => (candidate.email === email || candidate.username === email) && !candidate.disabled,
+        (candidate) =>
+          (candidate.accountId === user.id ||
+            (email !== null && (candidate.email === email || candidate.username === email))) &&
+          !candidate.disabled,
       );
       if (!member)
         return yield* new RemoteWorkflowError({ cause: new TeamStoreError(sourceText("error.team.accountNotMember")) });
       member.email = email;
       member.accountId = user.id;
-      member.username = email;
+      member.username = username;
       member.name = yield* remoteDecode(() => normalizeName(user.name));
       member.avatarUrl = yield* remoteDecode(() => normalizeAvatarUrl(user.avatarUrl));
       const result = yield* remoteDecode(() => this.#createSession(member));
@@ -1449,6 +1457,38 @@ export class TeamStore {
     Effect.uninterruptible,
   ).bind(this);
 
+  /** Makes the self-hosted identity authority canonical for this local host's owner membership. */
+  readonly syncSelfHostedOwner = Effect.fn("TeamStore.syncSelfHostedOwner")(
+    function* (this: TeamStore, user: CentralAuthUser): Effect.fn.Return<void, RemoteWorkflowError, TeamStoreFiles> {
+      const state = yield* remoteDecode(() => this.#requireState());
+      const owner = state.members.find((member) => member.role === "owner");
+      if (!owner)
+        return yield* new RemoteWorkflowError({ cause: new TeamStoreError("The local host owner is missing.") });
+      // The local-only authority replaces the former OpenBot account directory. A host upgraded
+      // from that flow may still have the old account ID on its owner row; preserve the stable
+      // member ID (and therefore message authorship/history) while migrating only the account link.
+      const username = accountUsername(user.id);
+      const name = yield* remoteDecode(() => normalizeName(user.name));
+      const avatarUrl = yield* remoteDecode(() => normalizeAvatarUrl(user.avatarUrl));
+      if (
+        owner.accountId === user.id &&
+        owner.email === null &&
+        owner.username === username &&
+        owner.name === name &&
+        (owner.avatarUrl ?? null) === avatarUrl
+      )
+        return;
+      owner.accountId = user.id;
+      owner.email = null;
+      owner.username = username;
+      owner.name = name;
+      owner.avatarUrl = avatarUrl;
+      yield* this.#persistEffect();
+    },
+    Effect.provide(TeamStoreFiles.layer),
+    Effect.uninterruptible,
+  ).bind(this);
+
   /** The profile half of `syncAccount`, without its write. Reports whether anything moved. */
   #applyAccount(user: CentralAuthUser): boolean {
     const state = this.#requireState();
@@ -1672,6 +1712,10 @@ function normalizeEmail(value: string): string {
   const normalized = normalizeEmailAddress(value);
   if (!normalized) throw new TeamStoreError(sourceText("error.team.emailInvalid"));
   return normalized;
+}
+
+function accountUsername(accountId: string): string {
+  return `account-${createHash("sha256").update(accountId).digest("hex").slice(0, 16)}`;
 }
 
 function normalizeName(value: string | null): string | null {

@@ -162,6 +162,8 @@ import { sendToRenderer } from "./renderer-ipc";
 import { RequestedUpdate, RequestedUpdateRefusal } from "./requested-update";
 import { RoutineFeedServer } from "./routine-feed-server";
 import { clearRoutineHold, ROUTINE_HOLD_FILE, takeRoutineHold, writeRoutineHold } from "./routine-hold-file";
+import { SelfHostedIdentityApiServer, selfHostedTeamProfile } from "./self-hosted-identity-api";
+import { SelfHostedIdentityAuthority } from "./self-hosted-identity-authority";
 import { ServerMode, type ServerModeEnvironment } from "./server-mode";
 import {
   configureApplicationProtocol,
@@ -262,6 +264,7 @@ const TEARDOWN_ORDER = {
   messaging: 85,
   // After the connections that hold it.
   slackIngress: 86,
+  selfHostedIdentityApi: 89,
   host: 90,
   teamWebRtcBridge: 100,
   // Before the agent service, so no calendar read finds it stopping.
@@ -352,6 +355,8 @@ export interface ApplicationServices {
   remoteServers: RemoteServerManager;
   centralAuth: CentralAuthManager;
   localProfile: LocalProfileStore;
+  selfHostedIdentityAuthority: SelfHostedIdentityAuthority | null;
+  selfHostedIdentityApi: SelfHostedIdentityApiServer | null;
   localOnlyNetworking: boolean;
   skills: SkillMarketplaceService;
   hostedSites: HostedSiteDesktopService;
@@ -596,6 +601,29 @@ export async function createApplicationServices({
   const localOnlyNetworking = !hostedServer && !serverModeEnvironment && developmentRemoteRole === null;
   const localProfile = new LocalProfileStore(join(app.getPath("userData"), "local-profile.json"));
   await runCauseEffect(localProfile.load());
+  let selfHostedIdentityAuthority: SelfHostedIdentityAuthority | null = null;
+  if (localOnlyNetworking && process.platform === "linux") {
+    const authority = new SelfHostedIdentityAuthority({
+      path: join(app.getPath("userData"), "self-hosted-identity.json"),
+    });
+    try {
+      await Effect.runPromise(authority.initialize());
+      const profile = localProfile.getUser();
+      const account = await Effect.runPromise(
+        authority.ensureLocalAccount({
+          id: profile.id,
+          name: profile.name ?? "OpenBot",
+          avatarUrl: profile.avatarUrl,
+        }),
+      );
+      await runCauseEffect(localProfile.synchronizeSharedProfile(account));
+      selfHostedIdentityAuthority = authority;
+    } catch (error) {
+      // Do not replace a damaged account file or block the local workspace. Identity sharing stays
+      // unavailable until the file is repaired; local conversations and agents remain untouched.
+      logger.error("The self-hosted identity authority could not initialize:", toLogValue(error));
+    }
+  }
   const localProfileState = localProfile.getState();
   // Registered before `initialize()`, which publishes `{ status: "loading" }` synchronously: the
   // listener therefore runs on the next line with most of this function's services still unbuilt.
@@ -1315,6 +1343,44 @@ export async function createApplicationServices({
   if (localOnlyNetworking && !teamStore.configured) {
     await runCauseEffect(teamStore.configure(hostname(), "owner", randomBytes(32).toString("base64url")));
   }
+  let selfHostedIdentityReady = selfHostedIdentityAuthority !== null;
+  if (selfHostedIdentityAuthority) {
+    try {
+      await runCauseEffect(teamStore.syncSelfHostedOwner(selfHostedTeamProfile(localProfile.getUser(), null)));
+    } catch (error) {
+      selfHostedIdentityReady = false;
+      logger.error("The local host owner could not be linked to the self-hosted account:", toLogValue(error));
+    }
+  }
+  let selfHostedIdentityApi: SelfHostedIdentityApiServer | null = null;
+  if (selfHostedIdentityReady && selfHostedIdentityAuthority) {
+    selfHostedIdentityApi = new SelfHostedIdentityApiServer({
+      authority: selfHostedIdentityAuthority,
+      onProfileChanged: async (user) => {
+        try {
+          await runCauseEffect(localProfile.synchronizeSharedProfile(user));
+          await runCauseEffect(
+            teamStore.syncSelfHostedOwner(selfHostedTeamProfile(user, selfHostedIdentityApi?.apiUrl ?? null)),
+          );
+        } catch (error) {
+          logger.warn("A self-hosted profile update could not reach the local profile:", toLogValue(error));
+          throw error;
+        }
+      },
+    });
+  }
+  if (selfHostedIdentityApi) {
+    const identityApi = selfHostedIdentityApi;
+    teardown.push(TEARDOWN_ORDER.selfHostedIdentityApi, "the Tailscale identity API", () => identityApi.stop());
+    // Tailscale may start after the desktop. A QR request calls start() again, and concurrent starts
+    // share one listener attempt; this background start publishes the member avatar URL after launch.
+    void identityApi
+      .start()
+      .then((apiUrl) =>
+        runCauseEffect(teamStore.syncSelfHostedOwner(selfHostedTeamProfile(localProfile.getUser(), apiUrl))),
+      )
+      .catch((error) => logger.warn("The Tailscale identity API is not listening yet:", toLogValue(error)));
+  }
   slackIngressHostId = () => teamStore.getIdentity()?.serverId ?? null;
   slackIngress.reconnect();
   // After `teamStore.initialize()` and before `HostService`, which reads the account it activates.
@@ -1464,7 +1530,14 @@ export async function createApplicationServices({
     // state of the running app, not a startup-ordering artifact.
     getSignedInUser: () => (localOnlyNetworking ? localProfile.getUser() : centralAuth.getSignedInUser()),
     redeemCentralTicket: (ticket, serverId) =>
-      centralAuth.redeemTeamAuthTicket(ticket, serverId).pipe(toRemoteWorkflowError),
+      localOnlyNetworking && selfHostedIdentityAuthority
+        ? selfHostedIdentityAuthority.consumeTeamTicket({ ticket, targetTeamServerId: serverId }).pipe(
+            Effect.map((account) =>
+              account ? { id: account.id, email: "", name: account.name, avatarUrl: account.avatarUrl } : null,
+            ),
+            Effect.mapError((cause) => new RemoteWorkflowError({ cause })),
+          )
+        : centralAuth.redeemTeamAuthTicket(ticket, serverId).pipe(toRemoteWorkflowError),
     sendTeamInviteEmail: (input) => centralAuth.sendTeamInviteEmail(input).pipe(toRemoteWorkflowError),
     platform: process.platform === "darwin" || process.platform === "win32" ? process.platform : "linux",
     unattended: false,
@@ -1966,6 +2039,8 @@ export async function createApplicationServices({
     remoteServers,
     centralAuth,
     localProfile,
+    selfHostedIdentityAuthority,
+    selfHostedIdentityApi,
     localOnlyNetworking,
     skills,
     hostedSites,
