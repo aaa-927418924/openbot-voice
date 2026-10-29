@@ -106,6 +106,12 @@ export function teamIpcHandlers({
       createInvite: payloadHandler(agentRequest(parseCreateTeamInvite), ({ serverId, payload }) =>
         runCauseEffect(remoteServers.createInvite(serverId, payload)),
       ),
+      createMemberDeviceLink: payloadHandler(stringPayload("serverId"), (serverId) =>
+        routeToServer(serverId, {
+          local: () => runCauseEffect(host.createMemberDeviceLink()),
+          remote: () => runCauseEffect(remoteServers.createMemberDeviceLink(serverId)),
+        }),
+      ),
       setTyping: payloadHandler(parseSetTeamTyping, (parsed) =>
         routeToServer<void>(remoteServers.activeServerId, {
           local: () => host.setTyping(parsed),
@@ -172,6 +178,7 @@ export function teamIpcHandlers({
         runCauseEffect(host.revokeInvite(inviteId)),
       ),
       createInvite: payloadHandler(parseCreateTeamInvite, (invite) => runCauseEffect(host.createInvite(invite))),
+      createMemberDeviceLink: handler(() => runCauseEffect(host.createMemberDeviceLink())),
     },
     remoteDesktop: {
       checkSetup: payloadHandler(stringPayload("serverId"), (serverId) =>

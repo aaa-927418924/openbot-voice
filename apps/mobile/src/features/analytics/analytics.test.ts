@@ -408,6 +408,7 @@ it("instruments message commands without sending their contents or changing the 
     refreshServer: unexpected,
     canEditServerIdentity: () => false,
     updateServerIdentity: unexpected,
+    createMemberDeviceLink: unexpected,
     addRemoteServer: unexpected,
     setAgentAvatar: async () => {},
     loadAgentAvatar: async () => "",

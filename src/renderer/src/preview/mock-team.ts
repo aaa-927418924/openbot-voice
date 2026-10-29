@@ -231,6 +231,8 @@ export function createMockTeam(
       permanent: input.permanent ?? false,
       useCount: 0,
     }),
+    createMemberDeviceLink: async () =>
+      "https://openbot.run/join?api=https%3A%2F%2Fteam.example.com&server=00000000-0000-4000-8000-000000000000&fingerprint=mock&device=mock-member-device-token",
     setTyping: async (_input: SetTeamTypingInput) => undefined,
     onPresence: (listener, serverId) => {
       const receive = (snapshot: TeamPresenceSnapshot) => {
@@ -396,6 +398,8 @@ export function createMockTeam(
       permanent: input.permanent ?? false,
       useCount: 0,
     }),
+    createMemberDeviceLink: async () =>
+      "https://openbot.run/join?api=http%3A%2F%2F100.100.100.100%3A43123&server=00000000-0000-4000-8000-000000000000&fingerprint=mock&device=mock-member-device-token",
     onEvent: (listener) => {
       hostListeners.add(listener);
       return () => hostListeners.delete(listener);

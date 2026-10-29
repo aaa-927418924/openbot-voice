@@ -12,6 +12,10 @@ import type { TeamPresenceSnapshot } from "@openbot/contracts/ipc";
 import { isBoolean } from "@openbot/contracts/runtime-values";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import { TEAM_CHANNEL_IDENTITY_ADMIN_CAPABILITY } from "@openbot/contracts/team-protocol/current";
+import {
+  TEAM_MEMBER_DEVICE_LINK_CAPABILITY,
+  TEAM_MEMBER_DEVICE_LINK_ROUTES,
+} from "@openbot/contracts/team-protocol/member-device-link-v1";
 import { sourceText } from "@openbot/i18n/source";
 import { runCauseEffect } from "../../backend/effect-boundary";
 import type { TeamStore } from "../team-store";
@@ -34,6 +38,7 @@ export interface TeamRouteDependencies {
     | "revokeInvite"
     | "listSessions"
     | "revokeSession"
+    | "createMemberDeviceLink"
   >;
   remoteScreen?: Pick<TeamApiRemoteScreen, "revokeTeamSession" | "revokeMember">;
   createInvite?: TeamApiOptions["createInvite"];
@@ -47,6 +52,13 @@ export async function routeTeam(
   { store, remoteScreen, createInvite, onSessionRevoked, getPresence, refreshPresence }: TeamRouteDependencies,
 ): Promise<RouteOutcome> {
   const { method, url, request, response, member, token, sessionId, capabilities, json, empty } = context;
+
+  if (method === "POST" && url.pathname === TEAM_MEMBER_DEVICE_LINK_ROUTES.create) {
+    if (!capabilities.has(TEAM_MEMBER_DEVICE_LINK_CAPABILITY))
+      throw new HttpError(404, sourceText("error.team.routeNotFound"));
+    const result = await runCauseEffect(store.createMemberDeviceLink(member.id));
+    return json(201, result);
+  }
 
   /** What removing a member does, whether an admin removes them or they leave. */
   async function removeMember(memberId: string): Promise<void> {

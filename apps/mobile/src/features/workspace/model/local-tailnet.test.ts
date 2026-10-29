@@ -3,6 +3,10 @@ import { createOpenBotInviteUrl } from "@openbot/contracts/invite-links";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import { CHANNEL_ROUTES } from "@openbot/contracts/team-protocol/channels-v1";
 import { teamHttpCodec } from "@openbot/contracts/team-protocol/http-codecs";
+import {
+  TEAM_MEMBER_DEVICE_LINK_CAPABILITY,
+  TEAM_MEMBER_DEVICE_LINK_ROUTES,
+} from "@openbot/contracts/team-protocol/member-device-link-v1";
 import { teamSideRouteCodec } from "@openbot/contracts/team-protocol/side-routes";
 import {
   decodeTeamProtocolSupportV1,
@@ -15,7 +19,10 @@ import { remoteHostFingerprint } from "@openbot/team-client/remote-directory";
 import { Effect } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  createTailnetMemberDeviceLinkUrl,
   DirectTailnetTeamClient,
+  decodeTailnetMemberDeviceLink,
+  isTailnetMemberDeviceLink,
   type LocalTailnetSocketDiagnostic,
   pairTailnetInvite,
   parseTailnetInvite,
@@ -80,7 +87,11 @@ async function createHostFetch() {
     const body = rawBody ? JSON.parse(rawBody) : undefined;
     calls.push({ path: url.pathname, body, headers });
     if (url.pathname === TEAM_API_ROUTES.compatibility)
-      return Response.json({ appVersion: "0.30.0", protocol: { minimum: 1, maximum: 6 }, capabilities: [] });
+      return Response.json({
+        appVersion: "0.30.0",
+        protocol: { minimum: 1, maximum: 6 },
+        capabilities: [TEAM_MEMBER_DEVICE_LINK_CAPABILITY],
+      });
     if (url.pathname === TEAM_API_ROUTES.identity) {
       const challenge = url.searchParams.get("challenge") ?? "";
       const identity = {
@@ -137,6 +148,16 @@ async function createHostFetch() {
       };
       return Response.json(JSON.parse(codec.encodeResponse("POST", url.pathname, 201, joined, {})), { status: 201 });
     }
+    if (url.pathname === TEAM_MEMBER_DEVICE_LINK_ROUTES.redeem) {
+      const sideRoute = teamSideRouteCodec(url.pathname);
+      if (!sideRoute) throw new Error("Member device link route codec is unavailable.");
+      const joined = {
+        member: { id: "same-member-id", role: "owner" },
+        sessionToken: "same-member-session-token",
+        sessionExpiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+      };
+      return Response.json(sideRoute.response(url.pathname, 201, joined), { status: 201 });
+    }
     throw new Error(`Unexpected request: ${url.pathname}`);
   });
   return { fingerprint, fetcher, calls };
@@ -166,7 +187,7 @@ describe("Android direct Tailscale pairing", () => {
       devicePublicKey: expect.stringContaining("BEGIN PUBLIC KEY"),
     });
     await expect(
-      pairTailnetInvite(link, { appVersion: "1.1.0", fetch: host.fetcher, randomBytes }),
+      pairTailnetInvite(link, { appVersion: "1.1.0", fetch: host.fetcher, randomBytes, displayName: "あああ" }),
     ).resolves.toMatchObject({
       hostId: serverId,
       name: "Tailnet host",
@@ -176,12 +197,60 @@ describe("Android direct Tailscale pairing", () => {
       role: "member",
     });
     expect(host.calls.filter((call) => call.path === TEAM_API_ROUTES.join.server)).toHaveLength(1);
+    expect(host.calls.find((call) => call.path === TEAM_API_ROUTES.join.server)?.body).toMatchObject({
+      displayName: "あああ",
+    });
     expect(host.calls.every((call) => !call.headers.has("Authorization"))).toBe(true);
     for (const call of host.calls.filter((entry) => entry.path !== TEAM_API_ROUTES.compatibility)) {
       expect(call.headers.get(TEAM_APP_VERSION_HEADER)).toBe("1.1.0");
       expect(call.headers.get(TEAM_PROTOCOL_VERSION_HEADER)).toBe("6");
       expect(call.headers.get(TEAM_CAPABILITIES_HEADER)).toBeTruthy();
     }
+  });
+
+  it("verifies and redeems a separate device link into the same member identity", async () => {
+    const host = await createHostFetch();
+    const server = {
+      hostId: serverId,
+      name: "Tailnet host",
+      logoKey: null,
+      apiUrl,
+      publicKey: "unused",
+      fingerprint: host.fingerprint,
+      sessionToken: "current-session-token",
+      membershipId: "same-member-id",
+      role: "owner" as const,
+    };
+    const deviceLink = createTailnetMemberDeviceLinkUrl(server, "c".repeat(43));
+    expect(isTailnetMemberDeviceLink(deviceLink)).toBe(true);
+
+    await expect(
+      previewTailnetInvite(deviceLink, { appVersion: "1.1.0", fetch: host.fetcher, randomBytes }),
+    ).resolves.toMatchObject({ hostId: serverId, hostName: "Tailnet host" });
+    await expect(
+      pairTailnetInvite(deviceLink, {
+        appVersion: "1.1.0",
+        fetch: host.fetcher,
+        randomBytes,
+        existingSessionToken: server.sessionToken,
+      }),
+    ).resolves.toMatchObject({
+      hostId: serverId,
+      membershipId: "same-member-id",
+      sessionToken: "same-member-session-token",
+      role: "owner",
+    });
+    expect(host.calls.filter((call) => call.path === TEAM_MEMBER_DEVICE_LINK_ROUTES.redeem)).toHaveLength(1);
+    expect(host.calls.some((call) => call.path === TEAM_API_ROUTES.join.server)).toBe(false);
+    expect(host.calls.find((call) => call.path === TEAM_MEMBER_DEVICE_LINK_ROUTES.redeem)?.body).toEqual({
+      token: "c".repeat(43),
+    });
+    expect(
+      host.calls.find((call) => call.path === TEAM_MEMBER_DEVICE_LINK_ROUTES.redeem)?.headers.get("Authorization"),
+    ).toBe(`Bearer ${server.sessionToken}`);
+    expect(decodeTailnetMemberDeviceLink({ token: "d".repeat(43), expiresAt: new Date().toISOString() }).token).toBe(
+      "d".repeat(43),
+    );
   });
 
   it("does not send the invite token when the host identity does not match the link", async () => {

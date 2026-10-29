@@ -52,6 +52,14 @@ export interface InviteLinkPayload {
   token: string;
 }
 
+/** A short-lived host-issued link that opens another device under an existing member. */
+export interface MemberDeviceLinkPayload {
+  apiUrl: string;
+  serverId: string;
+  fingerprint: string;
+  token: string;
+}
+
 export interface InviteLinkOptions {
   allowLocalDevelopmentApiUrl?: boolean;
   /** HTTP URLs on Tailscale-reserved addresses, protected by the tailnet and host-key pinning. */
@@ -93,6 +101,64 @@ export function createOpenBotInviteUrl(payload: InviteLinkPayload, options: Invi
   const url = new URL("openbot://join");
   writePayload(url, payload);
   return url.toString();
+}
+
+/** Creates a local host link for an additional device; the token is never sent to the OpenBot site. */
+export function createMemberDeviceLinkUrl(
+  payload: MemberDeviceLinkPayload,
+  options: InviteLinkOptions = { allowTailscaleApiUrl: true },
+): string {
+  validatePayload(payload, options);
+  const url = new URL(OPENBOT_INVITE_PATH, OPENBOT_INVITE_ORIGIN);
+  writeMemberDevicePayload(url, payload);
+  return url.toString();
+}
+
+/** Reads only the dedicated `device` field, keeping it separate from ordinary invitations. */
+export function parseMemberDeviceLinkUrl(
+  value: string,
+  options: InviteLinkOptions = { allowTailscaleApiUrl: true },
+): MemberDeviceLinkPayload {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error("Enter a valid OpenBot device link.");
+  }
+  const canonical =
+    url.protocol === "https:" && url.origin === OPENBOT_INVITE_ORIGIN && url.pathname === OPENBOT_INVITE_PATH;
+  const customScheme =
+    url.protocol === "openbot:" && url.hostname === "join" && (url.pathname === "" || url.pathname === "/");
+  if (
+    (!canonical && !customScheme) ||
+    url.username !== "" ||
+    url.password !== "" ||
+    url.port !== "" ||
+    url.hash !== "" ||
+    !hasOnlyMemberDeviceFields(url.searchParams)
+  ) {
+    throw new Error("The OpenBot device link is invalid.");
+  }
+  const payload: MemberDeviceLinkPayload = {
+    apiUrl: url.searchParams.get("api") ?? "",
+    serverId: url.searchParams.get("server") ?? "",
+    fingerprint: url.searchParams.get("fingerprint") ?? "",
+    token: url.searchParams.get("device") ?? "",
+  };
+  validatePayload(payload, options);
+  return payload;
+}
+
+export function isMemberDeviceLinkUrl(
+  value: string,
+  options: InviteLinkOptions = { allowTailscaleApiUrl: true },
+): boolean {
+  try {
+    parseMemberDeviceLinkUrl(value, options);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function toOpenBotInviteUrl(value: string, options: InviteLinkOptions = {}): string {
@@ -268,10 +334,26 @@ function writePayload(url: URL, payload: InviteLinkPayload): void {
   url.searchParams.set("invite", payload.token);
 }
 
+function writeMemberDevicePayload(url: URL, payload: MemberDeviceLinkPayload): void {
+  url.searchParams.set("api", payload.apiUrl);
+  url.searchParams.set("server", payload.serverId);
+  url.searchParams.set("fingerprint", payload.fingerprint);
+  url.searchParams.set("device", payload.token);
+}
+
 function hasOnlyInviteFields(search: URLSearchParams): boolean {
   const keys = [...search.keys()].sort();
   return (
     keys.length === INVITE_FIELDS.length &&
     INVITE_FIELDS.every((field, index) => keys[index] === field && search.getAll(field).length === 1)
+  );
+}
+
+function hasOnlyMemberDeviceFields(search: URLSearchParams): boolean {
+  const fields = ["api", "device", "fingerprint", "server"];
+  const keys = [...search.keys()].sort();
+  return (
+    keys.length === fields.length &&
+    fields.every((field, index) => keys[index] === field && search.getAll(field).length === 1)
   );
 }

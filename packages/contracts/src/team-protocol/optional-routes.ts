@@ -16,6 +16,7 @@ import { HOSTED_SITES_CODECS } from "./hosted-sites-v1";
 import { LIVE_ACTIVITY_PUSH_CODECS } from "./live-activity-push-v1";
 import { LIVE_VOICE_CHANNEL_CODECS } from "./live-voice-channel-v1";
 import { LIVE_VOICE_CODECS } from "./live-voice-v1";
+import { TEAM_MEMBER_DEVICE_LINK_CODECS } from "./member-device-link-v1";
 import { PROVIDERS_ADMIN_CODECS } from "./providers-v1";
 import { PROVIDERS_RUNTIMES_V2_CODECS } from "./providers-v2";
 import { PROVIDERS_SIGN_IN_V3_CODECS } from "./providers-v3";
@@ -45,6 +46,7 @@ const CODECS: ReadonlyMap<string, OptionalRouteCodec> = new Map([
   ...AGENT_PUBLISH_CODECS,
   ...LIVE_ACTIVITY_PUSH_CODECS,
   ...LIVE_VOICE_CODECS,
+  ...TEAM_MEMBER_DEVICE_LINK_CODECS,
   ...LIVE_VOICE_CHANNEL_CODECS,
   ...HOSTED_SITES_CODECS,
   ...WORKSPACE_DIRECTORY_CODECS,

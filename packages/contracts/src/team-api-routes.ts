@@ -48,6 +48,7 @@ export const TEAM_API_ROUTES = {
   join: {
     server: "/v1/join",
     account: "/v1/join/account",
+    memberDevice: "/v1/join/member-device",
     invitationPreview: "/v1/invitations/preview",
   },
   auth: {
@@ -71,6 +72,7 @@ export const TEAM_API_ROUTES = {
     invite: (inviteId: string) => `/v1/team/invites/${segment(inviteId)}`,
     sessions: "/v1/team/sessions",
     session: (sessionId: string) => `/v1/team/sessions/${segment(sessionId)}`,
+    memberDeviceLinks: "/v1/team/member-device-links",
   },
   direct: {
     threads: "/v1/direct/threads",

@@ -3,10 +3,13 @@ import { EventEmitter } from "node:events";
 import { basename } from "node:path";
 import { isValidAvatarImage } from "@openbot/contracts/avatar-images";
 import {
+  createMemberDeviceLinkUrl,
   type InviteLinkOptions,
   type InviteLinkPayload,
   isTailscaleApiUrl,
+  type MemberDeviceLinkPayload,
   parseInviteUrl,
+  parseMemberDeviceLinkUrl,
 } from "@openbot/contracts/invite-links";
 import type {
   AgentEvent,
@@ -62,6 +65,11 @@ import {
 } from "@openbot/contracts/team-protocol/current";
 import type { HostRestartEvent } from "@openbot/contracts/team-protocol/host-update-v1";
 import type { LiveVoiceWireEvent } from "@openbot/contracts/team-protocol/live-voice-v1";
+import {
+  decodeCreatedMemberDeviceLink,
+  TEAM_MEMBER_DEVICE_LINK_CAPABILITY,
+  TEAM_MEMBER_DEVICE_LINK_ROUTES,
+} from "@openbot/contracts/team-protocol/member-device-link-v1";
 import { decodeTeamProtocolV1CurrentHttpResponse } from "@openbot/contracts/team-protocol/v1-adapter";
 import { sourceText } from "@openbot/i18n/source";
 import { Deferred, Effect, Exit, Layer, Result, Scope, Semaphore } from "effect";
@@ -134,6 +142,10 @@ interface RemoteServerEvents {
   directMessage: [serverId: string, event: DirectMessageRealtimeEvent];
   directTyping: [serverId: string, event: DirectTypingRealtimeEvent];
 }
+
+type ParsedJoinLink =
+  | { kind: "invite"; payload: InviteLinkPayload }
+  | { kind: "member-device"; payload: MemberDeviceLinkPayload };
 
 class LocalTailnetRemoteServerDirectory implements RemoteServerDirectory {
   readonly #store: RemoteServerStore;
@@ -431,17 +443,89 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
    * A self-hosted account service gets the token of each invitation that this app previews or
    * accepts, so it must not see the token of an invitation for another service.
    */
-  #parseInvite(inviteUrl: string): InviteLinkPayload {
-    const invite = parseInviteUrl(inviteUrl, this.#inviteLinks);
-    if (this.#localOnlyNetworking && !isTailscaleApiUrl(invite.apiUrl)) {
+  #parseInvite(inviteUrl: string): ParsedJoinLink {
+    let invite: ParsedJoinLink;
+    try {
+      invite = { kind: "invite", payload: parseInviteUrl(inviteUrl, this.#inviteLinks) };
+    } catch {
+      invite = { kind: "member-device", payload: parseMemberDeviceLinkUrl(inviteUrl, this.#inviteLinks) };
+    }
+    const payload = invite.payload;
+    if (this.#localOnlyNetworking && !isTailscaleApiUrl(payload.apiUrl)) {
       throw new Error("Local-only mode accepts invitations from Tailscale addresses only.");
     }
     const service = this.#inviteLinks.selfHostedApiOrigin;
-    if (service && new URL(invite.apiUrl).origin !== service) {
+    if (service && new URL(payload.apiUrl).origin !== service) {
       throw new Error(sourceText("error.remote.inviteOtherService"));
     }
     return invite;
   }
+
+  #joinMemberDeviceLink = Effect.fn("RemoteManager.joinMemberDeviceLink")(
+    function* (
+      this: RemoteServerManager,
+      invite: MemberDeviceLinkPayload,
+    ): Effect.fn.Return<ServerSummary, RemoteWorkflowError, RemoteRequest> {
+      const identity = yield* this.#client.verifyIdentity(invite.apiUrl, invite.serverId, invite.fingerprint);
+      if (!identity.compatibility.capabilities.includes(TEAM_MEMBER_DEVICE_LINK_CAPABILITY)) {
+        return yield* new RemoteWorkflowError({
+          cause: new Error(sourceText("error.team.channelIdentityUnsupported")),
+        });
+      }
+      // Only reuse a session after the URL's pinned host identity has been verified. This lets the
+      // host associate a device's old channel posts with the profile that issued the link.
+      const previousServer = this.#servers.find(invite.serverId);
+      const previousToken =
+        previousServer?.fingerprint === invite.fingerprint ? this.#servers.token(previousServer) : undefined;
+      const result = yield* requestJson(invite.apiUrl, TEAM_MEMBER_DEVICE_LINK_ROUTES.redeem, decodeJoinResult, {
+        method: "POST",
+        body: { token: invite.token },
+        ...(previousToken ? { token: previousToken } : {}),
+        ...this.#client.requestProtocol(identity.compatibility),
+      }).pipe(
+        Effect.mapError(
+          (failure) =>
+            new RemoteWorkflowError({
+              cause:
+                failure instanceof RemoteRequestError || failure instanceof RemoteProtocolError
+                  ? failure
+                  : failure.cause,
+            }),
+        ),
+      );
+      const username =
+        previousServer?.fingerprint === invite.fingerprint
+          ? previousServer.username
+          : `device-${randomBytes(8).toString("hex")}`;
+      const stored: StoredRemoteServer = {
+        id: invite.serverId,
+        name: identity.serverName,
+        apiUrl: invite.apiUrl,
+        fingerprint: invite.fingerprint,
+        publicKey: identity.publicKey,
+        username,
+        encryptedToken: yield* remoteDecode(() => this.#store.sealToken(result.sessionToken)),
+        remoteDesktopAvailable: false,
+        logoVersion: identity.logoVersion,
+        role: result.member.role,
+      };
+      this.#connections.setCompatibility(stored.id, identity.compatibility);
+      this.#connections.clearIssue(stored.id);
+      this.#connections.setState(stored.id, "online");
+      yield* this.#store.adopt(stored);
+      const remoteDesktopAvailable = yield* this.#client
+        .probeRemoteDesktop(stored)
+        .pipe(Effect.catch(() => Effect.succeed(false)));
+      if (remoteDesktopAvailable) {
+        yield* this.#store.update(stored.id, { remoteDesktopAvailable }).pipe(Effect.catch(() => Effect.succeed(null)));
+      }
+      this.#events.syncScopes();
+      this.#emitChanged();
+      yield* this.#events.restart(stored.id, true);
+      return yield* remoteDecode(() => requiredServerSummary(this.list(), stored.id));
+    },
+    (operation) => this.#owned(operation),
+  ).bind(this);
 
   #suspendServer(serverId: string): void {
     this.#events.suspendReconnect(serverId);
@@ -691,7 +775,11 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     ): Effect.fn.Return<ServerSummary, RemoteWorkflowError, RemoteRequest> {
       const transport = this.#webrtcTransport;
 
-      const invite = yield* remoteDecode(() => this.#parseInvite(input.inviteUrl));
+      const parsedInvite = yield* remoteDecode(() => this.#parseInvite(input.inviteUrl));
+      if (parsedInvite.kind === "member-device") {
+        return yield* this.#joinMemberDeviceLink(parsedInvite.payload);
+      }
+      const invite = parsedInvite.payload;
       if (transport && !isDirectLocalInviteApi(invite.apiUrl)) {
         const preview = yield* transport.previewInvite(invite.token);
         if (preview.hostId !== invite.serverId)
@@ -865,7 +953,29 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     ): Effect.fn.Return<InvitePreview, RemoteWorkflowError, RemoteRequest> {
       const transport = this.#webrtcTransport;
 
-      const invite = yield* remoteDecode(() => this.#parseInvite(input.inviteUrl));
+      const parsedInvite = yield* remoteDecode(() => this.#parseInvite(input.inviteUrl));
+      if (parsedInvite.kind === "member-device") {
+        const identity = yield* this.#client.verifyIdentity(
+          parsedInvite.payload.apiUrl,
+          parsedInvite.payload.serverId,
+          parsedInvite.payload.fingerprint,
+        );
+        if (!identity.compatibility.capabilities.includes(TEAM_MEMBER_DEVICE_LINK_CAPABILITY)) {
+          return yield* new RemoteWorkflowError({
+            cause: new Error(sourceText("error.team.channelIdentityUnsupported")),
+          });
+        }
+        return {
+          serverId: parsedInvite.payload.serverId,
+          serverName: identity.serverName,
+          apiHostname: new URL(parsedInvite.payload.apiUrl).hostname,
+          role: "member",
+          expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
+          emailBound: false,
+          permanent: false,
+        };
+      }
+      const invite = parsedInvite.payload;
       if (transport && !isDirectLocalInviteApi(invite.apiUrl)) {
         const preview = yield* transport.previewInvite(invite.token);
         if (preview.hostId !== invite.serverId)
@@ -1324,6 +1434,45 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   revokeInvite(serverId: string, inviteId: string): Effect.Effect<void, RemoteWorkflowError> {
     return this.#owned(this.#team.revokeInvite(serverId, inviteId));
   }
+
+  readonly createMemberDeviceLink = Effect.fn("RemoteManager.createMemberDeviceLink")(
+    function* (
+      this: RemoteServerManager,
+      serverId: string,
+    ): Effect.fn.Return<string, RemoteWorkflowError, RemoteRequest> {
+      const server = yield* remoteDecode(() => this.#servers.require(serverId));
+      if (!isDirectLocalInviteApi(server.apiUrl)) {
+        return yield* new RemoteWorkflowError({
+          cause: new Error(sourceText("error.team.channelIdentityUnsupported")),
+        });
+      }
+      const compatibility = yield* this.#client.ensureCompatibility(server);
+      if (!compatibility.capabilities.includes(TEAM_MEMBER_DEVICE_LINK_CAPABILITY)) {
+        return yield* new RemoteWorkflowError({
+          cause: new Error(sourceText("error.team.channelIdentityUnsupported")),
+        });
+      }
+      const link = yield* this.request(serverId, TEAM_MEMBER_DEVICE_LINK_ROUTES.create, decodeCreatedMemberDeviceLink, {
+        method: "POST",
+        body: {},
+      });
+      return yield* remoteDecode(() =>
+        createMemberDeviceLinkUrl(
+          {
+            apiUrl: server.apiUrl,
+            serverId: server.id,
+            fingerprint: server.fingerprint,
+            token: link.token,
+          },
+          {
+            allowLocalDevelopmentApiUrl: isLocalDevelopmentApi(server.apiUrl),
+            allowTailscaleApiUrl: isTailscaleApiUrl(server.apiUrl),
+          },
+        ),
+      );
+    },
+    (operation) => this.#owned(operation),
+  ).bind(this);
 
   createInvite(
     serverId: string,

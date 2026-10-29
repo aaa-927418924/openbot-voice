@@ -152,6 +152,8 @@ export interface MobileWorkspaceContextValue extends MobileLiveVoiceHost {
     input: { serverName?: string; logo?: AvatarImageInput | null },
   ) => Promise<void>;
   addRemoteServer: (input: AddRemoteServerInput) => Promise<string>;
+  /** Creates a one-time Tailnet link that adds a device to this exact member identity. */
+  createMemberDeviceLink: (serverId: string) => Promise<string>;
   createAgent: (input: CreateAgentInput) => Promise<void>;
   updateAgent: (input: UpdateAgentInput, serverId?: string) => Promise<void>;
   setAgentAvatar: (agentId: string, image: RemoteFileUpload | null, serverId: string) => Promise<void>;

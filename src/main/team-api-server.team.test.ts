@@ -7,6 +7,10 @@ import { EventEmitter } from "node:events";
 import type { TeamPresenceSnapshot } from "@openbot/contracts/ipc";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import { TEAM_CHANNEL_IDENTITY_ADMIN_CAPABILITY } from "@openbot/contracts/team-protocol/current";
+import {
+  TEAM_MEMBER_DEVICE_LINK_CAPABILITY,
+  TEAM_MEMBER_DEVICE_LINK_ROUTES,
+} from "@openbot/contracts/team-protocol/member-device-link-v1";
 import { afterEach, describe, expect, it } from "vitest";
 import { OpenBotDatabase } from "../backend/openbot-database";
 import { TeamChatStore } from "../backend/team-chat-store";
@@ -23,6 +27,59 @@ import {
 afterEach(stopTeamApiFixtures);
 
 describe("TeamApiServer team", () => {
+  it("redeems a one-use device link into a new session for the existing member", async () => {
+    const { store, start, signIn } = await createTeamApiFixture("member-device-link", { configure: true });
+    const { base } = await start({ agents: createAgents() });
+    const protocol = { protocol: 6, appVersion: "0.30.0", capabilities: [TEAM_MEMBER_DEVICE_LINK_CAPABILITY] };
+    const ownerToken = await signIn(protocol);
+    const ownerId = store.getOwnerMemberId();
+    expect(ownerId).toBeTruthy();
+    const previousInvite = await Effect.runPromise(store.createInvite("admin"));
+    const previousDevice = await Effect.runPromise(
+      store.acceptInvite(previousInvite.token, "old-android-device", "a secure device password"),
+    );
+
+    const issued = await jsonRequest<{ token: string; expiresAt: string }>(
+      base,
+      TEAM_MEMBER_DEVICE_LINK_ROUTES.create,
+      { token: ownerToken, body: {}, ...protocol },
+    );
+    expect(issued.token).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+    expect(Date.parse(issued.expiresAt)).toBeGreaterThan(Date.now());
+
+    const missingCapability = await fetch(`${base}${TEAM_MEMBER_DEVICE_LINK_ROUTES.redeem}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "OpenBot-Protocol-Version": "6", "OpenBot-App-Version": "0.30.0" },
+      body: JSON.stringify({ token: issued.token }),
+    });
+    expect(missingCapability.status).toBe(404);
+
+    const linked = await jsonRequest<{
+      member: { id: string; role: string };
+      sessionToken: string;
+    }>(base, TEAM_MEMBER_DEVICE_LINK_ROUTES.redeem, {
+      token: previousDevice.sessionToken,
+      body: { token: issued.token },
+      ...protocol,
+    });
+    expect(linked.member).toEqual({ id: ownerId, role: "owner" });
+    expect(store.authenticate(linked.sessionToken)?.id).toBe(ownerId);
+    expect(store.listMembers()).toHaveLength(2);
+    expect(store.getChannelIdentity(previousDevice.member.id)?.id).toBe(ownerId);
+
+    const replay = await fetch(`${base}${TEAM_MEMBER_DEVICE_LINK_ROUTES.redeem}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "OpenBot-Protocol-Version": "6",
+        "OpenBot-App-Version": "0.30.0",
+        "OpenBot-Capabilities": TEAM_MEMBER_DEVICE_LINK_CAPABILITY,
+      },
+      body: JSON.stringify({ token: issued.token }),
+    });
+    expect(replay.status).toBe(400);
+  });
+
   it("limits cross-device channel identity linking to the owner and the advertised capability", async () => {
     const { store, start, signIn } = await createTeamApiFixture("channel-identity", { configure: true });
     const { base } = await start({ agents: createAgents() });

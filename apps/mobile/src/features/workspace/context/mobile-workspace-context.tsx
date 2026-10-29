@@ -26,6 +26,10 @@ import {
   LIVE_VOICE_ROUTES,
   type LiveVoiceWireEvent,
 } from "@openbot/contracts/team-protocol/live-voice-v1";
+import {
+  TEAM_MEMBER_DEVICE_LINK_CAPABILITY,
+  TEAM_MEMBER_DEVICE_LINK_ROUTES,
+} from "@openbot/contracts/team-protocol/member-device-link-v1";
 import { SKILLS_ADMIN_CAPABILITY } from "@openbot/contracts/team-protocol/skills-admin-v1";
 import { decodeTeamProtocolSupportV1 } from "@openbot/contracts/team-protocol/v1";
 import type { TeamProtocolV2Json } from "@openbot/contracts/team-protocol/v2";
@@ -110,7 +114,14 @@ import {
 import { conversationMessageId, decodeConversationPage } from "@/features/workspace/model/conversation";
 import { MobileConversationStore } from "@/features/workspace/model/conversation-store";
 import { LiveWorkspaceStore } from "@/features/workspace/model/live-workspace-store";
-import { type LocalTailnetServer, pairTailnetInvite } from "@/features/workspace/model/local-tailnet";
+import {
+  createTailnetMemberDeviceLinkUrl,
+  decodeTailnetMemberDeviceLink,
+  isTailnetMemberDeviceLink,
+  type LocalTailnetServer,
+  pairTailnetInvite,
+  parseTailnetMemberDeviceLink,
+} from "@/features/workspace/model/local-tailnet";
 import {
   readLocalTailnetServers,
   removeLocalTailnetServer,
@@ -1274,9 +1285,20 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
       },
       addRemoteServer: async ({ inviteUrl }) => {
         if (session.localOnly) {
+          let existingSessionToken: string | undefined;
+          if (isTailnetMemberDeviceLink(inviteUrl)) {
+            const link = parseTailnetMemberDeviceLink(inviteUrl);
+            const existingHost = (await readLocalTailnetServers()).find(
+              (host) =>
+                host.hostId === link.serverId && host.apiUrl === link.apiUrl && host.fingerprint === link.fingerprint,
+            );
+            existingSessionToken = existingHost?.sessionToken;
+          }
           const host = await pairTailnetInvite(inviteUrl, {
             appVersion: mobileAppVersion(),
             randomBytes: (size) => Crypto.getRandomBytes(size),
+            displayName: session.user.name,
+            existingSessionToken,
           });
           await saveLocalTailnetServer(host);
           const localHosts = await readLocalTailnetServers();
@@ -1316,6 +1338,21 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
         // Membership is already committed. Directory failure must not reuse the consumed invite.
         void refreshHosts().catch(() => undefined);
         return host.hostId;
+      },
+      createMemberDeviceLink: async (serverId) => {
+        const server = serversRef.current.find((candidate) => candidate.id === serverId);
+        if (!session.localOnly || !server?.tailnet)
+          throw new Error("Member device links require a locally paired Tailscale host.");
+        if (!serverCapabilities.current.get(serverId)?.includes(TEAM_MEMBER_DEVICE_LINK_CAPABILITY))
+          throw new Error("This host does not support member device links yet. Update the host first.");
+        const result = await request(
+          "POST",
+          TEAM_MEMBER_DEVICE_LINK_ROUTES.create,
+          decodeTailnetMemberDeviceLink,
+          {},
+          serverId,
+        );
+        return createTailnetMemberDeviceLinkUrl(server.tailnet, result.token);
       },
       ...createHostRequestActions({
         request,
@@ -1608,6 +1645,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
     session.localOnly,
     session.apiUrl,
     session.user.id,
+    session.user.name,
     sessionScope,
     queryClient,
     liveState,

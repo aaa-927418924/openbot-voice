@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { dirname, join } from "node:path";
-import { createInviteUrl, selfHostedApiOrigin } from "@openbot/contracts/invite-links";
+import { createInviteUrl, createMemberDeviceLinkUrl, selfHostedApiOrigin } from "@openbot/contracts/invite-links";
 import type {
   AvatarImageInput,
   CentralAuthUser,
@@ -1303,6 +1303,34 @@ export class HostService extends EventEmitter<HostEvents> {
         }
       }
       return result;
+    },
+    (operation) => this.#provide(operation),
+  ).bind(this);
+
+  /** Creates a local-only, short-lived link for another device to join this owner's member identity. */
+  readonly createMemberDeviceLink = Effect.fn("HostService.createMemberDeviceLink")(
+    function* (this: HostService): Effect.fn.Return<string, RemoteWorkflowError> {
+      const identity = this.#options.store.getIdentity();
+      const localApiUrl = this.#localApiUrl();
+      const owner = this.#options.store.listMembers().find((member) => member.role === "owner" && !member.disabled);
+      if (!identity || !localApiUrl || !owner) {
+        return yield* new RemoteWorkflowError({ cause: new Error(sourceText("error.host.publishBeforeInvite")) });
+      }
+      const link = yield* this.#options.store.createMemberDeviceLink(owner.id);
+      return yield* remoteDecode(() =>
+        createMemberDeviceLinkUrl(
+          {
+            apiUrl: localApiUrl,
+            serverId: identity.serverId,
+            fingerprint: identity.fingerprint,
+            token: link.token,
+          },
+          {
+            allowLocalDevelopmentApiUrl: this.#options.localDevelopmentHost,
+            allowTailscaleApiUrl: this.#options.localOnlyNetworking,
+          },
+        ),
+      );
     },
     (operation) => this.#provide(operation),
   ).bind(this);

@@ -269,6 +269,10 @@ export const messages = defineMessages("server", {
   "server.members.showAsSeparateMember": "Show this device as a separate member",
   "server.members.identityDescription":
     "Link your device accounts to your owner profile to show their channel messages as one person. Each device keeps its own sign-in and access role.",
+  "server.members.addDevice": "Add another device",
+  "server.members.deviceLinkDescription":
+    "This link expires in 10 minutes and works once. Open it in OpenBot on the other device to join with this profile.",
+  "server.members.deviceLinkLabel": "Link to add another device",
   "server.members.linkedDeviceAccounts": "Linked device accounts ({count})",
   "server.members.linkToProfile": "Link to me",
   "server.members.unlinkFromProfile": "Unlink",

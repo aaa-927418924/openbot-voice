@@ -1,5 +1,5 @@
 import { createAgentTemplateShareUrl, createOpenBotAgentTemplateUrl } from "@openbot/contracts/agent-template-links";
-import { createInviteUrl } from "@openbot/contracts/invite-links";
+import { createInviteUrl, createMemberDeviceLinkUrl } from "@openbot/contracts/invite-links";
 import { createOpenBotPluginUrl, createPluginShareUrl } from "@openbot/contracts/plugin-links";
 import { describe, expect, it } from "vitest";
 import { findDeepLink, MCP_OAUTH_REDIRECT_URL, parseDeepLink } from "./deep-link-router";
@@ -11,10 +11,23 @@ const invitePayload = {
   token: "b".repeat(43),
 };
 const inviteUrl = createInviteUrl(invitePayload);
+const memberDeviceLinkUrl = createMemberDeviceLinkUrl({
+  apiUrl: "http://100.100.135.107:43123/",
+  serverId: invitePayload.serverId,
+  fingerprint: invitePayload.fingerprint,
+  token: "c".repeat(43),
+});
 
 describe("the deep link router", () => {
   it("still reads an invitation as an invitation", () => {
     expect(parseDeepLink(inviteUrl)).toEqual({ kind: "invite", url: inviteUrl });
+  });
+
+  it("routes a Tailscale member-device link through the native invite flow", () => {
+    expect(parseDeepLink(memberDeviceLinkUrl, { allowTailscaleApiUrl: true })).toEqual({
+      kind: "invite",
+      url: memberDeviceLinkUrl,
+    });
   });
 
   it("reads a plugin link in both of its forms", () => {

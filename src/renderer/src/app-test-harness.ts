@@ -1101,6 +1101,7 @@ export function installOpenbotStub(): void {
         permanent: false,
         useCount: 0,
       }),
+      createMemberDeviceLink: vi.fn().mockResolvedValue("openbot://join?device=mock-member-device-token"),
       setTyping: vi.fn().mockResolvedValue(undefined),
       onPresence: vi.fn(presenceBridge.subscribe),
       listDirectThreads: vi.fn().mockResolvedValue([]),

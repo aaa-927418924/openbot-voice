@@ -256,6 +256,14 @@ const ServerSettings = createSimpleContext({
       }
     }
 
+    async function createServerMemberDeviceLink(): Promise<string> {
+      const server = serverSettingsTarget();
+      if (!server) throw new Error(currentText().t("server.settings.unavailable"));
+      const createLink = serverAdminPort(server).createMemberDeviceLink;
+      if (!createLink) throw new Error(currentText().t("server.settings.unavailable"));
+      return createLink();
+    }
+
     async function updateServerMember(input: UpdateTeamMemberInput): Promise<void> {
       const server = serverSettingsTarget();
       if (!server) throw new Error(currentText().t("server.settings.unavailable"));
@@ -469,6 +477,7 @@ const ServerSettings = createSimpleContext({
       recheckScreenRecording,
       setServerPublished,
       createServerInvite,
+      createServerMemberDeviceLink,
       updateServerMember,
       removeServerMember,
       revokeServerInvite,

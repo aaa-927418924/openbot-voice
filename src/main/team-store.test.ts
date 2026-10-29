@@ -59,6 +59,45 @@ describe("TeamStore", () => {
     expect(raw).not.toContain(login.sessionToken);
   });
 
+  it("adds another device to the exact same member with a short-lived one-time link", async () => {
+    const { store, path } = await createStore();
+    await runCauseEffect(
+      store.configureWithAccount("Studio Mac", {
+        id: "owner-account",
+        email: "owner@example.com",
+        name: "Owner profile",
+        avatarUrl: "https://api.openbot.run/v1/avatars/owner-account?v=avatar-1",
+      }),
+    );
+    const memberId = store.getOwnerMemberId();
+    if (!memberId) throw new Error("The owner member was not created.");
+    const oldDeviceInvite = await runCauseEffect(store.createInvite("admin"));
+    const oldDevice = await runCauseEffect(
+      store.acceptInvite(oldDeviceInvite.token, "old-device", "a secure device password"),
+    );
+
+    const first = await runCauseEffect(store.createMemberDeviceLink(memberId));
+    expect(Date.parse(first.expiresAt)).toBeGreaterThan(Date.now());
+    expect(first.token).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+
+    // Asking for a fresh link retires an earlier copy without changing the member.
+    const second = await runCauseEffect(store.createMemberDeviceLink(memberId));
+    await expect(runCauseEffect(store.redeemMemberDeviceLink(first.token))).rejects.toThrow("invalid or expired");
+    const joined = await runCauseEffect(store.redeemMemberDeviceLink(second.token, oldDevice.member.id));
+    expect(joined.member).toMatchObject({
+      id: memberId,
+      name: "Owner profile",
+      avatarUrl: "https://api.openbot.run/v1/avatars/owner-account?v=avatar-1",
+      role: "owner",
+    });
+    expect(store.authenticate(joined.sessionToken)?.id).toBe(memberId);
+    expect(store.getChannelIdentity(oldDevice.member.id)).toMatchObject({ id: memberId, name: "Owner profile" });
+    await expect(runCauseEffect(store.redeemMemberDeviceLink(second.token))).rejects.toThrow("invalid or expired");
+
+    const persisted = await readFile(path, "utf8");
+    expect(persisted).not.toContain(second.token);
+  });
+
   it("restores one channel display identity while keeping device memberships separate", async () => {
     const { store, path } = await createStore();
     await runCauseEffect(

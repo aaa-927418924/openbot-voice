@@ -60,6 +60,7 @@ class TeamStoreFiles extends Context.Service<
 
 const scrypt = promisify(scryptCallback);
 const INVITE_TTL_MS = 24 * 60 * 60 * 1_000;
+const MEMBER_DEVICE_LINK_TTL_MS = 10 * 60 * 1_000;
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1_000;
 
 export class TeamStoreError extends Schema.TaggedError<TeamStoreError>()("TeamStoreError", { message: Schema.String }) {
@@ -96,6 +97,13 @@ interface StoredSession {
   createdAt: string;
 }
 
+interface StoredMemberDeviceLink {
+  tokenHash: string;
+  memberId: string;
+  expiresAt: string;
+  usedAt: string | null;
+}
+
 interface StoredTeam {
   version: 1;
   serverId: string;
@@ -110,6 +118,7 @@ interface StoredTeam {
   members: StoredMember[];
   invites: StoredInvite[];
   sessions: StoredSession[];
+  memberDeviceLinks?: StoredMemberDeviceLink[];
 }
 
 /**
@@ -203,6 +212,7 @@ export class TeamStore {
    * so writing would destroy the user's only copy. Nothing here is backed up.
    */
   #unreadableFile = false;
+  readonly #redeemingMemberDeviceLinks = new Set<string>();
 
   /**
    * `legacyPath` is the single-host file shipped builds read and write. This store never
@@ -1211,6 +1221,74 @@ export class TeamStore {
     Effect.uninterruptible,
   ).bind(this);
 
+  /** Creates a short-lived, one-use link that adds another device to this member. */
+  readonly createMemberDeviceLink = Effect.fn("TeamStore.createMemberDeviceLink")(
+    function* (
+      this: TeamStore,
+      memberId: string,
+    ): Effect.fn.Return<{ token: string; expiresAt: string }, RemoteWorkflowError, TeamStoreFiles> {
+      const state = yield* remoteDecode(() => this.#requireState());
+      const member = state.members.find((candidate) => candidate.id === memberId && !candidate.disabled);
+      if (!member)
+        return yield* new RemoteWorkflowError({ cause: new TeamStoreError(sourceText("error.team.memberNotFound")) });
+      const token = randomBytes(32).toString("base64url");
+      const expiresAt = new Date(Date.now() + MEMBER_DEVICE_LINK_TTL_MS).toISOString();
+      // Keep only the newest outstanding link for this member. A copied/old link cannot stay
+      // usable after the member asks for another one, and the persisted list stays bounded.
+      state.memberDeviceLinks = (state.memberDeviceLinks ?? []).filter(
+        (link) => link.memberId !== memberId && link.usedAt === null && Date.parse(link.expiresAt) > Date.now(),
+      );
+      state.memberDeviceLinks.push({ tokenHash: hashToken(token), memberId, expiresAt, usedAt: null });
+      yield* this.#persistEffect();
+      return { token, expiresAt };
+    },
+    Effect.provide(TeamStoreFiles.layer),
+    Effect.uninterruptible,
+  ).bind(this);
+
+  /** Redeems one device link into a separate session for the same host member. */
+  readonly redeemMemberDeviceLink = Effect.fn("TeamStore.redeemMemberDeviceLink")(
+    function* (
+      this: TeamStore,
+      token: string,
+      previousMemberId?: string,
+    ): Effect.fn.Return<AuthenticatedMember, RemoteWorkflowError, TeamStoreFiles> {
+      const state = yield* remoteDecode(() => this.#requireState());
+      const tokenHash = hashToken(token);
+      const link = state.memberDeviceLinks?.find(
+        (candidate) =>
+          candidate.usedAt === null &&
+          Date.parse(candidate.expiresAt) > Date.now() &&
+          safeTextEqual(candidate.tokenHash, tokenHash),
+      );
+      const member = link && state.members.find((candidate) => candidate.id === link.memberId && !candidate.disabled);
+      if (!link || !member || this.#redeemingMemberDeviceLinks.has(tokenHash)) {
+        return yield* new RemoteWorkflowError({ cause: new TeamStoreError(sourceText("error.team.inviteInvalid")) });
+      }
+
+      // Claim before the first yield so two requests cannot redeem the same bearer link at once.
+      this.#redeemingMemberDeviceLinks.add(tokenHash);
+      link.usedAt = new Date().toISOString();
+      try {
+        // If this device already had its own membership, a link issued by the owner also
+        // connects that membership's historical channel messages to the owner's profile.
+        const previousMember = previousMemberId
+          ? state.members.find((candidate) => candidate.id === previousMemberId && !candidate.disabled)
+          : null;
+        if (previousMember && member.role === "owner" && previousMember.id !== member.id) {
+          previousMember.channelIdentityId = member.id;
+        }
+        const result = yield* remoteDecode(() => this.#createSession(member));
+        yield* this.#persistEffect();
+        return result;
+      } finally {
+        this.#redeemingMemberDeviceLinks.delete(tokenHash);
+      }
+    },
+    Effect.provide(TeamStoreFiles.layer),
+    Effect.uninterruptible,
+  ).bind(this);
+
   authenticate(token: string): TeamMemberSummary | null {
     return this.authenticateSession(token)?.member ?? null;
   }
@@ -1311,6 +1389,7 @@ export class TeamStore {
       if (patch.disabled !== undefined) member.disabled = patch.disabled;
       if (member.disabled) {
         state.sessions = state.sessions.filter((session) => session.memberId !== member.id);
+        state.memberDeviceLinks = (state.memberDeviceLinks ?? []).filter((link) => link.memberId !== member.id);
       }
       yield* this.#persistEffect();
       return publicMember(member);
@@ -1331,6 +1410,7 @@ export class TeamStore {
         });
       state.members = state.members.filter((candidate) => candidate.id !== memberId);
       state.sessions = state.sessions.filter((session) => session.memberId !== memberId);
+      state.memberDeviceLinks = (state.memberDeviceLinks ?? []).filter((link) => link.memberId !== memberId);
       yield* this.#persistEffect();
     },
     Effect.provide(TeamStoreFiles.layer),
@@ -1500,6 +1580,9 @@ export class TeamStore {
     const now = Date.now();
     host.sessions = host.sessions.filter((session) => Date.parse(session.expiresAt) > now);
     host.invites = host.invites.filter((invite) => invite.usedAt !== null || Date.parse(invite.expiresAt) > now);
+    host.memberDeviceLinks = (host.memberDeviceLinks ?? []).filter(
+      (link) => link.usedAt === null && Date.parse(link.expiresAt) > now,
+    );
   }
 
   readonly #persistEffect = Effect.fn("TeamStore.persist")(function* (
@@ -1772,6 +1855,18 @@ function isStoredTeam(value: unknown): value is StoredTeam {
   const validLogo =
     logo === undefined ||
     (isDynamicRecord(logo) && isString(logo.version) && isString(logo.mimeType) && isAvatarMimeType(logo.mimeType));
+  const memberDeviceLinks = record.memberDeviceLinks;
+  const validMemberDeviceLinks =
+    memberDeviceLinks === undefined ||
+    (Array.isArray(memberDeviceLinks) &&
+      memberDeviceLinks.every(
+        (link) =>
+          isDynamicRecord(link) &&
+          isString(link.tokenHash) &&
+          isString(link.memberId) &&
+          isString(link.expiresAt) &&
+          (link.usedAt === null || isString(link.usedAt)),
+      ));
   return (
     record.version === 1 &&
     isString(record.serverId) &&
@@ -1781,6 +1876,7 @@ function isStoredTeam(value: unknown): value is StoredTeam {
     Array.isArray(record.members) &&
     Array.isArray(record.invites) &&
     Array.isArray(record.sessions) &&
-    validLogo
+    validLogo &&
+    validMemberDeviceLinks
   );
 }

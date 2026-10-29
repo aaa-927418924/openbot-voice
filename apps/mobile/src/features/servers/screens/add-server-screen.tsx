@@ -15,7 +15,12 @@ import { AppState, Keyboard, Pressable, View } from "react-native";
 import { useMobileSession } from "@/features/auth/context/mobile-session-context";
 import { SERVER_ROLE_KEYS } from "@/features/servers/model/server-role";
 import { useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
-import { parseTailnetInvite, previewTailnetInvite } from "@/features/workspace/model/local-tailnet";
+import {
+  isTailnetMemberDeviceLink,
+  parseTailnetInvite,
+  parseTailnetMemberDeviceLink,
+  previewTailnetInvite,
+} from "@/features/workspace/model/local-tailnet";
 import { SheetFormField } from "@/shared/components/sheet-form-field";
 import { SheetScrollView } from "@/shared/components/sheet-scroll-view";
 import { haptics } from "@/shared/lib/haptics";
@@ -29,15 +34,26 @@ function normalizeInviteUrl(value: string, options: InviteLinkOptions, localOnly
   const invite = value.trim();
   if (!invite) return null;
   try {
-    if (localOnly) parseTailnetInvite(invite);
-    else parseInviteUrl(invite, options);
+    if (localOnly) {
+      try {
+        parseTailnetMemberDeviceLink(invite);
+      } catch {
+        parseTailnetInvite(invite);
+      }
+    } else parseInviteUrl(invite, options);
     return invite;
   } catch {
     return null;
   }
 }
 
-function describeInvite(preview: RemoteInvitePreview, t: MobileTranslate, format: AppFormat): string {
+function describeInvite(
+  preview: RemoteInvitePreview,
+  t: MobileTranslate,
+  format: AppFormat,
+  memberDeviceLink = false,
+): string {
+  if (memberDeviceLink) return t("mobile.server.invite.sameMemberDeviceLink");
   if (preview.permanent) return t("mobile.server.invite.noExpiry", { role: t(SERVER_ROLE_KEYS[preview.role]) });
   const expires = format.date(new Date(preview.expiresAt), {
     day: "numeric",
@@ -74,6 +90,9 @@ export function AddServerScreen({
     return url ? { url } : null;
   });
   const reviewedInvite = request?.url ?? null;
+  const reviewedMemberDeviceLink = Boolean(
+    session?.localOnly && reviewedInvite && isTailnetMemberDeviceLink(reviewedInvite),
+  );
   const [preview, setPreview] = useState<RemoteInvitePreview | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -241,7 +260,7 @@ export function AddServerScreen({
                 </Typography.Paragraph>
                 <Typography.Paragraph type="body-xs" className="text-text-secondary" numberOfLines={1}>
                   {preview
-                    ? describeInvite(preview, t, format)
+                    ? describeInvite(preview, t, format, reviewedMemberDeviceLink)
                     : previewing
                       ? t("mobile.server.invite.verifying")
                       : t("mobile.server.invite.verifyRequired")}

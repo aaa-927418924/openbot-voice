@@ -22,6 +22,8 @@ export const messages = defineMessages("mobile.server", {
   "mobile.server.invite.noExpiry": "{role} · No expiry",
   "mobile.server.invite.expires": "{role} · Expires {date}",
   "mobile.server.invite.loadFailed": "OpenBot could not load this invitation.",
+  "mobile.server.invite.sameMemberDeviceLink":
+    "Adds this device to the same member profile. This one-time link expires 10 minutes after it was created.",
   "mobile.server.invite.joinFailed": "OpenBot could not join this server.",
   "mobile.server.invite.checking": "Checking invitation…",
   "mobile.server.invite.unavailable": "Invitation unavailable",
@@ -164,6 +166,10 @@ export const messages = defineMessages("mobile.server", {
   "mobile.server.settings.updateFailed": "Could not update this server. Try again.",
   "mobile.server.settings.role": "Your role: {role}",
   "mobile.server.settings.members": "Members",
+  "mobile.server.settings.linkDevice": "Copy link for another device",
+  "mobile.server.settings.linkDeviceHint":
+    "Another device will use this same member name, avatar, and role. The link can be used once and expires after 10 minutes.",
+  "mobile.server.settings.linkDeviceCopied": "Device link copied",
   "mobile.server.settings.refreshing": "Refreshing…",
   "mobile.server.settings.refresh": "Refresh connection",
   "mobile.server.settings.leaveTitle": "Leave {name}?",

@@ -23,6 +23,8 @@ export const messages = {
   "mobile.server.invite.noExpiry": "{role} · 有効期限なし",
   "mobile.server.invite.expires": "{role} · 有効期限 {date}",
   "mobile.server.invite.loadFailed": "OpenBot はこの招待を読み込めませんでした。",
+  "mobile.server.invite.sameMemberDeviceLink":
+    "この端末を同じメンバーとして追加します。リンクは作成から10分間有効で、1回だけ使えます。",
   "mobile.server.invite.joinFailed": "OpenBot はこのサーバーに参加できませんでした。",
   "mobile.server.invite.checking": "招待を確認しています…",
   "mobile.server.invite.unavailable": "招待を利用できません",
@@ -160,6 +162,10 @@ export const messages = {
   "mobile.server.settings.updateFailed": "このサーバーを更新できませんでした。もう一度お試しください。",
   "mobile.server.settings.role": "あなたの役割: {role}",
   "mobile.server.settings.members": "メンバー",
+  "mobile.server.settings.linkDevice": "同じメンバーで別の端末を追加",
+  "mobile.server.settings.linkDeviceHint":
+    "別の端末も同じ名前・アイコン・権限になります。リンクは1回だけ使え、10分で期限切れになります。",
+  "mobile.server.settings.linkDeviceCopied": "端末追加リンクをコピーしました",
   "mobile.server.settings.refreshing": "更新しています…",
   "mobile.server.settings.refresh": "接続を更新",
   "mobile.server.settings.leaveTitle": "{name} から退出しますか？",

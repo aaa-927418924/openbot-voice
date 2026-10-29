@@ -7,9 +7,14 @@ import { generateKeyPairSync, sign } from "node:crypto";
 import { mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { parseMemberDeviceLinkUrl } from "@openbot/contracts/invite-links";
 import type { RemoteDesktopSession } from "@openbot/contracts/ipc";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import { TEAM_CURRENT_CAPABILITIES } from "@openbot/contracts/team-protocol/current";
+import {
+  TEAM_MEMBER_DEVICE_LINK_CAPABILITY,
+  TEAM_MEMBER_DEVICE_LINK_ROUTES,
+} from "@openbot/contracts/team-protocol/member-device-link-v1";
 import type { TeamProtocolV2Json } from "@openbot/contracts/team-protocol/v2";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runCauseEffect } from "../backend/effect-boundary";
@@ -142,6 +147,43 @@ describe("remote desktop session startup", () => {
 });
 
 describe("remote server links", () => {
+  it("creates a pinned Tailscale member-device link only when the host advertises the route", async () => {
+    const hostId = "00000000-0000-4000-8000-000000000000";
+    const stub = stubTeamFetch({
+      compatibility: {
+        appVersion: "1.1.0",
+        protocol: { minimum: 1, maximum: 6 },
+        capabilities: [TEAM_MEMBER_DEVICE_LINK_CAPABILITY],
+      },
+      routes: {
+        [TEAM_MEMBER_DEVICE_LINK_ROUTES.create]: () =>
+          Response.json({ token: "d".repeat(43), expiresAt: "2026-10-29T12:10:00.000Z" }, { status: 201 }),
+      },
+    });
+    const fixture = await createRemoteManager({
+      servers: [
+        storedHttpsServer(hostId, {
+          apiUrl: "http://100.100.135.107:43123/",
+          fingerprint: "a".repeat(43),
+          role: "owner",
+        }),
+      ],
+      appVersion: "1.1.0",
+      managerOptions: { allowTailscaleApiUrl: true, localOnlyNetworking: true },
+    });
+
+    const url = await runCauseEffect(fixture.manager.createMemberDeviceLink(hostId));
+    expect(parseMemberDeviceLinkUrl(url, { allowTailscaleApiUrl: true })).toMatchObject({
+      apiUrl: "http://100.100.135.107:43123/",
+      serverId: hostId,
+      token: "d".repeat(43),
+    });
+    expect(stub.requests(TEAM_MEMBER_DEVICE_LINK_ROUTES.create)).toHaveLength(1);
+    expect(stub.requests(TEAM_MEMBER_DEVICE_LINK_ROUTES.create)[0]?.headers.get("authorization")).toBe(
+      `Bearer token-${hostId}`,
+    );
+  });
+
   it("creates token-free preview URLs", () => {
     const preview = remoteAttachmentPreviewUrl("00000000-0000-4000-8000-000000000000", "draft 1");
     expect(preview).toBe("openbot-remote-attachment://00000000-0000-4000-8000-000000000000/draft%201");

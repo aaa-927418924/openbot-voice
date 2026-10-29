@@ -1,17 +1,20 @@
 import { describe, expect, it } from "vitest";
 import {
   createInviteUrl,
+  createMemberDeviceLinkUrl,
   createOpenBotInviteUrl,
   createWebAppInvitePath,
   inviteUrlFromWebAppSearch,
   inviteUseCount,
   isCanonicalInviteUrl,
+  isMemberDeviceLinkUrl,
   isNeverExpiringInvite,
   isPermanentInvite,
   isTailscaleApiUrl,
   isValidRemoteApiUrl,
   PERMANENT_INVITE_EXPIRES_AT_MS,
   parseInviteUrl,
+  parseMemberDeviceLinkUrl,
   permanentInviteExpiresAt,
   selfHostedApiOrigin,
   toOpenBotInviteUrl,
@@ -32,6 +35,21 @@ const localDevelopmentPayload = {
 const localDevelopmentOptions = { allowLocalDevelopmentApiUrl: true };
 
 describe("OpenBot invite links", () => {
+  it("round-trips a distinct Tailscale member-device link without accepting it as an invite", () => {
+    const tailscalePayload = {
+      apiUrl: "http://100.100.10.2:43123/",
+      serverId: "00000000-0000-4000-8000-0000000000a1",
+      fingerprint: "a".repeat(43),
+      token: "b".repeat(43),
+    };
+    const options = { allowTailscaleApiUrl: true };
+    const link = createMemberDeviceLinkUrl(tailscalePayload, options);
+    expect(parseMemberDeviceLinkUrl(link, options)).toEqual(tailscalePayload);
+    expect(isMemberDeviceLinkUrl(link, options)).toBe(true);
+    expect(() => parseInviteUrl(link, options)).toThrow("invalid");
+    expect(() => parseMemberDeviceLinkUrl(link.replace("device=", "invite="), options)).toThrow("invalid");
+  });
+
   it("creates and parses the canonical HTTPS invitation", () => {
     const url = createInviteUrl(payload);
     expect(url).toMatch(/^https:\/\/openbot\.run\/join\?/u);

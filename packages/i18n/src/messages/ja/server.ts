@@ -193,6 +193,10 @@ export const messages = {
   "server.members.showAsSeparateMember": "この端末を別メンバーとして表示",
   "server.members.identityDescription":
     "自分の端末アカウントをオーナープロフィールにリンクすると、チャンネルでは同じ人として表示されます。各端末のログインと権限は個別のままです。",
+  "server.members.addDevice": "別の端末を追加",
+  "server.members.deviceLinkDescription":
+    "このリンクは10分間有効で、一度だけ使えます。別の端末のOpenBotでリンクを開くと、このプロフィールに参加します。",
+  "server.members.deviceLinkLabel": "別の端末を追加するリンク",
   "server.members.linkedDeviceAccounts": "リンク済み端末アカウント（{count}）",
   "server.members.linkToProfile": "自分にリンク",
   "server.members.unlinkFromProfile": "リンク解除",

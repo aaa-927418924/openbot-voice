@@ -1,10 +1,21 @@
-import { type InviteLinkPayload, isTailscaleApiUrl, parseInviteUrl } from "@openbot/contracts/invite-links";
+import {
+  createMemberDeviceLinkUrl,
+  type InviteLinkPayload,
+  isMemberDeviceLinkUrl,
+  isTailscaleApiUrl,
+  parseInviteUrl,
+  parseMemberDeviceLinkUrl,
+} from "@openbot/contracts/invite-links";
 import type { AgentEvent, TeamRealtimeEvent } from "@openbot/contracts/ipc";
 import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import { TEAM_CURRENT_CAPABILITIES } from "@openbot/contracts/team-protocol/current";
 import { teamHttpCodec } from "@openbot/contracts/team-protocol/http-codecs";
 import type { LiveVoiceWireEvent } from "@openbot/contracts/team-protocol/live-voice-v1";
+import {
+  TEAM_MEMBER_DEVICE_LINK_CAPABILITY,
+  TEAM_MEMBER_DEVICE_LINK_ROUTES,
+} from "@openbot/contracts/team-protocol/member-device-link-v1";
 import { optionalTeamEvent } from "@openbot/contracts/team-protocol/optional-events";
 import { teamSideRouteCodec } from "@openbot/contracts/team-protocol/side-routes";
 import {
@@ -16,6 +27,7 @@ import {
   TEAM_PROTOCOL_VERSION_HEADER,
 } from "@openbot/contracts/team-protocol/v1";
 import { encodeTeamProtocolV1CurrentClientEvent } from "@openbot/contracts/team-protocol/v1-adapter";
+import type { TeamProtocolV2Json } from "@openbot/contracts/team-protocol/v2";
 import { TEAM_PROTOCOL_V6 } from "@openbot/contracts/team-protocol/v6";
 import { decodeTeamProtocolV6CurrentEventPayload } from "@openbot/contracts/team-protocol/v6-webrtc-adapter";
 import { verifyEd25519Pem } from "@openbot/team-client/ed25519";
@@ -152,7 +164,7 @@ async function requestJson(
   token: string | null,
   body: Record<string, string> | undefined,
   fetcher: TailnetFetch,
-): Promise<ReturnType<ReturnType<typeof teamHttpCodec>["decodeResponse"]>> {
+): Promise<TeamProtocolV2Json> {
   const headers = new Headers({ Accept: "application/json", [TEAM_PROTOCOL_VERSION_HEADER]: String(protocol) });
   if (appVersion) {
     headers.set(TEAM_APP_VERSION_HEADER, appVersion);
@@ -161,12 +173,23 @@ async function requestJson(
   if (token) headers.set("Authorization", `Bearer ${token}`);
   if (body !== undefined) headers.set("Content-Type", "application/json");
   const codec = teamHttpCodec(protocol);
+  const sideRoute = teamSideRouteCodec(path);
   const response = await fetcher(new URL(path, apiUrl), {
     method,
     headers,
-    ...(body === undefined ? {} : { body: codec.encodeRequest(method, path, body, { preserveSemanticTags: true }) }),
+    ...(body === undefined
+      ? {}
+      : {
+          body: sideRoute
+            ? JSON.stringify(sideRoute.request(path, body))
+            : codec.encodeRequest(method, path, body, { preserveSemanticTags: true }),
+        }),
   });
-  return readJson(response, (value) => codec.decodeResponse(method, path, response.status, value));
+  return readJson(response, (value) =>
+    sideRoute
+      ? sideRoute.response(path, response.status, value)
+      : codec.decodeResponse(method, path, response.status, value),
+  );
 }
 
 function randomPassword(randomBytes: TailnetRandomBytes): string {
@@ -211,6 +234,33 @@ export function parseTailnetInvite(value: string): InviteLinkPayload {
   return invite;
 }
 
+export function parseTailnetMemberDeviceLink(value: string): InviteLinkPayload {
+  const link = parseMemberDeviceLinkUrl(value, { allowTailscaleApiUrl: true });
+  if (!isTailscaleApiUrl(link.apiUrl)) throw new Error("Only Tailscale device links can be used in local mode.");
+  return { apiUrl: link.apiUrl, serverId: link.serverId, fingerprint: link.fingerprint, token: link.token };
+}
+
+export function isTailnetMemberDeviceLink(value: string): boolean {
+  return (
+    isMemberDeviceLinkUrl(value, { allowTailscaleApiUrl: true }) &&
+    isTailscaleApiUrl(parseMemberDeviceLinkUrl(value).apiUrl)
+  );
+}
+
+export function createTailnetMemberDeviceLinkUrl(server: LocalTailnetServer, token: string): string {
+  return createMemberDeviceLinkUrl(
+    { apiUrl: server.apiUrl, serverId: server.hostId, fingerprint: server.fingerprint, token },
+    { allowTailscaleApiUrl: true },
+  );
+}
+
+export function decodeTailnetMemberDeviceLink(value: unknown): { token: string; expiresAt: string } {
+  if (!isDynamicRecord(value) || !isString(value.token) || !isString(value.expiresAt)) {
+    throw new Error("The Tailscale host returned an invalid device link.");
+  }
+  return { token: value.token, expiresAt: value.expiresAt };
+}
+
 async function verifyTailnetIdentity(
   invite: InviteLinkPayload,
   appVersion: string,
@@ -240,11 +290,27 @@ export async function previewTailnetInvite(
   inviteUrl: string,
   options: { appVersion: string; fetch?: TailnetFetch; randomBytes: TailnetRandomBytes },
 ): Promise<RemoteInvitePreview> {
-  const invite = parseTailnetInvite(inviteUrl);
+  const deviceLink = isTailnetMemberDeviceLink(inviteUrl);
+  const invite = deviceLink ? parseTailnetMemberDeviceLink(inviteUrl) : parseTailnetInvite(inviteUrl);
   const { appVersion } = options;
   const fetcher = options.fetch ?? fetch;
   const { randomBytes } = options;
-  const { protocol, proof } = await verifyTailnetIdentity(invite, appVersion, fetcher, randomBytes);
+  const { protocol, proof, support } = await verifyTailnetIdentity(invite, appVersion, fetcher, randomBytes);
+  if (deviceLink) {
+    if (!support.capabilities.includes(TEAM_MEMBER_DEVICE_LINK_CAPABILITY)) {
+      throw new Error("The Tailscale host does not support linking member devices. Update the host first.");
+    }
+    return {
+      hostId: proof.serverId,
+      hostName: proof.serverName,
+      role: "member",
+      // The UI uses a dedicated description for these links; this value is intentionally not shown.
+      expiresAt: Date.now() + 10 * 60 * 1_000,
+      emailBound: false,
+      permanent: false,
+      devicePublicKey: proof.publicKey,
+    };
+  }
   const path = TEAM_API_ROUTES.join.invitationPreview;
   const preview = await requestJson(
     invite.apiUrl,
@@ -280,27 +346,58 @@ export async function previewTailnetInvite(
 /** Verifies the host's pinned identity before sending the one-time invite token or a password. */
 export async function pairTailnetInvite(
   inviteUrl: string,
-  options: { appVersion: string; fetch?: TailnetFetch; randomBytes: TailnetRandomBytes },
+  options: {
+    appVersion: string;
+    fetch?: TailnetFetch;
+    randomBytes: TailnetRandomBytes;
+    displayName?: string | null;
+    existingSessionToken?: string | null;
+  },
 ): Promise<LocalTailnetServer> {
-  const invite = parseTailnetInvite(inviteUrl);
+  const deviceLink = isTailnetMemberDeviceLink(inviteUrl);
+  const invite = deviceLink ? parseTailnetMemberDeviceLink(inviteUrl) : parseTailnetInvite(inviteUrl);
   const fetcher = options.fetch ?? fetch;
   const { appVersion, randomBytes } = options;
-  const { protocol, proof } = await verifyTailnetIdentity(invite, appVersion, fetcher, randomBytes);
+  const { protocol, proof, support } = await verifyTailnetIdentity(invite, appVersion, fetcher, randomBytes);
 
-  const username = `device-${base64Url(randomBytes(12)).slice(0, 16)}`;
-  const password = randomPassword(randomBytes);
-  const joined = decodeJoinedMember(
-    await requestJson(
-      invite.apiUrl,
-      appVersion,
-      protocol,
-      "POST",
-      TEAM_API_ROUTES.join.server,
-      null,
-      { inviteToken: invite.token, username, password },
-      fetcher,
-    ),
-  );
+  let joined: ReturnType<typeof decodeJoinedMember>;
+  if (deviceLink) {
+    if (!support.capabilities.includes(TEAM_MEMBER_DEVICE_LINK_CAPABILITY)) {
+      throw new Error("The Tailscale host does not support linking member devices. Update the host first.");
+    }
+    joined = decodeJoinedMember(
+      await requestJson(
+        invite.apiUrl,
+        appVersion,
+        protocol,
+        "POST",
+        TEAM_MEMBER_DEVICE_LINK_ROUTES.redeem,
+        options.existingSessionToken ?? null,
+        { token: invite.token },
+        fetcher,
+      ),
+    );
+  } else {
+    const username = `device-${base64Url(randomBytes(12)).slice(0, 16)}`;
+    const password = randomPassword(randomBytes);
+    joined = decodeJoinedMember(
+      await requestJson(
+        invite.apiUrl,
+        appVersion,
+        protocol,
+        "POST",
+        TEAM_API_ROUTES.join.server,
+        null,
+        {
+          inviteToken: invite.token,
+          username,
+          password,
+          ...(options.displayName?.trim() ? { displayName: options.displayName.trim() } : {}),
+        },
+        fetcher,
+      ),
+    );
+  }
   return {
     hostId: proof.serverId,
     name: proof.serverName,

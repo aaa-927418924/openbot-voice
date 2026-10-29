@@ -60,7 +60,7 @@ export function serversPort(): ServersPort {
 export type ServerAdminPort = Pick<
   OpenBotDesktopApi["host"],
   "getPresence" | "listMembers" | "listInvites" | "createInvite" | "updateMember" | "removeMember" | "revokeInvite"
->;
+> & { createMemberDeviceLink?: () => Promise<string> };
 
 export function serverAdminPort(server: Pick<ServerSummary, "id" | "kind">): ServerAdminPort {
   if (server.kind === "local") return window.openbot.host;
@@ -70,6 +70,7 @@ export function serverAdminPort(server: Pick<ServerSummary, "id" | "kind">): Ser
     listMembers: () => window.openbot.servers.listMembers(serverId),
     listInvites: () => window.openbot.servers.listInvites(serverId),
     createInvite: (input) => window.openbot.servers.createInvite(input, serverId),
+    createMemberDeviceLink: () => window.openbot.servers.createMemberDeviceLink(serverId),
     updateMember: (input) => window.openbot.servers.updateMember(input, serverId),
     removeMember: (memberId) => window.openbot.servers.removeMember(memberId, serverId),
     revokeInvite: (inviteId) => window.openbot.servers.revokeInvite(inviteId, serverId),

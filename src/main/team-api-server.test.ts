@@ -12,8 +12,11 @@ import { join } from "node:path";
 import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import { TEAM_SEMANTIC_TAGS_CAPABILITY } from "@openbot/contracts/team-protocol/current";
+import { TEAM_MEMBER_DEVICE_LINK_CAPABILITY } from "@openbot/contracts/team-protocol/member-device-link-v1";
+import { teamSideRouteCodec } from "@openbot/contracts/team-protocol/side-routes";
 import {
   TEAM_APP_VERSION_HEADER,
+  TEAM_CAPABILITIES_HEADER,
   TEAM_PROTOCOL_VERSION_HEADER,
   teamProtocolV1HttpRoute,
 } from "@openbot/contracts/team-protocol/v1";
@@ -166,6 +169,7 @@ const ROUTE_METHODS: Record<string, string> = {
   workspaceFiles: "GET",
   "join.server": "POST",
   "join.account": "POST",
+  "join.memberDevice": "POST",
   "join.invitationPreview": "POST",
   "auth.login": "POST",
   "auth.account": "POST",
@@ -176,6 +180,7 @@ const ROUTE_METHODS: Record<string, string> = {
   "team.presence": "GET",
   "team.logo": "GET",
   "team.members": "GET",
+  "team.memberDeviceLinks": "POST",
   "team.member": "PATCH",
   // The walk signs in as the owner, whom the route refuses, so it removes nothing and needs no order.
   "team.leave": "POST",
@@ -302,6 +307,9 @@ const ROUTES_WITHOUT_A_CLASSIFIED_JSON_BODY = new Set([
   // the deletion is answered with 204 and no body at all.
   "browser.viewSessions",
   "browser.viewSession",
+  // Optional member-device routes are classified by their side codec, not the frozen v1 adapter.
+  "join.memberDevice",
+  "team.memberDeviceLinks",
   // Optional v4 setup routes. Their separate request/response codec is tested in v4.test.ts.
   "remoteScreen.setup",
   "remoteScreen.test",
@@ -350,7 +358,10 @@ describe("TeamApiServer routing", () => {
     // notices, because the frozen adapter does not move with them.
     const unclassified = routes
       .filter((route) => !ROUTES_WITHOUT_A_CLASSIFIED_JSON_BODY.has(route.name))
-      .filter((route) => !teamProtocolV1HttpRoute(ROUTE_METHODS[route.name] ?? "", route.path))
+      .filter(
+        (route) =>
+          !teamProtocolV1HttpRoute(ROUTE_METHODS[route.name] ?? "", route.path) && !teamSideRouteCodec(route.path),
+      )
       .map((route) => `${ROUTE_METHODS[route.name]} ${route.path} (${route.name})`);
     expect(unclassified).toEqual([]);
 
@@ -365,7 +376,16 @@ describe("TeamApiServer routing", () => {
       const method = ROUTE_METHODS[route.name];
       const response = await fetch(`${base}${route.path}`, {
         method,
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {
+          Authorization: `Bearer ${token}`,
+          ...(route.name === "join.memberDevice" || route.name === "team.memberDeviceLinks"
+            ? {
+                [TEAM_PROTOCOL_VERSION_HEADER]: "6",
+                [TEAM_APP_VERSION_HEADER]: "0.5.0",
+                [TEAM_CAPABILITIES_HEADER]: TEAM_MEMBER_DEVICE_LINK_CAPABILITY,
+              }
+            : {}),
+        },
       });
       const body = response.status === 404 ? await response.json() : null;
       if (isDynamicRecord(body) && body.error === "Route not found.") {

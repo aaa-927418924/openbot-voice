@@ -43,6 +43,7 @@ export function serverSupportsCapability(
       capability === "context-reset-v1" ||
       capability === "channel-history-delete-v1" ||
       capability === "channel-identity-admin-v1" ||
+      capability === "member-device-link-v1" ||
       capability === "agent-import-v1" ||
       // A host that never negotiated cannot carry a microphone's session, so this waits to be told.
       capability === "live-voice-v1") &&

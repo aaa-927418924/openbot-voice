@@ -1,5 +1,5 @@
 import { join, resolve } from "node:path";
-import { parseInviteUrl, selfHostedApiOrigin } from "@openbot/contracts/invite-links";
+import { selfHostedApiOrigin } from "@openbot/contracts/invite-links";
 import { type AppLogoColor, type CentralAuthState, IPC_ENDPOINTS, LOCAL_SERVER_ID } from "@openbot/contracts/ipc";
 import { createFormat, resolveLocale, translateFor } from "@openbot/i18n";
 import { createOpenBotLogger, toLogValue } from "@openbot/logging";
@@ -134,6 +134,9 @@ const hostingDeveloperKey = takeHostingDeveloperKey(process.env, app.isPackaged)
 const serverMode = takeServerModeEnvironment(process.env, app.isPackaged, process.platform);
 const inviteLinkOptions = {
   allowLocalDevelopmentApiUrl: developmentRemoteRole !== null,
+  // Device-link invitations use the owner's direct Tailscale API. The host key is still verified
+  // by RemoteServerManager before the bearer token is sent.
+  allowTailscaleApiUrl: true,
   selfHostedApiOrigin: selfHostedApiOrigin(process.env.OPENBOT_AUTH_API_URL),
 };
 const developmentRemoteDebuggingPort = !app.isPackaged
@@ -778,13 +781,10 @@ app.on("open-url", (event, url) => {
 
 app.on("continue-activity", (event, type, _userInfo, details) => {
   if (type !== "NSUserActivityTypeBrowsingWeb" || !details.webpageURL) return;
-  try {
-    parseInviteUrl(details.webpageURL, inviteLinkOptions);
-  } catch {
-    return;
-  }
+  const link = parseDeepLink(details.webpageURL, inviteLinkOptions);
+  if (link?.kind !== "invite") return;
   event.preventDefault();
-  acceptDeepLink({ kind: "invite", url: details.webpageURL });
+  acceptDeepLink(link);
 });
 
 if (!hasSingleInstanceLock) {

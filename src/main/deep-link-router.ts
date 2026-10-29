@@ -20,7 +20,7 @@
  */
 
 import { parseAgentTemplateUrl } from "@openbot/contracts/agent-template-links";
-import { type InviteLinkOptions, parseInviteUrl } from "@openbot/contracts/invite-links";
+import { type InviteLinkOptions, parseInviteUrl, parseMemberDeviceLinkUrl } from "@openbot/contracts/invite-links";
 import { parsePluginUrl } from "@openbot/contracts/plugin-links";
 
 export type DeepLink =
@@ -49,6 +49,13 @@ export function parseDeepLink(value: string, options: InviteLinkOptions = {}): D
     return { kind: "invite", url: value };
   } catch {
     // Not an invitation. Most command-line arguments are not a link of any kind.
+  }
+
+  try {
+    parseMemberDeviceLinkUrl(value, options);
+    return { kind: "invite", url: value };
+  } catch {
+    // A link that joins an additional device follows the same native invite flow.
   }
 
   try {

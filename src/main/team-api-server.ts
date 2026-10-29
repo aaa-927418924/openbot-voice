@@ -51,6 +51,7 @@ import {
   TEAM_AGENT_ACTIVITY_CAPABILITY,
   TEAM_CHANNEL_IDENTITY_ADMIN_CAPABILITY,
   TEAM_CURRENT_CAPABILITIES,
+  TEAM_MEMBER_DEVICE_LINK_CAPABILITY,
   type TeamCurrentCapability,
 } from "@openbot/contracts/team-protocol/current";
 import {
@@ -60,6 +61,7 @@ import {
 } from "@openbot/contracts/team-protocol/host-update-v1";
 import { teamHttpCodec } from "@openbot/contracts/team-protocol/http-codecs";
 import type { LiveVoiceWireEvent } from "@openbot/contracts/team-protocol/live-voice-v1";
+import { TEAM_MEMBER_DEVICE_LINK_ROUTES } from "@openbot/contracts/team-protocol/member-device-link-v1";
 import { optionalTeamEvent } from "@openbot/contracts/team-protocol/optional-events";
 import { teamSideRouteCodec } from "@openbot/contracts/team-protocol/side-routes";
 import {
@@ -593,6 +595,20 @@ export class TeamApiServer {
             stringField(body, "password", false, 256),
             nullableString(body, "displayName", INPUT_LIMITS.accountName),
           ),
+        );
+        return this.#json(response, 201, result);
+      }
+      if (method === "POST" && url.pathname === TEAM_MEMBER_DEVICE_LINK_ROUTES.redeem) {
+        if (!requestCapabilities(request).has(TEAM_MEMBER_DEVICE_LINK_CAPABILITY)) {
+          return this.#json(response, 404, { error: sourceText("error.team.routeNotFound") });
+        }
+        const body = await readJson(request);
+        this.#checkRate(request, "member-device-link");
+        const authorization = request.headers.authorization;
+        const sourceToken = typeof authorization === "string" ? /^Bearer (.+)$/u.exec(authorization)?.[1] : undefined;
+        const previousMemberId = sourceToken ? this.#options.store.authenticate(sourceToken)?.id : undefined;
+        const result = await runCauseEffect(
+          this.#options.store.redeemMemberDeviceLink(stringField(body, "token", false, 128), previousMemberId),
         );
         return this.#json(response, 201, result);
       }

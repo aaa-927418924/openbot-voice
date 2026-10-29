@@ -954,6 +954,31 @@ describe("ServerSettingsModal", () => {
     expect(onUpdateMember).not.toHaveBeenCalled();
   });
 
+  it("creates a member-device link for a supported host", async () => {
+    const supportedOwner = {
+      ...remoteServer,
+      role: "owner" as const,
+      compatibility: {
+        localAppVersion: "0.5.0",
+        hostAppVersion: "0.5.0",
+        localProtocol: { minimum: 1, maximum: 6 },
+        hostProtocol: { minimum: 1, maximum: 6 },
+        negotiatedProtocol: 6,
+        capabilities: ["member-device-link-v1"],
+      },
+    };
+    const link = "https://openbot.run/join?api=http%3A%2F%2F100.100.135.107%3A43123&device=token";
+    const onCreateMemberDeviceLink = vi.fn(async () => link);
+    render(() => <ServerSettingsModal {...props({ server: supportedOwner, onCreateMemberDeviceLink })} />);
+
+    await fireEvent.click(screen.getByRole("tab", { name: "Members" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Add another device" }));
+
+    await waitFor(() => expect(onCreateMemberDeviceLink).toHaveBeenCalledOnce());
+    expect(await screen.findByRole("textbox", { name: "Link to add another device" })).toHaveValue(link);
+    expect(screen.getByRole("button", { name: "Copy link" })).toBeInTheDocument();
+  });
+
   it("groups explicitly linked device memberships beneath one profile", async () => {
     const supportedOwner = {
       ...remoteServer,

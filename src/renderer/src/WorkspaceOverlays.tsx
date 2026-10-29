@@ -331,6 +331,7 @@ function ServerSettings(props: {
     recheckScreenRecording,
     setServerPublished,
     createServerInvite,
+    createServerMemberDeviceLink,
     updateServerMember,
     removeServerMember,
     leaveServer,
@@ -498,6 +499,7 @@ function ServerSettings(props: {
           onSetMuted={(muted) => setServerMuted(server().id, muted)}
           onSetNotificationLevel={(level) => setServerNotificationLevel(server().id, level)}
           onCreateInvite={createServerInvite}
+          onCreateMemberDeviceLink={createServerMemberDeviceLink}
           onUpdateMember={updateServerMember}
           onRemoveMember={removeServerMember}
           onRevokeInvite={revokeServerInvite}

@@ -1,4 +1,5 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
+import * as Clipboard from "expo-clipboard";
 import { router, useLocalSearchParams, useNavigation } from "expo-router";
 import { usePreventRemove } from "expo-router/react-navigation";
 import { Typography } from "heroui-native";
@@ -28,10 +29,11 @@ export function ServerSettingsScreen() {
   const { session } = useMobileSession();
   const { t, sourceText } = useText();
   const { serverId } = useLocalSearchParams<{ serverId: string }>();
-  const { servers, leaveServer, refreshServer } = useMobileWorkspace();
+  const { servers, leaveServer, refreshServer, createMemberDeviceLink } = useMobileWorkspace();
   const server = servers.find((item) => item.id === serverId);
   const locked = useRef(false);
   const [busy, setBusy] = useState(false);
+  const [deviceLinkCopied, setDeviceLinkCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
   async function perform(operation: () => Promise<void>) {
     if (locked.current) return;
@@ -66,6 +68,24 @@ export function ServerSettingsScreen() {
           <ServerStatusLabel server={server} />
         </SettingsRow>
         {server.connectionMessage ? <SettingsNote>{sourceText(server.connectionMessage)}</SettingsNote> : null}
+        {session?.localOnly && server.tailnet ? (
+          <SettingsRow
+            disclosure={false}
+            disabled={busy || server.state !== "online"}
+            supportingText={t("mobile.server.settings.linkDeviceHint")}
+            onPress={() =>
+              void perform(async () => {
+                const link = await createMemberDeviceLink(serverId);
+                await Clipboard.setStringAsync(link);
+                setDeviceLinkCopied(true);
+              })
+            }
+          >
+            <Typography.Paragraph type="body-sm">
+              {deviceLinkCopied ? t("mobile.server.settings.linkDeviceCopied") : t("mobile.server.settings.linkDevice")}
+            </Typography.Paragraph>
+          </SettingsRow>
+        ) : null}
         {!session?.localOnly ? (
           <SettingsRow onPress={() => router.push({ pathname: "/server-settings/members", params: { serverId } })}>
             <Typography.Paragraph type="body-sm">{t("mobile.server.settings.members")}</Typography.Paragraph>

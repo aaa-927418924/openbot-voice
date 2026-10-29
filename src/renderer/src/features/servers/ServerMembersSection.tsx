@@ -47,7 +47,7 @@ import { useText } from "@openbot/ui/text";
 import { prefersReducedMotion } from "@openbot/ui/utils";
 import type { JSX } from "@solidjs/web";
 import { createEffect, createMemo, createSignal, createStore, For, onCleanup, Show, untrack } from "solid-js";
-import { serverCanAdminister, serverRoleCanAdminister } from "./server-capabilities";
+import { serverCanAdminister, serverRoleCanAdminister, serverSupportsCapability } from "./server-capabilities";
 import type { ServerSettingsSectionHost } from "./server-settings-section";
 
 type InviteMode = "link" | "email" | "perma";
@@ -90,6 +90,7 @@ interface MemberIdentityGroup {
 interface MembersPanels {
   invite: InvitePanel;
   members: MembersPanel;
+  memberDeviceLink: string | null;
 }
 
 interface ServerMembersSection {
@@ -115,6 +116,7 @@ export function createServerMembersSection(host: ServerSettingsSectionHost): Ser
       role: "member",
     },
     members: { removeId: null, search: "" },
+    memberDeviceLink: null,
   });
   /** A clock, not panel state: it retires an invite row as its `expiresAt` passes. */
   const [now, setNow] = createSignal(Date.now());
@@ -129,6 +131,12 @@ export function createServerMembersSection(host: ServerSettingsSectionHost): Ser
    */
   const permanentSupported = () => local() || props.server.apiUrl === null;
   const canManage = () => configured() && serverRoleCanAdminister(props.server);
+  const canCreateMemberDeviceLink = () =>
+    Boolean(props.onCreateMemberDeviceLink) &&
+    configured() &&
+    published() &&
+    actionsAvailable() &&
+    serverSupportsCapability(props.server, "member-device-link-v1");
   const ownerMember = createMemo(() => props.members.find((member) => member.role === "owner") ?? null);
   const canLinkChannelIdentity = () =>
     configured() &&
@@ -294,11 +302,25 @@ export function createServerMembersSection(host: ServerSettingsSectionHost): Ser
     if (!created.email) swapInviteLink(created.inviteUrl);
   }
 
+  async function createMemberDeviceLink(): Promise<void> {
+    if (!props.onCreateMemberDeviceLink) return;
+    let link: string | undefined;
+    const saved = await run("member-device-link", async () => {
+      link = await props.onCreateMemberDeviceLink?.();
+    });
+    if (!saved || !link) return;
+    const createdLink = link;
+    setPanels((state) => {
+      state.memberDeviceLink = createdLink;
+    });
+  }
+
   function resetForServer(): void {
     setPanels((state) => {
       state.invite.result = null;
       state.invite.showQr = false;
       state.members.search = "";
+      state.memberDeviceLink = null;
     });
     resetInviteLink();
   }
@@ -348,23 +370,63 @@ export function createServerMembersSection(host: ServerSettingsSectionHost): Ser
             </span>
           }
           actions={
-            <label class="server-settings-search">
-              <Search aria-hidden="true" />
-              <span class="sr-only">{t("server.members.search")}</span>
-              <Input
-                size="sm"
-                type="search"
-                placeholder={t("server.members.search")}
-                value={panels.members.search}
-                onValueChange={(value) =>
-                  setPanels((state) => {
-                    state.members.search = value;
-                  })
-                }
-              />
-            </label>
+            <>
+              <Show when={canCreateMemberDeviceLink()}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  loading={busy() === "member-device-link"}
+                  disabled={busy() !== null}
+                  onClick={() => void createMemberDeviceLink()}
+                >
+                  <UserRound />
+                  {t("server.members.addDevice")}
+                </Button>
+              </Show>
+              <label class="server-settings-search">
+                <Search aria-hidden="true" />
+                <span class="sr-only">{t("server.members.search")}</span>
+                <Input
+                  size="sm"
+                  type="search"
+                  placeholder={t("server.members.search")}
+                  value={panels.members.search}
+                  onValueChange={(value) =>
+                    setPanels((state) => {
+                      state.members.search = value;
+                    })
+                  }
+                />
+              </label>
+            </>
           }
         >
+          <Show when={panels.memberDeviceLink}>
+            {(link) => (
+              <Card class="server-settings-device-link-card">
+                <div class="server-settings-device-link-description">
+                  <Text>{t("server.members.deviceLinkDescription")}</Text>
+                </div>
+                <div class="server-settings-device-link-actions">
+                  <Input
+                    size="sm"
+                    readonly
+                    aria-label={t("server.members.deviceLinkLabel")}
+                    value={link()}
+                    onFocus={(event) => event.currentTarget.select()}
+                  />
+                  <CopyButton
+                    value={link()}
+                    label={t("server.invite.copyLink")}
+                    copiedLabel={t("common.copied")}
+                    size="sm"
+                    variant="default"
+                    onCopyError={host.showCopyError}
+                  />
+                </div>
+              </Card>
+            )}
+          </Show>
           <ItemGroup class="settings-modal-card server-settings-members-list">
             <Show
               when={filteredMemberGroups().length > 0}
