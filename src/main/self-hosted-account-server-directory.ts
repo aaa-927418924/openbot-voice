@@ -27,13 +27,15 @@ interface StoredMembership {
 }
 
 interface DirectoryFile {
-  readonly version: 1;
+  readonly version: 2;
   readonly servers: readonly StoredServer[];
   readonly memberships: readonly StoredMembership[];
+  /** Hidden hosts stay stored for reversible, account-wide removal from server lists. */
+  readonly hiddenHostIds: readonly string[];
 }
 
 function emptyDirectory(): DirectoryFile {
-  return { version: 1, servers: [], memberships: [] };
+  return { version: 2, servers: [], memberships: [], hiddenHostIds: [] };
 }
 
 function validId(value: unknown): value is string {
@@ -89,10 +91,22 @@ function decodeMembership(value: unknown): StoredMembership {
   };
 }
 
+function decodeHiddenHostIds(value: unknown): string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 10_000) throw new Error("The account server directory is invalid.");
+  const hostIds: string[] = [];
+  for (const hostId of value) {
+    if (!validId(hostId)) throw new Error("The account server directory is invalid.");
+    hostIds.push(hostId);
+  }
+  if (new Set(hostIds).size !== hostIds.length) throw new Error("The account server directory is invalid.");
+  return hostIds;
+}
+
 function decodeDirectory(value: unknown): DirectoryFile {
   if (
     !isDynamicRecord(value) ||
-    value.version !== 1 ||
+    (value.version !== 1 && value.version !== 2) ||
     !Array.isArray(value.servers) ||
     value.servers.length > 10_000 ||
     !Array.isArray(value.memberships) ||
@@ -111,7 +125,8 @@ function decodeDirectory(value: unknown): DirectoryFile {
   ) {
     throw new Error("The account server directory is invalid.");
   }
-  return { version: 1, servers, memberships };
+  const hiddenHostIds = decodeHiddenHostIds(value.hiddenHostIds);
+  return { version: 2, servers, memberships, hiddenHostIds };
 }
 
 function decodeRegistration(value: unknown): AccountServerRegistration {
@@ -168,8 +183,9 @@ export class SelfHostedAccountServerDirectory {
 
   async list(accountId: string): Promise<AccountServerDirectoryEntry[]> {
     await this.#requireReady();
+    const hiddenHostIds = new Set(this.#state.hiddenHostIds);
     return this.#state.memberships
-      .filter((membership) => membership.accountId === accountId)
+      .filter((membership) => membership.accountId === accountId && !hiddenHostIds.has(membership.hostId))
       .flatMap((membership) => {
         const server = this.#state.servers.find((candidate) => candidate.hostId === membership.hostId);
         return server
@@ -221,7 +237,7 @@ export class SelfHostedAccountServerDirectory {
         role: registration.role,
       };
       const next: DirectoryFile = {
-        version: 1,
+        version: 2,
         servers: existing
           ? this.#state.servers.map((candidate) => (candidate.hostId === server.hostId ? server : candidate))
           : [...this.#state.servers, server],
@@ -232,10 +248,30 @@ export class SelfHostedAccountServerDirectory {
               candidate.accountId === accountId && candidate.hostId === server.hostId ? membership : candidate,
             )
           : [...this.#state.memberships, membership],
+        hiddenHostIds: this.#state.hiddenHostIds,
       };
       await this.#persist(next);
       this.#state = next;
       return this.list(accountId);
+    });
+  }
+
+  /**
+   * Hides a host from every account served by this identity directory without deleting memberships,
+   * Team conversations, attachments, or workspaces. The owning host process calls this operation;
+   * re-enabling it simply removes the host from this set.
+   */
+  async setServerVisible(hostId: string, visible: boolean): Promise<void> {
+    if (!validId(hostId)) throw new AccountServerDirectoryError(400, "invalid_request");
+    await this.#exclusive(async () => {
+      await this.#requireReady();
+      const hiddenHostIds = new Set(this.#state.hiddenHostIds);
+      if (visible) hiddenHostIds.delete(hostId);
+      else hiddenHostIds.add(hostId);
+      if (hiddenHostIds.size === this.#state.hiddenHostIds.length) return;
+      const next: DirectoryFile = { ...this.#state, version: 2, hiddenHostIds: [...hiddenHostIds] };
+      await this.#persist(next);
+      this.#state = next;
     });
   }
 
@@ -247,10 +283,13 @@ export class SelfHostedAccountServerDirectory {
         (membership) => !(membership.accountId === accountId && membership.hostId === hostId),
       );
       const referencedHosts = new Set(memberships.map((membership) => membership.hostId));
+      const servers = this.#state.servers.filter((server) => referencedHosts.has(server.hostId));
+      const retainedHosts = new Set(servers.map((server) => server.hostId));
       const next: DirectoryFile = {
-        version: this.#state.version,
-        servers: this.#state.servers.filter((server) => referencedHosts.has(server.hostId)),
+        version: 2,
+        servers,
         memberships,
+        hiddenHostIds: this.#state.hiddenHostIds.filter((candidate) => retainedHosts.has(candidate)),
       };
       if (next.memberships.length === this.#state.memberships.length) return;
       await this.#persist(next);

@@ -174,6 +174,20 @@ describe("SelfHostedIdentityApiServer", () => {
       expect(await directoryReadback.list(account.id)).toMatchObject([
         { hostId: "linux-team-host", name: "Renamed host", isOwner: false, role: "member" },
       ]);
+      await directoryReadback.setServerVisible("linux-team-host", false);
+      expect(await directoryReadback.list(account.id)).toEqual([]);
+      expect(await directoryReadback.list(otherAccount.account.id)).toEqual([]);
+
+      const visibilityAfterRestart = new SelfHostedAccountServerDirectory(join(root, "server-directory.json"));
+      await visibilityAfterRestart.initialize();
+      expect(await visibilityAfterRestart.list(account.id)).toEqual([]);
+      await visibilityAfterRestart.setServerVisible("linux-team-host", true);
+      expect(await visibilityAfterRestart.list(account.id)).toMatchObject([
+        { hostId: "linux-team-host", name: "Renamed host" },
+      ]);
+      expect(await visibilityAfterRestart.list(otherAccount.account.id)).toMatchObject([
+        { hostId: "linux-team-host", membershipId: "other-membership" },
+      ]);
       expect(
         selfHostedTeamProfile(
           { id: account.id, email: account.email, name: account.name, avatarUrl: account.avatarUrl },
