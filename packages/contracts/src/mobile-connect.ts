@@ -1,4 +1,4 @@
-import { isTailscaleApiUrl } from "./invite-links";
+import { isTailscaleApiUrl, parseMemberDeviceLinkUrl } from "./invite-links";
 
 const MOBILE_CONNECT_PROTOCOL = "openbot:";
 const MOBILE_CONNECT_HOST = "mobile-connect";
@@ -60,6 +60,8 @@ export interface MobileConnectPayload {
   apiUrl: string;
   ticket: string;
   host?: MobileConnectHostBinding;
+  /** One-time link that joins the scanned device to the same Team member as the QR owner. */
+  memberDeviceLink?: string;
 }
 
 export function createMobileConnectUrl(payload: MobileConnectPayload): string {
@@ -74,6 +76,13 @@ export function createMobileConnectUrl(payload: MobileConnectPayload): string {
     url.searchParams.set("host", payload.host.hostId);
     url.searchParams.set("fingerprint", payload.host.fingerprint);
   }
+  if (payload.memberDeviceLink !== undefined) {
+    const member = parseMemberDeviceLinkUrl(payload.memberDeviceLink);
+    if (!payload.host || member.serverId !== payload.host.hostId || member.fingerprint !== payload.host.fingerprint) {
+      throw new Error("Invalid Mobile Connect member device link.");
+    }
+    url.searchParams.set("member", payload.memberDeviceLink);
+  }
   return url.toString();
 }
 
@@ -86,7 +95,9 @@ export function parseMobileConnectUrl(value: string): MobileConnectPayload | nul
       (url.pathname !== "" && url.pathname !== "/") ||
       url.hash !== "" ||
       [...url.searchParams.keys()].some(
-        (key) => !["api", "ticket", "host", "fingerprint"].includes(key) || url.searchParams.getAll(key).length !== 1,
+        (key) =>
+          !["api", "ticket", "host", "fingerprint", "member"].includes(key) ||
+          url.searchParams.getAll(key).length !== 1,
       )
     ) {
       return null;
@@ -96,7 +107,20 @@ export function parseMobileConnectUrl(value: string): MobileConnectPayload | nul
     const hasHost = url.searchParams.has("host") || url.searchParams.has("fingerprint");
     const host = { hostId: url.searchParams.get("host"), fingerprint: url.searchParams.get("fingerprint") };
     if (hasHost && !isMobileConnectHostBinding(host)) return null;
-    return apiUrl && ticket ? { apiUrl, ticket, ...(isMobileConnectHostBinding(host) ? { host } : {}) } : null;
+    const memberDeviceLink = url.searchParams.get("member");
+    if (memberDeviceLink !== null) {
+      if (!isMobileConnectHostBinding(host) || memberDeviceLink.length > 2048) return null;
+      const member = parseMemberDeviceLinkUrl(memberDeviceLink);
+      if (member.serverId !== host.hostId || member.fingerprint !== host.fingerprint) return null;
+    }
+    return apiUrl && ticket
+      ? {
+          apiUrl,
+          ticket,
+          ...(isMobileConnectHostBinding(host) ? { host } : {}),
+          ...(memberDeviceLink ? { memberDeviceLink } : {}),
+        }
+      : null;
   } catch {
     return null;
   }

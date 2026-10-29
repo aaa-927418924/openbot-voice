@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createMemberDeviceLinkUrl } from "@openbot/contracts/invite-links";
 import { parseMobileConnectUrl } from "@openbot/contracts/mobile-connect";
 import { Effect } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -8,7 +9,7 @@ import { runCauseEffect } from "../backend/effect-boundary";
 import { createHostedMobileConnect, createSelfHostedMobileConnect } from "./mobile-connect-host";
 import { SelfHostedIdentityAuthority } from "./self-hosted-identity-authority";
 
-const binding = { hostId: "host-a", fingerprint: "a".repeat(43) };
+const binding = { hostId: "11111111-1111-4111-8111-111111111111", fingerprint: "a".repeat(43) };
 const roots: string[] = [];
 
 afterEach(async () => {
@@ -51,15 +52,26 @@ describe("createSelfHostedMobileConnect", () => {
                 phase: "online" as const,
               };
             }),
+          createMemberDeviceLink: () =>
+            Effect.sync(() => {
+              operations.push("member-link");
+              return createMemberDeviceLinkUrl({
+                apiUrl: "http://100.100.10.2:43123",
+                serverId: binding.hostId,
+                fingerprint: binding.fingerprint,
+                token: "d".repeat(43),
+              });
+            }),
         },
       }),
     );
 
     const payload = parseMobileConnectUrl(qr.qrData);
-    expect(operations).toEqual(["team-api", "identity-api"]);
+    expect(operations).toEqual(["team-api", "member-link", "identity-api"]);
     expect(payload).toMatchObject({
       apiUrl: "http://100.100.10.2:43124",
       host: binding,
+      memberDeviceLink: expect.stringContaining("device="),
     });
     expect(qr.expiresAt).toBeGreaterThan(Date.now());
   });

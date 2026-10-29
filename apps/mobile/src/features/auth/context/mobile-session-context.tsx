@@ -10,6 +10,7 @@ import {
 } from "react";
 import { mobileAnalytics } from "@/features/analytics/mobile-analytics";
 import {
+  configureMobileLoginCredentials,
   logoutMobileSession,
   type MobileProfileChange,
   type MobileSession,
@@ -33,6 +34,7 @@ interface MobileSessionContextValue {
   connect: (session: MobileSession) => void;
   signOut: () => Promise<void>;
   updateProfile: (change: MobileProfileChange) => Promise<void>;
+  configureCredentials: (email: string, password: string) => Promise<void>;
 }
 
 const MobileSessionContext = createContext<MobileSessionContextValue | null>(null);
@@ -108,6 +110,16 @@ export function MobileSessionProvider({ children }: PropsWithChildren) {
     [setCurrentSession],
   );
 
+  const configureCredentials = useCallback(
+    async (email: string, password: string) => {
+      const current = sessionRef.current;
+      if (!current) throw new MobileSessionExpiredError();
+      const updated = await configureMobileLoginCredentials(current, email, password);
+      setCurrentSession(updated);
+    },
+    [setCurrentSession],
+  );
+
   const value = useMemo<MobileSessionContextValue>(
     () => ({
       loading,
@@ -121,8 +133,18 @@ export function MobileSessionProvider({ children }: PropsWithChildren) {
       },
       signOut,
       updateProfile,
+      configureCredentials,
     }),
-    [loading, sessionState, setCurrentSession, signOut, updateProfile, handleSessionError, refreshProfile],
+    [
+      loading,
+      sessionState,
+      setCurrentSession,
+      signOut,
+      updateProfile,
+      configureCredentials,
+      handleSessionError,
+      refreshProfile,
+    ],
   );
 
   return <MobileSessionContext.Provider value={value}>{children}</MobileSessionContext.Provider>;

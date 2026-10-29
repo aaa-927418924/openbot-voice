@@ -58,6 +58,82 @@ describe("SelfHostedIdentityAuthority", () => {
     expect(authority.getLocalAccount()).toEqual(first);
   });
 
+  it("keeps registered accounts distinct and authenticates each session as its own account", async () => {
+    const { authority, path } = await newAuthority();
+    const owner = await runEffect(authority.ensureLocalAccount(profile));
+    const ownerWithCredentials = await runEffect(
+      authority.configureLoginCredentials({ email: "owner@example.test", password }),
+    );
+
+    const registered = await runEffect(
+      authority.registerAccount({
+        email: " SECOND@example.test ",
+        password: "another-account-password",
+        name: "Second account",
+        deviceId: "android-id",
+        deviceName: "Pixel 7a",
+        platform: "android",
+      }),
+    );
+    expect(registered.account).toMatchObject({
+      email: "second@example.test",
+      name: "Second account",
+    });
+    expect(registered.account.id).not.toBe(owner.id);
+    expect(authority.getLocalAccount()).toEqual(ownerWithCredentials);
+
+    const signedIn = await runEffect(
+      authority.signIn({ username: "SECOND@example.test", password: "another-account-password" }),
+    );
+    expect(signedIn.account.id).toBe(registered.account.id);
+
+    const reloaded = new SelfHostedIdentityAuthority({ path });
+    await Effect.runPromise(reloaded.initialize());
+    expect(reloaded.getAccount(owner.id)).toEqual(ownerWithCredentials);
+    expect(reloaded.getAccount(registered.account.id)).toEqual(registered.account);
+  });
+
+  it("sets credentials on a QR session without replacing the original account", async () => {
+    const { authority } = await newAuthority();
+    const owner = await runEffect(authority.ensureLocalAccount(profile));
+    const pairing = await runEffect(
+      authority.issueMobileConnectTicket({
+        accountId: owner.id,
+        hostId: "team-host",
+        fingerprint: "f".repeat(43),
+      }),
+    );
+    const mobile = await runEffect(
+      authority.redeemMobileConnectTicket({
+        ticket: pairing.ticket,
+        hostId: "team-host",
+        fingerprint: "f".repeat(43),
+        deviceId: "phone-id",
+        deviceName: "Phone",
+        platform: "android",
+      }),
+    );
+    if (!mobile) throw new Error("The QR ticket could not be redeemed.");
+    const updated = await runEffect(
+      authority.configureSessionLoginCredentials({
+        sessionToken: mobile.token,
+        email: "owner@example.test",
+        password,
+      }),
+    );
+    expect(updated).toMatchObject({ id: owner.id, email: "owner@example.test", name: profile.name });
+    expect(authority.getLocalAccount()).toEqual(updated);
+    expect(
+      await failureCode(
+        authority.configureSessionLoginCredentials({
+          sessionToken: mobile.token,
+          email: "owner@example.test",
+          password,
+        }),
+      ),
+    ).toMatchObject({ code: "setup_completed" });
+  });
+
   it("binds mobile pairing tickets to the host fingerprint and consumes them once", async () => {
     const { authority, path } = await newAuthority();
     const account = await runEffect(authority.ensureLocalAccount(profile));

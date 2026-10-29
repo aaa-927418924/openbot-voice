@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
+import { hostname } from "node:os";
 import { isAvatarMimeType, isValidAvatarImage } from "@openbot/contracts/avatar-images";
+import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type { AvatarImageInput, CentralAuthState, CentralAuthUser } from "@openbot/contracts/ipc";
 import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { validateProfileName } from "@openbot/contracts/validation";
@@ -22,6 +24,11 @@ interface LocalProfileRecord {
 
 interface LocalProfileEvents {
   changed: [state: CentralAuthState];
+}
+
+export function defaultLocalProfileName(): string {
+  const candidate = validateProfileName(hostname().trim().slice(0, INPUT_LIMITS.profileName).trim());
+  return candidate.error ? randomUUID().slice(0, 8) : candidate.name;
 }
 
 function decodeProfile(value: unknown): LocalProfileRecord {
@@ -51,7 +58,7 @@ function decodeProfile(value: unknown): LocalProfileRecord {
 export class LocalProfileStore extends EventEmitter<LocalProfileEvents> {
   readonly #path: string;
   readonly #writes = Semaphore.makeUnsafe(1);
-  #record: LocalProfileRecord = { version: 1, id: randomUUID(), name: "OpenBot", avatar: null };
+  #record: LocalProfileRecord = { version: 1, id: randomUUID(), name: defaultLocalProfileName(), avatar: null };
   #loadFailure: PreferenceFileFailure | null = null;
 
   constructor(path: string) {

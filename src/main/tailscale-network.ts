@@ -11,10 +11,14 @@ export interface TailnetBinding {
 /** Stable Team API port so paired clients survive a host restart. */
 export const LOCAL_TAILNET_API_PORT = 43123;
 
-function isTailscaleInterfaceName(name: string): boolean {
-  // Linux names the TUN interface `tailscale0`; the Windows adapter is `Tailscale`.
-  // Do not trust the CGNAT range alone: 100.64/10 may also be assigned to another VPN.
-  return name === "tailscale0" || /^tailscale(?:\s+(?:tunnel|adapter))?$/iu.test(name);
+function isTailscaleInterfaceName(name: string, entries: readonly NetworkInterfaceInfo[] | undefined): boolean {
+  // Linux uses `tailscale0`, and Windows uses a Tailscale adapter name. macOS uses `utun`; require
+  // the Tailscale-specific IPv6 prefix there so another VPN's 100.64/10 address is not selected.
+  if (name === "tailscale0" || /^tailscale(?:\s+(?:tunnel|adapter))?$/iu.test(name)) return true;
+  return (
+    /^utun\d+$/iu.test(name) &&
+    (entries ?? []).some((entry) => entry.family === "IPv6" && isTailscaleAddress(entry.address))
+  );
 }
 
 /** Accept only Tailscale's reserved IPv4 and IPv6 address ranges. */
@@ -35,7 +39,7 @@ export function tailscaleAddresses(
 ): Array<{ address: string; family: 4 | 6 }> {
   const found: Array<{ address: string; family: 4 | 6 }> = [];
   for (const [name, entries] of Object.entries(interfaces)) {
-    if (!isTailscaleInterfaceName(name)) continue;
+    if (!isTailscaleInterfaceName(name, entries)) continue;
     for (const entry of entries ?? []) {
       const family = entry.family === "IPv4" ? 4 : entry.family === "IPv6" ? 6 : null;
       if (!entry.internal && family && isTailscaleAddress(entry.address))

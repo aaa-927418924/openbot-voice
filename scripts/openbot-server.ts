@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { resolveLocale, translateFor } from "@openbot/i18n";
 import { Effect } from "effect";
-import { LocalProfileStore } from "../src/main/local-profile-store";
+import { defaultLocalProfileName, LocalProfileStore } from "../src/main/local-profile-store";
 import { SELF_HOSTED_IDENTITY_API_PORT, SelfHostedIdentityApiServer } from "../src/main/self-hosted-identity-api";
 import type { LocalProfileBootstrap } from "../src/main/self-hosted-identity-authority";
 import { SelfHostedIdentityAuthority } from "../src/main/self-hosted-identity-authority";
@@ -38,7 +38,7 @@ const statusIntervalMs = 3_000;
 
 function bootstrapProfile(profile: LocalProfileStore): LocalProfileBootstrap {
   const user = profile.getUser();
-  return { id: user.id, name: user.name ?? "OpenBot", avatarUrl: user.avatarUrl };
+  return { id: user.id, name: user.name ?? defaultLocalProfileName(), avatarUrl: user.avatarUrl };
 }
 
 export function terminalSafe(value: string): string {
@@ -129,6 +129,10 @@ function drawStatus(status: OpenBotServerStatus | null, now = Date.now()): void 
 }
 
 async function runServiceAction(action: "start" | "stop" | "restart"): Promise<void> {
+  if (process.platform !== "linux") {
+    process.stdout.write(`\n${t("server.localAdmin.serviceUnavailable")}\n`);
+    return;
+  }
   try {
     await execFileAsync("systemctl", ["--user", action, "openbot-server.service"], { timeout: 15_000 });
   } catch {
@@ -349,7 +353,6 @@ function printHelp(): void {
 }
 
 async function main(): Promise<void> {
-  if (process.platform !== "linux") throw new Error("The independent server CLI is currently Linux-only.");
   const command = process.argv[2] ?? "tui";
   if (command === "help" || command === "--help" || command === "-h") return printHelp();
   if (command === "tui") return runTui();
@@ -364,6 +367,7 @@ async function main(): Promise<void> {
     return;
   }
   if (command === "install-autostart") {
+    if (process.platform !== "linux") throw new Error(t("server.localAdmin.serviceUnavailable"));
     await assertIdentityApiPortAvailable();
     const appExecutable = await installedOpenBotExecutable(homedir(), process.env);
     const serverExecutable = await installCompiledServer(homedir());
@@ -381,7 +385,10 @@ async function main(): Promise<void> {
       process.stdout.write(`${t("server.localAdmin.lingerRequired", { user: process.env.USER ?? homedir() })}\n`);
     return;
   }
-  if (command === "remove-autostart") return removeUserService();
+  if (command === "remove-autostart") {
+    if (process.platform !== "linux") throw new Error(t("server.localAdmin.serviceUnavailable"));
+    return removeUserService();
+  }
   throw new Error("Unknown command. Run `bun scripts/openbot-server.ts --help`.");
 }
 

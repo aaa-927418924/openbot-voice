@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { createMemberDeviceLinkUrl } from "./invite-links";
 import { createMobileConnectUrl, parseMobileConnectUrl, validateMobileConnectHostBinding } from "./mobile-connect";
 
 const ticket = "A_secure-one_time-ticket_1234567890abcdef";
 
 describe("Mobile Connect URLs", () => {
   it("binds pairing to the scanned desktop and rejects a substituted redemption", () => {
-    const host = { hostId: "host-a", fingerprint: "a".repeat(43) };
+    const host = { hostId: "11111111-1111-4111-8111-111111111111", fingerprint: "a".repeat(43) };
     expect(
       parseMobileConnectUrl(createMobileConnectUrl({ apiUrl: "https://api.openbot.run", ticket, host }))?.host,
     ).toEqual(host);
@@ -17,6 +18,41 @@ describe("Mobile Connect URLs", () => {
     expect(
       parseMobileConnectUrl(`openbot://mobile-connect?api=https://api.openbot.run&ticket=${ticket}&host=host-a`),
     ).toBeNull();
+  });
+  it("round-trips the one-time member-device link with the matching host identity", () => {
+    const host = { hostId: "11111111-1111-4111-8111-111111111111", fingerprint: "a".repeat(43) };
+    const memberDeviceLink = createMemberDeviceLinkUrl({
+      apiUrl: "http://100.100.10.2:43123",
+      serverId: host.hostId,
+      fingerprint: host.fingerprint,
+      token: "d".repeat(43),
+    });
+    const url = createMobileConnectUrl({
+      apiUrl: "http://100.100.10.2:43124",
+      ticket,
+      host,
+      memberDeviceLink,
+    });
+
+    expect(parseMobileConnectUrl(url)).toEqual({
+      apiUrl: "http://100.100.10.2:43124",
+      ticket,
+      host,
+      memberDeviceLink,
+    });
+    expect(() =>
+      createMobileConnectUrl({
+        apiUrl: "http://100.100.10.2:43124",
+        ticket,
+        host,
+        memberDeviceLink: createMemberDeviceLinkUrl({
+          apiUrl: "http://100.100.10.2:43123",
+          serverId: "22222222-2222-4222-8222-222222222222",
+          fingerprint: host.fingerprint,
+          token: "d".repeat(43),
+        }),
+      }),
+    ).toThrow("Invalid Mobile Connect member device link");
   });
   it("round-trips an HTTPS account API and one-time ticket", () => {
     const url = createMobileConnectUrl({ apiUrl: "https://api.openbot.run", ticket });

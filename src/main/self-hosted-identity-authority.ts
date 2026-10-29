@@ -14,6 +14,7 @@ const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1_000;
 const TEAM_TICKET_TTL_MS = 2 * 60 * 1_000;
 const MAX_SESSIONS = 256;
 const MAX_PENDING_TICKETS = 1_024;
+const MAX_ACCOUNTS = 10_000;
 const USERNAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{2,31}$/;
 const OPAQUE_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const TEAM_SERVER_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
@@ -28,6 +29,7 @@ export class SelfHostedIdentityFailure extends Schema.TaggedError<SelfHostedIden
       "loopback_required",
       "invalid_input",
       "invalid_credentials",
+      "email_taken",
       "session_limit",
       "invalid_session",
       "invalid_ticket",
@@ -162,12 +164,14 @@ function decodeIdentityFile(value: unknown): IdentityFile {
   if (!isDynamicRecord(value) || value.version !== 1 || !Array.isArray(value.accounts)) {
     throw new Error("The identity authority file is invalid.");
   }
-  if (value.accounts.length > 1 || !Array.isArray(value.sessions) || !Array.isArray(value.teamTickets)) {
+  if (value.accounts.length > MAX_ACCOUNTS || !Array.isArray(value.sessions) || !Array.isArray(value.teamTickets)) {
     throw new Error("The identity authority file is invalid.");
   }
 
   const accounts = value.accounts.map((entry) => decodeAccount(entry));
   const accountIds = new Set(accounts.map((account) => account.id));
+  const usernames = new Set(accounts.map((account) => account.username));
+  const emails = accounts.flatMap((account) => (account.email ? [account.email] : []));
   const sessions = value.sessions.map((entry) => decodeSession(entry));
   const teamTickets = value.teamTickets.map((entry) => decodeTeamTicket(entry));
   const pairingTickets = Array.isArray(value.pairingTickets)
@@ -177,6 +181,9 @@ function decodeIdentityFile(value: unknown): IdentityFile {
     sessions.length > MAX_SESSIONS ||
     teamTickets.length > MAX_PENDING_TICKETS ||
     pairingTickets.length > MAX_PENDING_TICKETS ||
+    accountIds.size !== accounts.length ||
+    usernames.size !== accounts.length ||
+    new Set(emails).size !== emails.length ||
     sessions.some((session) => !accountIds.has(session.accountId)) ||
     teamTickets.some((ticket) => !accountIds.has(ticket.accountId)) ||
     pairingTickets.some((ticket) => !accountIds.has(ticket.accountId))
@@ -332,6 +339,10 @@ function publicAccount(account: StoredAccount): SelfHostedAccount {
   };
 }
 
+function replaceAccount(accounts: readonly StoredAccount[], updated: StoredAccount): StoredAccount[] {
+  return accounts.map((account) => (account.id === updated.id ? updated : account));
+}
+
 function failure(code: SelfHostedIdentityFailureCode): SelfHostedIdentityFailure {
   return new SelfHostedIdentityFailure({ code });
 }
@@ -341,7 +352,7 @@ function emptyIdentityFile(): IdentityFile {
 }
 
 /**
- * A private, single-account authority for the self-hosted control plane.
+ * A private identity authority for accounts hosted by an OpenBot Team server.
  *
  * This service owns account identity only. TeamStore and conversation data stay in each host's own
  * files and database. The first-account operation checks the request socket address itself; its
@@ -437,17 +448,125 @@ export class SelfHostedIdentityAuthority {
         const password = isString(input?.password) ? input.password : "";
         if (!account) return yield* failure("not_initialized");
         if (!email || password.length < 12 || password.length > 256) return yield* failure("invalid_input");
+        if (this.#file.accounts.some((candidate) => candidate.id !== account.id && candidate.email === email))
+          return yield* failure("email_taken");
         registerSecretValue(password);
         const passwordSalt = randomBytes(16).toString("base64url");
         const passwordHash = (yield* derivePassword(password, passwordSalt)).toString("base64url");
         const updated: StoredAccount = { ...account, email, passwordSalt, passwordHash };
-        const next = { ...this.#file, accounts: [updated] };
+        const next = { ...this.#file, accounts: replaceAccount(this.#file.accounts, updated) };
         yield* this.#persist(next);
         this.#file = next;
         return publicAccount(updated);
       }),
     );
   });
+
+  /** Create a distinct account. The user must still accept a Team invite to join a host. */
+  readonly registerAccount = Effect.fn("SelfHostedIdentityAuthority.registerAccount")(function* (
+    this: SelfHostedIdentityAuthority,
+    input: {
+      readonly email: string;
+      readonly password: string;
+      readonly name: string;
+      readonly deviceId?: string;
+      readonly deviceName?: string;
+      readonly platform?: "ios" | "android" | "unknown";
+    },
+  ): Effect.fn.Return<SelfHostedSessionGrant, SelfHostedIdentityFailure> {
+    return yield* this.#writes.withPermit(
+      Effect.gen({ self: this }, function* () {
+        yield* this.#requireReady();
+        const email = isString(input?.email) ? normalizeEmail(input.email) : null;
+        const password = isString(input?.password) ? input.password : "";
+        const name = isString(input?.name) ? validateProfileName(input.name) : null;
+        const hasDeviceMetadata =
+          input?.deviceId !== undefined || input?.deviceName !== undefined || input?.platform !== undefined;
+        if (
+          !email ||
+          password.length < 12 ||
+          password.length > 256 ||
+          !name ||
+          name.error ||
+          this.#file.accounts.length >= MAX_ACCOUNTS ||
+          (hasDeviceMetadata &&
+            (!isString(input.deviceId) ||
+              input.deviceId.length < 1 ||
+              input.deviceId.length > 128 ||
+              !isString(input.deviceName) ||
+              input.deviceName.trim().length < 1 ||
+              input.deviceName.length > 80 ||
+              !["ios", "android", "unknown"].includes(input.platform ?? "")))
+        ) {
+          return yield* failure("invalid_input");
+        }
+        if (this.#file.accounts.some((candidate) => candidate.email === email)) return yield* failure("email_taken");
+
+        registerSecretValue(password);
+        const now = this.#readNow();
+        const passwordSalt = randomBytes(16).toString("base64url");
+        const passwordHash = (yield* derivePassword(password, passwordSalt)).toString("base64url");
+        const account: StoredAccount = {
+          id: randomUUID(),
+          username: `local_${randomUUID().replaceAll("-", "").slice(0, 16)}`,
+          email,
+          name: name.name,
+          avatarUrl: null,
+          passwordSalt,
+          passwordHash,
+          createdAt: now,
+        };
+        const pruned = this.#pruneExpired(now);
+        if (pruned.sessions.length >= MAX_SESSIONS) return yield* failure("session_limit");
+        const token = randomBytes(32).toString("base64url");
+        registerSecretValue(token);
+        const session: StoredSession = {
+          id: randomUUID(),
+          accountId: account.id,
+          tokenHash: hashOpaqueToken(token),
+          createdAt: now,
+          expiresAt: now + SESSION_TTL_MS,
+          ...(hasDeviceMetadata
+            ? { deviceId: input.deviceId, deviceName: input.deviceName?.trim(), platform: input.platform }
+            : {}),
+        };
+        const next = { ...pruned, accounts: [...pruned.accounts, account], sessions: [...pruned.sessions, session] };
+        yield* this.#persist(next);
+        this.#file = next;
+        return { account: publicAccount(account), token, expiresAt: session.expiresAt };
+      }),
+    );
+  });
+
+  /** Configure email/password once for a QR-created account, preserving its original ID. */
+  readonly configureSessionLoginCredentials = Effect.fn("SelfHostedIdentityAuthority.configureSessionLoginCredentials")(
+    function* (
+      this: SelfHostedIdentityAuthority,
+      input: { readonly sessionToken: string; readonly email: string; readonly password: string },
+    ): Effect.fn.Return<SelfHostedAccount, SelfHostedIdentityFailure> {
+      return yield* this.#writes.withPermit(
+        Effect.gen({ self: this }, function* () {
+          yield* this.#requireReady();
+          const account = this.#findSessionAccount(input.sessionToken, this.#file);
+          const email = isString(input?.email) ? normalizeEmail(input.email) : null;
+          const password = isString(input?.password) ? input.password : "";
+          if (!account) return yield* failure("invalid_session");
+          if (!email || password.length < 12 || password.length > 256) return yield* failure("invalid_input");
+          if (account.email) return yield* failure("setup_completed");
+          if (this.#file.accounts.some((candidate) => candidate.id !== account.id && candidate.email === email))
+            return yield* failure("email_taken");
+          registerSecretValue(password);
+          const passwordSalt = randomBytes(16).toString("base64url");
+          const passwordHash = (yield* derivePassword(password, passwordSalt)).toString("base64url");
+          const updated: StoredAccount = { ...account, email, passwordSalt, passwordHash };
+          const next = { ...this.#file, accounts: replaceAccount(this.#file.accounts, updated) };
+          yield* this.#persist(next);
+          this.#file = next;
+          return publicAccount(updated);
+        }),
+      );
+    },
+  );
 
   /** Return sanitized, unexpired device sessions for the local administration screen. */
   readonly listActiveDeviceSessions = Effect.fn("SelfHostedIdentityAuthority.listActiveDeviceSessions")(function* (
@@ -478,6 +597,12 @@ export class SelfHostedIdentityAuthority {
     return this.#file.accounts[0] ? publicAccount(this.#file.accounts[0]) : null;
   }
 
+  /** Read a public profile by its stable account ID for Team profile synchronization. */
+  getAccount(accountId: string): SelfHostedAccount | null {
+    const account = this.#file.accounts.find((candidate) => candidate.id === accountId);
+    return account ? publicAccount(account) : null;
+  }
+
   /** Synchronize a profile edit made in the trusted Linux desktop settings UI. */
   readonly updateLocalProfile = Effect.fn("SelfHostedIdentityAuthority.updateLocalProfile")(function* (
     this: SelfHostedIdentityAuthority,
@@ -497,7 +622,7 @@ export class SelfHostedIdentityAuthority {
         }
         if (name.error) return yield* failure("invalid_input");
         const updated = { ...account, name: name.name, avatarUrl };
-        const next = { ...this.#file, accounts: [updated] };
+        const next = { ...this.#file, accounts: replaceAccount(this.#file.accounts, updated) };
         yield* this.#persist(next);
         this.#file = next;
         return publicAccount(updated);
@@ -641,7 +766,7 @@ export class SelfHostedIdentityAuthority {
           return yield* failure("invalid_input");
         }
         const updated = { ...account, name: name.name, avatarUrl };
-        const next = { ...this.#file, accounts: [updated] };
+        const next = { ...this.#file, accounts: replaceAccount(this.#file.accounts, updated) };
         yield* this.#persist(next);
         this.#file = next;
         return publicAccount(updated);
@@ -722,7 +847,7 @@ export class SelfHostedIdentityAuthority {
     );
   });
 
-  /** Sign in with the canonical username and password and create an opaque bearer session. */
+  /** Sign in with an account email or username and create an opaque bearer session. */
   readonly signIn = Effect.fn("SelfHostedIdentityAuthority.signIn")(function* (
     this: SelfHostedIdentityAuthority,
     input: {
@@ -739,8 +864,13 @@ export class SelfHostedIdentityAuthority {
         const password = isString(input?.password) ? input.password : "";
         if (password.length > 256) return yield* failure("invalid_credentials");
         registerSecretValue(password);
-        const account = this.#file.accounts[0];
-        const emailMatches = account?.email && normalizeEmail(input?.username ?? "") === account.email;
+        const identifier = isString(input?.username) ? input.username.trim().toLowerCase() : "";
+        const email = normalizeEmail(identifier);
+        const username = normalizeUsername(identifier);
+        const account = this.#file.accounts.find(
+          (candidate) =>
+            (email !== null && candidate.email === email) || (username !== null && candidate.username === username),
+        );
         const hasDeviceMetadata =
           input?.deviceId !== undefined || input?.deviceName !== undefined || input?.platform !== undefined;
         if (
@@ -760,7 +890,6 @@ export class SelfHostedIdentityAuthority {
         if (
           !account ||
           !isString(input?.username) ||
-          (normalizeUsername(input.username) !== account.username && !emailMatches) ||
           password.length < 12 ||
           !safePasswordEqual(candidate, account.passwordHash)
         ) {

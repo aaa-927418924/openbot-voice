@@ -24,7 +24,7 @@ export interface AccountIpcDependencies {
     api: SelfHostedIdentityApiServer;
     teamStore: TeamStore;
   };
-  host: Pick<HostService, "configure" | "getStatus" | "start" | "getMobileConnectHost">;
+  host: Pick<HostService, "configure" | "getStatus" | "start" | "getMobileConnectHost" | "createMemberDeviceLink">;
 }
 
 export function accountIpcHandlers({

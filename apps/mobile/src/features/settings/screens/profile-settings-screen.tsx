@@ -17,14 +17,17 @@ import { pickAvatarPhoto } from "@/shared/lib/pick-avatar-photo";
 import { useText } from "@/shared/lib/text";
 
 export function ProfileSettingsScreen() {
-  const { session, updateProfile, signOut } = useMobileSession();
+  const { session, updateProfile, configureCredentials, signOut } = useMobileSession();
   const { t, errorMessage } = useText();
   const foreground = useThemeColor("foreground");
   const savedName = session ? mobileUserName(session.user) : "";
   const [draftName, setDraftName] = useState<string | null>(null);
-  const [pendingAction, setPendingAction] = useState<"name" | "photo" | "sign-out" | null>(null);
+  const [pendingAction, setPendingAction] = useState<"name" | "photo" | "credentials" | "sign-out" | null>(null);
   const locked = useRef(false);
   const [error, setError] = useState<string | null>(null);
+  const [credentialsEmail, setCredentialsEmail] = useState("");
+  const [credentialsPassword, setCredentialsPassword] = useState("");
+  const [credentialsConfirmation, setCredentialsConfirmation] = useState("");
   if (!session) return null;
   const busy = pendingAction !== null;
   const name = draftName ?? savedName;
@@ -36,9 +39,29 @@ export function ProfileSettingsScreen() {
         ? t("mobile.settings.profile.nameUnsafe")
         : t("mobile.settings.profile.nameLength")
       : null;
+  const credentialSetupAvailable = session.localOnly === true && session.user.email === "";
+  const credentialsDirty =
+    credentialSetupAvailable && Boolean(credentialsEmail || credentialsPassword || credentialsConfirmation);
+  const credentialsError = credentialsDirty
+    ? !credentialsEmail.trim() || credentialsPassword.length === 0
+      ? t("mobile.settings.profile.credentialsRequired")
+      : credentialsPassword.length < 12
+        ? t("mobile.settings.profile.passwordTooShort")
+        : credentialsPassword !== credentialsConfirmation
+          ? t("mobile.settings.profile.passwordMismatch")
+          : null
+    : null;
+  const credentialsCanSave =
+    Boolean(credentialsEmail.trim()) &&
+    /^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(credentialsEmail.trim()) &&
+    credentialsPassword.length >= 12 &&
+    credentialsPassword === credentialsConfirmation;
   const avatarUrl = session.user.avatarUrl ? new URL(session.user.avatarUrl, session.apiUrl).toString() : null;
 
-  async function perform(action: "name" | "photo" | "sign-out", operation: () => Promise<void>): Promise<void> {
+  async function perform(
+    action: "name" | "photo" | "credentials" | "sign-out",
+    operation: () => Promise<void>,
+  ): Promise<void> {
     if (locked.current) return;
     locked.current = true;
     setPendingAction(action);
@@ -59,6 +82,18 @@ export function ProfileSettingsScreen() {
     await perform("name", async () => {
       await updateProfile({ name: validatedName.name });
       setDraftName(null);
+      Keyboard.dismiss();
+      void haptics.notification("success");
+    });
+  }
+
+  async function saveCredentials(): Promise<void> {
+    if (!credentialsCanSave) return;
+    await perform("credentials", async () => {
+      await configureCredentials(credentialsEmail, credentialsPassword);
+      setCredentialsEmail("");
+      setCredentialsPassword("");
+      setCredentialsConfirmation("");
       Keyboard.dismiss();
       void haptics.notification("success");
     });
@@ -102,11 +137,11 @@ export function ProfileSettingsScreen() {
       keyboardShouldPersistTaps="handled"
     >
       <SheetSaveAction
-        dirty={nameChanged}
-        canSave={!busy && !validatedName.error}
-        pending={pendingAction === "name"}
-        label={t("mobile.settings.profile.saveName")}
-        onSave={() => void saveName()}
+        dirty={nameChanged || credentialsDirty}
+        canSave={!busy && (credentialsDirty ? credentialsCanSave : nameChanged && !validatedName.error)}
+        pending={pendingAction === "name" || pendingAction === "credentials"}
+        label={t(credentialsDirty ? "mobile.settings.profile.saveCredentials" : "mobile.settings.profile.saveName")}
+        onSave={() => void (credentialsDirty ? saveCredentials() : saveName())}
       />
       <View className="gap-6">
         <Pressable
@@ -150,6 +185,57 @@ export function ProfileSettingsScreen() {
           <SettingsRow>
             <Typography.Paragraph>{t("mobile.settings.profile.localIdentityConnected")}</Typography.Paragraph>
           </SettingsRow>
+          {credentialSetupAvailable ? (
+            <>
+              <SettingsRow>
+                <View className="w-full gap-3">
+                  <SheetFormField
+                    label={t("mobile.settings.profile.credentialsEmail")}
+                    inputMode="email"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    editable={!busy}
+                    value={credentialsEmail}
+                    onChangeText={(value) => {
+                      setCredentialsEmail(value);
+                      setError(null);
+                    }}
+                  />
+                  <SheetFormField
+                    label={t("mobile.settings.profile.credentialsPassword")}
+                    secureTextEntry
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    editable={!busy}
+                    value={credentialsPassword}
+                    onChangeText={(value) => {
+                      setCredentialsPassword(value);
+                      setError(null);
+                    }}
+                  />
+                  <SheetFormField
+                    label={t("mobile.settings.profile.credentialsConfirm")}
+                    secureTextEntry
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    editable={!busy}
+                    value={credentialsConfirmation}
+                    onChangeText={(value) => {
+                      setCredentialsConfirmation(value);
+                      setError(null);
+                    }}
+                  />
+                </View>
+              </SettingsRow>
+              {credentialsError ? (
+                <SettingsRow>
+                  <Typography.Paragraph accessibilityRole="alert" className="text-danger-text">
+                    {credentialsError}
+                  </Typography.Paragraph>
+                </SettingsRow>
+              ) : null}
+            </>
+          ) : null}
           <SettingsRow
             disclosure={false}
             disabled={busy}

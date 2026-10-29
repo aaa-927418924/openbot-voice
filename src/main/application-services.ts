@@ -121,7 +121,7 @@ import { HostedServerStartRetry } from "./hosted-server-start-retry";
 import { HostedSiteDesktopService } from "./hosted-site-service";
 import { IdleRestart } from "./idle-restart";
 import { LanguageService } from "./language-service";
-import { LocalProfileStore } from "./local-profile-store";
+import { defaultLocalProfileName, LocalProfileStore } from "./local-profile-store";
 import { localRoutineFeedDocument } from "./local-routine-calendar";
 import { LogoColorService } from "./logo-color-service";
 import type { MacHapticFeedback } from "./mac-haptic-feedback";
@@ -602,7 +602,7 @@ export async function createApplicationServices({
   const localProfile = new LocalProfileStore(join(app.getPath("userData"), "local-profile.json"));
   await runCauseEffect(localProfile.load());
   let selfHostedIdentityAuthority: SelfHostedIdentityAuthority | null = null;
-  if (localOnlyNetworking && process.platform === "linux") {
+  if (localOnlyNetworking) {
     const authority = new SelfHostedIdentityAuthority({
       path: join(app.getPath("userData"), "self-hosted-identity.json"),
     });
@@ -612,7 +612,7 @@ export async function createApplicationServices({
       const account = await Effect.runPromise(
         authority.ensureLocalAccount({
           id: profile.id,
-          name: profile.name ?? "OpenBot",
+          name: profile.name ?? defaultLocalProfileName(),
           avatarUrl: profile.avatarUrl,
         }),
       );
@@ -1358,10 +1358,13 @@ export async function createApplicationServices({
       authority: selfHostedIdentityAuthority,
       onProfileChanged: async (user) => {
         try {
-          await runCauseEffect(localProfile.synchronizeSharedProfile(user));
-          await runCauseEffect(
-            teamStore.syncSelfHostedOwner(selfHostedTeamProfile(user, selfHostedIdentityApi?.apiUrl ?? null)),
-          );
+          const profile = selfHostedTeamProfile(user, selfHostedIdentityApi?.apiUrl ?? null);
+          if (user.id === localProfile.getUser().id) {
+            await runCauseEffect(localProfile.synchronizeSharedProfile(user));
+            await runCauseEffect(teamStore.syncSelfHostedOwner(profile));
+          } else {
+            await runCauseEffect(teamStore.syncAccount(profile));
+          }
         } catch (error) {
           logger.warn("A self-hosted profile update could not reach the local profile:", toLogValue(error));
           throw error;

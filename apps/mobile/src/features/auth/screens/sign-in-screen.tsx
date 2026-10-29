@@ -12,6 +12,7 @@ import {
   loginToSelfHostedIdentityServer,
   readSavedIdentityServerAddress,
   redeemMobileConnectUrl,
+  registerSelfHostedIdentityAccount,
 } from "@/features/auth/api/mobile-auth";
 import { AppLogo } from "@/features/auth/components/app-logo";
 import { ScanQrButton } from "@/features/auth/components/scan-qr-button";
@@ -107,10 +108,12 @@ export function SignInScreen({ notice }: { notice?: SignInNotice }) {
   const { width: windowWidth } = useWindowDimensions();
   const buttonWidth = Math.min(240, windowWidth - 64);
   const { connect } = useMobileSession();
+  const [authMode, setAuthMode] = useState<"sign-in" | "register">("sign-in");
   const [serverAddress, setServerAddress] = useState("");
   const serverAddressEdited = useRef(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [accountName, setAccountName] = useState("");
   const [signInBusy, setSignInBusy] = useState(false);
   const [signInError, setSignInError] = useState<string | null>(null);
   const measurementDeadline = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -177,12 +180,16 @@ export function SignInScreen({ notice }: { notice?: SignInNotice }) {
     });
   }
 
-  async function signIn() {
+  async function submitCredentials() {
     if (signInBusy) return;
     setSignInBusy(true);
     setSignInError(null);
     try {
-      connect(await loginToSelfHostedIdentityServer(serverAddress, email, password));
+      const session =
+        authMode === "register"
+          ? await registerSelfHostedIdentityAccount(serverAddress, accountName, email, password)
+          : await loginToSelfHostedIdentityServer(serverAddress, email, password);
+      connect(session);
     } catch (cause) {
       setSignInError(errorMessage(cause, t("mobile.auth.error.identityServerUnreachable")));
     } finally {
@@ -267,6 +274,17 @@ export function SignInScreen({ notice }: { notice?: SignInNotice }) {
                   value={email}
                   onChangeText={setEmail}
                 />
+                {authMode === "register" ? (
+                  <SheetFormField
+                    label={t("mobile.auth.signIn.accountName")}
+                    autoCapitalize="words"
+                    autoCorrect={false}
+                    editable={!signInBusy && !scannerOpen}
+                    returnKeyType="next"
+                    value={accountName}
+                    onChangeText={setAccountName}
+                  />
+                ) : null}
                 <SheetFormField
                   label={t("mobile.auth.signIn.password")}
                   secureTextEntry
@@ -276,16 +294,38 @@ export function SignInScreen({ notice }: { notice?: SignInNotice }) {
                   returnKeyType="go"
                   value={password}
                   onChangeText={setPassword}
-                  onSubmitEditing={() => void signIn()}
+                  onSubmitEditing={() => void submitCredentials()}
                 />
                 {signInError ? (
                   <Typography.Paragraph className="text-danger-text">{signInError}</Typography.Paragraph>
                 ) : null}
-                <Button isDisabled={signInBusy || scannerOpen} onPress={() => void signIn()}>
+                <Button isDisabled={signInBusy || scannerOpen} onPress={() => void submitCredentials()}>
                   <Button.Label>
-                    {t(signInBusy ? "mobile.auth.signIn.submitting" : "mobile.auth.signIn.submit")}
+                    {t(
+                      signInBusy
+                        ? authMode === "register"
+                          ? "mobile.auth.signIn.registering"
+                          : "mobile.auth.signIn.submitting"
+                        : authMode === "register"
+                          ? "mobile.auth.signIn.register"
+                          : "mobile.auth.signIn.submit",
+                    )}
                   </Button.Label>
                 </Button>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled: signInBusy || scannerOpen }}
+                  disabled={signInBusy || scannerOpen}
+                  onPress={() => {
+                    setAuthMode((mode) => (mode === "sign-in" ? "register" : "sign-in"));
+                    setSignInError(null);
+                  }}
+                  className="items-center py-1"
+                >
+                  <Typography.Paragraph color="muted" align="center">
+                    {t(authMode === "register" ? "mobile.auth.signIn.haveAccount" : "mobile.auth.signIn.createAccount")}
+                  </Typography.Paragraph>
+                </Pressable>
                 <Typography.Paragraph color="muted" align="center">
                   {t("mobile.auth.signIn.orScan")}
                 </Typography.Paragraph>

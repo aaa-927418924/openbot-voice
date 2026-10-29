@@ -1,3 +1,4 @@
+import { hostname } from "node:os";
 import { isTailscaleApiUrl } from "@openbot/contracts/invite-links";
 import type { MobileConnectHostBinding } from "@openbot/contracts/mobile-connect";
 import { createMobileConnectUrl } from "@openbot/contracts/mobile-connect";
@@ -8,30 +9,37 @@ import { RemoteWorkflowError } from "./remote-service-effects";
 import type { SelfHostedIdentityApiServer } from "./self-hosted-identity-api";
 import type { SelfHostedIdentityAuthority } from "./self-hosted-identity-authority";
 
+interface MobileConnectHost {
+  configure(input: { serverName: string }): Effect.Effect<unknown, RemoteWorkflowError>;
+  getStatus(): { configured: boolean; serverName?: string | null };
+  getMobileConnectHost(): MobileConnectHostBinding | null;
+  start(): Effect.Effect<
+    {
+      serverId: string | null;
+      phase: string;
+      apiOnline: boolean;
+      apiUrl: string | null;
+      message: string | null;
+    },
+    RemoteWorkflowError
+  >;
+}
+
 interface MobileConnectHostDependencies {
   centralAuth: Pick<CentralAuthManager, "createMobileConnect">;
-  host: {
-    configure(input: { serverName: string }): Effect.Effect<unknown, RemoteWorkflowError>;
-    getStatus(): { configured: boolean };
-    getMobileConnectHost(): MobileConnectHostBinding | null;
-    start(): Effect.Effect<
-      {
-        serverId: string | null;
-        phase: string;
-        apiOnline: boolean;
-        apiUrl: string | null;
-        message: string | null;
-      },
-      RemoteWorkflowError
-    >;
-  };
+  host: MobileConnectHost;
+}
+
+interface SelfHostedMobileConnectHost extends MobileConnectHost {
+  createMemberDeviceLink(): Effect.Effect<string, RemoteWorkflowError>;
 }
 
 export const createHostedMobileConnect = Effect.fn("MobileConnectHost.create")(function* ({
   centralAuth,
   host,
 }: MobileConnectHostDependencies) {
-  if (!host.getStatus().configured) yield* host.configure({ serverName: "OpenBot" });
+  const currentHost = host.getStatus();
+  if (!currentHost.configured) yield* host.configure({ serverName: currentHost.serverName?.trim() || hostname() });
   const status = yield* host.start();
   if (!isPublishedHost(status)) {
     return yield* new RemoteWorkflowError({
@@ -55,10 +63,11 @@ export const createSelfHostedMobileConnect = Effect.fn("MobileConnectHost.create
   authority: SelfHostedIdentityAuthority;
   identityApi: Pick<SelfHostedIdentityApiServer, "start">;
   onIdentityApiReady?: (apiUrl: string) => Promise<void>;
-  host: MobileConnectHostDependencies["host"];
+  host: SelfHostedMobileConnectHost;
   accountId: string;
 }) {
-  if (!host.getStatus().configured) yield* host.configure({ serverName: "OpenBot" });
+  const currentHost = host.getStatus();
+  if (!currentHost.configured) yield* host.configure({ serverName: currentHost.serverName?.trim() || hostname() });
   const status = yield* host.start();
   if (status.phase !== "online" || !status.apiOnline || !status.apiUrl || !isTailscaleApiUrl(status.apiUrl)) {
     return yield* new RemoteWorkflowError({
@@ -68,6 +77,7 @@ export const createSelfHostedMobileConnect = Effect.fn("MobileConnectHost.create
   const binding = host.getMobileConnectHost();
   if (!binding || binding.hostId !== status.serverId)
     return yield* new RemoteWorkflowError({ cause: new Error(sourceText("error.host.mobileConnectHostChanged")) });
+  const memberDeviceLink = yield* host.createMemberDeviceLink();
   const apiUrl = yield* Effect.tryPromise({
     try: () => identityApi.start(),
     catch: (cause) => new RemoteWorkflowError({ cause }),
@@ -82,7 +92,7 @@ export const createSelfHostedMobileConnect = Effect.fn("MobileConnectHost.create
     .issueMobileConnectTicket({ accountId, hostId: binding.hostId, fingerprint: binding.fingerprint })
     .pipe(Effect.mapError((cause) => new RemoteWorkflowError({ cause })));
   return {
-    qrData: createMobileConnectUrl({ apiUrl, ticket: grant.ticket, host: binding }),
+    qrData: createMobileConnectUrl({ apiUrl, ticket: grant.ticket, host: binding, memberDeviceLink }),
     expiresAt: grant.expiresAt,
   };
 });

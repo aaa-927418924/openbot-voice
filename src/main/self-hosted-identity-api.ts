@@ -41,9 +41,11 @@ function asCentralAuthUser(account: SelfHostedAccount): SelfHostedAccountUser {
 /** Team records store a short URL; the identity API serves validated avatar bytes over Tailscale. */
 export function selfHostedTeamProfile(user: CentralAuthUser, identityApiUrl: string | null): CentralAuthUser {
   const avatarApi = identityApiUrl && isTailscaleApiUrl(identityApiUrl) ? identityApiUrl : null;
+  const avatarUrl = avatarApi ? new URL("/v1/profile/avatar", avatarApi) : null;
+  avatarUrl?.searchParams.set("account", user.id);
   return {
     ...user,
-    avatarUrl: user.avatarUrl && avatarApi ? new URL("/v1/profile/avatar", avatarApi).toString() : null,
+    avatarUrl: user.avatarUrl && avatarUrl ? avatarUrl.toString() : null,
   };
 }
 
@@ -150,6 +152,7 @@ function failureStatus(code: string): 400 | 401 | 409 | 429 | 503 {
     case "session_limit":
       return 429;
     case "setup_completed":
+    case "email_taken":
       return 409;
     default:
       return 503;
@@ -271,8 +274,33 @@ export class SelfHostedIdentityApiServer {
         });
       }
 
+      if (method === "POST" && url.pathname === "/v1/auth/register") {
+        this.#rateLimitAuthentication(request);
+        const body = await readJson(request);
+        const platform = body.platform === undefined ? undefined : decodePlatform(body.platform);
+        const grant = await Effect.runPromise(
+          this.#authority.registerAccount({
+            email: stringField(body, "email", 254),
+            password: stringField(body, "password", 256),
+            name: stringField(body, "name", 128),
+            ...(body.deviceId === undefined ? {} : { deviceId: stringField(body, "deviceId", 128) }),
+            ...(body.deviceName === undefined ? {} : { deviceName: stringField(body, "deviceName", 80) }),
+            ...(platform === undefined ? {} : { platform }),
+          }),
+        );
+        return json(response, 201, {
+          sessionToken: grant.token,
+          user: asCentralAuthUser(grant.account),
+          localOnly: true,
+          expiresAt: grant.expiresAt,
+        });
+      }
+
       if (method === "GET" && url.pathname === "/v1/profile/avatar") {
-        const avatarUrl = this.#authority.getLocalAccount()?.avatarUrl ?? null;
+        const accountId = url.searchParams.get("account");
+        if (url.searchParams.getAll("account").length > 1) return json(response, 400, { error: "invalid_request" });
+        const account = accountId ? this.#authority.getAccount(accountId) : this.#authority.getLocalAccount();
+        const avatarUrl = account?.avatarUrl ?? null;
         const match = avatarUrl
           ? /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/]+={0,2})$/u.exec(avatarUrl)
           : null;
@@ -341,6 +369,20 @@ export class SelfHostedIdentityApiServer {
         if (!token) throw new ApiError(401, "unauthorized");
         const account = await Effect.runPromise(this.#authority.authenticateSession(token));
         if (!account) throw new ApiError(401, "unauthorized");
+        return json(response, 200, asCentralAuthUser(account));
+      }
+
+      if (method === "PUT" && url.pathname === "/v1/me/credentials") {
+        const token = bearer(request);
+        if (!token) throw new ApiError(401, "unauthorized");
+        const body = await readJson(request);
+        const account = await Effect.runPromise(
+          this.#authority.configureSessionLoginCredentials({
+            sessionToken: token,
+            email: stringField(body, "email", 254),
+            password: stringField(body, "password", 256),
+          }),
+        );
         return json(response, 200, asCentralAuthUser(account));
       }
 

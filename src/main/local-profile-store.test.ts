@@ -2,6 +2,7 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { validateProfileName } from "@openbot/contracts/validation";
 import { afterEach, describe, expect, it } from "vitest";
 import { runCauseEffect } from "../backend/effect-boundary";
 import { LocalProfileStore } from "./local-profile-store";
@@ -20,7 +21,8 @@ describe("LocalProfileStore", () => {
     const profile = new LocalProfileStore(path);
     await runCauseEffect(profile.load());
 
-    expect(profile.getState()).toMatchObject({ status: "signed_in", user: { email: "", name: "OpenBot" } });
+    const initialName = profile.getUser().name;
+    expect(validateProfileName(initialName ?? "").error).toBeNull();
     await runCauseEffect(profile.updateName("My OpenBot"));
 
     const restored = new LocalProfileStore(path);

@@ -89,7 +89,7 @@ describe("SelfHostedIdentityApiServer", () => {
           { id: account.id, email: account.email, name: account.name, avatarUrl: account.avatarUrl },
           "http://100.100.10.2:43124",
         ).avatarUrl,
-      ).toBe("http://100.100.10.2:43124/v1/profile/avatar");
+      ).toBe(`http://100.100.10.2:43124/v1/profile/avatar?account=${account.id}`);
       const avatar = await fetch(new URL("/v1/profile/avatar", apiUrl));
       expect(avatar.status).toBe(200);
       expect(avatar.headers.get("Content-Type")).toBe("image/png");
@@ -162,6 +162,116 @@ describe("SelfHostedIdentityApiServer", () => {
         }),
       });
       expect(replay.status).toBe(401);
+    } finally {
+      await api.stop();
+    }
+  });
+
+  it("registers a separate account and keeps one-time QR credential setup tied to its stable account", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-self-hosted-identity-accounts-"));
+    roots.push(root);
+    const authority = new SelfHostedIdentityAuthority({ path: join(root, "identity.json") });
+    await Effect.runPromise(authority.initialize());
+    const owner = await Effect.runPromise(authority.ensureLocalAccount(profile));
+    const pairing = await Effect.runPromise(
+      authority.issueMobileConnectTicket({
+        accountId: owner.id,
+        hostId: "team-host",
+        fingerprint: "f".repeat(43),
+      }),
+    );
+    const mobile = await Effect.runPromise(
+      authority.redeemMobileConnectTicket({
+        ticket: pairing.ticket,
+        hostId: "team-host",
+        fingerprint: "f".repeat(43),
+        deviceId: "phone-id",
+        deviceName: "Pixel 7a",
+        platform: "android",
+      }),
+    );
+    if (!mobile) throw new Error("The QR ticket could not be redeemed.");
+
+    const api = new SelfHostedIdentityApiServer({
+      authority,
+      port: 0,
+      listen: (server: Server) =>
+        new Promise((resolve, reject) => {
+          server.once("error", reject);
+          server.listen(0, "127.0.0.1", () => {
+            const address = server.address();
+            if (!address || typeof address === "string") return reject(new Error("No listener address."));
+            resolve({ address: "127.0.0.1", family: 4, port: address.port });
+          });
+        }),
+    });
+    const apiUrl = await api.start();
+
+    try {
+      const setup = await fetch(new URL("/v1/me/credentials", apiUrl), {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${mobile.token}`,
+          "Content-Type": "application/json",
+          Connection: "close",
+        },
+        body: JSON.stringify({ email: "Owner@OpenBot.test", password: "owner-password-long-enough" }),
+      });
+      expect(setup.status).toBe(200);
+      expect(await setup.json()).toMatchObject({ id: owner.id, email: "owner@openbot.test" });
+
+      const registration = await fetch(new URL("/v1/auth/register", apiUrl), {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Connection: "close" },
+        body: JSON.stringify({
+          name: "Second account",
+          email: "SECOND@OpenBot.test",
+          password: "second-account-password-long-enough",
+          deviceId: "second-phone",
+          deviceName: "Another phone",
+          platform: "android",
+        }),
+      });
+      expect(registration.status).toBe(201);
+      const created = await registration.json();
+      expect(created).toMatchObject({
+        user: { email: "second@openbot.test", name: "Second account" },
+        localOnly: true,
+      });
+      expect(created.user.id).not.toBe(owner.id);
+
+      const duplicate = await fetch(new URL("/v1/auth/register", apiUrl), {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Connection: "close" },
+        body: JSON.stringify({
+          name: "Duplicate",
+          email: "second@openbot.test",
+          password: "second-account-password-long-enough",
+        }),
+      });
+      expect(duplicate.status).toBe(409);
+      expect(await duplicate.json()).toEqual({ error: "email_taken" });
+
+      const secondAvatar = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x02]);
+      const avatarUpdate = await fetch(new URL("/v1/me/avatar", apiUrl), {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${created.sessionToken}`,
+          "Content-Type": "image/png",
+          Connection: "close",
+        },
+        body: secondAvatar,
+      });
+      expect(avatarUpdate.status).toBe(200);
+      const avatarUser = await avatarUpdate.json();
+      expect(selfHostedTeamProfile(avatarUser, "http://100.100.10.2:43124").avatarUrl).toBe(
+        `http://100.100.10.2:43124/v1/profile/avatar?account=${created.user.id}`,
+      );
+      const avatar = await fetch(new URL(`/v1/profile/avatar?account=${created.user.id}`, apiUrl));
+      expect(avatar.status).toBe(200);
+      expect(Buffer.from(await avatar.arrayBuffer())).toEqual(secondAvatar);
+      const ownerAvatar = await fetch(new URL(`/v1/profile/avatar?account=${owner.id}`, apiUrl));
+      expect(Buffer.from(await ownerAvatar.arrayBuffer())).toEqual(avatarBytes);
     } finally {
       await api.stop();
     }

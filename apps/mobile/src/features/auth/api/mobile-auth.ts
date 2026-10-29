@@ -15,6 +15,9 @@ import * as Crypto from "expo-crypto";
 import * as Device from "expo-device";
 import * as SecureStore from "expo-secure-store";
 import { z } from "zod";
+import { pairTailnetInvite } from "@/features/workspace/model/local-tailnet";
+import { saveLocalTailnetServer } from "@/features/workspace/model/local-tailnet-store";
+import { mobileAppVersion } from "@/shared/lib/mobile-features";
 import { isAndroid, isIOS } from "@/shared/lib/platform";
 import { currentText } from "@/shared/lib/text";
 // Relative: the Node test project resolves no `@/` path that the test does not mock.
@@ -113,7 +116,19 @@ async function redeemMobileConnectSession(value: string): Promise<MobileSession>
   const session = decodeMobileSession(body, payload.apiUrl);
   if (selfHostedTailnet && !session.localOnly)
     throw new Error("The Tailscale identity service returned an invalid session.");
-  session.host = validateMobileConnectHostBinding(payload.host, session.host);
+  const binding = validateMobileConnectHostBinding(payload.host, session.host);
+  session.host = binding;
+  if (payload.memberDeviceLink) {
+    const host = await pairTailnetInvite(payload.memberDeviceLink, {
+      appVersion: mobileAppVersion(),
+      randomBytes: (size) => Crypto.getRandomBytes(size),
+      displayName: session.user.name,
+    });
+    if (host.hostId !== binding.hostId || host.fingerprint !== binding.fingerprint) {
+      throw new Error("The Mobile Connect QR code contains a different Team server.");
+    }
+    await saveLocalTailnetServer(host);
+  }
   await saveMobileSession(session);
   return session;
 }
@@ -220,6 +235,112 @@ export async function loginToSelfHostedIdentityServer(
   } finally {
     mobileConnectInFlight = false;
   }
+}
+
+export async function registerSelfHostedIdentityAccount(
+  serverAddress: string,
+  name: string,
+  email: string,
+  password: string,
+): Promise<MobileSession> {
+  if (mobileConnectInFlight) throw new Error(currentText().t("mobile.auth.error.connectionInProgress"));
+  mobileConnectInFlight = true;
+  try {
+    let apiUrl: string;
+    try {
+      apiUrl = normalizeSelfHostedIdentityApiUrl(serverAddress);
+    } catch {
+      throw new Error(currentText().t("mobile.auth.error.identityServerAddressInvalid"));
+    }
+    const normalizedName = validateProfileName(name);
+    if (normalizedName.error) throw new Error(currentText().t("mobile.auth.error.identityAccountNameInvalid"));
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail || !password)
+      throw new Error(currentText().t("mobile.auth.error.identityCredentialsRequired"));
+    if (password.length < 12) throw new Error(currentText().t("mobile.auth.error.identityPasswordTooShort"));
+
+    let response: Response;
+    let body: unknown;
+    try {
+      const device = await mobileDeviceIdentity();
+      ({ response, body } = await withMobileAuthRequestTimeout(async (signal) => {
+        const request = await fetch(new URL("/v1/auth/register", apiUrl).toString(), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: normalizedName.name,
+            email: normalizedEmail,
+            password,
+            deviceId: device.id,
+            deviceName: device.name,
+            platform: device.platform,
+          }),
+          signal,
+        });
+        return { response: request, body: await readResponseBody(request, signal) };
+      }));
+    } catch {
+      throw new Error(currentText().t("mobile.auth.error.identityServerUnreachable"));
+    }
+
+    if (response.status === 409 && isDynamicRecord(body) && body.error === "email_taken") {
+      throw new Error(currentText().t("mobile.auth.error.identityEmailTaken"));
+    }
+    if (response.status === 429) {
+      throw new Error(currentText().t("mobile.auth.error.identityLoginRateLimited"));
+    }
+    if (!response.ok) throw new Error(currentText().t("mobile.auth.error.identityRegistrationFailed"));
+    const session = decodeMobileSession(body, apiUrl);
+    if (!session.localOnly) throw new Error(currentText().t("mobile.auth.error.identityServerUnsupported"));
+    await saveMobileSession(session);
+    await saveIdentityServerAddress(apiUrl);
+    return session;
+  } finally {
+    mobileConnectInFlight = false;
+  }
+}
+
+export function configureMobileLoginCredentials(
+  session: MobileSession,
+  email: string,
+  password: string,
+  onUpdated?: (updated: MobileSession) => void,
+): Promise<MobileSession> {
+  return serializeMobileProfile(async () => {
+    if (!session.localOnly || !session.sessionToken)
+      throw new Error(currentText().t("mobile.auth.error.identityServerUnsupported"));
+    if (session.user.email) throw new Error(currentText().t("mobile.auth.error.identityCredentialsAlreadySet"));
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail || !password)
+      throw new Error(currentText().t("mobile.auth.error.identityCredentialsRequired"));
+    if (password.length < 12) throw new Error(currentText().t("mobile.auth.error.identityPasswordTooShort"));
+
+    const { response, body } = await withMobileAuthRequestTimeout(async (signal) => {
+      const request = await fetch(new URL("/v1/me/credentials", session.apiUrl).toString(), {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${session.sessionToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ email: normalizedEmail, password }),
+        signal,
+      });
+      return { response: request, body: await readResponseBody(request, signal) };
+    });
+    await checkMobileAuthorization(response, session);
+    if (response.status === 409 && isDynamicRecord(body)) {
+      if (body.error === "email_taken") throw new Error(currentText().t("mobile.auth.error.identityEmailTaken"));
+      if (body.error === "setup_completed")
+        throw new Error(currentText().t("mobile.auth.error.identityCredentialsAlreadySet"));
+    }
+    if (!response.ok) throw new Error(currentText().t("mobile.auth.error.identityCredentialsSaveFailed"));
+    const user = decodeUser(body);
+    if (user.id !== session.user.id) throw new Error("The account service returned an invalid user.");
+    const updated = { ...session, user };
+    await saveMobileSessionIfCurrent(updated);
+    onUpdated?.(updated);
+    return updated;
+  });
 }
 
 async function readStoredLocalIdentitySession(): Promise<MobileSession | null> {
@@ -666,10 +787,10 @@ async function mobileDeviceIdentity(): Promise<{
       keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
     });
   }
-  const rawName = Device.deviceName?.trim() || Device.modelName?.trim() || "Mobile device";
+  const rawName = Device.deviceName?.trim() || Device.modelName?.trim() || id;
   const name = rawName.normalize("NFC").replace(/\p{C}/gu, "").replace(/\s+/gu, " ").slice(0, 80).trim();
   const platform = isIOS ? "ios" : isAndroid ? "android" : "unknown";
-  return { id, name: name || "Mobile device", platform };
+  return { id, name: name || id, platform };
 }
 
 function normalizeSelfHostedIdentityApiUrl(value: string): string {

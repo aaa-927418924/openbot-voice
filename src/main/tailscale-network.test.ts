@@ -51,6 +51,34 @@ describe("Tailscale address selection", () => {
     ).toEqual([{ address: "100.100.10.2", family: 4 }]);
   });
 
+  it("discovers Tailscale addresses on macOS utun interfaces without accepting other VPN ranges", () => {
+    expect(
+      tailscaleAddresses({
+        utun4: [
+          { address: "100.100.10.2", family: "IPv4", internal: false, mac: "", netmask: "", cidr: "100.100.10.2/32" },
+          {
+            address: "fd7a:115c:a1e0::2",
+            family: "IPv6",
+            internal: false,
+            mac: "",
+            netmask: "",
+            cidr: "fd7a:115c:a1e0::2/64",
+            scopeid: 0,
+          },
+        ],
+        utun5: [
+          { address: "192.168.1.10", family: "IPv4", internal: false, mac: "", netmask: "", cidr: "192.168.1.10/24" },
+        ],
+        utun6: [
+          { address: "100.100.10.99", family: "IPv4", internal: false, mac: "", netmask: "", cidr: "100.100.10.99/32" },
+        ],
+      }),
+    ).toEqual([
+      { address: "100.100.10.2", family: 4 },
+      { address: "fd7a:115c:a1e0::2", family: 6 },
+    ]);
+  });
+
   it("uses a stable port in its direct Tailscale API URL", () => {
     expect(LOCAL_TAILNET_API_PORT).toBe(43123);
     expect(tailnetUrl({ address: "fd7a:115c:a1e0::1", family: 6, port: LOCAL_TAILNET_API_PORT })).toBe(

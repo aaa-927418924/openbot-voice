@@ -1,7 +1,9 @@
+import { createMemberDeviceLinkUrl } from "@openbot/contracts/invite-links";
 import { createMobileConnectUrl } from "@openbot/contracts/mobile-connect";
 import { afterEach, assert, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveSessionValidation } from "../context/session-validation";
 import {
+  configureMobileLoginCredentials,
   listMobileAccountSessions,
   loginToSelfHostedIdentityServer,
   logoutMobileSession,
@@ -12,6 +14,7 @@ import {
   readMobileSession,
   readSavedIdentityServerAddress,
   redeemMobileConnectUrl,
+  registerSelfHostedIdentityAccount,
   retryMobileSessionRevocations,
   revokeMobileAccountSession,
   updateMobileProfile,
@@ -20,10 +23,23 @@ import {
 import { mobileUserName } from "./mobile-user-name";
 
 // The native Keychain and HTTP transport are the boundary; exercise the real session storage logic.
-const native = vi.hoisted(() => ({ storage: new Map<string, string>(), fetch: vi.fn<typeof fetch>() }));
+const native = vi.hoisted(() => ({
+  storage: new Map<string, string>(),
+  fetch: vi.fn<typeof fetch>(),
+  pairTailnetInvite: vi.fn(),
+  saveLocalTailnetServer: vi.fn(),
+}));
 vi.mock("expo/fetch", () => ({ fetch: native.fetch }));
-vi.mock("expo-crypto", () => ({}));
+vi.mock("expo-crypto", () => ({
+  getRandomBytes: (size: number) => new Uint8Array(size),
+  randomUUID: () => "device-id",
+}));
 vi.mock("expo-device", () => ({ deviceName: null, modelName: null }));
+vi.mock("@/shared/lib/mobile-features", () => ({ mobileAppVersion: () => "1.1.0-test" }));
+vi.mock("@/features/workspace/model/local-tailnet", () => ({ pairTailnetInvite: native.pairTailnetInvite }));
+vi.mock("@/features/workspace/model/local-tailnet-store", () => ({
+  saveLocalTailnetServer: native.saveLocalTailnetServer,
+}));
 vi.mock("@/shared/lib/platform", () => ({ isIOS: true, isAndroid: false }));
 vi.mock("@/shared/lib/text", async () => {
   const { textFor } = await import("../../../shared/lib/text-value");
@@ -53,6 +69,8 @@ beforeEach(() => {
   native.storage.clear();
   native.storage.set(key, JSON.stringify(session));
   native.fetch.mockReset();
+  native.pairTailnetInvite.mockReset();
+  native.saveLocalTailnetServer.mockReset();
 });
 afterEach(async () => {
   await retryMobileSessionRevocations();
@@ -246,6 +264,62 @@ describe("self-hosted identity sign-in", () => {
     );
     expect(JSON.stringify([...native.storage.entries()])).not.toContain(password);
   });
+
+  it("registers a distinct account on the selected identity server and stores only its session", async () => {
+    native.storage.clear();
+    native.storage.set("openbot.mobile.device-id.v1", "mobile-device");
+    const createdUser = { id: "another-account", email: "new@example.com", name: "New user", avatarUrl: null };
+    native.fetch.mockResolvedValueOnce(
+      Response.json({ sessionToken: "new-account-session", user: createdUser, localOnly: true }, { status: 201 }),
+    );
+
+    const created = await registerSelfHostedIdentityAccount(
+      serverAddress,
+      " New user ",
+      " NEW@example.com ",
+      "a-password-that-is-long-enough",
+    );
+    expect(created).toEqual({
+      apiUrl: "http://100.100.135.107:43124",
+      sessionToken: "new-account-session",
+      user: createdUser,
+      localOnly: true,
+    });
+    expect(native.fetch).toHaveBeenCalledWith(
+      "http://100.100.135.107:43124/v1/auth/register",
+      expect.objectContaining({
+        method: "POST",
+        body: expect.stringMatching(
+          /"email":"new@example\.com".*"deviceId":"mobile-device".*"deviceName":"mobile-device"/u,
+        ),
+      }),
+    );
+    expect(await readLocalIdentitySession()).toEqual(created);
+    expect(JSON.stringify([...native.storage.entries()])).not.toContain("a-password-that-is-long-enough");
+  });
+
+  it("sets QR-created account credentials without changing its stable account ID", async () => {
+    native.storage.clear();
+    const unconfigured = {
+      ...session,
+      apiUrl: "http://100.100.10.2:43124",
+      sessionToken: "owner-session",
+      user: { id: "stable-owner-id", email: "", name: "Owner", avatarUrl: null },
+      localOnly: true,
+    };
+    native.storage.set("openbot.local-identity.session.v1", JSON.stringify(unconfigured));
+    const updatedUser = { ...unconfigured.user, email: "owner@example.com" };
+    native.fetch.mockResolvedValueOnce(Response.json(updatedUser));
+
+    await expect(
+      configureMobileLoginCredentials(unconfigured, " OWNER@example.com ", "a-long-enough-password"),
+    ).resolves.toMatchObject({ user: updatedUser, sessionToken: unconfigured.sessionToken });
+    expect(native.fetch).toHaveBeenCalledWith(
+      "http://100.100.10.2:43124/v1/me/credentials",
+      expect.objectContaining({ method: "PUT", body: expect.stringContaining('"email":"owner@example.com"') }),
+    );
+    expect(await readLocalIdentitySession()).toMatchObject({ user: updatedUser });
+  });
 });
 
 describe("Mobile Connect redemption", () => {
@@ -253,7 +327,7 @@ describe("Mobile Connect redemption", () => {
     native.storage.clear();
     native.storage.set("openbot.mobile.device-id.v1", "stable-mobile-device-id");
     const localUser = { id: "shared-account-id", email: "", name: "Shared profile", avatarUrl: null };
-    const localHost = { hostId: "linux-host", fingerprint: "f".repeat(43) };
+    const localHost = { hostId: "11111111-1111-4111-8111-111111111111", fingerprint: "f".repeat(43) };
     const localApiUrl = "http://100.100.10.2:43124";
     const code = createMobileConnectUrl({ apiUrl: localApiUrl, ticket: "p".repeat(43), host: localHost });
     native.fetch.mockImplementation(async (url, init) => {
@@ -285,6 +359,55 @@ describe("Mobile Connect redemption", () => {
       localOnly: true,
       user: localUser,
     });
+  });
+
+  it("pairs and saves the Team host from a self-hosted identity QR", async () => {
+    native.storage.clear();
+    native.storage.set("openbot.mobile.device-id.v1", "stable-mobile-device-id");
+    const localHost = { hostId: "11111111-1111-4111-8111-111111111111", fingerprint: "f".repeat(43) };
+    const localApiUrl = "http://100.100.10.2:43124";
+    const memberDeviceLink = createMemberDeviceLinkUrl({
+      apiUrl: "http://100.100.10.2:43123",
+      serverId: localHost.hostId,
+      fingerprint: localHost.fingerprint,
+      token: "m".repeat(43),
+    });
+    const code = createMobileConnectUrl({
+      apiUrl: localApiUrl,
+      ticket: "p".repeat(43),
+      host: localHost,
+      memberDeviceLink,
+    });
+    const pairedHost = {
+      hostId: localHost.hostId,
+      name: "host-device-name",
+      logoKey: null,
+      apiUrl: "http://100.100.10.2:43123",
+      publicKey: "public-key",
+      fingerprint: localHost.fingerprint,
+      sessionToken: "t".repeat(43),
+      membershipId: "owner-member-id",
+      role: "owner" as const,
+    };
+    native.pairTailnetInvite.mockResolvedValueOnce(pairedHost);
+    native.fetch.mockResolvedValueOnce(
+      Response.json({
+        sessionToken: "i".repeat(43),
+        user: { id: "owner-id", email: "owner@example.com", name: "Owner", avatarUrl: null },
+        host: localHost,
+        localOnly: true,
+      }),
+    );
+
+    await expect(redeemMobileConnectUrl(code)).resolves.toMatchObject({
+      user: { id: "owner-id" },
+      host: localHost,
+    });
+    expect(native.pairTailnetInvite).toHaveBeenCalledWith(
+      memberDeviceLink,
+      expect.objectContaining({ appVersion: expect.any(String), displayName: "Owner" }),
+    );
+    expect(native.saveLocalTailnetServer).toHaveBeenCalledWith(pairedHost);
   });
 
   it("rejects a concurrent redemption from any caller and preserves the first session", async () => {
