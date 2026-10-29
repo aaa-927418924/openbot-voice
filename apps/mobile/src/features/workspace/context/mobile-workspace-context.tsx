@@ -1,3 +1,4 @@
+import type { AccountServerDirectoryEntry } from "@openbot/contracts/account-server-directory";
 import {
   type AgentEvent,
   type CreateAgentInput,
@@ -215,6 +216,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
   const serversRef = useRef(servers);
   serversRef.current = servers;
   const localTailnetHosts = useRef(new Map<string, LocalTailnetServer>());
+  const accountDirectoryHosts = useRef(new Map<string, AccountServerDirectoryEntry>());
   const [sidebarByServer, setSidebarByServer] = useState<
     Record<string, { layout: SidebarLayoutSnapshot | null; error: string | null }>
   >({});
@@ -333,6 +335,9 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
             publicKey: previous?.publicKey ?? host.devicePublicKey,
             membershipId: host.membershipId,
             role: host.role,
+            ...(accountDirectoryHosts.current.has(host.hostId)
+              ? { accountServer: accountDirectoryHosts.current.get(host.hostId) }
+              : {}),
             ...(localTailnetHosts.current.has(host.hostId)
               ? { tailnet: localTailnetHosts.current.get(host.hostId) }
               : {}),
@@ -386,6 +391,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
               try: async () => {
                 const deviceHosts = await readLocalTailnetServers();
                 if (!session.sessionToken) {
+                  accountDirectoryHosts.current.clear();
                   localTailnetHosts.current = new Map(deviceHosts.map((host) => [host.hostId, host]));
                   return deviceHosts.map((host) => ({
                     hostId: host.hostId,
@@ -420,6 +426,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
                   }
                 })();
                 if (!synced) {
+                  accountDirectoryHosts.current.clear();
                   localTailnetHosts.current = new Map(deviceHosts.map((host) => [host.hostId, host]));
                   return deviceHosts.map((host) => ({
                     hostId: host.hostId,
@@ -432,6 +439,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
                 }
 
                 const directoryById = new Map(synced.map((host) => [host.hostId, host]));
+                accountDirectoryHosts.current = directoryById;
                 const pairedById = new Map(
                   deviceHosts
                     .filter((host) => {
@@ -787,6 +795,24 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
   const registerConnection = useCallback((hostId: string, handle: ServerConnectionHandle | null) => {
     if (handle) connections.current.set(hostId, handle);
     else connections.current.delete(hostId);
+  }, []);
+  const handleAccountServerPaired = useCallback((host: LocalTailnetServer) => {
+    localTailnetHosts.current.set(host.hostId, host);
+    setServers((current) =>
+      current.map((server) =>
+        server.id === host.hostId
+          ? {
+              ...server,
+              name: host.name,
+              logoKey: host.logoKey,
+              publicKey: host.publicKey,
+              membershipId: host.membershipId,
+              role: host.role,
+              tailnet: host,
+            }
+          : server,
+      ),
+    );
   }, []);
   const wakeHostedServer = useMemo(
     () =>
@@ -1734,6 +1760,8 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
             hostId={server.id}
             publicKey={server.publicKey}
             localTailnetServer={server.tailnet}
+            accountServer={server.accountServer}
+            onAccountServerPaired={handleAccountServerPaired}
             active={foreground}
             remoteDesktopSession={remoteDesktopSession?.serverId === server.id ? remoteDesktopSession.session : null}
             onCloseRemoteDesktop={(sessionId) => closeRemoteDesktop(server.id, sessionId)}

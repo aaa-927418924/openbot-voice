@@ -1,3 +1,4 @@
+import type { AccountServerDirectoryEntry } from "@openbot/contracts/account-server-directory";
 import type { AgentEvent, RemoteDesktopSession, TeamRealtimeEvent } from "@openbot/contracts/ipc";
 import type { LiveVoiceWireEvent } from "@openbot/contracts/team-protocol/live-voice-v1";
 import { sourceText } from "@openbot/i18n/source";
@@ -29,6 +30,8 @@ interface Props {
   hostId: string;
   publicKey: string;
   localTailnetServer?: LocalTailnetServer;
+  accountServer?: AccountServerDirectoryEntry;
+  onAccountServerPaired?(host: LocalTailnetServer): void;
   active: boolean;
   remoteDesktopSession?: RemoteDesktopSession | null;
   onCloseRemoteDesktop?: (sessionId: string) => Promise<void>;
@@ -45,6 +48,8 @@ export function ServerConnection({
   hostId,
   publicKey,
   localTailnetServer,
+  accountServer,
+  onAccountServerPaired,
   active,
   remoteDesktopSession = null,
   onCloseRemoteDesktop,
@@ -145,6 +150,8 @@ export function ServerConnection({
       ref={attach}
       active={active}
       localTailnetServer={localTailnetServer}
+      accountServer={accountServer}
+      onAccountServerPaired={onAccountServerPaired}
       remoteDesktopSession={remoteDesktopSession}
       onCloseRemoteDesktop={onCloseRemoteDesktop}
       directory={directory}

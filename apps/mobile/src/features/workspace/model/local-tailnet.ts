@@ -1,4 +1,7 @@
-import type { AccountServerRegistration } from "@openbot/contracts/account-server-directory";
+import type {
+  AccountServerDirectoryEntry,
+  AccountServerRegistration,
+} from "@openbot/contracts/account-server-directory";
 import {
   createMemberDeviceLinkUrl,
   type InviteLinkPayload,
@@ -288,6 +291,67 @@ export function decodeTailnetMemberDeviceLink(value: unknown): { token: string; 
     throw new Error("The Tailscale host returned an invalid device link.");
   }
   return { token: value.token, expiresAt: value.expiresAt };
+}
+
+/** Log this device into a previously paired account server using a host-bound, one-time ticket. */
+export async function loginTailnetAccountServer(
+  server: AccountServerDirectoryEntry,
+  options: {
+    appVersion: string;
+    fetch?: TailnetFetch;
+    randomBytes: TailnetRandomBytes;
+    identitySession: { apiUrl: string; sessionToken: string };
+  },
+): Promise<LocalTailnetServer> {
+  if (
+    !isTailscaleApiUrl(server.apiUrl) ||
+    !isTailscaleApiUrl(options.identitySession.apiUrl) ||
+    remoteHostFingerprint(server.publicKey) !== server.fingerprint
+  ) {
+    throw new Error("The account server directory returned an invalid host identity.");
+  }
+  const fetcher = options.fetch ?? fetch;
+  const invite = {
+    apiUrl: server.apiUrl,
+    serverId: server.hostId,
+    fingerprint: server.fingerprint,
+    token: "",
+  };
+  const { protocol, proof } = await verifyTailnetIdentity(invite, options.appVersion, fetcher, options.randomBytes);
+  if (proof.publicKey !== server.publicKey) throw new Error("The Tailscale host identity could not be verified.");
+
+  const ticketResponse = await fetcher(new URL("/v1/team-auth/ticket", options.identitySession.apiUrl), {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${options.identitySession.sessionToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ serverId: server.hostId }),
+  });
+  const ticket = await readJson(ticketResponse, decodeTeamAuthTicket);
+  const joined = decodeJoinedMember(
+    await requestJson(
+      server.apiUrl,
+      options.appVersion,
+      protocol,
+      "POST",
+      TEAM_API_ROUTES.auth.account,
+      null,
+      { accountTicket: ticket.ticket },
+      fetcher,
+    ),
+  );
+  return {
+    hostId: proof.serverId,
+    name: proof.serverName,
+    logoKey: proof.logoVersion,
+    apiUrl: server.apiUrl,
+    publicKey: proof.publicKey,
+    fingerprint: proof.fingerprint,
+    sessionToken: joined.sessionToken,
+    membershipId: joined.membershipId,
+    role: joined.role,
+  };
 }
 
 async function verifyTailnetIdentity(

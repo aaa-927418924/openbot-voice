@@ -1,3 +1,4 @@
+import type { AccountServerDirectoryEntry } from "@openbot/contracts/account-server-directory";
 import type { AgentEvent, RemoteDesktopSession, TeamRealtimeEvent } from "@openbot/contracts/ipc";
 import { LIVE_VOICE_CHANNEL_START_ROUTE } from "@openbot/contracts/team-protocol/live-voice-channel-v1";
 import { LIVE_VOICE_ROUTES, type LiveVoiceWireEvent } from "@openbot/contracts/team-protocol/live-voice-v1";
@@ -25,7 +26,9 @@ import {
   DirectTailnetTeamClient,
   type LocalTailnetServer,
   type LocalTailnetSocketDiagnostic,
+  loginTailnetAccountServer,
 } from "@/features/workspace/model/local-tailnet";
+import { saveLocalTailnetServer } from "@/features/workspace/model/local-tailnet-store";
 import { expoGoDomOptions } from "@/shared/lib/expo-go-dom";
 import { currentText } from "@/shared/lib/text";
 
@@ -48,6 +51,8 @@ export interface RemoteTeamTransportRef {
 interface RemoteTeamTransportProps {
   active: boolean;
   localTailnetServer?: LocalTailnetServer;
+  accountServer?: AccountServerDirectoryEntry;
+  onAccountServerPaired?(host: LocalTailnetServer): void;
   remoteDesktopSession?: RemoteDesktopSession | null;
   onCloseRemoteDesktop?: (sessionId: string) => Promise<void>;
   directory: RemoteTeamDirectoryClient | null;
@@ -86,6 +91,8 @@ export const RemoteTeamTransport = forwardRef<RemoteTeamTransportRef, RemoteTeam
     {
       active: foreground,
       localTailnetServer,
+      accountServer,
+      onAccountServerPaired,
       remoteDesktopSession = null,
       onCloseRemoteDesktop,
       directory,
@@ -96,7 +103,7 @@ export const RemoteTeamTransport = forwardRef<RemoteTeamTransportRef, RemoteTeam
     },
     ref,
   ) {
-    const { refreshProfile } = useMobileSession();
+    const { session, refreshProfile } = useMobileSession();
     const [commands, setCommands] = useState<RemoteTeamCommand[]>([]);
     const mailboxRef = useRef<ReturnType<typeof createRemoteCommandMailbox> | null>(null);
     if (!mailboxRef.current) mailboxRef.current = createRemoteCommandMailbox(setCommands);
@@ -104,6 +111,8 @@ export const RemoteTeamTransport = forwardRef<RemoteTeamTransportRef, RemoteTeam
     // The server of this transport, for support log lines. Requests do not name it.
     const hostIdRef = useRef<string | null>(null);
     const directClient = useRef<DirectTailnetTeamClient | null>(null);
+    const directServer = useRef<LocalTailnetServer | null>(localTailnetServer ?? null);
+    directServer.current = localTailnetServer ?? directServer.current;
     const directGeneration = useRef(0);
     const callbacks = useRef({ onConnectionUpdate, onTeamEvent });
     callbacks.current = { onConnectionUpdate, onTeamEvent };
@@ -144,10 +153,22 @@ export const RemoteTeamTransport = forwardRef<RemoteTeamTransportRef, RemoteTeam
       () => ({
         connect: async (hostId, hostPublicKey) => {
           hostIdRef.current = hostId;
-          if (localTailnetServer?.hostId === hostId) {
+          let server = directServer.current?.hostId === hostId ? directServer.current : null;
+          if (!server && accountServer?.hostId === hostId && session?.localOnly && session.sessionToken) {
+            callbacks.current.onConnectionUpdate({ hostId, state: "connecting", message: null });
+            server = await loginTailnetAccountServer(accountServer, {
+              appVersion: Application.nativeApplicationVersion ?? "",
+              randomBytes: (size) => Crypto.getRandomBytes(size),
+              identitySession: { apiUrl: session.apiUrl, sessionToken: session.sessionToken },
+            });
+            await saveLocalTailnetServer(server);
+            directServer.current = server;
+            onAccountServerPaired?.(server);
+          }
+          if (server?.hostId === hostId) {
             directClient.current?.disconnect();
             const generation = ++directGeneration.current;
-            const client = new DirectTailnetTeamClient(localTailnetServer, {
+            const client = new DirectTailnetTeamClient(server, {
               appVersion: Application.nativeApplicationVersion ?? "",
               randomBytes: (size) => Crypto.getRandomBytes(size),
             });
@@ -202,7 +223,7 @@ export const RemoteTeamTransport = forwardRef<RemoteTeamTransportRef, RemoteTeam
           if (!result.ok) throw new Error(result.error ?? currentText().t("mobile.workspace.error.connectFailed"));
         },
         disconnect: async () => {
-          if (localTailnetServer) {
+          if (directServer.current) {
             directGeneration.current += 1;
             directClient.current?.disconnect();
             directClient.current = null;
@@ -221,7 +242,7 @@ export const RemoteTeamTransport = forwardRef<RemoteTeamTransportRef, RemoteTeam
         ): Promise<T> => {
           const started = Date.now();
           const innerTimeout = remoteTeamRequestTimeoutMs(method, path);
-          if (localTailnetServer) {
+          if (directServer.current) {
             const client = directClient.current;
             if (!client) throw new Error(currentText().t("mobile.workspace.error.transportNotReady"));
             const request = `${hostIdRef.current ?? "unknown server"} ${method} ${supportLogUrl(path)}`;
@@ -281,7 +302,7 @@ export const RemoteTeamTransport = forwardRef<RemoteTeamTransportRef, RemoteTeam
           return decode(result.body);
         },
       }),
-      [enqueue, localTailnetServer],
+      [accountServer, enqueue, onAccountServerPaired, session?.apiUrl, session?.localOnly, session?.sessionToken],
     );
 
     const handleCommandResult = useCallback(
@@ -301,7 +322,7 @@ export const RemoteTeamTransport = forwardRef<RemoteTeamTransportRef, RemoteTeam
         active={foreground}
         commands={commands}
         remoteDesktopSession={remoteDesktopSession}
-        directRemoteDesktop={Boolean(localTailnetServer)}
+        directRemoteDesktop={Boolean(directServer.current || accountServer)}
         remoteDesktopLabels={{
           back: currentText().t("mobile.remoteDesktop.back"),
           connecting: currentText().t("mobile.remoteDesktop.connecting"),

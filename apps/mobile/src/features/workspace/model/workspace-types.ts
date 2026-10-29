@@ -1,3 +1,4 @@
+import type { AccountServerDirectoryEntry } from "@openbot/contracts/account-server-directory";
 import type { AttachmentSupport } from "@openbot/contracts/attachment-files";
 import type {
   AddedAgent,
@@ -66,6 +67,8 @@ export interface MobileServer {
   publicKey: string;
   membershipId: string;
   role: "owner" | "admin" | "member";
+  /** Public server metadata from the signed-in account directory, before this device has a token. */
+  accountServer?: AccountServerDirectoryEntry;
   /** The active members that the host's plan allows. Absent when the account server gave none. */
   memberLimit?: number;
   /** Saved on-device direct Tailscale membership; absent for account-directory connections. */

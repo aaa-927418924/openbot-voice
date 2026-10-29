@@ -24,6 +24,7 @@ import {
   decodeTailnetMemberDeviceLink,
   isTailnetMemberDeviceLink,
   type LocalTailnetSocketDiagnostic,
+  loginTailnetAccountServer,
   pairTailnetInvite,
   parseTailnetInvite,
   previewTailnetInvite,
@@ -168,6 +169,23 @@ async function createHostFetch() {
       };
       return Response.json(JSON.parse(codec.encodeResponse("POST", url.pathname, 201, joined, {})), { status: 201 });
     }
+    if (url.pathname === TEAM_API_ROUTES.auth.account) {
+      const authenticated = {
+        member: {
+          id: "shared-account-member-id",
+          username: "account-shared-account-id",
+          email: null,
+          name: "Shared profile",
+          avatarUrl: null,
+          role: "member",
+          createdAt: new Date().toISOString(),
+          disabled: false,
+        },
+        sessionToken: "shared-account-session-token",
+        sessionExpiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+      };
+      return Response.json(JSON.parse(codec.encodeResponse("POST", url.pathname, 200, authenticated, {})));
+    }
     if (url.pathname === TEAM_MEMBER_DEVICE_LINK_ROUTES.redeem) {
       const sideRoute = teamSideRouteCodec(url.pathname);
       if (!sideRoute) throw new Error("Member device link route codec is unavailable.");
@@ -180,7 +198,7 @@ async function createHostFetch() {
     }
     throw new Error(`Unexpected request: ${url.pathname}`);
   });
-  return { fingerprint, fetcher, calls };
+  return { fingerprint, publicKeyPem, fetcher, calls };
 }
 
 describe("Android direct Tailscale pairing", () => {
@@ -252,6 +270,93 @@ describe("Android direct Tailscale pairing", () => {
       accountTicket: "t".repeat(43),
     });
     expect(host.calls.some((call) => call.path === TEAM_API_ROUTES.join.server)).toBe(false);
+  });
+
+  it("verifies a synced host identity before requesting a one-time account login ticket", async () => {
+    const host = await createHostFetch();
+    const calls: string[] = [];
+    const identityApiUrl = "http://100.100.10.2:43124/";
+    const fetcher = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      if (url.port === "43124") {
+        calls.push(`identity ${url.pathname}`);
+        expect(new Headers(init?.headers).get("Authorization")).toBe(`Bearer ${"s".repeat(43)}`);
+        expect(JSON.parse(String(init?.body))).toEqual({ serverId });
+        return Response.json({ ticket: "t".repeat(43), expiresAt: Date.now() + 120_000 });
+      }
+      calls.push(`host ${url.pathname}`);
+      return host.fetcher(input, init);
+    });
+    const directoryEntry = {
+      hostId: serverId,
+      name: "Synced host name",
+      apiUrl,
+      fingerprint: host.fingerprint,
+      publicKey: host.publicKeyPem,
+      logoKey: null,
+      membershipId: "directory-membership",
+      role: "member" as const,
+      isOwner: false,
+    };
+    await expect(
+      loginTailnetAccountServer(directoryEntry, {
+        appVersion: "1.1.0",
+        fetch: fetcher,
+        randomBytes,
+        identitySession: { apiUrl: identityApiUrl, sessionToken: "s".repeat(43) },
+      }),
+    ).resolves.toMatchObject({
+      hostId: serverId,
+      name: "Tailnet host",
+      apiUrl,
+      membershipId: "shared-account-member-id",
+      sessionToken: "shared-account-session-token",
+      role: "member",
+    });
+    expect(calls).toEqual([
+      `host ${TEAM_API_ROUTES.compatibility}`,
+      `host ${TEAM_API_ROUTES.identity}`,
+      "identity /v1/team-auth/ticket",
+      `host ${TEAM_API_ROUTES.auth.account}`,
+    ]);
+    expect(host.calls.find((call) => call.path === TEAM_API_ROUTES.auth.account)?.body).toEqual({
+      accountTicket: "t".repeat(43),
+    });
+    expect(host.calls.every((call) => !call.headers.has("Authorization"))).toBe(true);
+  });
+
+  it("does not request an account ticket when a synced server identity does not match its public key", async () => {
+    const host = await createHostFetch();
+    const wrongIdentity = await Effect.runPromise(createEd25519Identity(() => new Uint8Array(32).fill(20)));
+    const calls: string[] = [];
+    const fetcher = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      calls.push(url.port === "43124" ? "identity" : url.pathname);
+      if (url.port === "43124") return Response.json({ ticket: "t".repeat(43), expiresAt: Date.now() + 120_000 });
+      return host.fetcher(input, init);
+    });
+    const directoryEntry = {
+      hostId: serverId,
+      name: "Synced host name",
+      apiUrl,
+      fingerprint: remoteHostFingerprint(wrongIdentity.publicKeyPem),
+      publicKey: wrongIdentity.publicKeyPem,
+      logoKey: null,
+      membershipId: "directory-membership",
+      role: "member" as const,
+      isOwner: false,
+    };
+
+    await expect(
+      loginTailnetAccountServer(directoryEntry, {
+        appVersion: "1.1.0",
+        fetch: fetcher,
+        randomBytes,
+        identitySession: { apiUrl: "http://100.100.10.2:43124/", sessionToken: "s".repeat(43) },
+      }),
+    ).rejects.toThrow("identity could not be verified");
+    expect(calls).toEqual([TEAM_API_ROUTES.compatibility, TEAM_API_ROUTES.identity]);
+    expect(host.calls.some((call) => call.path === TEAM_API_ROUTES.auth.account)).toBe(false);
   });
 
   it("verifies and redeems a separate device link into the same member identity", async () => {
