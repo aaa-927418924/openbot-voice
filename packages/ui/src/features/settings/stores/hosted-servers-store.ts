@@ -197,8 +197,7 @@ export function createSettingsHostedServersStore(props: HostedServersStoreProps,
     });
   }
 
-  const deleteConfirmed = () =>
-    panel.pendingDelete !== null && panel.deleteConfirmName.trim() === panel.pendingDelete.name;
+  const deleteConfirmed = () => panel.pendingDelete !== null && panel.deleteConfirmName === panel.pendingDelete.name;
 
   /** Deletes the server the dialog asks about. A failed deletion keeps the dialog open with the error. */
   async function confirmDelete(): Promise<void> {
@@ -216,7 +215,7 @@ export function createSettingsHostedServersStore(props: HostedServersStoreProps,
       state.deleteError = null;
     });
     try {
-      await api.delete({ serverId: server.serverId, confirmName: panel.deleteConfirmName.trim() });
+      await api.delete({ serverId: server.serverId, confirmName: panel.deleteConfirmName });
       setPanel((state) => {
         state.servers = state.servers.filter((entry) => entry.serverId !== server.serverId);
         state.pendingDelete = null;

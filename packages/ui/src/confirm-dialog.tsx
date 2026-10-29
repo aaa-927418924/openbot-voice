@@ -27,6 +27,8 @@ export interface ConfirmDialogProps {
   confirmLabel: JSX.Element;
   /** Replaces the confirm label while pending, such as "Deleting…". */
   pendingLabel?: string;
+  /** Keeps a destructive action unavailable until the caller's confirmation requirement is met. */
+  confirmDisabled?: boolean;
   cancelLabel?: string;
   /** Marks the dialog pending in addition to a pending `onConfirm` promise. */
   pending?: boolean;
@@ -141,6 +143,7 @@ export function ConfirmDialog(props: ConfirmDialogProps): JSX.Element {
                 data-cuelume-tap={tone() === "destructive" ? "close" : ""}
                 data-cuelume-emphasis={tone() === "destructive" ? "strong" : undefined}
                 class="ui-confirm-dialog-confirm"
+                disabled={pending() || Boolean(props.confirmDisabled)}
                 loading={pending()}
                 loadingLabel={props.pendingLabel}
                 onClick={() => void confirm()}

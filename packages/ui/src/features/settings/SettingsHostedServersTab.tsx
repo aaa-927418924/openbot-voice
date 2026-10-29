@@ -176,6 +176,7 @@ export function SettingsHostedServersTab(props: SettingsHostedServersTabProps) {
         description={t("settings.hostedServers.deleteDescription")}
         confirmLabel={t("common.delete")}
         pendingLabel={t("settings.hostedServers.deleting")}
+        confirmDisabled={!props.store.deleteConfirmed()}
         pending={state().deleting}
         error={state().deleteError ?? undefined}
         initialFocus="cancel"

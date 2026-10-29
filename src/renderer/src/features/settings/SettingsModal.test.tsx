@@ -1,15 +1,17 @@
+import type { HostedServerSummary } from "@openbot/contracts/hosted-servers";
 import type {
   AccountSession,
   AppLogoColor,
   AvatarImageInput,
   CentralAuthUser,
   DesktopPlatform,
+  HostedServersDesktopApi,
   MobileConnectedDevice,
   UpdateStatus,
 } from "@openbot/contracts/ipc";
 import { toast } from "@openbot/ui";
 import { DEFAULT_GENERAL_SETTINGS } from "@openbot/ui/features/settings/app-settings";
-import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
+import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SettingsModal } from "./SettingsModal";
@@ -110,6 +112,65 @@ describe("SettingsModal", () => {
     toast.dismiss();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it("keeps server deletion disabled until the exact server name is entered", async () => {
+    const server: HostedServerSummary = {
+      serverId: "server-1",
+      name: "Hosted Workstation",
+      size: "small",
+      plan: "starter",
+      interval: "month",
+      currency: "usd",
+      state: "running",
+      error: null,
+      createdAt: "2026-10-30T00:00:00.000Z",
+      updatedAt: "2026-10-30T00:00:00.000Z",
+    };
+    let servers = [server];
+    const deleteServer = vi.fn(async ({ serverId }: { serverId: string; confirmName: string }) => {
+      servers = servers.filter((entry) => entry.serverId !== serverId);
+    });
+    const hostedServersApi: HostedServersDesktopApi = {
+      list: vi.fn(async () => ({ available: true, servers, maxServers: 2 })),
+      plans: vi.fn(async () => ({ plans: [] })),
+      create: vi.fn(async () => server),
+      openCheckout: vi.fn(async () => server),
+      delete: deleteServer,
+      wake: vi.fn(async () => server),
+    };
+    render(() => (
+      <SettingsModal
+        open
+        onOpenChange={() => {}}
+        value={DEFAULT_GENERAL_SETTINGS}
+        onValueChange={() => {}}
+        appInfo={null}
+        updateStatus={idleUpdateStatus}
+        onUpdateAction={async () => {}}
+        account={account}
+        onUpdateAccountName={async () => {}}
+        onUpdateAccountAvatar={async () => {}}
+        hostedServersApi={hostedServersApi}
+      />
+    ));
+
+    await fireEvent.click(await screen.findByRole("tab", { name: "Hosted servers" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Delete Hosted Workstation" }));
+    const confirmation = await screen.findByRole("alertdialog", { name: "Delete Hosted Workstation?" });
+    const confirm = within(confirmation).getByRole("button", { name: "Delete" });
+    const name = within(confirmation).getByRole("textbox", { name: "Type Hosted Workstation to confirm" });
+
+    expect(confirm).toBeDisabled();
+    await fireEvent.input(name, { target: { value: "Hosted Workstation " } });
+    expect(confirm).toBeDisabled();
+    await fireEvent.input(name, { target: { value: "Hosted Workstation" } });
+    await waitFor(() => expect(confirm).toBeEnabled());
+    await fireEvent.click(confirm);
+
+    await waitFor(() =>
+      expect(deleteServer).toHaveBeenCalledWith({ serverId: "server-1", confirmName: "Hosted Workstation" }),
+    );
   });
 
   it("keeps every settings preference controlled across a button close, Escape, and reopen", async () => {
