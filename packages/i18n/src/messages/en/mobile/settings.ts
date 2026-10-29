@@ -120,7 +120,6 @@ export const messages = defineMessages("mobile.settings", {
   "mobile.settings.profile.discardChangesBody": "Your unsaved profile changes will be lost.",
   "mobile.settings.profile.discardChanges": "Discard changes",
   "mobile.settings.profile.localIdentity": "Local account",
-  "mobile.settings.profile.localIdentityConnected": "This device is signed in to your local identity server.",
   "mobile.settings.profile.setCredentials": "Set up email and password",
   "mobile.settings.profile.setCredentialsHint": "Add sign-in details to this QR-created account.",
   "mobile.settings.profile.credentialsEmail": "Email",

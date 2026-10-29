@@ -121,7 +121,6 @@ export const messages = {
   "mobile.settings.profile.discardChangesBody": "Kaydedilmemiş profil değişiklikleri kaybolacak.",
   "mobile.settings.profile.discardChanges": "Değişiklikleri sil",
   "mobile.settings.profile.localIdentity": "Yerel hesap",
-  "mobile.settings.profile.localIdentityConnected": "Bu cihaz yerel kimlik sunucunuza giriş yaptı.",
   "mobile.settings.profile.localIdentityDisconnectTitle": "Bu cihazın bağlantısı kesilsin mi?",
   "mobile.settings.profile.localIdentityDisconnectBody":
     "Telefon cihaza özel profile döner. Görüşmeler ve sunucu verileri silinmez.",

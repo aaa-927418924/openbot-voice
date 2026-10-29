@@ -258,9 +258,6 @@ export function ProfileSettingsScreen() {
       ) : null}
       {session.localOnly && session.sessionToken ? (
         <SettingsSection title={t("mobile.settings.profile.localIdentity")}>
-          <SettingsRow>
-            <Typography.Paragraph>{t("mobile.settings.profile.localIdentityConnected")}</Typography.Paragraph>
-          </SettingsRow>
           {editingInformation ? (
             <>
               <SettingsRow>

@@ -121,7 +121,6 @@ export const messages = {
   "mobile.settings.profile.discardChangesBody": "As alterações não salvas do perfil serão perdidas.",
   "mobile.settings.profile.discardChanges": "Descartar alterações",
   "mobile.settings.profile.localIdentity": "Conta local",
-  "mobile.settings.profile.localIdentityConnected": "Este dispositivo está conectado ao servidor de identidade local.",
   "mobile.settings.profile.localIdentityDisconnectTitle": "Desconectar este dispositivo?",
   "mobile.settings.profile.localIdentityDisconnectBody":
     "O telefone voltará a um perfil exclusivo do dispositivo. Conversas e dados do servidor não serão excluídos.",

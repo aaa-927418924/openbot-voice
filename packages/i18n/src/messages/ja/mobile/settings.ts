@@ -123,7 +123,6 @@ export const messages = {
   "mobile.settings.profile.discardChangesBody": "保存していないプロフィールの変更内容は失われます。",
   "mobile.settings.profile.discardChanges": "変更を破棄",
   "mobile.settings.profile.localIdentity": "ローカルアカウント",
-  "mobile.settings.profile.localIdentityConnected": "この端末はローカルのIDサーバーにログインしています。",
   "mobile.settings.profile.setCredentials": "メールアドレスとパスワードを設定",
   "mobile.settings.profile.setCredentialsHint": "QRコードで作成したアカウントにログイン情報を追加します。",
   "mobile.settings.profile.credentialsEmail": "メールアドレス",
