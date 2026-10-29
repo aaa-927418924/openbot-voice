@@ -111,16 +111,14 @@ function RootNavigator() {
                 }}
               >
                 <Stack.Screen name="index" options={{ headerShown: false, orientation: "portrait" }} />
-                <Stack.Protected guard={!session}>
-                  <Stack.Screen
-                    name="scan-qr-code"
-                    options={{
-                      animation: "slide_from_right",
-                      orientation: "portrait",
-                      title: t("mobile.app.route.scanQrCode"),
-                    }}
-                  />
-                </Stack.Protected>
+                <Stack.Screen
+                  name="scan-qr-code"
+                  options={{
+                    animation: "slide_from_right",
+                    orientation: "portrait",
+                    title: t("mobile.app.route.scanQrCode"),
+                  }}
+                />
                 <Stack.Protected guard={Boolean(session)}>
                   <Stack.Screen
                     name="(app)"

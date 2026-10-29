@@ -145,6 +145,35 @@ export function ProfileSettingsScreen() {
           {nameError ?? error}
         </Typography.Paragraph>
       ) : null}
+      {session.localOnly && session.sessionToken ? (
+        <SettingsSection title={t("mobile.settings.profile.localIdentity")}>
+          <SettingsRow>
+            <Typography.Paragraph>{t("mobile.settings.profile.localIdentityConnected")}</Typography.Paragraph>
+          </SettingsRow>
+          <SettingsRow
+            disclosure={false}
+            disabled={busy}
+            onPress={() =>
+              Alert.alert(
+                t("mobile.settings.profile.localIdentityDisconnectTitle"),
+                t("mobile.settings.profile.localIdentityDisconnectBody"),
+                [
+                  { text: t("common.cancel"), style: "cancel" },
+                  {
+                    text: t("mobile.settings.profile.localIdentityDisconnect"),
+                    style: "destructive",
+                    onPress: () => void perform("sign-out", signOut),
+                  },
+                ],
+              )
+            }
+          >
+            <Typography.Paragraph className="text-danger-text">
+              {t("mobile.settings.profile.localIdentityDisconnect")}
+            </Typography.Paragraph>
+          </SettingsRow>
+        </SettingsSection>
+      ) : null}
       {!session.localOnly ? (
         <>
           <SettingsSection title={t("mobile.settings.profile.email")}>

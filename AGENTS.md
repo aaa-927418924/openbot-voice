@@ -248,3 +248,8 @@ They describe the enforced syntax, fixture behavior, and reasons for removed rul
   or `@ts-ignore`; disables rules through `biome.json` overrides or removes a GritQL plugin; widens
   a boundary to `any` or `unknown`; or uses an assertion to bypass a checker. Fix the domain issue,
   or explain why the rule is wrong and let the developer decide.
+
+## OpenBot Voice project-specific requirements
+
+- For Android account, identity, pairing, login, navigation, or connection changes, build the Android APK, install it on an attached physical Android device with `adb install -r` so app data is preserved, and exercise the changed screens/flow on-device before calling the work complete. Unit tests alone are not sufficient. If no device is attached or a real end-to-end step cannot be completed safely, state that limitation explicitly.
+- Never clear Android app data as part of verification unless the user explicitly asks. Verify the installed package/version and foreground screen after installation, and distinguish successful installation from successful end-to-end pairing.

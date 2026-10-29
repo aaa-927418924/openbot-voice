@@ -28,6 +28,24 @@ export function SettingsScreen() {
           <Typography.Paragraph type="body-sm">{displayName}</Typography.Paragraph>
         </SettingsRow>
       </SettingsSection>
+      {session?.localOnly ? (
+        <SettingsSection title={t("mobile.settings.home.localIdentity")}>
+          <SettingsRow
+            onPress={() => router.push(session.sessionToken ? "/settings/profile" : "/scan-qr-code")}
+            supportingText={
+              session.sessionToken
+                ? t("mobile.settings.home.localIdentityConnected")
+                : t("mobile.settings.home.localIdentityHint")
+            }
+          >
+            <Typography.Paragraph type="body-sm">
+              {session.sessionToken
+                ? t("mobile.settings.home.localIdentityAccount")
+                : t("mobile.settings.home.localIdentityConnect")}
+            </Typography.Paragraph>
+          </SettingsRow>
+        </SettingsSection>
+      ) : null}
       <SettingsSection title={t("mobile.settings.home.preferences")}>
         <SettingsRow
           onPress={() => router.push("/settings/general")}
