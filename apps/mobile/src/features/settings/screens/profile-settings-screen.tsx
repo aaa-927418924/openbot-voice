@@ -2,7 +2,7 @@ import { validateProfileName } from "@openbot/contracts/validation";
 import { router } from "expo-router";
 import { Typography } from "heroui-native";
 import { useThemeColor } from "heroui-native/hooks";
-import { Camera } from "lucide-react-native";
+import { Camera, ChevronUp } from "lucide-react-native";
 import { useRef, useState } from "react";
 import { Alert, Keyboard, Pressable, View } from "react-native";
 import { mobileUserName } from "@/features/auth/api/mobile-user-name";
@@ -28,6 +28,7 @@ export function ProfileSettingsScreen() {
   const [credentialsEmail, setCredentialsEmail] = useState("");
   const [credentialsPassword, setCredentialsPassword] = useState("");
   const [credentialsConfirmation, setCredentialsConfirmation] = useState("");
+  const [editingInformation, setEditingInformation] = useState(false);
   if (!session) return null;
   const busy = pendingAction !== null;
   const name = draftName ?? savedName;
@@ -82,6 +83,7 @@ export function ProfileSettingsScreen() {
     await perform("name", async () => {
       await updateProfile({ name: validatedName.name });
       setDraftName(null);
+      if (!credentialsDirty) setEditingInformation(false);
       Keyboard.dismiss();
       void haptics.notification("success");
     });
@@ -94,9 +96,33 @@ export function ProfileSettingsScreen() {
       setCredentialsEmail("");
       setCredentialsPassword("");
       setCredentialsConfirmation("");
+      if (!nameChanged) setEditingInformation(false);
       Keyboard.dismiss();
       void haptics.notification("success");
     });
+  }
+
+  function toggleInformationEditing(): void {
+    if (editingInformation && (nameChanged || credentialsDirty)) {
+      Alert.alert(t("mobile.settings.profile.discardChangesTitle"), t("mobile.settings.profile.discardChangesBody"), [
+        { text: t("common.cancel"), style: "cancel" },
+        {
+          text: t("mobile.settings.profile.discardChanges"),
+          style: "destructive",
+          onPress: () => {
+            setDraftName(null);
+            setCredentialsEmail("");
+            setCredentialsPassword("");
+            setCredentialsConfirmation("");
+            setError(null);
+            setEditingInformation(false);
+            Keyboard.dismiss();
+          },
+        },
+      ]);
+      return;
+    }
+    setEditingInformation((value) => !value);
   }
 
   async function choosePhoto(): Promise<void> {
@@ -159,21 +185,54 @@ export function ProfileSettingsScreen() {
             <Camera color={foreground} size={14} />
           </View>
         </Pressable>
-        <SheetFormField
-          label={t("mobile.settings.profile.name")}
-          appearance="soft"
-          placeholder={t("mobile.settings.profile.namePlaceholder")}
-          autoCapitalize="words"
-          autoCorrect={false}
-          returnKeyType="done"
-          value={name}
-          editable={!busy}
-          onChangeText={(value) => {
-            setDraftName(value);
-            setError(null);
-          }}
-          onSubmitEditing={() => void saveName()}
-        />
+        <SettingsSection>
+          {!editingInformation ? (
+            <SettingsRow>
+              <View className="gap-1">
+                <Typography.Paragraph type="body-xs" className="text-grouped-secondary">
+                  {t("mobile.settings.profile.name")}
+                </Typography.Paragraph>
+                <Typography.Paragraph>{savedName}</Typography.Paragraph>
+              </View>
+            </SettingsRow>
+          ) : (
+            <SettingsRow>
+              <SheetFormField
+                label={t("mobile.settings.profile.name")}
+                appearance="soft"
+                placeholder={t("mobile.settings.profile.namePlaceholder")}
+                autoCapitalize="words"
+                autoCorrect={false}
+                returnKeyType="done"
+                value={name}
+                editable={!busy}
+                onChangeText={(value) => {
+                  setDraftName(value);
+                  setError(null);
+                }}
+                onSubmitEditing={() => void saveName()}
+              />
+            </SettingsRow>
+          )}
+          <SettingsRow
+            accessibilityLabel={t(
+              editingInformation
+                ? "mobile.settings.profile.hideInformation"
+                : "mobile.settings.profile.editInformation",
+            )}
+            disabled={busy}
+            onPress={toggleInformationEditing}
+            trailing={editingInformation ? <ChevronUp color={foreground} size={18} /> : undefined}
+          >
+            <Typography.Paragraph>
+              {t(
+                editingInformation
+                  ? "mobile.settings.profile.hideInformation"
+                  : "mobile.settings.profile.editInformation",
+              )}
+            </Typography.Paragraph>
+          </SettingsRow>
+        </SettingsSection>
       </View>
       {nameError || error ? (
         <Typography.Paragraph accessibilityRole="alert" className="text-danger-text">
@@ -185,7 +244,7 @@ export function ProfileSettingsScreen() {
           <SettingsRow>
             <Typography.Paragraph>{t("mobile.settings.profile.localIdentityConnected")}</Typography.Paragraph>
           </SettingsRow>
-          {credentialSetupAvailable ? (
+          {credentialSetupAvailable && editingInformation ? (
             <>
               <SettingsRow>
                 <View className="w-full gap-3">
