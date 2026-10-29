@@ -30,6 +30,7 @@ export function ProfileSettingsScreen() {
   const [credentialsConfirmation, setCredentialsConfirmation] = useState("");
   const [editingInformation, setEditingInformation] = useState(false);
   if (!session) return null;
+  const savedEmail = session.user.email;
   const busy = pendingAction !== null;
   const name = draftName ?? savedName;
   const validatedName = validateProfileName(name);
@@ -40,23 +41,32 @@ export function ProfileSettingsScreen() {
         ? t("mobile.settings.profile.nameUnsafe")
         : t("mobile.settings.profile.nameLength")
       : null;
-  const credentialSetupAvailable = session.localOnly === true && session.user.email === "";
-  const credentialsDirty =
-    credentialSetupAvailable && Boolean(credentialsEmail || credentialsPassword || credentialsConfirmation);
+  const hasConfiguredCredentials = Boolean(savedEmail);
+  const normalizedCredentialsEmail = credentialsEmail.trim().toLowerCase();
+  const emailChanged = normalizedCredentialsEmail !== savedEmail;
+  const passwordRequested = credentialsPassword.length > 0 || credentialsConfirmation.length > 0;
+  const credentialsDirty = editingInformation && (emailChanged || passwordRequested);
+  const credentialsEmailValid =
+    Boolean(normalizedCredentialsEmail) && /^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(normalizedCredentialsEmail);
   const credentialsError = credentialsDirty
-    ? !credentialsEmail.trim() || credentialsPassword.length === 0
+    ? !normalizedCredentialsEmail
       ? t("mobile.settings.profile.credentialsRequired")
-      : credentialsPassword.length < 12
-        ? t("mobile.settings.profile.passwordTooShort")
-        : credentialsPassword !== credentialsConfirmation
-          ? t("mobile.settings.profile.passwordMismatch")
-          : null
+      : !credentialsEmailValid
+        ? t("mobile.settings.profile.credentialsEmailInvalid")
+        : !hasConfiguredCredentials && !passwordRequested
+          ? t("mobile.settings.profile.credentialsRequired")
+          : passwordRequested && credentialsPassword.length < 12
+            ? t("mobile.settings.profile.passwordTooShort")
+            : passwordRequested && credentialsPassword !== credentialsConfirmation
+              ? t("mobile.settings.profile.passwordMismatch")
+              : null
     : null;
   const credentialsCanSave =
-    Boolean(credentialsEmail.trim()) &&
-    /^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(credentialsEmail.trim()) &&
-    credentialsPassword.length >= 12 &&
-    credentialsPassword === credentialsConfirmation;
+    credentialsDirty &&
+    credentialsEmailValid &&
+    (passwordRequested
+      ? credentialsPassword.length >= 12 && credentialsPassword === credentialsConfirmation
+      : hasConfiguredCredentials);
   const avatarUrl = session.user.avatarUrl ? new URL(session.user.avatarUrl, session.apiUrl).toString() : null;
 
   async function perform(
@@ -93,7 +103,7 @@ export function ProfileSettingsScreen() {
     if (!credentialsCanSave) return;
     await perform("credentials", async () => {
       await configureCredentials(credentialsEmail, credentialsPassword);
-      setCredentialsEmail("");
+      setCredentialsEmail(normalizedCredentialsEmail);
       setCredentialsPassword("");
       setCredentialsConfirmation("");
       if (!nameChanged) setEditingInformation(false);
@@ -122,7 +132,14 @@ export function ProfileSettingsScreen() {
       ]);
       return;
     }
-    setEditingInformation((value) => !value);
+    if (editingInformation) {
+      setEditingInformation(false);
+      return;
+    }
+    setCredentialsEmail(savedEmail);
+    setCredentialsPassword("");
+    setCredentialsConfirmation("");
+    setEditingInformation(true);
   }
 
   async function choosePhoto(): Promise<void> {
@@ -244,7 +261,7 @@ export function ProfileSettingsScreen() {
           <SettingsRow>
             <Typography.Paragraph>{t("mobile.settings.profile.localIdentityConnected")}</Typography.Paragraph>
           </SettingsRow>
-          {credentialSetupAvailable && editingInformation ? (
+          {editingInformation ? (
             <>
               <SettingsRow>
                 <View className="w-full gap-3">
@@ -261,8 +278,14 @@ export function ProfileSettingsScreen() {
                     }}
                   />
                   <SheetFormField
-                    label={t("mobile.settings.profile.credentialsPassword")}
+                    label={t(
+                      hasConfiguredCredentials
+                        ? "mobile.settings.profile.credentialsNewPassword"
+                        : "mobile.settings.profile.credentialsPassword",
+                    )}
+                    hint={hasConfiguredCredentials ? t("mobile.settings.profile.credentialsPasswordHint") : undefined}
                     secureTextEntry
+                    maxLength={256}
                     autoCapitalize="none"
                     autoCorrect={false}
                     editable={!busy}
@@ -275,6 +298,7 @@ export function ProfileSettingsScreen() {
                   <SheetFormField
                     label={t("mobile.settings.profile.credentialsConfirm")}
                     secureTextEntry
+                    maxLength={256}
                     autoCapitalize="none"
                     autoCorrect={false}
                     editable={!busy}

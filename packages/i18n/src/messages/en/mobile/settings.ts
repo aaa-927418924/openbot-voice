@@ -125,6 +125,10 @@ export const messages = defineMessages("mobile.settings", {
   "mobile.settings.profile.setCredentialsHint": "Add sign-in details to this QR-created account.",
   "mobile.settings.profile.credentialsEmail": "Email",
   "mobile.settings.profile.credentialsPassword": "Password",
+  "mobile.settings.profile.credentialsNewPassword": "New password",
+  "mobile.settings.profile.credentialsPasswordHint":
+    "Leave this blank to keep your current password. Saved passwords cannot be displayed.",
+  "mobile.settings.profile.credentialsEmailInvalid": "Enter a valid email address.",
   "mobile.settings.profile.credentialsConfirm": "Confirm password",
   "mobile.settings.profile.saveCredentials": "Save sign-in details",
   "mobile.settings.profile.passwordMismatch": "The passwords do not match.",

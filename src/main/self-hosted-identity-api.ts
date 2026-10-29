@@ -115,9 +115,15 @@ async function readJson(request: IncomingMessage): Promise<IdentityRequestBody> 
   };
 }
 
-function stringField(body: IdentityRequestBody, name: keyof IdentityRequestBody, max = 256): string {
+function stringField(
+  body: IdentityRequestBody,
+  name: keyof IdentityRequestBody,
+  max = 256,
+  allowEmpty = false,
+): string {
   const value = body[name];
-  if (typeof value !== "string" || value.length === 0 || value.length > max) throw new ApiError(400, "invalid_request");
+  if (typeof value !== "string" || (!allowEmpty && value.length === 0) || value.length > max)
+    throw new ApiError(400, "invalid_request");
   return value;
 }
 
@@ -380,7 +386,7 @@ export class SelfHostedIdentityApiServer {
           this.#authority.configureSessionLoginCredentials({
             sessionToken: token,
             email: stringField(body, "email", 254),
-            password: stringField(body, "password", 256),
+            password: stringField(body, "password", 256, true),
           }),
         );
         return json(response, 200, asCentralAuthUser(account));

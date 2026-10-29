@@ -128,6 +128,10 @@ export const messages = {
   "mobile.settings.profile.setCredentialsHint": "QRコードで作成したアカウントにログイン情報を追加します。",
   "mobile.settings.profile.credentialsEmail": "メールアドレス",
   "mobile.settings.profile.credentialsPassword": "パスワード",
+  "mobile.settings.profile.credentialsNewPassword": "新しいパスワード",
+  "mobile.settings.profile.credentialsPasswordHint":
+    "パスワードを変更しない場合は空欄のままにしてください。登録済みのパスワードは表示されません。",
+  "mobile.settings.profile.credentialsEmailInvalid": "有効なメールアドレスを入力してください。",
   "mobile.settings.profile.credentialsConfirm": "パスワードを再入力",
   "mobile.settings.profile.saveCredentials": "ログイン情報を保存",
   "mobile.settings.profile.passwordMismatch": "パスワードが一致しません。",

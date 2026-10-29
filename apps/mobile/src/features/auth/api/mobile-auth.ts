@@ -309,11 +309,11 @@ export function configureMobileLoginCredentials(
   return serializeMobileProfile(async () => {
     if (!session.localOnly || !session.sessionToken)
       throw new Error(currentText().t("mobile.auth.error.identityServerUnsupported"));
-    if (session.user.email) throw new Error(currentText().t("mobile.auth.error.identityCredentialsAlreadySet"));
     const normalizedEmail = email.trim().toLowerCase();
-    if (!normalizedEmail || !password)
+    if (!normalizedEmail || (!session.user.email && !password))
       throw new Error(currentText().t("mobile.auth.error.identityCredentialsRequired"));
-    if (password.length < 12) throw new Error(currentText().t("mobile.auth.error.identityPasswordTooShort"));
+    if (password.length > 0 && password.length < 12)
+      throw new Error(currentText().t("mobile.auth.error.identityPasswordTooShort"));
 
     const { response, body } = await withMobileAuthRequestTimeout(async (signal) => {
       const request = await fetch(new URL("/v1/me/credentials", session.apiUrl).toString(), {

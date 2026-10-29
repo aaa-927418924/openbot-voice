@@ -538,7 +538,7 @@ export class SelfHostedIdentityAuthority {
     );
   });
 
-  /** Configure email/password once for a QR-created account, preserving its original ID. */
+  /** Set or update email/password on the authenticated account, preserving its ID and profile. */
   readonly configureSessionLoginCredentials = Effect.fn("SelfHostedIdentityAuthority.configureSessionLoginCredentials")(
     function* (
       this: SelfHostedIdentityAuthority,
@@ -551,14 +551,22 @@ export class SelfHostedIdentityAuthority {
           const email = isString(input?.email) ? normalizeEmail(input.email) : null;
           const password = isString(input?.password) ? input.password : "";
           if (!account) return yield* failure("invalid_session");
-          if (!email || password.length < 12 || password.length > 256) return yield* failure("invalid_input");
-          if (account.email) return yield* failure("setup_completed");
+          if (
+            !email ||
+            password.length > 256 ||
+            (password.length > 0 && password.length < 12) ||
+            (!account.email && password.length === 0)
+          )
+            return yield* failure("invalid_input");
           if (this.#file.accounts.some((candidate) => candidate.id !== account.id && candidate.email === email))
             return yield* failure("email_taken");
-          registerSecretValue(password);
-          const passwordSalt = randomBytes(16).toString("base64url");
-          const passwordHash = (yield* derivePassword(password, passwordSalt)).toString("base64url");
-          const updated: StoredAccount = { ...account, email, passwordSalt, passwordHash };
+          let updated: StoredAccount = { ...account, email };
+          if (password.length > 0) {
+            registerSecretValue(password);
+            const passwordSalt = randomBytes(16).toString("base64url");
+            const passwordHash = (yield* derivePassword(password, passwordSalt)).toString("base64url");
+            updated = { ...updated, passwordSalt, passwordHash };
+          }
           const next = { ...this.#file, accounts: replaceAccount(this.#file.accounts, updated) };
           yield* this.#persist(next);
           this.#file = next;

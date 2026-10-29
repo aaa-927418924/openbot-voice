@@ -220,6 +220,18 @@ describe("SelfHostedIdentityApiServer", () => {
       expect(setup.status).toBe(200);
       expect(await setup.json()).toMatchObject({ id: owner.id, email: "owner@openbot.test" });
 
+      const update = await fetch(new URL("/v1/me/credentials", apiUrl), {
+        method: "PUT",
+        headers: {
+          Authorization: "Bearer " + mobile.token,
+          "Content-Type": "application/json",
+          Connection: "close",
+        },
+        body: JSON.stringify({ email: "updated@OpenBot.test", password: "" }),
+      });
+      expect(update.status).toBe(200);
+      expect(await update.json()).toMatchObject({ id: owner.id, email: "updated@openbot.test" });
+
       const registration = await fetch(new URL("/v1/auth/register", apiUrl), {
         method: "POST",
         headers: { "Content-Type": "application/json", Connection: "close" },

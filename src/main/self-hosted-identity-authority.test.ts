@@ -94,7 +94,7 @@ describe("SelfHostedIdentityAuthority", () => {
   });
 
   it("sets credentials on a QR session without replacing the original account", async () => {
-    const { authority } = await newAuthority();
+    const { authority, path } = await newAuthority();
     const owner = await runEffect(authority.ensureLocalAccount(profile));
     const pairing = await runEffect(
       authority.issueMobileConnectTicket({
@@ -123,15 +123,34 @@ describe("SelfHostedIdentityAuthority", () => {
     );
     expect(updated).toMatchObject({ id: owner.id, email: "owner@example.test", name: profile.name });
     expect(authority.getLocalAccount()).toEqual(updated);
-    expect(
-      await failureCode(
-        authority.configureSessionLoginCredentials({
-          sessionToken: mobile.token,
-          email: "owner@example.test",
-          password,
-        }),
-      ),
-    ).toMatchObject({ code: "setup_completed" });
+    const emailUpdated = await runEffect(
+      authority.configureSessionLoginCredentials({
+        sessionToken: mobile.token,
+        email: "updated@example.test",
+        password: "",
+      }),
+    );
+    expect(emailUpdated).toMatchObject({ id: owner.id, email: "updated@example.test", name: profile.name });
+    await expect(runEffect(authority.signIn({ username: "updated@example.test", password }))).resolves.toMatchObject({
+      account: { id: owner.id, email: "updated@example.test" },
+    });
+
+    const passwordUpdated = await runEffect(
+      authority.configureSessionLoginCredentials({
+        sessionToken: mobile.token,
+        email: "updated@example.test",
+        password: "a-new-secure-password",
+      }),
+    );
+    expect(passwordUpdated).toMatchObject({ id: owner.id, email: "updated@example.test" });
+    await expect(failureCode(authority.signIn({ username: "updated@example.test", password }))).resolves.toMatchObject({
+      code: "invalid_credentials",
+    });
+    await expect(
+      runEffect(authority.signIn({ username: "updated@example.test", password: "a-new-secure-password" })),
+    ).resolves.toMatchObject({ account: { id: owner.id, email: "updated@example.test" } });
+    const persistedIdentity = await readFile(path, "utf8");
+    expect(persistedIdentity).not.toContain("a-new-secure-password");
   });
 
   it("binds mobile pairing tickets to the host fingerprint and consumes them once", async () => {

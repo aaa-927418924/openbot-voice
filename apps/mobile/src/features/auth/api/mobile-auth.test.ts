@@ -319,6 +319,19 @@ describe("self-hosted identity sign-in", () => {
       expect.objectContaining({ method: "PUT", body: expect.stringContaining('"email":"owner@example.com"') }),
     );
     expect(await readLocalIdentitySession()).toMatchObject({ user: updatedUser });
+
+    const changedUser = { ...updatedUser, email: "updated@example.com" };
+    native.fetch.mockResolvedValueOnce(Response.json(changedUser));
+    await expect(
+      configureMobileLoginCredentials({ ...unconfigured, user: updatedUser }, "updated@example.com", ""),
+    ).resolves.toMatchObject({ user: changedUser });
+    expect(native.fetch).toHaveBeenLastCalledWith(
+      "http://100.100.10.2:43124/v1/me/credentials",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({ email: "updated@example.com", password: "" }),
+      }),
+    );
   });
 });
 
