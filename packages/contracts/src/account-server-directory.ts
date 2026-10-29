@@ -11,7 +11,7 @@ export interface AccountServerDirectoryEntry {
   readonly membershipId: string;
   /** A directory hint only; permissions must be checked by the Team server. */
   readonly role: TeamRole;
-  /** Reserved for a verified Team-host permission check. The sync service returns false. */
+  /** True only when the identity host has verified that this account owns this host. */
   readonly isOwner: boolean;
 }
 

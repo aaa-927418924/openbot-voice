@@ -46,6 +46,7 @@ import type {
   CapabilityState,
   CentralAuthState,
   ComputerUseState,
+  LocalHostSettings,
   ProviderRuntimeSnapshot,
   VoiceModelStatus,
 } from "@openbot/contracts/ipc";
@@ -123,6 +124,7 @@ import { IdleRestart } from "./idle-restart";
 import { LanguageService } from "./language-service";
 import { defaultLocalProfileName, LocalProfileStore } from "./local-profile-store";
 import { localRoutineFeedDocument } from "./local-routine-calendar";
+import { LocalServerPreferenceStore } from "./local-server-preference-store";
 import { LogoColorService } from "./logo-color-service";
 import type { MacHapticFeedback } from "./mac-haptic-feedback";
 import {
@@ -358,6 +360,10 @@ export interface ApplicationServices {
   localProfile: LocalProfileStore;
   selfHostedIdentityAuthority: SelfHostedIdentityAuthority | null;
   selfHostedIdentityApi: SelfHostedIdentityApiServer | null;
+  ensureLocalHost: () => Promise<void>;
+  getLocalHostSettings: () => LocalHostSettings;
+  setLocalHostSettings: (enabled: boolean) => Promise<LocalHostSettings>;
+  setLocalHostRetry: (retry: { start: () => void; stop: () => Promise<void> } | null) => void;
   localOnlyNetworking: boolean;
   skills: SkillMarketplaceService;
   hostedSites: HostedSiteDesktopService;
@@ -600,6 +606,11 @@ export async function createApplicationServices({
   // Fork builds run as a private Tailscale host by default. Hosted-server installs and the
   // explicit development-account harness retain their existing account-directory behavior.
   const localOnlyNetworking = !hostedServer && !serverModeEnvironment && developmentRemoteRole === null;
+  const localHostPreference = new LocalServerPreferenceStore(
+    join(app.getPath("userData"), "local-server-preference-v1.json"),
+  );
+  await localHostPreference.initialize();
+  let localHostRetry: { start: () => void; stop: () => Promise<void> } | null = null;
   const localProfile = new LocalProfileStore(join(app.getPath("userData"), "local-profile.json"));
   await runCauseEffect(localProfile.load());
   let selfHostedIdentityAuthority: SelfHostedIdentityAuthority | null = null;
@@ -1338,14 +1349,25 @@ export async function createApplicationServices({
   );
   await runCauseEffect(teamStore.initialize());
   service.channels.store.setMemberIdentityResolver((memberId) => teamStore.getChannelIdentity(memberId));
-  if (localOnlyNetworking && !teamStore.configured) {
-    await runCauseEffect(teamStore.activateLocalHost());
-  }
-  if (localOnlyNetworking && !teamStore.configured) {
-    await runCauseEffect(teamStore.configure(hostname(), "owner", randomBytes(32).toString("base64url")));
-  }
+  let selfHostedIdentityApi: SelfHostedIdentityApiServer | null = null;
+  let selfHostedAccountServerDirectory: SelfHostedAccountServerDirectory | null = null;
+  const ensureLocalHost = async () => {
+    if (!localOnlyNetworking) throw new Error("Local server mode is unavailable.");
+    if (!teamStore.configured) {
+      await runCauseEffect(teamStore.activateLocalHost());
+      await runCauseEffect(teamStore.configure(hostname(), "owner", randomBytes(32).toString("base64url")));
+    }
+    if (selfHostedIdentityAuthority) {
+      await runCauseEffect(
+        teamStore.syncSelfHostedOwner(
+          selfHostedTeamProfile(localProfile.getUser(), selfHostedIdentityApi?.apiUrl ?? null),
+        ),
+      );
+    }
+  };
+  if (localOnlyNetworking && localHostPreference.enabled && !teamStore.configured) await ensureLocalHost();
   let selfHostedIdentityReady = selfHostedIdentityAuthority !== null;
-  if (selfHostedIdentityAuthority) {
+  if (selfHostedIdentityAuthority && teamStore.configured) {
     try {
       await runCauseEffect(teamStore.syncSelfHostedOwner(selfHostedTeamProfile(localProfile.getUser(), null)));
     } catch (error) {
@@ -1353,29 +1375,40 @@ export async function createApplicationServices({
       logger.error("The local host owner could not be linked to the self-hosted account:", toLogValue(error));
     }
   }
-  let selfHostedIdentityApi: SelfHostedIdentityApiServer | null = null;
   if (selfHostedIdentityReady && selfHostedIdentityAuthority) {
     const serverDirectory = new SelfHostedAccountServerDirectory(
       join(app.getPath("userData"), "self-hosted-account-server-directory-v1.json"),
     );
-    selfHostedIdentityApi = new SelfHostedIdentityApiServer({
-      authority: selfHostedIdentityAuthority,
-      serverDirectory,
-      onProfileChanged: async (user) => {
-        try {
-          const profile = selfHostedTeamProfile(user, selfHostedIdentityApi?.apiUrl ?? null);
-          if (user.id === localProfile.getUser().id) {
-            await runCauseEffect(localProfile.synchronizeSharedProfile(user));
-            await runCauseEffect(teamStore.syncSelfHostedOwner(profile));
-          } else {
-            await runCauseEffect(teamStore.syncAccount(profile));
+    try {
+      await serverDirectory.initialize();
+      selfHostedAccountServerDirectory = serverDirectory;
+      const localHostId = teamStore.getIdentity()?.serverId;
+      if (localHostId) await serverDirectory.setServerVisible(localHostId, localHostPreference.enabled);
+    } catch (error) {
+      selfHostedIdentityReady = false;
+      logger.error("The self-hosted account server directory could not initialize:", toLogValue(error));
+    }
+    if (selfHostedIdentityReady)
+      selfHostedIdentityApi = new SelfHostedIdentityApiServer({
+        authority: selfHostedIdentityAuthority,
+        serverDirectory,
+        isOwnerOfHost: (accountId, hostId) =>
+          hostId === teamStore.getIdentity()?.serverId && accountId === teamStore.getOwnerAccountId(),
+        onProfileChanged: async (user) => {
+          try {
+            const profile = selfHostedTeamProfile(user, selfHostedIdentityApi?.apiUrl ?? null);
+            if (user.id === localProfile.getUser().id) {
+              await runCauseEffect(localProfile.synchronizeSharedProfile(user));
+              await runCauseEffect(teamStore.syncSelfHostedOwner(profile));
+            } else {
+              await runCauseEffect(teamStore.syncAccount(profile));
+            }
+          } catch (error) {
+            logger.warn("A self-hosted profile update could not reach the local profile:", toLogValue(error));
+            throw error;
           }
-        } catch (error) {
-          logger.warn("A self-hosted profile update could not reach the local profile:", toLogValue(error));
-          throw error;
-        }
-      },
-    });
+        },
+      });
   }
   if (selfHostedIdentityApi) {
     const identityApi = selfHostedIdentityApi;
@@ -2049,6 +2082,48 @@ export async function createApplicationServices({
     localProfile,
     selfHostedIdentityAuthority,
     selfHostedIdentityApi,
+    ensureLocalHost,
+    getLocalHostSettings: () => ({ supported: localOnlyNetworking, enabled: localHostPreference.enabled }),
+    setLocalHostSettings: async (enabled) => {
+      if (!localOnlyNetworking) return { supported: false, enabled: false };
+      if (enabled === localHostPreference.enabled) return { supported: true, enabled };
+      if (!enabled) {
+        const hostId = teamStore.getIdentity()?.serverId;
+        try {
+          await localHostRetry?.stop();
+          if (hostId && selfHostedIdentityApi && !selfHostedAccountServerDirectory) {
+            throw new Error("The account server directory is unavailable.");
+          }
+          if (hostId) await selfHostedAccountServerDirectory?.setServerVisible(hostId, false);
+          await runCauseEffect(host.stop(false));
+          await localHostPreference.setEnabled(false);
+        } catch (error) {
+          if (hostId) await selfHostedAccountServerDirectory?.setServerVisible(hostId, true).catch(() => undefined);
+          localHostRetry?.start();
+          throw error;
+        }
+        return { supported: true, enabled: false };
+      }
+      await ensureLocalHost();
+      const hostId = teamStore.getIdentity()?.serverId;
+      try {
+        if (hostId && selfHostedIdentityApi && !selfHostedAccountServerDirectory) {
+          throw new Error("The account server directory is unavailable.");
+        }
+        if (hostId) await selfHostedAccountServerDirectory?.setServerVisible(hostId, true);
+        await localHostPreference.setEnabled(true);
+        if (localHostRetry) localHostRetry.start();
+        else await runCauseEffect(host.start());
+      } catch (error) {
+        await localHostPreference.setEnabled(false).catch(() => undefined);
+        if (hostId) await selfHostedAccountServerDirectory?.setServerVisible(hostId, false).catch(() => undefined);
+        throw error;
+      }
+      return { supported: true, enabled: true };
+    },
+    setLocalHostRetry: (retry) => {
+      localHostRetry = retry;
+    },
     localOnlyNetworking,
     skills,
     hostedSites,

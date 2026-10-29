@@ -118,6 +118,7 @@ import { MobileConversationStore } from "@/features/workspace/model/conversation
 import { LiveWorkspaceStore } from "@/features/workspace/model/live-workspace-store";
 import {
   accountServerRegistration,
+  accountServerRole,
   createTailnetMemberDeviceLinkUrl,
   decodeTailnetMemberDeviceLink,
   isTailnetMemberDeviceLink,
@@ -457,7 +458,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
                     logoKey: host.logoKey,
                     devicePublicKey: host.publicKey,
                     membershipId: local?.membershipId ?? host.membershipId,
-                    role: local?.role ?? host.role,
+                    role: accountServerRole(host, local?.role),
                   };
                 });
               },
@@ -1307,7 +1308,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
       },
       leaveServer: async (serverId) => {
         const server = serversRef.current.find((candidate) => candidate.id === serverId);
-        if (!server || (!session.localOnly && server.role === "owner"))
+        if (!server || server.role === "owner")
           throw new Error(currentText().t("mobile.workspace.error.leaveOwnServer"));
         if (session.localOnly) {
           if (session.sessionToken) await removeAccountServer(session, server.id).catch(() => undefined);

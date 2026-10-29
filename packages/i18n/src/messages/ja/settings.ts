@@ -29,6 +29,10 @@ export const messages = {
   "settings.windowsStartup.minimized": "システムトレイに格納して起動",
   "settings.windowsStartup.shown": "ウィンドウを表示して起動",
   "settings.windowsStartup.saveFailed": "Windowsの自動起動設定を変更できませんでした。",
+  "settings.localServer.title": "このローカルサーバーを無効にする",
+  "settings.localServer.description":
+    "このPCのサーバーを停止し、すべてのアカウントのサーバー一覧から隠します。サーバーデータはこのPCに残ります。",
+  "settings.localServer.saveFailed": "ローカルサーバーの設定を変更できませんでした。",
   "settings.keepRunning.title": "OpenBot をバックグラウンドで実行し続ける",
   "settings.keepRunning.description": "ウインドウを閉じたあとも実行中のタスクを続けます。",
   "settings.workspace.title": "ワークスペース",

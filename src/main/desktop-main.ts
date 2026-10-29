@@ -447,6 +447,8 @@ function registerIpcHandlers({
   localProfile,
   selfHostedIdentityAuthority,
   selfHostedIdentityApi,
+  getLocalHostSettings,
+  setLocalHostSettings,
   localOnlyNetworking,
   teamStore,
   skills,
@@ -494,6 +496,8 @@ function registerIpcHandlers({
       getMainWindow,
       setAnalyticsTrackingEnabled: (enabled) => analytics.setTrackingEnabled(enabled),
       windowsStartup,
+      getLocalHostSettings,
+      setLocalHostSettings,
       trace,
     }),
     ...dynamicIslandIpcHandlers({ dynamicIsland }),
@@ -1045,11 +1049,15 @@ if (!hasSingleInstanceLock) {
       const teamIdentity = teamStore.getIdentity();
       if (built.localOnlyNetworking) {
         const localHostRetry = new LocalTailnetHostStartRetry({
-          startHost: () => runCauseEffect(host.start()),
+          startHost: async () => {
+            await built.ensureLocalHost();
+            return runCauseEffect(host.start());
+          },
           onError: (error) =>
             logger.warn("Unable to start the Tailscale-only OpenBot host; retrying:", toLogValue(error)),
         });
-        localHostRetry.start();
+        built.setLocalHostRetry(localHostRetry);
+        if (built.getLocalHostSettings().enabled) localHostRetry.start();
         teardown.push(0, "Tailscale host start retry", () => localHostRetry.stop());
       } else if (built.serverMode) {
         const serverModeControl = built.serverMode;

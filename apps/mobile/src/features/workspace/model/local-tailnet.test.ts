@@ -19,6 +19,7 @@ import { remoteHostFingerprint } from "@openbot/team-client/remote-directory";
 import { Effect } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  accountServerRole,
   createTailnetMemberDeviceLinkUrl,
   DirectTailnetTeamClient,
   decodeTailnetMemberDeviceLink,
@@ -61,6 +62,26 @@ class FakeTailnetSocket extends EventTarget {
 }
 
 afterEach(() => vi.unstubAllGlobals());
+
+describe("accountServerRole", () => {
+  it("keeps the verified paired role and recognizes a synced account-owned host", () => {
+    const server = {
+      hostId: serverId,
+      name: "Tailnet host",
+      apiUrl,
+      fingerprint: "f".repeat(43),
+      publicKey: "public-key",
+      logoKey: null,
+      membershipId: "account-membership",
+      role: "member" as const,
+      isOwner: true,
+    };
+
+    expect(accountServerRole(server)).toBe("owner");
+    expect(accountServerRole({ ...server, isOwner: false }, "admin")).toBe("admin");
+    expect(accountServerRole({ ...server, isOwner: false })).toBe("member");
+  });
+});
 
 function inviteUrl(fingerprint: string): string {
   return createOpenBotInviteUrl(

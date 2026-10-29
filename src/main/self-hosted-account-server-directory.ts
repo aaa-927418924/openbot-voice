@@ -266,9 +266,10 @@ export class SelfHostedAccountServerDirectory {
     await this.#exclusive(async () => {
       await this.#requireReady();
       const hiddenHostIds = new Set(this.#state.hiddenHostIds);
+      const wasHidden = hiddenHostIds.has(hostId);
       if (visible) hiddenHostIds.delete(hostId);
       else hiddenHostIds.add(hostId);
-      if (hiddenHostIds.size === this.#state.hiddenHostIds.length) return;
+      if (wasHidden === !visible) return;
       const next: DirectoryFile = { ...this.#state, version: 2, hiddenHostIds: [...hiddenHostIds] };
       await this.#persist(next);
       this.#state = next;

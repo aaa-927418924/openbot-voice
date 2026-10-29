@@ -1,5 +1,8 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import type { AccountServerRegistration } from "@openbot/contracts/account-server-directory";
+import type {
+  AccountServerDirectoryEntry,
+  AccountServerRegistration,
+} from "@openbot/contracts/account-server-directory";
 import { isTailscaleApiUrl } from "@openbot/contracts/invite-links";
 import type { CentralAuthUser, TeamRole } from "@openbot/contracts/ipc";
 import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
@@ -42,6 +45,8 @@ export interface SelfHostedIdentityApiOptions {
   readonly serverDirectory: SelfHostedAccountServerDirectory;
   readonly port?: number;
   readonly listen?: TailnetListener;
+  /** Host-local ownership is checked by the trusted process, never by the account client. */
+  readonly isOwnerOfHost?: (accountId: string, hostId: string) => boolean;
   readonly onProfileChanged?: (user: SelfHostedAccountUser) => Promise<void>;
 }
 
@@ -186,6 +191,7 @@ export class SelfHostedIdentityApiServer {
   readonly #serverDirectory: SelfHostedAccountServerDirectory;
   readonly #port: number;
   readonly #listen: TailnetListener;
+  readonly #isOwnerOfHost: (accountId: string, hostId: string) => boolean;
   readonly #onProfileChanged: (user: SelfHostedAccountUser) => Promise<void>;
   readonly #requests = new Map<string, number[]>();
   readonly #authenticationRequests = new Map<string, number[]>();
@@ -199,6 +205,7 @@ export class SelfHostedIdentityApiServer {
     this.#port = options.port ?? SELF_HOSTED_IDENTITY_API_PORT;
     this.#listen =
       options.listen ?? ((server, port) => listenOnTailscale(server, () => new Error("Tailscale bind failed."), port));
+    this.#isOwnerOfHost = options.isOwnerOfHost ?? (() => false);
     this.#onProfileChanged = options.onProfileChanged ?? (async () => undefined);
   }
 
@@ -268,6 +275,14 @@ export class SelfHostedIdentityApiServer {
         if (entries.every((time) => now - time >= RATE_WINDOW_MS)) this.#authenticationRequests.delete(key);
       }
     }
+  }
+
+  #withOwnerStatus(accountId: string, servers: AccountServerDirectoryEntry[]): AccountServerDirectoryEntry[] {
+    return servers.map((server) =>
+      this.#isOwnerOfHost(accountId, server.hostId)
+        ? { ...server, role: "owner" satisfies TeamRole, isOwner: true }
+        : server,
+    );
   }
 
   async #handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -402,7 +417,9 @@ export class SelfHostedIdentityApiServer {
         if (!token) throw new ApiError(401, "unauthorized");
         const account = await Effect.runPromise(this.#authority.authenticateSession(token));
         if (!account) throw new ApiError(401, "unauthorized");
-        return json(response, 200, { servers: await this.#serverDirectory.list(account.id) });
+        return json(response, 200, {
+          servers: this.#withOwnerStatus(account.id, await this.#serverDirectory.list(account.id)),
+        });
       }
 
       if (method === "PUT" && url.pathname === "/v1/me/servers") {
@@ -426,7 +443,7 @@ export class SelfHostedIdentityApiServer {
           role: "member" satisfies TeamRole,
         };
         return json(response, 200, {
-          servers: await this.#serverDirectory.register(account.id, registration),
+          servers: this.#withOwnerStatus(account.id, await this.#serverDirectory.register(account.id, registration)),
         });
       }
 

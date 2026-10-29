@@ -426,6 +426,10 @@ export class TeamStore {
     return this.#state?.members.find((member) => member.role === "owner")?.email ?? null;
   }
 
+  getOwnerAccountId(): string | null {
+    return this.#state?.members.find((member) => member.role === "owner")?.accountId ?? null;
+  }
+
   getOwnerMemberId(): string | null {
     return this.#state?.members.find((member) => member.role === "owner")?.id ?? null;
   }

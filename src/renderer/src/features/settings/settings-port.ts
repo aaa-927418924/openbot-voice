@@ -9,12 +9,14 @@ export interface SettingsPort {
   getApprovalAutomation: OpenBotDesktopApi["getApprovalAutomation"];
   getBusyMessageModePreference: OpenBotDesktopApi["getBusyMessageModePreference"];
   getWindowsStartupSettings: OpenBotDesktopApi["getWindowsStartupSettings"];
+  getLocalHostSettings: OpenBotDesktopApi["getLocalHostSettings"];
   onApprovalAutomation: OpenBotDesktopApi["onApprovalAutomation"];
   onOpenSettings: OpenBotDesktopApi["onOpenSettings"];
   setAnalyticsPreference: OpenBotDesktopApi["setAnalyticsPreference"];
   setApprovalAutomation: OpenBotDesktopApi["setApprovalAutomation"];
   setBusyMessageModePreference: OpenBotDesktopApi["setBusyMessageModePreference"];
   setWindowsStartupSettings: OpenBotDesktopApi["setWindowsStartupSettings"];
+  setLocalHostSettings: OpenBotDesktopApi["setLocalHostSettings"];
   dynamicIsland: Pick<
     OpenBotDesktopApi["dynamicIsland"],
     "getBuiltInDisplayGeometry" | "getPreference" | "setPreference"

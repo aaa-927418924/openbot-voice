@@ -31,6 +31,10 @@ export const messages = defineMessages("settings", {
   "settings.windowsStartup.minimized": "Minimize to the system tray",
   "settings.windowsStartup.shown": "Show the window",
   "settings.windowsStartup.saveFailed": "Unable to update Windows startup settings.",
+  "settings.localServer.title": "Disable this local server",
+  "settings.localServer.description":
+    "Stop this computer's server and hide it from every account's server list. Server data stays on this computer.",
+  "settings.localServer.saveFailed": "Unable to update the local server setting.",
   "settings.keepRunning.title": "Keep OpenBot running in the background",
   "settings.keepRunning.description": "Keep active tasks running after you close the window.",
   "settings.workspace.title": "Workspace",

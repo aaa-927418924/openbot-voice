@@ -24,6 +24,7 @@ import type {
   SetApprovalAutomationInput,
   SetDynamicIslandInteractiveInput,
   SetEnabledSkillInput,
+  SetLocalHostSettingsInput,
   SetWindowsStartupSettingsInput,
   SubmitMarketplaceAgentInput,
   SubmitSkillInput,
@@ -43,6 +44,7 @@ import {
   isDynamicIslandPreference,
   isDynamicIslandPresentation,
   isSetApprovalAutomationInput,
+  isSetLocalHostSettingsInput,
   isSetWindowsStartupSettingsInput,
   isSkillCategory,
 } from "@openbot/contracts/ipc";
@@ -97,6 +99,11 @@ export function parseBusyMessageModePreference(input: unknown): BusyMessageModeP
 
 export function parseWindowsStartupSettings(input: unknown): SetWindowsStartupSettingsInput {
   if (!isSetWindowsStartupSettingsInput(input)) throw new Error("Windows startup settings are required.");
+  return input;
+}
+
+export function parseSetLocalHostSettings(input: unknown): SetLocalHostSettingsInput {
+  if (!isSetLocalHostSettingsInput(input)) throw new Error("Local server settings are required.");
   return input;
 }
 

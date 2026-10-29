@@ -10,6 +10,7 @@ import {
   type AppVariant,
   type ExternalDestination,
   GROK_BOT_EXPORT_URL,
+  type LocalHostSettings,
 } from "@openbot/contracts/ipc";
 import { sourceText } from "@openbot/i18n/source";
 import { app, type BrowserWindow, shell } from "electron";
@@ -37,6 +38,7 @@ import {
   parseApprovalAutomation,
   parseBusyMessageModePreference,
   parseExternalDestination,
+  parseSetLocalHostSettings,
   parseSetup,
   parseWindowsStartupSettings,
 } from "./app-inputs";
@@ -81,6 +83,8 @@ export interface AppIpcDependencies {
   language: LanguageService;
   logoColor: LogoColorService;
   windowsStartup: WindowsStartupController;
+  getLocalHostSettings: () => LocalHostSettings;
+  setLocalHostSettings: (enabled: boolean) => Promise<LocalHostSettings>;
   initializeAgent: () => Promise<void>;
   appVariant: AppVariant;
   getMainWindow: () => BrowserWindow | null;
@@ -100,6 +104,8 @@ export function appIpcHandlers({
   language,
   logoColor,
   windowsStartup,
+  getLocalHostSettings,
+  setLocalHostSettings,
   initializeAgent,
   appVariant,
   getMainWindow,
@@ -160,6 +166,8 @@ export function appIpcHandlers({
       setWindowsStartupSettings: payloadHandler(parseWindowsStartupSettings, (parsed) =>
         runCauseEffect(windowsStartup.set(parsed)),
       ),
+      getLocalHostSettings: handler(getLocalHostSettings),
+      setLocalHostSettings: payloadHandler(parseSetLocalHostSettings, (parsed) => setLocalHostSettings(parsed.enabled)),
       saveSetup: payloadHandler(parseSetup, async (input): Promise<AppSetupState> => {
         const state = await runCauseEffect(writeSetupState(setupFile, input));
         await runCauseEffect(service.setPreferredProvider(input.preferredProvider, input.preferredModel));

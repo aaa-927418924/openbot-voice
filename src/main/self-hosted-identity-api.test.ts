@@ -43,6 +43,7 @@ describe("SelfHostedIdentityApiServer", () => {
     const api = new SelfHostedIdentityApiServer({
       authority,
       serverDirectory: new SelfHostedAccountServerDirectory(join(root, "server-directory.json")),
+      isOwnerOfHost: (accountId, hostId) => accountId === account.id && hostId === "linux-team-host",
       port: 0,
       listen: (server: Server) =>
         new Promise((resolve, reject) => {
@@ -113,8 +114,8 @@ describe("SelfHostedIdentityApiServer", () => {
           {
             hostId: "linux-team-host",
             apiUrl: "http://100.100.10.2:43123",
-            isOwner: false,
-            role: "member",
+            isOwner: true,
+            role: "owner",
           },
         ],
       });
@@ -174,7 +175,18 @@ describe("SelfHostedIdentityApiServer", () => {
       expect(await directoryReadback.list(account.id)).toMatchObject([
         { hostId: "linux-team-host", name: "Renamed host", isOwner: false, role: "member" },
       ]);
+      await directoryReadback.register(account.id, {
+        hostId: "second-team-host",
+        name: "Second host",
+        apiUrl: "http://100.100.10.3:43123",
+        fingerprint: remoteHostFingerprint(publicKey),
+        publicKey,
+        logoKey: null,
+        membershipId: "second-membership",
+        role: "member",
+      });
       await directoryReadback.setServerVisible("linux-team-host", false);
+      await directoryReadback.setServerVisible("second-team-host", false);
       expect(await directoryReadback.list(account.id)).toEqual([]);
       expect(await directoryReadback.list(otherAccount.account.id)).toEqual([]);
 
@@ -185,6 +197,7 @@ describe("SelfHostedIdentityApiServer", () => {
       expect(await visibilityAfterRestart.list(account.id)).toMatchObject([
         { hostId: "linux-team-host", name: "Renamed host" },
       ]);
+      expect(await visibilityAfterRestart.list(account.id)).toHaveLength(1);
       expect(await visibilityAfterRestart.list(otherAccount.account.id)).toMatchObject([
         { hostId: "linux-team-host", membershipId: "other-membership" },
       ]);

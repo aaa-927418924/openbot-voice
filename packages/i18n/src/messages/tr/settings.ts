@@ -23,6 +23,10 @@ export const messages = {
   "settings.appBehavior.title": "Uygulama davranışı",
   "settings.launchAtLogin.title": "Girişte OpenBot'u başlat",
   "settings.launchAtLogin.description": "Bu bilgisayarda oturum açtığınızda uygulamayı açın.",
+  "settings.localServer.title": "Bu yerel sunucuyu devre dışı bırak",
+  "settings.localServer.description":
+    "Bu bilgisayarın sunucusunu durdurun ve tüm hesapların sunucu listelerinden gizleyin. Sunucu verileri bu bilgisayarda kalır.",
+  "settings.localServer.saveFailed": "Yerel sunucu ayarı güncellenemedi.",
   "settings.keepRunning.title": "OpenBot'u arka planda çalışır durumda tut",
   "settings.keepRunning.description": "Pencereyi kapattıktan sonra etkin görevleri çalıştırmaya devam edin.",
   "settings.workspace.title": "Çalışma alanı",

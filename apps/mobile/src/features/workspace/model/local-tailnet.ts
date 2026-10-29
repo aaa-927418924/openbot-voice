@@ -52,6 +52,14 @@ export interface LocalTailnetServer {
   role: "owner" | "admin" | "member";
 }
 
+/** Use the verified host-local role on a paired device, then the account server's owner hint. */
+export function accountServerRole(
+  server: AccountServerDirectoryEntry,
+  pairedRole?: LocalTailnetServer["role"],
+): LocalTailnetServer["role"] {
+  return pairedRole ?? (server.isOwner ? "owner" : server.role);
+}
+
 /** Strip the device-only Team session token before syncing host metadata to the account service. */
 export function accountServerRegistration(server: LocalTailnetServer): AccountServerRegistration {
   return {

@@ -28,6 +28,10 @@ export const messages = {
   "settings.appBehavior.title": "Comportement de l’application",
   "settings.launchAtLogin.title": "Lancer OpenBot à l’ouverture de session",
   "settings.launchAtLogin.description": "Ouvrir l’application lorsque vous vous connectez à cet ordinateur.",
+  "settings.localServer.title": "Désactiver ce serveur local",
+  "settings.localServer.description":
+    "Arrêter le serveur de cet ordinateur et le masquer dans les listes de tous les comptes. Les données restent sur cet ordinateur.",
+  "settings.localServer.saveFailed": "Impossible de modifier le réglage du serveur local.",
   "settings.keepRunning.title": "Garder OpenBot actif en arrière-plan",
   "settings.keepRunning.description": "Poursuivre les tâches en cours après la fermeture de la fenêtre.",
   "settings.workspace.title": "Espace de travail",

@@ -35,6 +35,7 @@ export * from "./ipc-host-analytics";
 export * from "./ipc-host-update";
 export * from "./ipc-hosted-sites";
 export * from "./ipc-live-voice";
+export * from "./ipc-local-host";
 export * from "./ipc-marketplace-agents";
 export * from "./ipc-mcp-servers";
 export * from "./ipc-messaging";

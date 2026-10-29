@@ -199,6 +199,7 @@ import type {
   LiveVoiceStartOutcome,
   LiveVoiceStopInput,
 } from "./ipc-live-voice";
+import type { LocalHostSettings, SetLocalHostSettingsInput } from "./ipc-local-host";
 import type {
   AgentPublicationPreview,
   AgentSubmission,
@@ -454,6 +455,8 @@ export const IPC_ENDPOINTS = {
     setWindowsStartupSettings: request<SetWindowsStartupSettingsInput, WindowsStartupSettings>()(
       "app:set-windows-startup-settings",
     ),
+    getLocalHostSettings: request<undefined, LocalHostSettings>()("app:get-local-host-settings"),
+    setLocalHostSettings: request<SetLocalHostSettingsInput, LocalHostSettings>()("app:set-local-host-settings"),
     // Every window draws the logo, and the Dynamic Island has no Settings of its own, so the choice
     // is broadcast in the same way as the language.
     appLogoColorPreference: event<AppLogoColorPreference>()("app:logo-color-preference"),

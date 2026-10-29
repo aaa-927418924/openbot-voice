@@ -57,10 +57,12 @@ import {
   isDetectedAcpAgent,
   isDetectedModelServer,
   isDiscoverModelsResult,
+  isLocalHostSettings,
   isProviderDetectionSettings,
   isRemoteDesktopSetupStatus,
   isRemoteDesktopTestStatus,
   isWindowsStartupSettings,
+  type LocalHostSettings,
   type MobileConnectedDevice,
   type MobileConnectTicket,
   type NotificationOpenedEvent,
@@ -104,6 +106,11 @@ export function decodeAppInfo(value: unknown): AppInfo {
 export const decodeWindowsStartupSettings: (value: unknown) => WindowsStartupSettings = guardedDecoder(
   isWindowsStartupSettings,
   "Windows startup settings",
+);
+
+export const decodeLocalHostSettings: (value: unknown) => LocalHostSettings = guardedDecoder(
+  isLocalHostSettings,
+  "local host settings",
 );
 
 export function decodeAppSetupState(value: unknown): AppSetupState {

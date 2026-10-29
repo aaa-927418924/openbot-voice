@@ -23,10 +23,11 @@ import { LanguageSelect } from "@openbot/ui/features/settings/LanguageSelect";
 import { LogoColorPicker } from "@openbot/ui/features/settings/LogoColorPicker";
 import { SendShortcutSelect } from "@openbot/ui/features/settings/SendShortcutSelect";
 import { SoundThemePicker } from "@openbot/ui/features/settings/SoundThemePicker";
-import { createSignal, For, Show } from "solid-js";
+import { createEffect, createSignal, For, Show } from "solid-js";
 import { replayActionSoundChoice } from "../../action-sounds";
 import { useI18n } from "../../i18n-context";
 import { useLogoColorChoice } from "../../logo-color";
+import { settingsPort } from "./settings-port";
 
 const linkTargetOptions: GeneralSettingsValue["externalLinkTarget"][] = ["Default browser", "OpenBot"];
 
@@ -82,7 +83,27 @@ export function SettingsGeneralTab(props: SettingsGeneralTabProps) {
         : "";
   const [confirmingTurbo, setConfirmingTurbo] = createSignal(false);
   const [savingRemoteDesktopLog, setSavingRemoteDesktopLog] = createSignal(false);
+  const [localHostSettings, setLocalHostSettings] = createSignal<{ supported: boolean; enabled: boolean } | null>(null);
+  const [savingLocalHostSettings, setSavingLocalHostSettings] = createSignal(false);
   const logoColor = useLogoColorChoice();
+  createEffect(() => {
+    if (props.platform !== "win32" && props.platform !== "linux") return;
+    void settingsPort()
+      .getLocalHostSettings()
+      .then(setLocalHostSettings)
+      .catch(() => setLocalHostSettings(null));
+  });
+  const setLocalServerDisabled = async (disabled: boolean) => {
+    if (savingLocalHostSettings()) return;
+    setSavingLocalHostSettings(true);
+    try {
+      setLocalHostSettings(await settingsPort().setLocalHostSettings({ enabled: !disabled }));
+    } catch {
+      toast.error(i18n.t("settings.localServer.saveFailed"));
+    } finally {
+      setSavingLocalHostSettings(false);
+    }
+  };
   const exportRemoteDesktopLog = async () => {
     if (!props.onExportRemoteDesktopSupportLog || savingRemoteDesktopLog()) return;
     setSavingRemoteDesktopLog(true);
@@ -184,6 +205,15 @@ export function SettingsGeneralTab(props: SettingsGeneralTabProps) {
             label={i18n.t("settings.keepRunning.title")}
             description={i18n.t("settings.keepRunning.description")}
           />
+          <Show when={localHostSettings()?.supported}>
+            <SwitchField
+              checked={!localHostSettings()?.enabled}
+              disabled={savingLocalHostSettings()}
+              onChange={setLocalServerDisabled}
+              label={i18n.t("settings.localServer.title")}
+              description={i18n.t("settings.localServer.description")}
+            />
+          </Show>
         </ItemGroup>
       </SettingsSection>
 

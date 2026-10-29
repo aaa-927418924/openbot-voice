@@ -500,6 +500,8 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
       launchAtLogin: false,
       startupMode,
     }),
+    getLocalHostSettings: async () => ({ supported: false, enabled: false }),
+    setLocalHostSettings: async () => ({ supported: false, enabled: false }),
     onAppLogoColorPreference: (listener) => {
       logoColorListeners.add(listener);
       return () => logoColorListeners.delete(listener);
