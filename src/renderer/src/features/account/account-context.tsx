@@ -1,4 +1,10 @@
-import type { AccountUsage, AvatarImageInput, CentralAuthState } from "@openbot/contracts/ipc";
+import type {
+  AccountUsage,
+  AvatarImageInput,
+  CentralAuthState,
+  SelfHostedAccountLoginInput,
+  SelfHostedAccountRegistrationInput,
+} from "@openbot/contracts/ipc";
 import { currentText } from "@openbot/ui/text";
 import { createMemo, createSignal, createStore, flush, onCleanup, onSettled } from "solid-js";
 import { desktopAnalytics } from "../../analytics";
@@ -141,7 +147,36 @@ const Auth = createSimpleContext({
 
     async function retryCentralAccount(): Promise<void> {
       applyCentralAuthState({ status: "loading" });
-      applyCentralAuthState(await accountPort().auth.retry());
+      try {
+        applyCentralAuthState(await accountPort().auth.retry());
+      } catch (error) {
+        applyCentralAuthState({
+          status: "error",
+          issue: {
+            code: "auth_api_error",
+            message: error instanceof Error ? error.message : currentText().t("account.login.loadFailed"),
+          },
+        });
+      }
+    }
+
+    async function signInSelfHosted(input: SelfHostedAccountLoginInput): Promise<void> {
+      const state = await accountPort().auth.selfHostedLogin(input);
+      applyCentralAuthState(state);
+    }
+
+    async function registerSelfHosted(input: SelfHostedAccountRegistrationInput): Promise<void> {
+      const state = await accountPort().auth.selfHostedRegister(input);
+      applyCentralAuthState(state);
+    }
+
+    async function useLocalProfile(): Promise<void> {
+      const state = await accountPort().auth.useLocalProfile();
+      applyCentralAuthState(state);
+    }
+
+    function getSelfHostedServerAddress(): Promise<string> {
+      return accountPort().auth.getSelfHostedServerAddress();
     }
 
     async function verifyEmailCode(challengeId: string, code: string): Promise<void> {
@@ -272,6 +307,10 @@ const Auth = createSimpleContext({
       requestEmailCode,
       retryCentralAccount,
       verifyEmailCode,
+      signInSelfHosted,
+      registerSelfHosted,
+      useLocalProfile,
+      getSelfHostedServerAddress,
       logoutCentralAccount,
       updateAccountName,
       updateAccountAvatar,

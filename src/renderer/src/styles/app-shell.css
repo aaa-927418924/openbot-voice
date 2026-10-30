@@ -91,6 +91,12 @@
   font-variant-numeric: tabular-nums;
 }
 
+.remote-compatibility-retry-error {
+  max-width: min(100%, 520px);
+  color: var(--openbot-danger);
+  text-align: center;
+}
+
 .global-search-overlay {
   position: fixed;
   z-index: var(--openbot-layer-dialog);
@@ -1166,7 +1172,6 @@ textarea {
   padding: 0 0 2px;
 }
 
-.app-frame-platform-darwin:not(.app-frame-with-server-rail, .web-app-frame) .sidebar-compact .sidebar-server-name,
 .app-frame-platform-darwin:not(.app-frame-with-server-rail, .web-app-frame) .sidebar-compact .sidebar-new-button {
   display: none;
 }
@@ -3466,7 +3471,7 @@ textarea {
   padding-inline: 12px;
 }
 
-.sidebar-compact .sidebar-server-name {
+.app-frame-with-server-rail .sidebar-compact .sidebar-server-name {
   opacity: 0;
   pointer-events: none;
 }

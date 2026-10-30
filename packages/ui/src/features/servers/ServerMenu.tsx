@@ -137,9 +137,9 @@ export function ServerMenu(props: ServerMenuProps) {
             ...(activeSleep() === "sleeping" ? [t("server.state.sleeping")] : []),
             ...(activeSleep() === "waking" ? [t("server.state.waking")] : []),
           ].join(", ")}
-          aria-hidden={props.compact ? "true" : undefined}
+          aria-hidden={props.compact && props.view === "rail" ? "true" : undefined}
           aria-keyshortcuts="Shift+F10"
-          tabindex={props.compact ? -1 : 0}
+          tabindex={props.compact && props.view === "rail" ? -1 : 0}
           title={triggerTitle()}
           onContextMenu={(event) => {
             event.preventDefault();

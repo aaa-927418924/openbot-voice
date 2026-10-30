@@ -8,7 +8,7 @@ import { useServerSelection } from "./features/servers/server-selection";
 import { useSettings } from "./features/settings/settings-context";
 import type { SoundFeedbackChoice } from "./features/settings/sound-feedback";
 import { StartupSplash } from "./features/startup/StartupSplash";
-import { AccountLogin, InitialSetup, OnboardingFlow } from "./lazy-views";
+import { AccountLogin, InitialSetup, OnboardingFlow, SelfHostedAccountLogin } from "./lazy-views";
 import { usePlatform } from "./platform";
 import { WorkspaceShell } from "./WorkspaceShell";
 
@@ -69,16 +69,33 @@ export function AppAccessGate() {
         <Show
           when={auth.visibleSignedInAccount()}
           fallback={
-            <Loading fallback={<LoadingScreen />}>
-              <AccountLogin
-                variant={platform.appInfo()?.variant ?? "production"}
-                state={auth.centralAuth()}
-                onRetry={auth.retryCentralAccount}
-                onRequestEmailCode={auth.requestEmailCode}
-                onVerifyEmailCode={auth.verifyEmailCode}
-                onReset={auth.logoutCentralAccount}
-              />
-            </Loading>
+            <Show
+              when={platform.appInfo()?.accountMode === "self_hosted"}
+              fallback={
+                <Loading fallback={<LoadingScreen />}>
+                  <AccountLogin
+                    variant={platform.appInfo()?.variant ?? "production"}
+                    state={auth.centralAuth()}
+                    onRetry={auth.retryCentralAccount}
+                    onRequestEmailCode={auth.requestEmailCode}
+                    onVerifyEmailCode={auth.verifyEmailCode}
+                    onReset={auth.logoutCentralAccount}
+                  />
+                </Loading>
+              }
+            >
+              <Loading fallback={<LoadingScreen />}>
+                <SelfHostedAccountLogin
+                  variant={platform.appInfo()?.variant ?? "production"}
+                  state={auth.centralAuth()}
+                  onRetry={auth.retryCentralAccount}
+                  onSignIn={auth.signInSelfHosted}
+                  onRegister={auth.registerSelfHosted}
+                  onUseLocalProfile={auth.useLocalProfile}
+                  getServerAddress={auth.getSelfHostedServerAddress}
+                />
+              </Loading>
+            </Show>
           }
         >
           {(account) => (

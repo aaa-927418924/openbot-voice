@@ -135,6 +135,8 @@ export function AccountDock(props: AccountDockProps) {
   let menuTrigger: HTMLButtonElement | undefined;
   let usageTrigger: HTMLButtonElement | undefined;
   let settingsTrigger: HTMLButtonElement | undefined;
+  let menuSurface: HTMLElement | undefined;
+  let usageSurface: HTMLElement | undefined;
 
   const hybridLayout = createMemo(() => (props.shelf ?? props.appInfo?.platform === "darwin") && !props.compact);
   const accountName = createMemo(
@@ -163,6 +165,58 @@ export function AccountDock(props: AccountDockProps) {
       (props.updateStatus.phase === "error"
         ? errorMessage(props.updateStatus.message, t("account.menu.updateFailedRetry"))
         : null),
+  );
+
+  // The popover primitive's outside-interaction event can be swallowed by a nested top-layer
+  // dialog on desktop. Listen in capture phase as a final dismissal path so a menu can never
+  // leave the rest of the workspace unreachable. The event is allowed to continue to its target:
+  // the first click both dismisses the menu and still reaches the clicked workspace control.
+  createEffect(
+    () => menuOpen() || usageOpen(),
+    (isOpen) => {
+      if (!isOpen) return;
+      const closeOnOutsidePointer = (event: PointerEvent) => {
+        const path = event.composedPath();
+        if (
+          (menuTrigger && path.includes(menuTrigger)) ||
+          (usageTrigger && path.includes(usageTrigger)) ||
+          (menuSurface && path.includes(menuSurface)) ||
+          (usageSurface && path.includes(usageSurface))
+        ) {
+          return;
+        }
+        setMenuOpen(false);
+        setUsageOpen(false);
+        setUsageTooltipOpen(false);
+      };
+      const closeOnEscape = (event: KeyboardEvent) => {
+        if (event.key !== "Escape" || event.isComposing) return;
+        setMenuOpen(false);
+        setUsageOpen(false);
+        setUsageTooltipOpen(false);
+      };
+      const closeOnOutsideClick = (event: MouseEvent) => {
+        const path = event.composedPath();
+        if (
+          (menuTrigger && path.includes(menuTrigger)) ||
+          (usageTrigger && path.includes(usageTrigger)) ||
+          (menuSurface && path.includes(menuSurface)) ||
+          (usageSurface && path.includes(usageSurface))
+        )
+          return;
+        setMenuOpen(false);
+        setUsageOpen(false);
+        setUsageTooltipOpen(false);
+      };
+      document.addEventListener("pointerdown", closeOnOutsidePointer, true);
+      document.addEventListener("click", closeOnOutsideClick, true);
+      document.addEventListener("keydown", closeOnEscape, true);
+      onCleanup(() => {
+        document.removeEventListener("pointerdown", closeOnOutsidePointer, true);
+        document.removeEventListener("click", closeOnOutsideClick, true);
+        document.removeEventListener("keydown", closeOnEscape, true);
+      });
+    },
   );
 
   onCleanup(() => {
@@ -549,6 +603,7 @@ export function AccountDock(props: AccountDockProps) {
 
         <Popover.Portal>
           <Popover.Content
+            ref={(element) => (menuSurface = element)}
             class="ui-popover-menu-surface account-popover"
             onInteractOutside={() => setMenuOpen(false)}
             aria-hidden={menuOpen() ? undefined : "true"}
@@ -603,6 +658,7 @@ export function AccountDock(props: AccountDockProps) {
           </Popover.Trigger>
           <Popover.Portal>
             <Popover.Content
+              ref={(element) => (menuSurface = element)}
               class="ui-popover-menu-surface account-popover"
               onInteractOutside={() => setMenuOpen(false)}
               aria-hidden={menuOpen() ? undefined : "true"}
@@ -660,6 +716,7 @@ export function AccountDock(props: AccountDockProps) {
               </Popover.Trigger>
               <Popover.Portal>
                 <Popover.Content
+                  ref={(element) => (usageSurface = element)}
                   class="ui-popover-menu-surface account-usage-popover"
                   aria-hidden={usageOpen() ? undefined : "true"}
                 >

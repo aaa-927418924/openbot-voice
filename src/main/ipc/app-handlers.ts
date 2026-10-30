@@ -87,6 +87,7 @@ export interface AppIpcDependencies {
   setLocalHostSettings: (enabled: boolean) => Promise<LocalHostSettings>;
   initializeAgent: () => Promise<void>;
   appVariant: AppVariant;
+  accountMode?: AppInfo["accountMode"];
   getMainWindow: () => BrowserWindow | null;
   setAnalyticsTrackingEnabled: (enabled: boolean) => void;
   trace: TraceFile;
@@ -108,6 +109,7 @@ export function appIpcHandlers({
   setLocalHostSettings,
   initializeAgent,
   appVariant,
+  accountMode,
   getMainWindow,
   setAnalyticsTrackingEnabled,
   trace,
@@ -121,7 +123,13 @@ export function appIpcHandlers({
         if (platform !== "darwin" && platform !== "win32" && platform !== "linux") {
           throw new Error(`Unsupported desktop platform: ${platform}`);
         }
-        return { name: app.getName(), version: app.getVersion(), platform, variant: appVariant };
+        return {
+          name: app.getName(),
+          version: app.getVersion(),
+          platform,
+          variant: appVariant,
+          ...(accountMode ? { accountMode } : {}),
+        };
       }),
       getSetupState: handler(() => runCauseEffect(readSetupState(setupFile))),
       getAnalyticsPreference: handler(() => {

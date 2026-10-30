@@ -559,6 +559,13 @@ const openbotApi: OpenBotDesktopApi = {
     revokeAccountSession: decodeVoid,
     revokeMobileConnectedDevice: decodeVoid,
     logout: decodeCentralAuthState,
+    selfHostedLogin: decodeCentralAuthState,
+    selfHostedRegister: decodeCentralAuthState,
+    useLocalProfile: decodeCentralAuthState,
+    getSelfHostedServerAddress: (value) => {
+      if (typeof value !== "string") throw new Error("Invalid self-hosted server address.");
+      return value;
+    },
     event: decodeCentralAuthState,
   }),
   skills: bridgeGroup(IPC_ENDPOINTS.skills, {

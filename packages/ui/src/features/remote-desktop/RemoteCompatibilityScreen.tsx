@@ -1,7 +1,7 @@
 import type { ServerSummary } from "@openbot/contracts/ipc";
 import { Alert, AlertContent, AlertDescription, Button } from "@openbot/ui";
 import { useText } from "@openbot/ui/text";
-import { For, Show } from "solid-js";
+import { createSignal, For, Show } from "solid-js";
 
 /**
  * What the workspace shows instead of a conversation when the active server is
@@ -11,7 +11,21 @@ import { For, Show } from "solid-js";
  * and a context read here would quietly re-derive what that key already decided.
  */
 export function RemoteCompatibilityScreen(props: { server: ServerSummary; onRetry: () => Promise<void> }) {
-  const { t, sourceText } = useText();
+  const { t, sourceText, errorMessage } = useText();
+  const [retrying, setRetrying] = createSignal(false);
+  const [retryError, setRetryError] = createSignal<string | null>(null);
+  async function retry(): Promise<void> {
+    if (retrying()) return;
+    setRetryError(null);
+    setRetrying(true);
+    try {
+      await props.onRetry();
+    } catch (cause) {
+      setRetryError(errorMessage(cause, t("error.remote.hostUnreachable")));
+    } finally {
+      setRetrying(false);
+    }
+  }
   const title = () => {
     if (props.server.issue?.code === "client_update_required") return t("server.compatibility.updateClientTitle");
     if (props.server.issue?.code === "host_update_required") {
@@ -65,7 +79,16 @@ export function RemoteCompatibilityScreen(props: { server: ServerSummary; onRetr
           </For>
         </dl>
       </Show>
-      <Button onClick={() => void props.onRetry()}>{t("common.retry")}</Button>
+      <Button type="button" disabled={retrying()} onClick={() => void retry()}>
+        {retrying() ? t("common.connecting") : t("common.retry")}
+      </Button>
+      <Show when={retryError()}>
+        {(message) => (
+          <p class="remote-compatibility-retry-error" role="alert">
+            {message()}
+          </p>
+        )}
+      </Show>
     </main>
   );
 }

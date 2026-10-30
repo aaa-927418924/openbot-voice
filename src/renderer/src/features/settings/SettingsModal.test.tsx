@@ -40,6 +40,8 @@ function logoColorPort() {
     getAppLogoColorPreference: vi.fn(async () => ({ color: "lavender" as const })),
     onAppLogoColorPreference: vi.fn(() => () => undefined),
     setAppLogoColorPreference: vi.fn(async ({ color }: { color: AppLogoColor }) => ({ color })),
+    getLocalHostSettings: vi.fn(async () => ({ supported: false, enabled: true })),
+    setLocalHostSettings: vi.fn(async ({ enabled }: { enabled: boolean }) => ({ supported: false, enabled })),
   };
 }
 
@@ -49,6 +51,64 @@ beforeEach(() => {
 });
 
 describe("SettingsModal", () => {
+  it("closes after a pointer press outside the settings surface", async () => {
+    const onOpenChange = vi.fn();
+    render(() => (
+      <SettingsModal
+        open
+        onOpenChange={onOpenChange}
+        value={DEFAULT_GENERAL_SETTINGS}
+        onValueChange={() => {}}
+        appInfo={{ name: "OpenBot", version: "0.2.1", platform: "win32", variant: "production" }}
+        updateStatus={idleUpdateStatus}
+        onUpdateAction={async () => {}}
+        account={account}
+        onUpdateAccountName={async () => {}}
+        onUpdateAccountAvatar={async () => {}}
+      />
+    ));
+    await screen.findByRole("dialog", { name: "General" });
+    const backdrop = document.querySelector(".settings-modal-backdrop");
+    if (!(backdrop instanceof HTMLElement)) throw new Error("Settings backdrop is missing.");
+    await fireEvent.pointerDown(backdrop, { pointerType: "mouse", button: 0 });
+
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("closes from Escape even when a nested control stops the keyboard event", async () => {
+    const onOpenChange = vi.fn();
+    const [open, setOpen] = createSignal(false);
+    render(() => (
+      <>
+        <button type="button" onClick={() => setOpen(true)}>
+          Open settings
+        </button>
+        <SettingsModal
+          open={open()}
+          onOpenChange={(next) => {
+            onOpenChange(next);
+            setOpen(next);
+          }}
+          value={DEFAULT_GENERAL_SETTINGS}
+          onValueChange={() => {}}
+          appInfo={{ name: "OpenBot", version: "0.2.1", platform: "win32", variant: "production" }}
+          updateStatus={idleUpdateStatus}
+          onUpdateAction={async () => {}}
+          account={account}
+          onUpdateAccountName={async () => {}}
+          onUpdateAccountAvatar={async () => {}}
+        />
+      </>
+    ));
+    await fireEvent.click(screen.getByRole("button", { name: "Open settings" }));
+    const control = await screen.findByRole("tab", { name: "General" });
+    control.addEventListener("keydown", (event) => event.stopPropagation(), { once: true });
+
+    await fireEvent.keyDown(control, { key: "Escape" });
+
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
   it("hides product analytics sharing on Windows", () => {
     render(() => (
       <SettingsModal

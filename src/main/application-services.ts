@@ -84,6 +84,7 @@ import { BillingDesktopService } from "./billing-service";
 import { BrowserPictureInPicture } from "./browser-picture-in-picture";
 import { BrowserViewClient } from "./browser-view-client";
 import { BusyMessageModePreferenceStore } from "./busy-message-mode-preference-store";
+import { CentralAuthOperationError } from "./central-auth-effects";
 import { CentralAuthManager, readCentralAuthApiUrl, readMobileConnectApiUrl } from "./central-auth-manager";
 import { ComputerUseHighlightController } from "./computer-use-highlight-window";
 import { applicationBundlePath, applicationIconName } from "./computer-use-permission-app";
@@ -165,6 +166,7 @@ import { RequestedUpdate, RequestedUpdateRefusal } from "./requested-update";
 import { RoutineFeedServer } from "./routine-feed-server";
 import { clearRoutineHold, ROUTINE_HOLD_FILE, takeRoutineHold, writeRoutineHold } from "./routine-hold-file";
 import { SelfHostedAccountServerDirectory } from "./self-hosted-account-server-directory";
+import { SelfHostedDesktopAccountManager } from "./self-hosted-desktop-account";
 import { SelfHostedIdentityApiServer, selfHostedTeamProfile } from "./self-hosted-identity-api";
 import { SelfHostedIdentityAuthority } from "./self-hosted-identity-authority";
 import { ServerMode, type ServerModeEnvironment } from "./server-mode";
@@ -358,6 +360,7 @@ export interface ApplicationServices {
   remoteServers: RemoteServerManager;
   centralAuth: CentralAuthManager;
   localProfile: LocalProfileStore;
+  selfHostedDesktopAccount: SelfHostedDesktopAccountManager;
   selfHostedIdentityAuthority: SelfHostedIdentityAuthority | null;
   selfHostedIdentityApi: SelfHostedIdentityApiServer | null;
   ensureLocalHost: () => Promise<void>;
@@ -613,6 +616,12 @@ export async function createApplicationServices({
   let localHostRetry: { start: () => void; stop: () => Promise<void> } | null = null;
   const localProfile = new LocalProfileStore(join(app.getPath("userData"), "local-profile.json"));
   await runCauseEffect(localProfile.load());
+  const selfHostedDesktopAccount = new SelfHostedDesktopAccountManager({
+    path: join(app.getPath("userData"), "self-hosted-desktop-account-v1.json"),
+    profile: localProfile,
+    cipher: safeStorageCipher("error.app.secretStorageUnavailable"),
+  });
+  if (localOnlyNetworking) await selfHostedDesktopAccount.initialize();
   let selfHostedIdentityAuthority: SelfHostedIdentityAuthority | null = null;
   if (localOnlyNetworking) {
     const authority = new SelfHostedIdentityAuthority({
@@ -641,7 +650,7 @@ export async function createApplicationServices({
   // listener therefore runs on the next line with most of this function's services still unbuilt.
   teardown.push(TEARDOWN_ORDER.centralAuth, "the account runtime", () => Effect.runPromise(centralAuth.dispose()));
   const centralAuthInitialization: Effect.Effect<CentralAuthState, RemoteWorkflowError> = localOnlyNetworking
-    ? Effect.succeed(localProfileState)
+    ? Effect.succeed(selfHostedDesktopAccount.getState())
     : Effect.runSync(Effect.cached(centralAuth.initialize().pipe(toRemoteWorkflowError)));
   if (!localOnlyNetworking) {
     centralAuth.on("changed", forwardCentralAuth);
@@ -1705,10 +1714,27 @@ export async function createApplicationServices({
     join(app.getPath("userData"), REMOTE_SERVERS_FILE),
     safeStorageCipher("error.app.macSecureStorageUnavailable"),
     {
-      createTeamAuthTicket: (serverId) => centralAuth.createTeamAuthTicket(serverId),
-      getEmail: () => centralAuth.getSignedInUser().email,
+      createTeamAuthTicket: (serverId) =>
+        localOnlyNetworking && selfHostedDesktopAccount.isSignedIn
+          ? selfHostedDesktopAccount
+              .createTeamAuthTicket(serverId)
+              .pipe(Effect.mapError((cause) => new CentralAuthOperationError({ cause })))
+          : centralAuth.createTeamAuthTicket(serverId),
+      getEmail: () =>
+        localOnlyNetworking
+          ? (selfHostedDesktopAccount.signedInAccount?.email ?? "")
+          : centralAuth.getSignedInUser().email,
+      isSelfHostedSignedIn: () => localOnlyNetworking && selfHostedDesktopAccount.isSignedIn,
+      listAccountServers: () =>
+        selfHostedDesktopAccount
+          .listAccountServers()
+          .pipe(Effect.mapError((cause) => new CentralAuthOperationError({ cause }))),
+      registerAccountServer: (registration) =>
+        selfHostedDesktopAccount
+          .registerAccountServer(registration)
+          .pipe(Effect.mapError((cause) => new CentralAuthOperationError({ cause }))),
       getDisplayName: () => {
-        const state = localOnlyNetworking ? localProfile.getState() : centralAuth.getState();
+        const state = localOnlyNetworking ? selfHostedDesktopAccount.getState() : centralAuth.getState();
         return state.status === "signed_in" ? (state.user.name ?? "") : "";
       },
       sendTeamInviteEmail: (input) => centralAuth.sendTeamInviteEmail(input),
@@ -2080,6 +2106,7 @@ export async function createApplicationServices({
     remoteServers,
     centralAuth,
     localProfile,
+    selfHostedDesktopAccount,
     selfHostedIdentityAuthority,
     selfHostedIdentityApi,
     ensureLocalHost,

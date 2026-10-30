@@ -258,6 +258,26 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(window.openbot.servers.retryConnection).toHaveBeenCalledWith("remote-1"));
   });
 
+  it("keeps retry available after a connection attempt fails", async () => {
+    const server: ServerSummary = {
+      ...testServer("remote-1", true),
+      state: "offline",
+      issue: { code: "network_unavailable", message: "The host is offline.", retryable: true },
+    };
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([testServer("local", false), server]);
+    vi.mocked(window.openbot.servers.retryConnection)
+      .mockRejectedValueOnce(new Error("Retry failed"))
+      .mockResolvedValueOnce({ ...server, state: "connecting" });
+    render(() => <App />);
+    const retry = await screen.findByRole("button", { name: "Retry" });
+
+    await fireEvent.click(retry);
+    await waitFor(() => expect(window.openbot.servers.retryConnection).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(retry).toBeEnabled());
+    await fireEvent.click(retry);
+    await waitFor(() => expect(window.openbot.servers.retryConnection).toHaveBeenCalledTimes(2));
+  });
+
   it("keeps a busy-host error visible during retry and loads agents after recovery", async () => {
     const local = testServer("local", false);
     const busy: ServerSummary = {
@@ -1245,6 +1265,21 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Delete" }));
     await waitFor(() => expect(window.openbot.agent.deleteAgent).toHaveBeenCalledWith("sales-outbound"));
     await waitFor(() => expect(screen.queryByRole("button", { name: /Sales Outbound/ })).not.toBeInTheDocument());
+  });
+
+  it("keeps the server list reachable when the sidebar is compact and the menu view is selected", async () => {
+    window.localStorage.setItem("openbot:server-view", "menu");
+    Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 500 });
+    render(() => <App />);
+
+    const trigger = await screen.findByRole("button", { name: "Open server menu for Local" });
+    expect(trigger).toBeVisible();
+    await fireEvent.pointerDown(trigger, { button: 0, pointerType: "mouse" });
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    const menu = document.querySelector(".server-menu");
+    expect(menu).toBeInTheDocument();
+    expect(menu).toBeVisible();
+    expect(menu).toHaveTextContent("Local");
   });
 
   it("shows the server rail and opens the join flow", async () => {

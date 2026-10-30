@@ -445,6 +445,7 @@ function registerIpcHandlers({
   remoteServers,
   centralAuth,
   localProfile,
+  selfHostedDesktopAccount,
   selfHostedIdentityAuthority,
   selfHostedIdentityApi,
   getLocalHostSettings,
@@ -493,6 +494,7 @@ function registerIpcHandlers({
       logoColor,
       initializeAgent: () => runCauseEffect(agentInitialization.start()),
       appVariant,
+      accountMode: localOnlyNetworking ? "self_hosted" : "hosted",
       getMainWindow,
       setAnalyticsTrackingEnabled: (enabled) => analytics.setTrackingEnabled(enabled),
       windowsStartup,
@@ -513,6 +515,8 @@ function registerIpcHandlers({
       centralAuth,
       host,
       localProfile: localOnlyNetworking ? localProfile : undefined,
+      selfHostedDesktopAccount: localOnlyNetworking ? selfHostedDesktopAccount : undefined,
+      remoteServers,
       selfHostedIdentity:
         selfHostedIdentityAuthority && selfHostedIdentityApi
           ? { authority: selfHostedIdentityAuthority, api: selfHostedIdentityApi, teamStore }
@@ -1031,6 +1035,11 @@ if (!hasSingleInstanceLock) {
       performance.mark("openbot:renderer-loaded");
       // After the load: `sendToRenderer` drops events aimed at a window that is still loading.
       await Effect.runPromise(remoteServers.startEventConnections());
+      if (built.localOnlyNetworking && built.selfHostedDesktopAccount.isSignedIn) {
+        void runCauseEffect(remoteServers.syncAccountDirectory()).catch((error) =>
+          logger.warn("Unable to synchronize self-hosted account servers:", toLogValue(error)),
+        );
+      }
       const reconcileDynamicIsland = () =>
         void Effect.runPromise(dynamicIsland.reconcileWindow()).catch((error) =>
           logger.error("Unable to reconcile Dynamic Island displays:", toLogValue(error)),

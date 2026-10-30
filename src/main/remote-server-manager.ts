@@ -1,6 +1,10 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { basename } from "node:path";
+import type {
+  AccountServerDirectoryEntry,
+  AccountServerRegistration,
+} from "@openbot/contracts/account-server-directory";
 import { isValidAvatarImage } from "@openbot/contracts/avatar-images";
 import {
   createMemberDeviceLinkUrl,
@@ -186,6 +190,9 @@ class LocalTailnetRemoteServerDirectory implements RemoteServerDirectory {
 interface CentralAccountSession {
   createTeamAuthTicket: (serverId: string) => Effect.Effect<string, CentralAuthOperationError>;
   getEmail: () => string;
+  isSelfHostedSignedIn?: () => boolean;
+  listAccountServers?: () => Effect.Effect<AccountServerDirectoryEntry[], CentralAuthOperationError>;
+  registerAccountServer?: (registration: AccountServerRegistration) => Effect.Effect<void, CentralAuthOperationError>;
   getDisplayName?: () => string;
   sendTeamInviteEmail?: (input: {
     email: string;
@@ -527,6 +534,52 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     (operation) => this.#owned(operation),
   ).bind(this);
 
+  #adoptAccountServer = Effect.fn("RemoteManager.adoptAccountServer")(
+    function* (
+      this: RemoteServerManager,
+      entry: AccountServerDirectoryEntry,
+    ): Effect.fn.Return<void, RemoteWorkflowError, RemoteRequest> {
+      const identity = yield* this.#client.verifyIdentity(entry.apiUrl, entry.hostId, entry.fingerprint);
+      if (
+        identity.publicKey !== entry.publicKey ||
+        (yield* remoteDecode(() => fingerprint(identity.publicKey))) !== entry.fingerprint
+      ) {
+        return yield* new RemoteWorkflowError({ cause: new Error("The account directory host identity changed.") });
+      }
+      const accountTicket = yield* this.#centralAccount.createTeamAuthTicket(entry.hostId).pipe(toRemoteWorkflowError);
+      const result = yield* requestJson(entry.apiUrl, TEAM_API_ROUTES.auth.account, decodeJoinResult, {
+        method: "POST",
+        body: { accountTicket },
+        ...this.#client.requestProtocol(identity.compatibility),
+      }).pipe(Effect.mapError((failure) => new RemoteWorkflowError({ cause: failure.cause })));
+      const stored: StoredRemoteServer = {
+        id: entry.hostId,
+        name: identity.serverName,
+        apiUrl: entry.apiUrl,
+        fingerprint: entry.fingerprint,
+        publicKey: entry.publicKey,
+        username: this.#centralAccount.getEmail().trim().toLowerCase(),
+        encryptedToken: yield* remoteDecode(() => this.#store.sealToken(result.sessionToken)),
+        remoteDesktopAvailable: false,
+        logoVersion: identity.logoVersion,
+        role: result.member.role,
+        ...(result.member.id ? { membershipId: result.member.id } : { membershipId: entry.membershipId }),
+      };
+      this.#connections.setCompatibility(stored.id, identity.compatibility);
+      this.#connections.clearIssue(stored.id);
+      this.#connections.setState(stored.id, "online");
+      yield* this.#store.adopt(stored);
+      const remoteDesktopAvailable = yield* this.#client
+        .probeRemoteDesktop(stored)
+        .pipe(Effect.catch(() => Effect.succeed(false)));
+      if (remoteDesktopAvailable) {
+        yield* this.#store.update(stored.id, { remoteDesktopAvailable }).pipe(Effect.catch(() => Effect.succeed(null)));
+      }
+      yield* this.#events.restart(stored.id, true);
+    },
+    (operation) => this.#owned(operation),
+  ).bind(this);
+
   #suspendServer(serverId: string): void {
     this.#events.suspendReconnect(serverId);
     if (this.#servers.find(serverId)?.transport !== "webrtc-v2") return;
@@ -637,6 +690,68 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       if (!this.#localOnlyNetworking) yield* this.#syncWebRtcHosts();
       if (this.#localOnlyNetworking) return this.list();
       if (this.#events.enabled) yield* this.startEventConnections();
+      this.#emitChanged();
+      return this.list();
+    },
+    (operation) => this.#owned(operation),
+  ).bind(this);
+
+  /** Restore self-hosted account servers on this device, using pinned identity before any ticket. */
+  readonly syncAccountDirectory = Effect.fn("RemoteManager.syncAccountDirectory")(
+    function* (this: RemoteServerManager): Effect.fn.Return<ServerSummary[], RemoteWorkflowError, RemoteRequest> {
+      const account = this.#centralAccount;
+      if (
+        !this.#localOnlyNetworking ||
+        !account.isSelfHostedSignedIn?.() ||
+        !account.listAccountServers ||
+        !account.registerAccountServer
+      )
+        return this.list();
+
+      let entries = yield* account.listAccountServers().pipe(toRemoteWorkflowError);
+      const byId = new Map(entries.map((entry) => [entry.hostId, entry]));
+      // Older devices paired servers locally before the account directory existed. Authenticate
+      // them with the signed-in account once, then publish the verified membership to the directory.
+      for (const server of [...this.#store.servers]) {
+        if (!isTailscaleApiUrl(server.apiUrl) || byId.has(server.id) || this.#store.isHiddenHost(server.id)) continue;
+        const seeded = yield* this.login({ serverId: server.id }).pipe(Effect.result);
+        if (Result.isFailure(seeded)) continue;
+        const refreshed = this.#store.find(server.id);
+        if (!refreshed?.membershipId || !refreshed.publicKey) continue;
+        yield* account
+          .registerAccountServer({
+            hostId: refreshed.id,
+            name: refreshed.name,
+            apiUrl: refreshed.apiUrl,
+            fingerprint: refreshed.fingerprint,
+            publicKey: refreshed.publicKey,
+            logoKey: refreshed.logoVersion ?? null,
+            membershipId: refreshed.membershipId,
+            role: refreshed.role,
+          })
+          .pipe(Effect.catch(() => Effect.void));
+      }
+      entries = yield* account.listAccountServers().pipe(toRemoteWorkflowError);
+      const previousActive = this.#store.activeServerId;
+      for (const entry of entries) {
+        if (this.#store.isHiddenHost(entry.hostId)) continue;
+        const existing = this.#store.find(entry.hostId);
+        if (existing && (existing.fingerprint !== entry.fingerprint || existing.publicKey !== entry.publicKey))
+          continue;
+        if (existing) {
+          const refreshed = yield* this.login({ serverId: existing.id }).pipe(Effect.result);
+          if (Result.isFailure(refreshed)) continue;
+        } else {
+          yield* this.#adoptAccountServer(entry).pipe(Effect.catch(() => Effect.void));
+        }
+      }
+      const active =
+        previousActive === LOCAL_SERVER_ID || this.#servers.has(previousActive) ? previousActive : LOCAL_SERVER_ID;
+      if (this.#store.activeServerId !== active) {
+        this.#store.setActiveServerId(active);
+        yield* this.#store.persist();
+      }
+      this.#events.syncScopes();
       this.#emitChanged();
       return this.list();
     },
@@ -815,11 +930,12 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       }
       const verifiedIdentity = yield* this.#client.verifyIdentity(invite.apiUrl, invite.serverId, invite.fingerprint);
       const isTailnetInvite = isTailscaleApiUrl(invite.apiUrl);
-      const username = isTailnetInvite
-        ? `device-${randomBytes(8).toString("hex")}`
-        : this.#centralAccount.getEmail().trim().toLowerCase();
-      const displayName = isTailnetInvite ? this.#centralAccount.getDisplayName?.().trim() : undefined;
-      const result = isTailnetInvite
+      const useAccountTicket = !isTailnetInvite || this.#centralAccount.isSelfHostedSignedIn?.() === true;
+      const username = useAccountTicket
+        ? this.#centralAccount.getEmail().trim().toLowerCase()
+        : `device-${randomBytes(8).toString("hex")}`;
+      const displayName = useAccountTicket ? this.#centralAccount.getDisplayName?.().trim() : undefined;
+      const result = !useAccountTicket
         ? yield* requestJson(invite.apiUrl, TEAM_API_ROUTES.join.server, decodeJoinResult, {
             method: "POST",
             body: {
@@ -871,6 +987,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         remoteDesktopAvailable: false,
         logoVersion: verifiedIdentity.logoVersion,
         role: result.member.role,
+        ...(result.member.id ? { membershipId: result.member.id } : {}),
       };
       this.#connections.setCompatibility(stored.id, verifiedIdentity.compatibility);
       this.#connections.clearIssue(stored.id);
@@ -1053,6 +1170,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         const signedIn = yield* this.#store.update(server.id, {
           username: this.#centralAccount.getEmail().trim().toLowerCase(),
           role: result.member.role,
+          ...(result.member.id ? { membershipId: result.member.id } : {}),
           encryptedToken: yield* remoteDecode(() => this.#store.sealToken(result.sessionToken)),
           name: identity.serverName,
           logoVersion: identity.logoVersion,

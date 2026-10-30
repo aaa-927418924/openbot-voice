@@ -113,6 +113,20 @@ export function createMockAuth(options: MockAuthOptions, { emit }: MockRuntime) 
     revokeAccountSession: async (sessionId) => {
       accountSessions = accountSessions.filter((session) => session.sessionId !== sessionId);
     },
+    selfHostedLogin: async (input) => {
+      const user: CentralAuthUser = { id: "user-1", email: input.email, name: "Norbert", avatarUrl: null };
+      authState = { status: "signed_in", user };
+      emitAuthState(authState);
+      return clone(authState);
+    },
+    selfHostedRegister: async (input) => {
+      const user: CentralAuthUser = { id: "user-1", email: input.email, name: input.name, avatarUrl: null };
+      authState = { status: "signed_in", user };
+      emitAuthState(authState);
+      return clone(authState);
+    },
+    useLocalProfile: async () => clone(authState),
+    getSelfHostedServerAddress: async () => "",
     logout: async () => {
       authState = { status: "signed_out" };
       emitAuthState(authState);

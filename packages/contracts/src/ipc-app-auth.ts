@@ -10,6 +10,8 @@ export interface AppInfo {
   version: string;
   platform: DesktopPlatform;
   variant: AppVariant;
+  /** Desktop clients use the fork's local identity service instead of OpenBot hosted sign-in. */
+  accountMode?: "hosted" | "self_hosted";
 }
 
 /** The phase list is the source of truth: `UpdatePhase` is derived from it. */
@@ -229,6 +231,16 @@ export type CentralAuthState =
 export interface VerifyEmailCodeInput {
   challengeId: string;
   code: string;
+}
+
+export interface SelfHostedAccountLoginInput {
+  serverAddress: string;
+  email: string;
+  password: string;
+}
+
+export interface SelfHostedAccountRegistrationInput extends SelfHostedAccountLoginInput {
+  name: string;
 }
 
 export type MacPermissionId = "screen-recording" | "accessibility";

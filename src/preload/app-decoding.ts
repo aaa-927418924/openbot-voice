@@ -100,7 +100,17 @@ export function decodeAppInfo(value: unknown): AppInfo {
   const { platform, variant } = info;
   if (!isOneOf(["darwin", "win32", "linux"] as const, platform)) throw new Error("Invalid platform.");
   if (!isOneOf(["production", "dev", "preview"] as const, variant)) throw new Error("Invalid variant.");
-  return { name: requiredString(info, "name"), version: requiredString(info, "version"), platform, variant };
+  const accountMode = info.accountMode;
+  if (accountMode !== undefined && !isOneOf(["hosted", "self_hosted"] as const, accountMode)) {
+    throw new Error("Invalid account mode.");
+  }
+  return {
+    name: requiredString(info, "name"),
+    version: requiredString(info, "version"),
+    platform,
+    variant,
+    ...(accountMode === undefined ? {} : { accountMode }),
+  };
 }
 
 export const decodeWindowsStartupSettings: (value: unknown) => WindowsStartupSettings = guardedDecoder(

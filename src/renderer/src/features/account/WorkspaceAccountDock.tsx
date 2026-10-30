@@ -80,7 +80,7 @@ export function WorkspaceAccountDock(props: { account: () => CentralAuthUser }) 
           return targetKey ? auth.refreshAccountUsage(targetKey) : Promise.resolve({ limits: [] });
         }}
         onUpdateAction={updates.runAction}
-        onLogout={platform.landingPreview || !props.account().email ? undefined : auth.logoutCentralAccount}
+        onLogout={platform.landingPreview ? undefined : auth.logoutCentralAccount}
         onOpenExternal={(destination) => appPort().openExternal(destination)}
         onOpenPermissions={() => setup.setPermissionsOpen(true)}
         onOpenSettings={openAppSettings}

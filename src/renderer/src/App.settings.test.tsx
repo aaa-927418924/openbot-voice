@@ -471,6 +471,37 @@ describe("OpenBot connected desktop shell", () => {
     setTrackingEnabled.mockRestore();
   });
 
+  it("closes the account menu after a click outside it", async () => {
+    render(() => <App />);
+    await fireEvent.click(await screen.findByRole("button", { name: "Open account actions" }));
+    expect(await screen.findByRole("dialog", { name: "Account actions" })).toBeInTheDocument();
+
+    await fireEvent.pointerDown(screen.getByRole("textbox", { name: "Message Chief" }));
+    await fireEvent.click(screen.getByRole("textbox", { name: "Message Chief" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Account actions" })).not.toBeInTheDocument());
+  });
+
+  it("shows sign out for a local profile and returns to self-hosted sign-in", async () => {
+    vi.mocked(window.openbot.getAppInfo).mockResolvedValue({
+      name: "OpenBot",
+      version: "0.1.0",
+      platform: "win32",
+      variant: "production",
+      accountMode: "self_hosted",
+    });
+    vi.mocked(window.openbot.auth.getState).mockResolvedValue({
+      status: "signed_in",
+      user: { id: "local-profile", email: "", name: "Local profile", avatarUrl: null },
+    });
+    render(() => <App />);
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Open account menu" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Sign out" }));
+
+    await waitFor(() => expect(window.openbot.auth.logout).toHaveBeenCalledOnce());
+    expect(await screen.findByRole("textbox", { name: "Server address" })).toBeInTheDocument();
+  });
+
   it("signs out from the account menu without removing local data", async () => {
     render(() => <App />);
     await fireEvent.click(await screen.findByRole("button", { name: "Open account actions" }));

@@ -46,6 +46,8 @@ export interface StoredRemoteServer {
   remoteDesktopAvailable: boolean;
   logoVersion?: string | null;
   role: TeamRole;
+  /** Membership identifier returned by account auth; used to seed cross-device server sync. */
+  membershipId?: string;
   transport?: "webrtc-v2";
   /** The active members that the host's plan allows, from the account server's host list. */
   memberLimit?: number;
@@ -256,6 +258,9 @@ function readStoredRemoteServer(value: unknown): StoredRemoteServer | null {
     remoteDesktopAvailable: value.remoteDesktopAvailable ?? false,
     ...(value.logoVersion === undefined ? {} : { logoVersion: value.logoVersion }),
     role: value.role,
+    ...(isString(value.membershipId) && value.membershipId.length > 0 && value.membershipId.length <= 128
+      ? { membershipId: value.membershipId }
+      : {}),
     ...(value.transport === undefined ? {} : { transport: value.transport }),
     // A bad limit drops only the limit: the next host list writes it again.
     ...(isMemberLimit(value.memberLimit) ? { memberLimit: value.memberLimit } : {}),

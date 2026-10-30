@@ -1,7 +1,7 @@
 import { Dialog, IconButton, X } from "@openbot/ui";
 import { cx, prefersReducedMotion } from "@openbot/ui/utils";
 import type { JSX } from "@solidjs/web";
-import { createEffect, createSignal, onCleanup, Show, untrack } from "solid-js";
+import { createEffect, createSignal, onCleanup, onSettled, Show, untrack } from "solid-js";
 import { useText } from "../../text";
 
 interface SettingsDialogShellProps {
@@ -200,6 +200,17 @@ export function SettingsDialogShell(props: SettingsDialogShellProps) {
     props.onOpenChange(open);
   }
 
+  onSettled(() => {
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (!rendered() || event.key !== "Escape" || event.isComposing || event.defaultPrevented) return;
+      event.preventDefault();
+      event.stopPropagation();
+      requestOpenChange(false);
+    };
+    document.addEventListener("keydown", closeOnEscape, true);
+    return () => document.removeEventListener("keydown", closeOnEscape, true);
+  });
+
   return (
     <Dialog.Root open={rendered()} onOpenChange={requestOpenChange}>
       <Dialog.Portal>
@@ -222,6 +233,12 @@ export function SettingsDialogShell(props: SettingsDialogShellProps) {
               event.preventDefault();
               queueMicrotask(() => modalElement?.focus({ preventScroll: true }));
             }}
+            onKeyDown={(event) => {
+              if (event.key === "Escape" && !event.isComposing) {
+                event.preventDefault();
+                requestOpenChange(false);
+              }
+            }}
           >
             <aside class="settings-modal-sidebar">{props.sidebar}</aside>
 
@@ -234,6 +251,7 @@ export function SettingsDialogShell(props: SettingsDialogShellProps) {
                 <IconButton
                   label={props.closeLabel ?? t("settings.dialog.close")}
                   tooltip={props.closeLabel ?? t("settings.dialog.close")}
+                  type="button"
                   variant="ghost"
                   data-cuelume-tap="close"
                   onClick={() => requestOpenChange(false)}

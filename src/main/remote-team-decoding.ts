@@ -14,14 +14,18 @@ import { isTeamRealtimeEvent } from "@openbot/contracts/ipc";
 import { decodeRecord, nullableString, requiredBoolean, requiredString } from "@openbot/contracts/ipc-decoding";
 import { isOneOf, isString } from "@openbot/contracts/runtime-values";
 
-export function decodeJoinResult(value: unknown): { member: { role: TeamRole }; sessionToken: string } {
+export function decodeJoinResult(value: unknown): { member: { id?: string; role: TeamRole }; sessionToken: string } {
   const record = decodeRecord(value, "join response");
   const member = decodeRecord(record.member, "member");
   const role = member.role;
   if (!isOneOf(["owner", "admin", "member"] as const, role)) {
     throw new Error("Invalid member role.");
   }
-  return { member: { role }, sessionToken: requiredString(record, "sessionToken") };
+  const id = member.id === undefined ? undefined : requiredString(member, "id");
+  return {
+    member: { ...(id === undefined ? {} : { id }), role },
+    sessionToken: requiredString(record, "sessionToken"),
+  };
 }
 
 export function decodeIdentityProof(value: unknown): {

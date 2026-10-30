@@ -25,6 +25,11 @@ export const AccountDock = lazy(() =>
 export const AccountLogin = lazy(() =>
   import("@openbot/ui/features/account/AccountLogin").then((module) => ({ default: module.AccountLogin })),
 );
+export const SelfHostedAccountLogin = lazy(() =>
+  import("@openbot/ui/features/account/SelfHostedAccountLogin").then((module) => ({
+    default: module.SelfHostedAccountLogin,
+  })),
+);
 export const DirectConversation = lazy(() =>
   import("@openbot/ui/features/conversation/DirectConversation").then((module) => ({
     default: module.DirectConversation,

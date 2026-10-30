@@ -86,13 +86,16 @@ export function SettingsGeneralTab(props: SettingsGeneralTabProps) {
   const [localHostSettings, setLocalHostSettings] = createSignal<{ supported: boolean; enabled: boolean } | null>(null);
   const [savingLocalHostSettings, setSavingLocalHostSettings] = createSignal(false);
   const logoColor = useLogoColorChoice();
-  createEffect(() => {
-    if (props.platform !== "win32" && props.platform !== "linux") return;
-    void settingsPort()
-      .getLocalHostSettings()
-      .then(setLocalHostSettings)
-      .catch(() => setLocalHostSettings(null));
-  });
+  createEffect(
+    () => props.platform,
+    (platform) => {
+      if (platform !== "win32" && platform !== "linux") return;
+      void settingsPort()
+        .getLocalHostSettings()
+        .then(setLocalHostSettings)
+        .catch(() => setLocalHostSettings(null));
+    },
+  );
   const setLocalServerDisabled = async (disabled: boolean) => {
     if (savingLocalHostSettings()) return;
     setSavingLocalHostSettings(true);
