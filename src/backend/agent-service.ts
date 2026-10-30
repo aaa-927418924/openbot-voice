@@ -275,6 +275,7 @@ interface LiveVoiceStartReservation {
   readonly threadId: string;
   readonly sessionId: string;
   readonly channelId?: string;
+  readonly completed: Deferred.Deferred<void>;
   cancelled: boolean;
 }
 
@@ -398,8 +399,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   /** The last turn of each agent's chat that the user stopped. One per agent, so it needs no clean-up. */
   readonly #stoppedTurns = new Map<string, string>();
   readonly #liveVoiceSessions = new Map<string, LiveVoiceSession>();
-  /** Reserves the one global voice slot while its provider client and thread become ready. */
+  /** Reserves the one global voice slot until the provider startup effect has fully unwound. */
   #pendingLiveVoiceStart: LiveVoiceStartReservation | undefined;
+  /** Typed voice submissions still awaiting their provider request for each agent. */
+  readonly #pendingLiveVoiceTexts = new Map<string, Set<Deferred.Deferred<void>>>();
   readonly #usedLiveVoiceSessionIds = new Set<string>();
   #initialized = false;
   #stopping = false;
@@ -1037,12 +1040,23 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       hooks: {
         emit: (event) => this.#emit(event),
         listAgents: () => this.listAgents(),
-        stopLiveVoice: (agentId) => {
-          const session = this.#liveVoiceSessions.get(agentId);
-          return session
-            ? this.stopLiveVoice({ agentId, threadId: session.threadId, sessionId: session.sessionId })
-            : Effect.void;
-        },
+        stopLiveVoice: (agentId) =>
+          Effect.gen({ self: this }, function* () {
+            const pendingTexts = [...(this.#pendingLiveVoiceTexts.get(agentId) ?? [])];
+            yield* Effect.forEach(pendingTexts, Deferred.await, { discard: true });
+            const pending = this.#pendingLiveVoiceStart;
+            if (pending?.agentId === agentId) {
+              yield* this.stopLiveVoice({
+                agentId,
+                threadId: pending.threadId,
+                sessionId: pending.sessionId,
+              });
+              return;
+            }
+            const session = this.#liveVoiceSessions.get(agentId);
+            if (session)
+              yield* this.stopLiveVoice({ agentId, threadId: session.threadId, sessionId: session.sessionId });
+          }),
       },
     });
     this.#tools = new OpenBotToolRouter({
@@ -1223,6 +1237,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     input: LiveVoiceStartInput,
     channelActor?: { id: string; name: string },
   ) {
+    if (this.#removal.deleting().has(input.agentId))
+      throw new LiveVoiceRefusedError(sourceText("error.liveVoice.unavailable"));
     const agent = this.#store.list().find((candidate) => candidate.id === input.agentId);
     if (!agent || agent.threadId !== input.threadId || agent.provider !== "codex")
       throw new LiveVoiceRefusedError(sourceText("error.liveVoice.unavailable"));
@@ -1251,6 +1267,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       threadId: input.threadId,
       sessionId: input.clientSessionId,
       ...(input.channelId ? { channelId: input.channelId } : {}),
+      completed: Deferred.makeUnsafe<void>(),
       cancelled: false,
     };
     // Hold the global slot before provider or thread setup yields. Otherwise two calls for
@@ -1351,7 +1368,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         },
       };
       this.#liveVoiceSessions.set(agent.id, session);
-      this.#pendingLiveVoiceStart = undefined;
       this.emit("liveVoice", {
         agentId: session.agentId,
         threadId: session.threadId,
@@ -1401,6 +1417,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
               if (!session || this.#liveVoiceSessions.get(agent.id) !== session) releaseLease();
             }),
       ),
+      Effect.ensuring(Effect.asVoid(Deferred.succeed(reservation.completed, undefined))),
     );
   }).bind(this);
 
@@ -1415,6 +1432,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       pending.sessionId === input.sessionId
     ) {
       pending.cancelled = true;
+      const pendingSession = this.#liveVoiceSessions.get(input.agentId);
+      const stop =
+        pendingSession?.sessionId === input.sessionId
+          ? pendingSession.adapter
+              .stop(pendingSession.providerThreadId)
+              .pipe(Effect.tap(() => Effect.sync(() => pendingSession.finish("closed"))))
+          : Effect.void;
+      yield* stop.pipe(Effect.onExit(() => Deferred.await(pending.completed)));
       return;
     }
     const session = this.#liveVoiceSessions.get(input.agentId);
@@ -1433,6 +1458,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this: AgentService,
     input: LiveVoiceSendTextInput,
   ) {
+    if (this.#removal.deleting().has(input.agentId))
+      throw new LiveVoiceRefusedError(sourceText("error.liveVoice.unavailable"));
     const session = this.#liveVoiceSessions.get(input.agentId);
     const agent = this.#store.list().find((candidate) => candidate.id === input.agentId);
     if (
@@ -1446,59 +1473,86 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       !this.#providers.hasCodexChatGptAccount()
     )
       throw new LiveVoiceRefusedError(sourceText("error.liveVoice.unavailable"));
-    const account = yield* session.client.request(
-      "account/read",
-      { refreshToken: false },
-      decodeAccountReadResult,
-      5_000,
-    );
-    if (account.account?.type !== "chatgpt")
-      throw new LiveVoiceRefusedError(sourceText("error.liveVoice.accountRequired"));
-    const providerItemId = randomUUID();
-    const clientUserMessageId = liveVoiceConversationMessageId(providerItemId);
-    const persistSubmission = () =>
-      this.#persistLiveVoiceTranscript(
-        agent.id,
-        {
-          id: providerItemId,
-          realtimeSessionId: session.sessionId,
-          type: "transcriptSegment",
-          role: "user",
+    const completion = Deferred.makeUnsafe<void>();
+    let pendingTexts = this.#pendingLiveVoiceTexts.get(agent.id);
+    if (!pendingTexts) {
+      pendingTexts = new Set();
+      this.#pendingLiveVoiceTexts.set(agent.id, pendingTexts);
+    }
+    pendingTexts.add(completion);
+    const send = Effect.gen({ self: this }, function* () {
+      const account = yield* session.client.request(
+        "account/read",
+        { refreshToken: false },
+        decodeAccountReadResult,
+        5_000,
+      );
+      if (
+        this.#removal.deleting().has(agent.id) ||
+        this.#liveVoiceSessions.get(agent.id) !== session ||
+        !session.client.running
+      )
+        throw new LiveVoiceRefusedError(sourceText("error.liveVoice.unavailable"));
+      if (account.account?.type !== "chatgpt")
+        throw new LiveVoiceRefusedError(sourceText("error.liveVoice.accountRequired"));
+      const providerItemId = randomUUID();
+      const clientUserMessageId = liveVoiceConversationMessageId(providerItemId);
+      const persistSubmission = () =>
+        this.#persistLiveVoiceTranscript(
+          agent.id,
+          {
+            id: providerItemId,
+            realtimeSessionId: session.sessionId,
+            type: "transcriptSegment",
+            role: "user",
+            text: input.text,
+          },
+          session.channel,
+        );
+      yield* session.adapter
+        .startOrSteerUserTurn(session.providerThreadId, {
+          clientUserMessageId,
           text: input.text,
-        },
-        session.channel,
-      );
-    yield* session.adapter
-      .startOrSteerUserTurn(session.providerThreadId, {
-        clientUserMessageId,
-        text: input.text,
-        model: agent.model,
-        effort: agent.reasoningEffort,
-        cwd: agent.workspacePath,
-        runtimeWorkspaceRoots: workspaceWritableRoots(agent, this.#store.sharedRoot),
-        sandboxPolicy: codexSandboxPolicy(agent, this.#store.sharedRoot),
-        additionalContext: {
-          openbot_live_voice_spoken_context: {
-            kind: "untrusted",
-            value: liveVoiceSpokenContext(session),
+          model: agent.model,
+          effort: agent.reasoningEffort,
+          cwd: agent.workspacePath,
+          runtimeWorkspaceRoots: workspaceWritableRoots(agent, this.#store.sharedRoot),
+          sandboxPolicy: codexSandboxPolicy(agent, this.#store.sharedRoot),
+          additionalContext: {
+            openbot_live_voice_spoken_context: {
+              kind: "untrusted",
+              value: liveVoiceSpokenContext(session),
+            },
+            openbot_live_voice_typed_dispatch: {
+              kind: "application",
+              value: LIVE_VOICE_TYPED_DISPATCH_INSTRUCTION,
+            },
           },
-          openbot_live_voice_typed_dispatch: {
-            kind: "application",
-            value: LIVE_VOICE_TYPED_DISPATCH_INSTRUCTION,
-          },
-        },
-      })
-      .pipe(
-        Effect.tapError((failure) =>
-          Effect.sync(() => {
-            // Only a JSON-RPC rejection proves the provider refused the turn. A timeout, stream close,
-            // or other transport failure may follow an accepted request, so keep its canonical row.
-            if (failure instanceof ProviderClientOperationError && !(failure.cause instanceof AppServerError))
-              persistSubmission();
-          }),
-        ),
-      );
-    persistSubmission();
+        })
+        .pipe(
+          Effect.tapError((failure) =>
+            Effect.sync(() => {
+              // Only a JSON-RPC rejection proves the provider refused the turn. A timeout, stream close,
+              // or other transport failure may follow an accepted request, so keep its canonical row.
+              if (failure instanceof ProviderClientOperationError && !(failure.cause instanceof AppServerError))
+                persistSubmission();
+            }),
+          ),
+        );
+      persistSubmission();
+      if (this.#removal.deleting().has(agent.id))
+        throw new LiveVoiceRefusedError(sourceText("error.liveVoice.unavailable"));
+    });
+    return yield* send.pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          pendingTexts.delete(completion);
+          if (pendingTexts.size === 0 && this.#pendingLiveVoiceTexts.get(agent.id) === pendingTexts)
+            this.#pendingLiveVoiceTexts.delete(agent.id);
+          Deferred.doneUnsafe(completion, Effect.void);
+        }),
+      ),
+    );
   }).bind(this);
 
   getAnalytics(input: AgentAnalyticsInput) {

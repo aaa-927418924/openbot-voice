@@ -73,6 +73,7 @@ class FakeLiveVoiceClient extends FakeAgentClient {
   liveTurnStartError: Error | undefined;
   earlyTranscriptText: string | undefined;
   closeRealtimeStartAfterEarlyTranscript = false;
+  realtimeStopHook: (() => Promise<void>) | undefined;
 
   constructor(_providerEcho: boolean, requestHook?: (method: string, provider: AgentProvider) => Promise<void>) {
     super("codex", "CODEX_DONE", true, true, {}, requestHook);
@@ -106,7 +107,7 @@ class FakeLiveVoiceClient extends FakeAgentClient {
     }
     if (method !== "thread/realtime/start" && method !== "thread/realtime/stop")
       return super.request(method, params, decoder);
-    return Effect.sync(() => {
+    const completeRealtimeRequest = () => {
       const threadId = paramsRecord(params)?.threadId;
       if (typeof threadId !== "string") throw new Error("Live voice request has no thread id.");
       if (method === "thread/realtime/start") {
@@ -142,7 +143,12 @@ class FakeLiveVoiceClient extends FakeAgentClient {
         this.emit("notification", notification("thread/realtime/closed", { threadId }));
       }
       return decoder({});
-    });
+    };
+    const realtimeStopHook = this.realtimeStopHook;
+    if (method === "thread/realtime/stop" && realtimeStopHook) {
+      return Effect.promise(realtimeStopHook).pipe(Effect.map(completeRealtimeRequest));
+    }
+    return Effect.sync(completeRealtimeRequest);
   }
 
   markHostRestarted(): void {
@@ -1423,6 +1429,286 @@ describe.sequential("AgentService: providers", () => {
     expect(service.listQueue("chief").deliveries).toEqual([]);
     await expect(runCauseEffect(service.deleteAgent("chief"))).rejects.toThrow("Stop the agent");
     expect(service.listAgents().some((agent) => agent.id === "chief")).toBe(true);
+  });
+
+  it("blocks new work while it waits for Live Voice to stop before deletion", async () => {
+    const liveClient = new FakeLiveVoiceClient(false);
+    const { service: agentService } = await startService(root, {
+      preferredProvider: "codex",
+      client: () => liveClient,
+    });
+    service = agentService;
+    await runCauseEffect(service.sendMessage({ agentId: "chief", text: "Create the provider thread." }));
+    await waitForQueue(service, "chief", (queue) =>
+      queue.deliveries.every((delivery) => delivery.status === "completed"),
+    );
+    const agent = service.listAgents().find((candidate) => candidate.id === "chief");
+    if (!agent?.threadId) throw new Error("The provider thread was not created.");
+    const started = await runCauseEffect(
+      service.startLiveVoice({
+        agentId: agent.id,
+        threadId: agent.threadId,
+        clientSessionId: randomUUID(),
+        sdpOffer: "offer-sdp",
+      }),
+    );
+
+    let signalStopRequested!: () => void;
+    const stopRequested = new Promise<void>((resolve) => {
+      signalStopRequested = resolve;
+    });
+    let releaseStop!: () => void;
+    const stopGate = new Promise<void>((resolve) => {
+      releaseStop = resolve;
+    });
+    liveClient.realtimeStopHook = async () => {
+      signalStopRequested();
+      await stopGate;
+    };
+
+    const deletion = runCauseEffect(service.deleteAgent(agent.id));
+    await stopRequested;
+    const liveRequestsBeforeRefusal = liveClient.liveRequests.length;
+    type Outcome = { ok: true } | { ok: false; cause: unknown };
+    const captureOutcome = (operation: Promise<unknown>): Promise<Outcome> =>
+      operation.then(
+        () => ({ ok: true as const }),
+        (cause: unknown) => ({ ok: false as const, cause }),
+      );
+    let results: [Outcome, Outcome, Outcome] | undefined;
+    try {
+      const startResult = await captureOutcome(
+        runCauseEffect(
+          service.startLiveVoice({
+            agentId: agent.id,
+            threadId: agent.threadId,
+            clientSessionId: randomUUID(),
+            sdpOffer: "second-offer-sdp",
+          }),
+        ),
+      );
+      const textResult = await captureOutcome(
+        runCauseEffect(
+          service.sendLiveVoiceText({
+            agentId: agent.id,
+            threadId: agent.threadId,
+            sessionId: started.sessionId,
+            text: "Do not start a typed turn during deletion.",
+          }),
+        ),
+      );
+      const sendResult = await captureOutcome(
+        runCauseEffect(service.sendMessage({ agentId: agent.id, text: "Do not start during deletion." })),
+      );
+      results = [startResult, textResult, sendResult];
+    } finally {
+      releaseStop();
+    }
+    const deletionResult = await deletion.then(
+      () => ({ ok: true as const }),
+      (cause: unknown) => ({ ok: false as const, cause }),
+    );
+    if (!results) throw new Error("Deletion ingress attempts did not settle.");
+    const [startResult, textResult, sendResult] = results;
+    const errorMessage = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause));
+    expect(startResult.ok).toBe(false);
+    if (startResult.ok) throw new Error("Live Voice start unexpectedly succeeded during deletion.");
+    expect(errorMessage(startResult.cause)).toContain(sourceText("error.liveVoice.unavailable"));
+    expect(textResult.ok).toBe(false);
+    if (textResult.ok) throw new Error("Live Voice text unexpectedly succeeded during deletion.");
+    expect(errorMessage(textResult.cause)).toContain(sourceText("error.liveVoice.unavailable"));
+    expect(liveClient.liveRequests).toHaveLength(liveRequestsBeforeRefusal);
+    expect(sendResult.ok).toBe(false);
+    if (sendResult.ok) throw new Error("Message unexpectedly succeeded during deletion.");
+    expect(errorMessage(sendResult.cause)).toContain("The recipient is being deleted. Retry after deletion finishes.");
+    expect(deletionResult.ok).toBe(true);
+    expect(service.listAgents().some((candidate) => candidate.id === agent.id)).toBe(false);
+  });
+
+  it("cancels and waits for a pending Live Voice start before deleting agent data", async () => {
+    let pauseAccountRead = false;
+    let providerStartPaused = false;
+    let signalAccountRead!: () => void;
+    const accountReadStarted = new Promise<void>((resolve) => {
+      signalAccountRead = resolve;
+    });
+    let releaseAccountRead!: () => void;
+    const accountReadGate = new Promise<void>((resolve) => {
+      releaseAccountRead = resolve;
+    });
+    let cleanupStartedWhileProviderPaused = false;
+    const liveClient = new FakeLiveVoiceClient(false, async (method) => {
+      if (!pauseAccountRead || method !== "account/read") return;
+      providerStartPaused = true;
+      signalAccountRead();
+      await accountReadGate;
+      providerStartPaused = false;
+    });
+    const { service: agentService } = await startService(root, {
+      preferredProvider: "codex",
+      client: () => liveClient,
+      deleteWithRevokedApproval: (_agentId, remove) => {
+        if (providerStartPaused) cleanupStartedWhileProviderPaused = true;
+        return remove();
+      },
+    });
+    service = agentService;
+    await runCauseEffect(service.sendMessage({ agentId: "chief", text: "Create the Codex thread." }));
+    await waitForQueue(service, "chief", (queue) =>
+      queue.deliveries.every((delivery) => delivery.status === "completed"),
+    );
+    const agent = service.listAgents().find((candidate) => candidate.id === "chief");
+    if (!agent?.threadId) throw new Error("The Codex thread was not created.");
+
+    const requestsBeforeStart = liveClient.liveRequests.length;
+    pauseAccountRead = true;
+    const start = runCauseEffect(
+      service.startLiveVoice({
+        agentId: agent.id,
+        threadId: agent.threadId,
+        clientSessionId: randomUUID(),
+        sdpOffer: "offer-sdp",
+      }),
+    ).then(
+      () => ({ ok: true as const }),
+      (cause: unknown) => ({ ok: false as const, cause }),
+    );
+
+    let deletion: Promise<{ ok: true } | { ok: false; cause: unknown }> | undefined;
+    let cleanupWasEarly = false;
+    try {
+      await accountReadStarted;
+      deletion = runCauseEffect(service.deleteAgent(agent.id)).then(
+        () => ({ ok: true as const }),
+        (cause: unknown) => ({ ok: false as const, cause }),
+      );
+      cleanupWasEarly = cleanupStartedWhileProviderPaused;
+    } finally {
+      pauseAccountRead = false;
+      releaseAccountRead();
+    }
+    if (!deletion) throw new Error("Agent deletion did not start.");
+
+    const [startResult, deletionResult] = await Promise.all([start, deletion]);
+    expect(startResult.ok).toBe(false);
+    if (startResult.ok) throw new Error("Live Voice startup unexpectedly succeeded during deletion.");
+    const startErrorMessage =
+      startResult.cause instanceof Error ? startResult.cause.message : String(startResult.cause);
+    expect(startErrorMessage).toContain(sourceText("error.liveVoice.unavailable"));
+    expect(deletionResult.ok).toBe(true);
+    expect(cleanupWasEarly).toBe(false);
+    expect(cleanupStartedWhileProviderPaused).toBe(false);
+    const startupRequests = liveClient.liveRequests.slice(requestsBeforeStart).map((request) => request.method);
+    expect(startupRequests).toContain("account/read");
+    expect(startupRequests).not.toContain("thread/realtime/start");
+    expect(service.listAgents().some((candidate) => candidate.id === agent.id)).toBe(false);
+
+    // The failed start must release its per-agent voice lease as well as the global reservation.
+    const secondAgent = await runCauseEffect(service.createAgent({ ...CREATE_AGENT_INPUT, name: "Second agent" }));
+    await waitForQueue(service, secondAgent.id, (queue) =>
+      queue.deliveries.every((delivery) => delivery.status === "completed"),
+    );
+    const second = service.listAgents().find((candidate) => candidate.id === secondAgent.id);
+    if (!second?.threadId) throw new Error("The second agent thread was not created.");
+    const secondVoice = await runCauseEffect(
+      service.startLiveVoice({
+        agentId: second.id,
+        threadId: second.threadId,
+        clientSessionId: randomUUID(),
+        sdpOffer: "second-offer-sdp",
+      }),
+    );
+    await runCauseEffect(
+      service.stopLiveVoice({ agentId: second.id, threadId: second.threadId, sessionId: secondVoice.sessionId }),
+    );
+  });
+
+  it("rejects a Live Voice text submission still waiting on account read when deletion starts", async () => {
+    let pauseAccountRead = false;
+    let providerTextPaused = false;
+    let signalAccountRead!: () => void;
+    const accountReadStarted = new Promise<void>((resolve) => {
+      signalAccountRead = resolve;
+    });
+    let releaseAccountRead!: () => void;
+    const accountReadGate = new Promise<void>((resolve) => {
+      releaseAccountRead = resolve;
+    });
+    let cleanupStartedWhileTextPaused = false;
+    const liveClient = new FakeLiveVoiceClient(false, async (method) => {
+      if (!pauseAccountRead || method !== "account/read") return;
+      providerTextPaused = true;
+      signalAccountRead();
+      await accountReadGate;
+      providerTextPaused = false;
+    });
+    const { service: agentService } = await startService(root, {
+      preferredProvider: "codex",
+      client: () => liveClient,
+      deleteWithRevokedApproval: (_agentId, remove) => {
+        if (providerTextPaused) cleanupStartedWhileTextPaused = true;
+        return remove();
+      },
+    });
+    service = agentService;
+    await runCauseEffect(service.sendMessage({ agentId: "chief", text: "Create the Codex thread." }));
+    await waitForQueue(service, "chief", (queue) =>
+      queue.deliveries.every((delivery) => delivery.status === "completed"),
+    );
+    const agent = service.listAgents().find((candidate) => candidate.id === "chief");
+    if (!agent?.threadId) throw new Error("The Codex thread was not created.");
+    const started = await runCauseEffect(
+      service.startLiveVoice({
+        agentId: agent.id,
+        threadId: agent.threadId,
+        clientSessionId: randomUUID(),
+        sdpOffer: "offer-sdp",
+      }),
+    );
+
+    const requestsBeforeText = liveClient.liveRequests.length;
+    const text = "Do not submit this text after deletion begins.";
+    pauseAccountRead = true;
+    const send = runCauseEffect(
+      service.sendLiveVoiceText({
+        agentId: agent.id,
+        threadId: agent.threadId,
+        sessionId: started.sessionId,
+        text,
+      }),
+    ).then(
+      () => ({ ok: true as const }),
+      (cause: unknown) => ({ ok: false as const, cause }),
+    );
+
+    let deletion: Promise<{ ok: true } | { ok: false; cause: unknown }> | undefined;
+    let cleanupWasEarly = false;
+    try {
+      await accountReadStarted;
+      deletion = runCauseEffect(service.deleteAgent(agent.id)).then(
+        () => ({ ok: true as const }),
+        (cause: unknown) => ({ ok: false as const, cause }),
+      );
+      cleanupWasEarly = cleanupStartedWhileTextPaused;
+    } finally {
+      pauseAccountRead = false;
+      releaseAccountRead();
+    }
+    if (!deletion) throw new Error("Agent deletion did not start.");
+
+    const [sendResult, deletionResult] = await Promise.all([send, deletion]);
+    expect(sendResult.ok).toBe(false);
+    if (sendResult.ok) throw new Error("Live Voice text unexpectedly succeeded during deletion.");
+    const sendErrorMessage = sendResult.cause instanceof Error ? sendResult.cause.message : String(sendResult.cause);
+    expect(sendErrorMessage).toContain(sourceText("error.liveVoice.unavailable"));
+    expect(deletionResult.ok).toBe(true);
+    expect(cleanupWasEarly).toBe(false);
+    expect(cleanupStartedWhileTextPaused).toBe(false);
+    const textRequests = liveClient.liveRequests.slice(requestsBeforeText).map((request) => request.method);
+    expect(textRequests).toContain("account/read");
+    expect(textRequests).not.toContain("turn/start");
+    expect(textRequests).not.toContain("thread/inject_items");
+    expect(service.listAgents().some((candidate) => candidate.id === agent.id)).toBe(false);
   });
 
   it("refreshes outdated Codex tools while preserving the agent and conversation, then resumes unchanged tools", async () => {

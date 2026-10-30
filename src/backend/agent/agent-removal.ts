@@ -105,11 +105,6 @@ export class AgentRemoval {
       }
       return candidate;
     });
-    yield* this.#hooks
-      .stopLiveVoice(agentId)
-      .pipe(
-        Effect.mapError(() => new AgentRemovalFailed({ cause: new Error(sourceText("error.agent.deleteIncomplete")) })),
-      );
     yield* Effect.acquireUseRelease(
       removalStep(() => {
         const gate = this.#duplication.releaseForDelete(agentId);
@@ -119,7 +114,36 @@ export class AgentRemoval {
       }),
       ({ wasPending }) =>
         Effect.gen({ self: this }, function* () {
+          // The first idle check happens before the deletion gate is installed. Check again after
+          // blocking deliveries so work accepted in between can never be orphaned by cleanup.
+          yield* removalStep(() => {
+            if (
+              this.#mailbox.hasUnfinishedDelivery(agentId) ||
+              this.#conversation.workingSnapshot(agentId)?.activeTurnId
+            ) {
+              throw new Error(sourceText("error.agent.stopBeforeDelete"));
+            }
+          });
           yield* removalStep(() => this.#routines.arm());
+          // Keep the gate active while stopping Live Voice. Otherwise a new message can start
+          // after the idle check and before provider sessions and agent files are removed.
+          yield* this.#hooks
+            .stopLiveVoice(agentId)
+            .pipe(
+              Effect.mapError(
+                () => new AgentRemovalFailed({ cause: new Error(sourceText("error.agent.deleteIncomplete")) }),
+              ),
+            );
+          // Typed Live Voice submissions can finish a provider turn while the stop hook waits for
+          // them. Do not remove the agent if that created work after the earlier idle check.
+          yield* removalStep(() => {
+            if (
+              this.#mailbox.hasUnfinishedDelivery(agentId) ||
+              this.#conversation.workingSnapshot(agentId)?.activeTurnId
+            ) {
+              throw new Error(sourceText("error.agent.stopBeforeDelete"));
+            }
+          });
           yield* this.deleteData(agent ?? { id: agentId, threadId: null });
           yield* removalStep(() => {
             this.#channels.removeDeletedMembers(new Set(this.#store.list().map((candidate) => candidate.id)));
