@@ -202,6 +202,28 @@ describe("HostService account binding", () => {
     expect(store.configured).toBe(false);
   });
 
+  it("renames the saved account host when the visible host status is temporarily unconfigured", async () => {
+    const { service, store, signIn } = await createHostService({ localOnlyNetworking: true });
+    await signIn(first);
+    await expect(runCauseEffect(service.configure({ serverName: "OpenBot" }))).resolves.toMatchObject({
+      configured: true,
+      serverName: "OpenBot",
+    });
+    const originalServerId = store.getIdentity()?.serverId;
+
+    // Account changes clear the active selection before the next host is applied. The existing
+    // account-owned host remains on disk and must be selected instead of being configured again.
+    service.unbindChangedAccount(null);
+    expect(service.getStatus().configured).toBe(false);
+
+    await expect(runCauseEffect(service.configure({ serverName: "Renamed OpenBot" }))).resolves.toMatchObject({
+      configured: true,
+      serverName: "Renamed OpenBot",
+    });
+    expect(store.getIdentity()).toMatchObject({ serverId: originalServerId, serverName: "Renamed OpenBot" });
+    expect(store.getOwnerAccountId()).toBe(first.id);
+  });
+
   it("keeps the first host for its owner and lets the newly signed-in account configure after a delayed write", async () => {
     const { service, store, signIn, announce, root } = await createHostService({ localOnlyNetworking: true });
     await signIn(first);

@@ -542,13 +542,48 @@ export class HostService extends EventEmitter<HostEvents> {
       if (this.#options.localOnlyNetworking) {
         const account = yield* remoteDecode(() => this.#options.getSignedInUser());
         const isCurrentAccount = () => this.#signedInAccountId() === account.id;
-        const identity = yield* this.#options.store.configure(
-          input.serverName,
-          "owner",
-          randomBytes(32).toString("base64url"),
-          account.id,
-          isCurrentAccount,
-        );
+        // The renderer can still show an unconfigured host while an account switch is being
+        // applied. Re-select this account's saved host before treating the request as first-time
+        // setup; otherwise TeamStore rejects the rename as a duplicate host for this account.
+        const existingAccountHost = yield* this.#options.store.activateLocalHost(account.id, account.email);
+        if (!isCurrentAccount()) {
+          yield* this.#restoreLocalHostSelectionForSignedInAccount().pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                this.#status = initialHostStatus(null, this.#options.unattended ?? false);
+                this.emit("changed", this.getStatus());
+              }),
+            ),
+          );
+          return yield* new RemoteWorkflowError({
+            cause: new Error(sourceText("error.team.accountChangedDuringCreate")),
+          });
+        }
+        if (!existingAccountHost && this.#options.store.configured) {
+          yield* this.#options.store.deactivate();
+          if (!isCurrentAccount()) {
+            yield* this.#restoreLocalHostSelectionForSignedInAccount().pipe(
+              Effect.ensuring(
+                Effect.sync(() => {
+                  this.#status = initialHostStatus(null, this.#options.unattended ?? false);
+                  this.emit("changed", this.getStatus());
+                }),
+              ),
+            );
+            return yield* new RemoteWorkflowError({
+              cause: new Error(sourceText("error.team.accountChangedDuringCreate")),
+            });
+          }
+        }
+        const identity = existingAccountHost
+          ? yield* this.#options.store.updateIdentity(input)
+          : yield* this.#options.store.configure(
+              input.serverName,
+              "owner",
+              randomBytes(32).toString("base64url"),
+              account.id,
+              isCurrentAccount,
+            );
         if (!isCurrentAccount()) {
           yield* this.#restoreLocalHostSelectionForSignedInAccount().pipe(
             Effect.ensuring(
