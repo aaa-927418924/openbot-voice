@@ -713,13 +713,46 @@ export class HostService extends EventEmitter<HostEvents> {
    */
   #restoreLocalHostSelectionForSignedInAccount(): Effect.Effect<void, RemoteWorkflowError> {
     this.#options.store.unbindActiveHost();
-    let user: CentralAuthUser | null = null;
-    try {
-      user = this.#options.getSignedInUser();
-    } catch {
-      // A signed-out account has no local host to bind.
-    }
-    return user ? this.#options.store.activateAccount(user) : this.#options.store.deactivate();
+    return Effect.gen({ self: this }, function* () {
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        let user: CentralAuthUser | null = null;
+        try {
+          user = this.#options.getSignedInUser();
+        } catch {
+          // A signed-out account has no local host to bind.
+        }
+        if (!user) {
+          yield* this.#options.store.deactivate();
+          if (this.#signedInAccountId() === null) return;
+          this.#options.store.unbindActiveHost();
+          continue;
+        }
+
+        const activation = yield* this.#options.store.activateAccount(user).pipe(Effect.result);
+        if (Result.isFailure(activation)) {
+          if (this.#signedInAccountId() !== user.id) {
+            this.#options.store.unbindActiveHost();
+            continue;
+          }
+          // Activation restores its previous file on write failure. Clear that stale account ID
+          // as a recovery step, so a later first-time setup for this account can proceed safely.
+          yield* this.#options.store.deactivate();
+          if (this.#signedInAccountId() !== user.id) {
+            this.#options.store.unbindActiveHost();
+            continue;
+          }
+          return yield* new RemoteWorkflowError({ cause: activation.failure.cause });
+        }
+        if (this.#signedInAccountId() === user.id) return;
+        this.#options.store.unbindActiveHost();
+      }
+      // Do not persist a selection for an account that kept changing while each activation
+      // was being written. Clearing it leaves all hosts intact and makes a later setup retryable.
+      yield* this.#options.store.deactivate();
+      return yield* new RemoteWorkflowError({
+        cause: new Error(sourceText("error.team.accountChangedDuringCreate")),
+      });
+    });
   }
 
   #assertStillActiveHost(serverId: string): void {

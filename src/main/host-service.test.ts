@@ -171,6 +171,7 @@ describe("HostService screen recording", () => {
 describe("HostService account binding", () => {
   const first = { id: "account-a", email: "a@example.com", name: "A", avatarUrl: null };
   const second = { id: "account-b", email: "b@example.com", name: "B", avatarUrl: null };
+  const third = { id: "account-c", email: "c@example.com", name: "C", avatarUrl: null };
 
   it("configures an account-owned local host and prevents another account from adopting it", async () => {
     const registerRemoteHost = vi.fn(() => remoteCall(async () => undefined));
@@ -250,6 +251,134 @@ describe("HostService account binding", () => {
     expect(saved.activeAccountId).toBe(second.id);
     expect(saved.hosts.map((host) => host.serverName).sort()).toEqual(["Account A host", "Account B host"]);
     expect(store.getOwnerAccountId()).toBe(second.id);
+  });
+
+  it("restores the latest account when sign-in changes twice during selection writes", async () => {
+    const { service, signIn, announce, root } = await createHostService({ localOnlyNetworking: true });
+    await signIn(first);
+
+    const path = join(root, "team.json");
+    const writeFileAtomically = atomicJsonFile.writeFileAtomically;
+    const writeSpy = vi.spyOn(atomicJsonFile, "writeFileAtomically");
+    let markHostWriteStarted: () => void = () => undefined;
+    const hostWriteStarted = new Promise<void>((resolve) => {
+      markHostWriteStarted = resolve;
+    });
+    let releaseHostWrite: () => void = () => undefined;
+    const hostWriteGate = new Promise<void>((resolve) => {
+      releaseHostWrite = resolve;
+    });
+    let markSecondSelectionStarted: () => void = () => undefined;
+    const secondSelectionStarted = new Promise<void>((resolve) => {
+      markSecondSelectionStarted = resolve;
+    });
+    let releaseSecondSelection: () => void = () => undefined;
+    const secondSelectionGate = new Promise<void>((resolve) => {
+      releaseSecondSelection = resolve;
+    });
+    let delayedHostWrite = false;
+    let delayedSecondSelection = false;
+    writeSpy.mockImplementation((targetPath, content, options) => {
+      if (targetPath !== path) return writeFileAtomically(targetPath, content, options);
+      if (!delayedHostWrite) {
+        delayedHostWrite = true;
+        return Effect.tryPromise({
+          try: async () => {
+            markHostWriteStarted();
+            await hostWriteGate;
+            await Effect.runPromise(writeFileAtomically(targetPath, content, options));
+          },
+          catch: (cause) => new atomicJsonFile.AtomicFileWriteError({ operation: "write", cause }),
+        });
+      }
+      if (!delayedSecondSelection && String(content).includes('"activeAccountId":"account-b"')) {
+        delayedSecondSelection = true;
+        return Effect.tryPromise({
+          try: async () => {
+            markSecondSelectionStarted();
+            await secondSelectionGate;
+            await Effect.runPromise(writeFileAtomically(targetPath, content, options));
+          },
+          catch: (cause) => new atomicJsonFile.AtomicFileWriteError({ operation: "write", cause }),
+        });
+      }
+      return writeFileAtomically(targetPath, content, options);
+    });
+
+    const pendingSetup = runCauseEffect(service.configure({ serverName: "Account A host" }));
+    await hostWriteStarted;
+    announce(second);
+    releaseHostWrite();
+    await secondSelectionStarted;
+    // The second selection write can finish after a still newer login has been announced.
+    announce(third);
+    releaseSecondSelection();
+    await expect(pendingSetup).rejects.toThrow();
+
+    await expect(runCauseEffect(service.configure({ serverName: "Account C host" }))).resolves.toMatchObject({
+      configured: true,
+      serverName: "Account C host",
+    });
+    const saved: { activeAccountId: string | null; hosts: Array<{ serverName: string }> } = JSON.parse(
+      await readFile(path, "utf8"),
+    );
+    expect(saved.activeAccountId).toBe(third.id);
+    expect(saved.hosts.map((host) => host.serverName).sort()).toEqual(["Account A host", "Account C host"]);
+  });
+
+  it("clears the stale selection if restoring the newly signed-in account fails once", async () => {
+    const { service, signIn, announce, root } = await createHostService({ localOnlyNetworking: true });
+    await signIn(first);
+
+    let markWriteStarted: () => void = () => undefined;
+    const writeStarted = new Promise<void>((resolve) => {
+      markWriteStarted = resolve;
+    });
+    let releaseWrite: () => void = () => undefined;
+    const writeGate = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    const path = join(root, "team.json");
+    const writeFileAtomically = atomicJsonFile.writeFileAtomically;
+    const writeSpy = vi.spyOn(atomicJsonFile, "writeFileAtomically");
+    let writeNumber = 0;
+    writeSpy.mockImplementation((targetPath, content, options) => {
+      if (targetPath !== path) return writeFileAtomically(targetPath, content, options);
+      writeNumber += 1;
+      if (writeNumber === 1) {
+        return Effect.tryPromise({
+          try: async () => {
+            markWriteStarted();
+            await writeGate;
+            await Effect.runPromise(writeFileAtomically(targetPath, content, options));
+          },
+          catch: (cause) => new atomicJsonFile.AtomicFileWriteError({ operation: "write", cause }),
+        });
+      }
+      if (writeNumber === 2) {
+        return Effect.fail(
+          new atomicJsonFile.AtomicFileWriteError({ operation: "write", cause: new Error("temporary failure") }),
+        );
+      }
+      return writeFileAtomically(targetPath, content, options);
+    });
+
+    const pendingSetup = runCauseEffect(service.configure({ serverName: "Account A host" }));
+    await writeStarted;
+    announce(second);
+    releaseWrite();
+    await expect(pendingSetup).rejects.toThrow();
+
+    const savedAfterRecovery: { activeAccountId: string | null; hosts: Array<{ serverName: string }> } = JSON.parse(
+      await readFile(path, "utf8"),
+    );
+    expect(savedAfterRecovery.activeAccountId).toBeNull();
+    expect(savedAfterRecovery.hosts.map((host) => host.serverName)).toEqual(["Account A host"]);
+
+    await expect(runCauseEffect(service.configure({ serverName: "Account B host" }))).resolves.toMatchObject({
+      configured: true,
+      serverName: "Account B host",
+    });
   });
 
   it("refuses to start an account-owned local host after another account signs in", async () => {
