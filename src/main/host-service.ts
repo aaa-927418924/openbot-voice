@@ -550,18 +550,28 @@ export class HostService extends EventEmitter<HostEvents> {
           isCurrentAccount,
         );
         if (!isCurrentAccount()) {
-          this.#options.store.unbindActiveHost();
-          this.#status = initialHostStatus(null, this.#options.unattended ?? false);
-          this.emit("changed", this.getStatus());
+          yield* this.#restoreLocalHostSelectionForSignedInAccount().pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                this.#status = initialHostStatus(null, this.#options.unattended ?? false);
+                this.emit("changed", this.getStatus());
+              }),
+            ),
+          );
           return yield* new RemoteWorkflowError({
             cause: new Error(sourceText("error.team.accountChangedDuringCreate")),
           });
         }
         if (input.logo !== undefined) yield* this.#options.store.updateIdentity({ logo: input.logo });
         if (!isCurrentAccount()) {
-          this.#options.store.unbindActiveHost();
-          this.#status = initialHostStatus(null, this.#options.unattended ?? false);
-          this.emit("changed", this.getStatus());
+          yield* this.#restoreLocalHostSelectionForSignedInAccount().pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                this.#status = initialHostStatus(null, this.#options.unattended ?? false);
+                this.emit("changed", this.getStatus());
+              }),
+            ),
+          );
           return yield* new RemoteWorkflowError({
             cause: new Error(sourceText("error.team.accountChangedDuringCreate")),
           });
@@ -693,6 +703,23 @@ export class HostService extends EventEmitter<HostEvents> {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * A host setup can finish after authentication has moved to another account, before the
+   * normal account-switch callback has persisted that new selection. Leave the completed
+   * host stored for its original owner, but make the in-memory and persisted active selection
+   * match whichever account is signed in now so its next local-host setup is not rejected.
+   */
+  #restoreLocalHostSelectionForSignedInAccount(): Effect.Effect<void, RemoteWorkflowError> {
+    this.#options.store.unbindActiveHost();
+    let user: CentralAuthUser | null = null;
+    try {
+      user = this.#options.getSignedInUser();
+    } catch {
+      // A signed-out account has no local host to bind.
+    }
+    return user ? this.#options.store.activateAccount(user) : this.#options.store.deactivate();
   }
 
   #assertStillActiveHost(serverId: string): void {

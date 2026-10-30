@@ -1,4 +1,3 @@
-import type { Effect } from "effect";
 import { desktopCall } from "./remote-desktop-effects";
 import { remoteCall } from "./remote-service-effects";
 // @vitest-environment node
@@ -7,11 +6,13 @@ import { remoteCall } from "./remote-service-effects";
 // about which account's server it reports - not about a route. It lived in `team-api-server.test.ts`
 // until the suite was split by domain, where it was the one block testing a different class.
 
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CentralAuthUser } from "@openbot/contracts/ipc";
+import { Effect } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import * as atomicJsonFile from "../backend/atomic-json-file";
 import { runCauseEffect } from "../backend/effect-boundary";
 import { DEVELOPMENT_REMOTE_CLIENT_USERNAME, HostService } from "./host-service";
 import { createAgents, createBrowser, createMailbox, unimplemented } from "./team-api-server-test-harness";
@@ -198,6 +199,57 @@ describe("HostService account binding", () => {
     await runCauseEffect(store.activateAccount(second));
     await expect(runCauseEffect(store.activateLocalHost(second.id, second.email))).resolves.toBe(false);
     expect(store.configured).toBe(false);
+  });
+
+  it("keeps the first host for its owner and lets the newly signed-in account configure after a delayed write", async () => {
+    const { service, store, signIn, announce, root } = await createHostService({ localOnlyNetworking: true });
+    await signIn(first);
+
+    let markWriteStarted: () => void = () => undefined;
+    const writeStarted = new Promise<void>((resolve) => {
+      markWriteStarted = resolve;
+    });
+    let releaseWrite: () => void = () => undefined;
+    const writeGate = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    const path = join(root, "team.json");
+    const writeFileAtomically = atomicJsonFile.writeFileAtomically;
+    const writeSpy = vi.spyOn(atomicJsonFile, "writeFileAtomically");
+    let delayFirstWrite = true;
+    writeSpy.mockImplementation((targetPath, content, options) => {
+      if (targetPath !== path || !delayFirstWrite) return writeFileAtomically(targetPath, content, options);
+      delayFirstWrite = false;
+      return Effect.tryPromise({
+        try: async () => {
+          markWriteStarted();
+          await writeGate;
+          await Effect.runPromise(writeFileAtomically(targetPath, content, options));
+        },
+        catch: (cause) => new atomicJsonFile.AtomicFileWriteError({ operation: "write", cause }),
+      });
+    });
+
+    const pendingSetup = runCauseEffect(service.configure({ serverName: "Account A host" }));
+    await writeStarted;
+    // Central auth has announced B, but its asynchronous account-switch callback has not
+    // recorded B in the local TeamStore yet.
+    announce(second);
+    releaseWrite();
+    await expect(pendingSetup).rejects.toThrow();
+
+    await expect(runCauseEffect(service.configure({ serverName: "Account B host" }))).resolves.toMatchObject({
+      configured: true,
+      serverName: "Account B host",
+    });
+
+    const saved: {
+      activeAccountId: string | null;
+      hosts: Array<{ serverName: string }>;
+    } = JSON.parse(await readFile(path, "utf8"));
+    expect(saved.activeAccountId).toBe(second.id);
+    expect(saved.hosts.map((host) => host.serverName).sort()).toEqual(["Account A host", "Account B host"]);
+    expect(store.getOwnerAccountId()).toBe(second.id);
   });
 
   it("refuses to start an account-owned local host after another account signs in", async () => {
