@@ -275,7 +275,7 @@ export const messages = {
   "server.localAdmin.state.stopped": "停止中",
   "server.localAdmin.state.error": "エラー",
   "server.localAdmin.state.stale": "状態更新が停止しています",
-  "server.localAdmin.endpoint": "プライベート接続先",
+  "server.localAdmin.endpoint": "サーバーアドレス",
   "server.localAdmin.uptime": "稼働時間",
   "server.localAdmin.devices": "ログイン済み端末",
   "server.localAdmin.deviceNone": "ログイン済み端末はありません",

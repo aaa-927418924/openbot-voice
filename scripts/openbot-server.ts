@@ -148,7 +148,9 @@ async function runTui(): Promise<void> {
       process.stdout.write(`${t("server.localAdmin.noStatus")}\n`);
       return;
     }
-    process.stdout.write(`${t("server.localAdmin.title")} · ${stateLabel(status.state)} · ${status.apiUrl ?? "—"}\n`);
+    process.stdout.write(
+      `${t("server.localAdmin.title")} · ${stateLabel(status.state)} · ${t("server.localAdmin.endpoint")}: ${status.apiUrl ?? "—"}\n`,
+    );
     return;
   }
   emitKeypressEvents(process.stdin);

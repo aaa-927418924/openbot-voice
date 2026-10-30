@@ -419,7 +419,7 @@ export const messages = defineMessages("server", {
   "server.localAdmin.state.stopped": "STOPPED",
   "server.localAdmin.state.error": "ERROR",
   "server.localAdmin.state.stale": "NO STATUS UPDATE",
-  "server.localAdmin.endpoint": "Private endpoint",
+  "server.localAdmin.endpoint": "Server address",
   "server.localAdmin.uptime": "Uptime",
   "server.localAdmin.devices": "Signed-in devices",
   "server.localAdmin.deviceNone": "No signed-in devices",
