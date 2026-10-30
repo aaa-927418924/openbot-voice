@@ -256,6 +256,7 @@ const Servers = createSimpleContext({
     }
 
     let markServersLoaded: () => void = () => undefined;
+    const [initialServerListReady, setInitialServerListReady] = createSignal(false);
     const initialServersReady = new Promise<void>((resolve) => {
       markServersLoaded = resolve;
     });
@@ -272,9 +273,13 @@ const Servers = createSimpleContext({
         .then(
           (value) => {
             applyServerSummaries(value);
+            setInitialServerListReady(true);
             markServersLoaded();
           },
-          () => markServersLoaded(),
+          () => {
+            setInitialServerListReady(true);
+            markServersLoaded();
+          },
         );
       void serversPort()
         .host.getStatus()
@@ -391,6 +396,7 @@ const Servers = createSimpleContext({
       setHostUpdateOpener,
       activeServer,
       activeServerId,
+      initialServerListReady,
       activeServerSupportsCapability,
       hostStatus,
       setHostStatus,

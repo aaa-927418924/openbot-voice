@@ -139,9 +139,12 @@ export function AppProviders(props: ParentProps<AppProps>): JSX.Element {
 
 /** Server switches dispose scoped state; reconnects reload it without clearing cached data. */
 function ServerScopeBoundary(props: ParentProps<ScopedConversationProps>): JSX.Element {
-  const { activeServerId } = useServers();
+  const { activeServer, activeServerId, initialServerListReady } = useServers();
+  // Before the first server-list read finishes, keep the legacy local scope key stable. Once it
+  // finishes, use a distinct key for an actually empty server list so old scoped state is disposed.
+  const scopeKey = () => (initialServerListReady() ? (activeServer()?.id ?? "no-active-server") : activeServerId());
   return (
-    <Show keyed when={activeServerId()}>
+    <Show keyed when={scopeKey()}>
       <ScopedProviders stableConversation={props.stableConversation}>{props.children}</ScopedProviders>
     </Show>
   );
@@ -159,6 +162,7 @@ interface ScopedConversationProps {
 
 /** Everything whose lifetime is one server. See `server-scope.tsx`. */
 function ScopedProviders(props: ParentProps<ScopedConversationProps>): JSX.Element {
+  const { activeServer } = useServers();
   const conversationController = { ...props.stableConversation, ...createServerConversationState() };
   return (
     <ConversationControllerProvider controller={conversationController}>
@@ -176,7 +180,9 @@ function ScopedProviders(props: ParentProps<ScopedConversationProps>): JSX.Eleme
                             <AgentActionsProvider>
                               <ServerScopeProvider>
                                 <AgentEventBridge />
-                                <DynamicIslandBridge />
+                                <Show when={activeServer()}>
+                                  <DynamicIslandBridge />
+                                </Show>
                                 {props.children}
                               </ServerScopeProvider>
                             </AgentActionsProvider>

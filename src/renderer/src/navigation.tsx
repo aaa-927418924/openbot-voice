@@ -26,7 +26,7 @@ const Navigation = createSimpleContext({
   name: "Navigation",
   init: () => {
     const { peopleEnabled } = usePlatform();
-    const { activeServerId } = useServers();
+    const { activeServer, activeServerId } = useServers();
     const { currentTeamMember, directPeople } = usePresence();
     const {
       activeAgentId,
@@ -59,7 +59,7 @@ const Navigation = createSimpleContext({
     } | null>(null);
 
     function selectAgent(agentId: string) {
-      if (agentSetupOpen() && creatingAgent()) return;
+      if (!activeServer() || (agentSetupOpen() && creatingAgent())) return;
       // The rail and the sidebar sit outside the markup the report covers, so a
       // conversation is one click away while the report hides where it opens. Opening
       // one that stays hidden also reads it: `requestConversationRead` below is the
@@ -83,7 +83,7 @@ const Navigation = createSimpleContext({
     }
 
     async function selectDirectMember(memberId: string): Promise<void> {
-      if (agentSetupOpen() && creatingAgent()) return;
+      if (!activeServer() || (agentSetupOpen() && creatingAgent())) return;
       if (!peopleEnabled || !currentTeamMember() || !directPeople().some((member) => member.id === memberId)) return;
       // Past the guards, so a call that opens nothing leaves the report or the channel alone.
       dismissUsage();

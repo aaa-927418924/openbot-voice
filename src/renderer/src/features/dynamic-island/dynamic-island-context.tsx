@@ -6,6 +6,7 @@ import { usePlatform } from "../../platform";
 import { createSimpleContext } from "../../simple-context";
 import { useServers } from "../servers/servers-context";
 import { dynamicIslandPort } from "./dynamic-island-port";
+import { canApplyDynamicIslandServerEvent, dynamicIslandServerOrder } from "./dynamic-island-servers";
 
 /**
  * The macOS Dynamic Island projection: what the desktop shows about servers the
@@ -33,25 +34,14 @@ const DynamicIsland = createSimpleContext({
   name: "Dynamic Island",
   init: () => {
     const platform = usePlatform();
-    const { servers, activeServerId } = useServers();
+    const { servers, activeServerId, initialServerListReady } = useServers();
     const coordinator = new DynamicIslandCoordinator(islandText);
     const connectedServers = new Set(["local"]);
     let presentationScheduled = false;
 
     /** Active server first: main renders the head of this list as the leading item. */
     function serverOrder(): string[] {
-      const activeId = activeServerId();
-      const current = servers();
-      const ids = current
-        .filter((server) => connectedServers.has(server.id) && (server.kind === "local" || server.state === "online"))
-        .map((server) => server.id);
-      ids.sort((left, right) => Number(right === activeId) - Number(left === activeId));
-      const ordered = ids.length > 0 ? ids : ["local"];
-      // A muted server is muted here too: it contributes neither a presentation nor an attention
-      // count. The filter runs after the `["local"]` fallback so that fallback cannot put a muted
-      // local server back. An empty list is fine - the coordinator reads it as idle.
-      const muted = new Set(current.filter((server) => server.notificationsMuted).map((server) => server.id));
-      return ordered.filter((serverId) => !muted.has(serverId));
+      return dynamicIslandServerOrder(servers(), connectedServers, activeServerId(), initialServerListReady());
     }
 
     function publishPresentation(): void {
@@ -67,13 +57,18 @@ const DynamicIsland = createSimpleContext({
     }
 
     createEffect(
-      () =>
-        servers()
-          // Mute belongs in this key: it changes what `serverOrder` returns, and the user has to
-          // see that without restarting the app.
-          .map((server) => `${server.id}:${server.state}:${server.notificationsMuted}`)
-          .join("\u0000"),
       () => {
+        if (!initialServerListReady()) return null;
+        return (
+          servers()
+            // Mute belongs in this key: it changes what `serverOrder` returns, and the user has to
+            // see that without restarting the app.
+            .map((server) => `${server.id}:${server.state}:${server.notificationsMuted}`)
+            .join("\u0000")
+        );
+      },
+      () => {
+        if (!initialServerListReady()) return;
         // The key above decides when this runs; the list is read once for the current state.
         const currentServers = untrack(servers);
         const configuredServerIds = new Set(currentServers.map((server) => server.id));
@@ -83,7 +78,6 @@ const DynamicIsland = createSimpleContext({
             connectedServers.delete(serverId);
           }
         }
-        connectedServers.add("local");
         coordinator.retainServers([...configuredServerIds]);
         publishPresentation();
       },
@@ -92,7 +86,9 @@ const DynamicIsland = createSimpleContext({
     onSettled(() =>
       dynamicIslandPort().agent.onScopedEvent((event) => {
         flush(() => {
-          const server = servers().find((candidate) => candidate.id === event.serverId);
+          const currentServers = servers();
+          if (!canApplyDynamicIslandServerEvent(event.serverId, currentServers, initialServerListReady())) return;
+          const server = currentServers.find((candidate) => candidate.id === event.serverId);
           if (server?.kind === "remote" && server.state !== "online") return;
           connectedServers.add(event.serverId);
           coordinator.applyEvent(event, activeServerId());

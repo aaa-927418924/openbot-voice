@@ -132,29 +132,41 @@ export function WorkspaceSidebar(props: { peopleEnabled: boolean }) {
   return (
     <Sidebar
       channels={visibleChannels()}
-      deletedChannels={channels.supported() ? channels.state.channels.filter((channel) => channel.archived) : []}
+      deletedChannels={
+        activeServer() && channels.supported() ? channels.state.channels.filter((channel) => channel.archived) : []
+      }
       activeChannelId={channels.state.selectedId}
       onSelectChannel={(id) => void channels.open(id)}
       onEditChannel={(id) => void channels.editChannel(id)}
-      onDeleteChannel={channels.deletionSupported() ? channels.remove : undefined}
+      onDeleteChannel={activeServer() && channels.deletionSupported() ? channels.remove : undefined}
       onClearChannelHistory={
-        activeServer()?.kind === "local" || activeServerSupportsCapability(CHANNEL_HISTORY_DELETE_CAPABILITY)
+        activeServer() &&
+        (activeServer()?.kind === "local" || activeServerSupportsCapability(CHANNEL_HISTORY_DELETE_CAPABILITY))
           ? clearChannelHistory
           : undefined
       }
       showingArchivedChannels={channels.state.archived}
-      onToggleArchivedChannels={channels.supported() ? channels.toggleArchived : undefined}
-      onCreateChannel={channels.supported() ? channels.create : undefined}
-      onMarkAllRead={() => {
-        void markAllAgentMessagesRead();
-        void channels.markAllRead();
-      }}
-      hasUnread={agentList().some((agent) => (unreadReplies()[agent.id] ?? 0) > 0) || channels.hasUnread()}
+      onToggleArchivedChannels={activeServer() && channels.supported() ? channels.toggleArchived : undefined}
+      onCreateChannel={activeServer() && channels.supported() ? channels.create : undefined}
+      onMarkAllRead={
+        activeServer()
+          ? () => {
+              void markAllAgentMessagesRead();
+              void channels.markAllRead();
+            }
+          : undefined
+      }
+      hasUnread={
+        Boolean(activeServer()) &&
+        (agentList().some((agent) => (unreadReplies()[agent.id] ?? 0) > 0) || channels.hasUnread())
+      }
       serverName={activeServer()?.name ?? t("mobile.agent.home.noServers")}
       onOpenServerSettings={(trigger) => {
         const server = activeServer();
         if (server) openServerSettings(server.id, trigger);
       }}
+      createSupported={Boolean(activeServer())}
+      marketplaceSupported={Boolean(activeServer())}
       serverMenu={
         platform.appInfo()
           ? {
@@ -170,14 +182,14 @@ export function WorkspaceSidebar(props: { peopleEnabled: boolean }) {
       }
       agents={agentList()}
       activeAgentId={activeDirectMember() || channels.state.selectedId ? "" : (activeAgent()?.id ?? "")}
-      showPeople={props.peopleEnabled}
-      people={directPeople()}
+      showPeople={Boolean(activeServer()) && props.peopleEnabled}
+      people={activeServer() ? directPeople() : []}
       directThreads={directThreads()}
       activeDirectMemberId={activeDirectMemberId()}
       agentStates={sidebarAgentStates()}
       agentMoods={agentMoods()}
       layout={sidebarLayout()}
-      layoutMutable={activeServerSupportsCapability("sidebar-layout")}
+      layoutMutable={Boolean(activeServer()) && activeServerSupportsCapability("sidebar-layout")}
       collapsedSectionIds={collapsedSidebarSectionIds()}
       onMutateLayout={mutateSidebarLayout}
       onToggleSection={toggleSidebarSection}
@@ -189,18 +201,23 @@ export function WorkspaceSidebar(props: { peopleEnabled: boolean }) {
       onReorderPeople={reorderSidebarPeople}
       onSelectAgent={selectAgent}
       onSelectPerson={(memberId) => void selectDirectMember(memberId)}
-      onPreloadDirectConversation={props.peopleEnabled ? () => void DirectConversation.preload() : undefined}
+      onPreloadDirectConversation={
+        activeServer() && props.peopleEnabled ? () => void DirectConversation.preload() : undefined
+      }
       onCreateAgent={() => {
+        if (!activeServer()) return;
         channels.close();
         openBotSetup();
       }}
       onEditAgent={editAgent}
-      duplicateSupported={activeServerSupportsCapability("agent-duplication")}
+      duplicateSupported={Boolean(activeServer()) && activeServerSupportsCapability("agent-duplication")}
       duplicatingAgentIds={duplicatingAgentIds()}
       onDuplicateAgent={duplicateAgent}
       onDeleteAgent={deleteAgent}
       onClearAgentHistory={
-        activeServerSupportsCapability("conversation-history-delete-v1") ? clearAgentHistory : undefined
+        activeServer() && activeServerSupportsCapability("conversation-history-delete-v1")
+          ? clearAgentHistory
+          : undefined
       }
       compact={layout.leftPanelCompact()}
       onExpand={layout.expandSidebar}
@@ -217,7 +234,7 @@ export function WorkspaceSidebar(props: { peopleEnabled: boolean }) {
       }
       onOpenMarketplace={() => setSkillsMarketplaceOpen(true)}
       emptyAction={
-        agentList().length === 0
+        activeServer() && agentList().length === 0
           ? {
               label: t("sidebar.empty.firstAgent"),
               avatarSeed: agentSetupDraft().avatarSeed,

@@ -63,7 +63,7 @@ const AgentActions = createSimpleContext({
     const { selectAgent } = useNavigation();
 
     async function createAgent(draft: FirstAgentDraft = agentSetupDraft()) {
-      if (creatingAgent()) return;
+      if (!activeServer() || creatingAgent()) return;
       const analytics = desktopAnalytics.scope();
       const submitted = { ...draft };
       setCreatingAgent(true);
@@ -100,13 +100,13 @@ const AgentActions = createSimpleContext({
     }
 
     function editAgent(agentId: string) {
-      if (agentSetupOpen() && creatingAgent()) return;
+      if (!activeServer() || (agentSetupOpen() && creatingAgent())) return;
       selectAgent(agentId);
       setSettingsRequest({ agentId, nonce: Date.now() });
     }
 
     async function duplicateAgent(agentId: string): Promise<void> {
-      if (agentSetupOpen() && creatingAgent()) return;
+      if (!activeServer() || (agentSetupOpen() && creatingAgent())) return;
       if (!activeServerSupportsCapability("agent-duplication") || duplicatingAgentIds().has(agentId)) return;
       const analytics = desktopAnalytics.scope();
       const properties = analyticsAgentProperties(agentId);
@@ -141,7 +141,7 @@ const AgentActions = createSimpleContext({
     }
 
     async function deleteAgent(agentId: string) {
-      if (agentSetupOpen() && creatingAgent()) return;
+      if (!activeServer() || (agentSetupOpen() && creatingAgent())) return;
       const serverId = activeServerId();
       const analytics = desktopAnalytics.scope();
       const properties = analyticsAgentProperties(agentId);

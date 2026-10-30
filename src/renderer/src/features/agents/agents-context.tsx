@@ -137,6 +137,13 @@ const Agents = createSimpleContext({
     }
 
     function applyStoredAgents(storedAgents: AgentSummary[]): void {
+      if (!activeServer()) {
+        setAgentList([]);
+        setActiveAgentId("");
+        setModelOptions([]);
+        setAgentSetupOpen(false);
+        return;
+      }
       const currentById = new Map(agentList().map((agent) => [agent.id, agent]));
       const profiles = storedAgents.map((stored) => {
         const next = toAgentProfile(stored);
@@ -165,6 +172,7 @@ const Agents = createSimpleContext({
       // doing nothing visible; the guard still protects the draft from a reset.
       // The automatic open above is deliberately not this: a server with no agents
       // must not take the report away from a user who asked for it.
+      if (!activeServer()) return;
       dismissUsage();
       if (agentSetupOpen()) return;
       setDirectTyping(false);
@@ -182,6 +190,7 @@ const Agents = createSimpleContext({
     }
 
     async function updateAgent(agentId: string, updates: Omit<UpdateAgentInput, "agentId">): Promise<void> {
+      if (!activeServer()) return;
       const serverId = activeServerId();
       const analytics = desktopAnalytics.scope();
       const properties = analyticsAgentProperties(agentId);
@@ -219,6 +228,7 @@ const Agents = createSimpleContext({
     }
 
     async function setAgentAvatar(agentId: string, image: AvatarImageInput | null): Promise<void> {
+      if (!activeServer()) return;
       const serverId = activeServerId();
       const analytics = desktopAnalytics.scope();
       const properties = analyticsAgentProperties(agentId);

@@ -1,4 +1,4 @@
-import type { Channel, ChannelMessage, ChannelSummary } from "@openbot/contracts/ipc";
+import type { Channel, ChannelCommand, ChannelMessage, ChannelSummary } from "@openbot/contracts/ipc";
 import { createRoot, createSignal } from "solid-js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { installOpenbotStub } from "../../app-test-harness";
@@ -13,6 +13,41 @@ describe("channel startup loading", () => {
   afterEach(() => {
     dispose?.();
     dispose = undefined;
+  });
+
+  it("does not open or create channels after the active server disappears", async () => {
+    const [supported] = createSignal(false);
+    const listChannels = vi.spyOn(window.openbot.agent, "listChannels").mockResolvedValue([]);
+    const channelCommand = vi.spyOn(window.openbot.agent, "channelCommand").mockImplementation(async () => {
+      throw new Error("Channel command should not run without an active server.");
+    });
+    const port = channelsPort();
+    let controller!: ReturnType<typeof createChannelsController>;
+
+    createRoot((stop) => {
+      dispose = stop;
+      controller = createChannelsController({
+        port: () => port,
+        agents: () => [],
+        scopeKey: () => "account-1",
+        readSelection: () => null,
+        writeSelection: () => undefined,
+        supported,
+        deletionSupported: supported,
+        beforeOpen: () => undefined,
+        canMarkRead: () => false,
+      });
+    });
+
+    controller.create();
+    await controller.open("stale-channel");
+    const command: ChannelCommand = { type: "archive", channelId: "stale-channel", operationId: "stale-operation" };
+    await expect(controller.command(command)).resolves.toBe(false);
+
+    expect(controller.state.editing).toBeNull();
+    expect(controller.state.selectedId).toBeNull();
+    expect(listChannels).not.toHaveBeenCalled();
+    expect(channelCommand).not.toHaveBeenCalled();
   });
 
   it("loads channels when remote capability negotiation completes after startup", async () => {

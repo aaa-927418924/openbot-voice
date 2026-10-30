@@ -51,8 +51,9 @@ export function ChannelsProvider(props: ParentProps) {
         writeChannelSelection(accountKey(), selectionServerId, channelId);
       }
     },
-    supported: () => activeServerSupportsCapability(CHANNEL_CHATS_CAPABILITY),
-    deletionSupported: () => activeServer()?.kind !== "remote" || serverRoleCanAdminister(activeServer()),
+    supported: () => Boolean(activeServer()) && activeServerSupportsCapability(CHANNEL_CHATS_CAPABILITY),
+    deletionSupported: () =>
+      Boolean(activeServer()) && (activeServer()?.kind !== "remote" || serverRoleCanAdminister(activeServer())),
     beforeOpen: () => {
       setAgentSetupOpen(false);
       // The channel covers the workspace, and a direct conversation left selected under it is read

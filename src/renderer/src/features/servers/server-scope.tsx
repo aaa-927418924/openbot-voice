@@ -46,7 +46,7 @@ const ServerScope = createSimpleContext({
   init: () => {
     const { centralAuth } = useAuth();
     const { setupState } = useSetup();
-    const { servers, activeServerId, initialServersReady, serverLoadRequest } = useServers();
+    const { activeServer, activeServerId, initialServersReady, serverLoadRequest } = useServers();
     const { pendingAgentSelection, setPendingAgentSelection } = useServerSwitch();
     const { setTeamPresence } = usePresence();
     const {
@@ -80,8 +80,11 @@ const ServerScope = createSimpleContext({
       const generation = ++loadGeneration;
       const isCurrent = () => scopeIsCurrent() && generation === loadGeneration;
       if (!isCurrent()) return;
-      const serverId = activeServerId();
-      const server = servers().find((candidate) => candidate.id === serverId);
+      const server = activeServer();
+      if (!server) {
+        setLoaded(true);
+        return;
+      }
       if (server?.kind === "remote" && (server.state === "incompatible" || server.issue != null)) {
         return;
       }
@@ -154,6 +157,7 @@ const ServerScope = createSimpleContext({
       const handleGlobalSearchShortcut = (event: KeyboardEvent) => {
         if (
           !isGlobalSearchShortcut(event) ||
+          !activeServer() ||
           centralAuth().status !== "signed_in" ||
           setupState()?.completed !== true
         ) {
@@ -196,7 +200,7 @@ const ServerScope = createSimpleContext({
       () => serverLoadRequest(),
       (request) =>
         untrack(() => {
-          if (request?.serverId === activeServerId()) loadWorkspace();
+          if (activeServer() && request?.serverId === activeServerId()) loadWorkspace();
         }),
     );
 
@@ -205,8 +209,9 @@ const ServerScope = createSimpleContext({
     // switch lands in. It is taken rather than read so a later mount cannot
     // replay it.
     createEffect(
-      () => pendingAgentSelection(),
-      (agentId) => {
+      () => ({ agentId: pendingAgentSelection(), server: activeServer() }),
+      ({ agentId, server }) => {
+        if (!server) return;
         if (!agentId) return;
         setPendingAgentSelection(null);
         selectAgent(agentId);

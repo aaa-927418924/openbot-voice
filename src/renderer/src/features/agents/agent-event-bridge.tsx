@@ -46,7 +46,7 @@ import { agentsPort } from "./agents-port";
 export function AgentEventBridge() {
   const channels = useChannels();
   const platform = usePlatform();
-  const { activeServerId } = useServers();
+  const { activeServer, activeServerId } = useServers();
   const { applyAccountUsage } = useAuth();
   const { applyAgentStatus, refreshAgentProviders } = useProviders();
   const { agentList, setModelOptions, explicitlyOpenedAgentChatId, applyStoredAgents } = useAgents();
@@ -320,6 +320,10 @@ export function AgentEventBridge() {
 
   onSettled(() => {
     const unsubscribe = agentsPort().agent.onEvent((event) => {
+      // Provider/auth status and account usage are useful without a joined workspace. All other
+      // events belong to the current server scope and must not repopulate stale Local state after
+      // the account has no visible servers.
+      if (!activeServer() && event.type !== "status" && event.type !== "usage-changed") return;
       if (event.type === "channels-changed") {
         void channels.refresh();
         return;

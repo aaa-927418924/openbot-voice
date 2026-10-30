@@ -50,6 +50,7 @@ export function WorkspaceShell(props: { account: () => CentralAuthUser }) {
   const { remoteDesktopWorkspaceVisible } = useRemoteDesktop();
   const { agentSetupOpen, serverOnboardingOpen } = useAgents();
   const { activeDirectMember } = useDirectMessages();
+  const usageServerId = () => (activeServer() ? usage.state.serverId : null);
 
   const blockedRemoteServer = createMemo(() => {
     const server = activeServer();
@@ -67,7 +68,7 @@ export function WorkspaceShell(props: { account: () => CentralAuthUser }) {
       hidden={remoteDesktopWorkspaceVisible()}
       blockedServer={blockedRemoteServer()}
       onRetryServer={retryServerConnection}
-      usageOpen={!!usage.state.serverId}
+      usageOpen={!!usageServerId()}
       left={
         <>
           <WorkspaceServerRail />
@@ -76,7 +77,7 @@ export function WorkspaceShell(props: { account: () => CentralAuthUser }) {
         </>
       }
       usage={
-        <Show when={usage.state.serverId}>
+        <Show when={usageServerId()}>
           {(serverId) => (
             <Show
               when={usage.state.view === "schedule"}
@@ -103,24 +104,28 @@ export function WorkspaceShell(props: { account: () => CentralAuthUser }) {
       after={
         <>
           <WorkspaceOverlays account={props.account} />
-          <LiveVoiceLauncher />
+          <Show when={activeServer()}>
+            <LiveVoiceLauncher />
+          </Show>
         </>
       }
     >
-      <Show when={serverOnboardingOpen()}>
-        <WorkspaceServerOnboarding />
-      </Show>
-      <Show when={agentSetupOpen() && !serverOnboardingOpen()}>
-        <WorkspaceAgentSetup />
-      </Show>
-      <Show when={activePeopleEnabled() && !agentSetupOpen() && !channelOpen() && activeDirectMember()} keyed>
-        {(member) => <WorkspaceDirectConversation member={member} />}
-      </Show>
-      <Show when={!agentSetupOpen() && !channelOpen() && !activeDirectMember()}>
-        <WorkspaceConversation account={props.account} />
-      </Show>
-      <Show when={!agentSetupOpen() && channelOpen()}>
-        <WorkspaceChannelConversation />
+      <Show when={activeServer()}>
+        <Show when={serverOnboardingOpen()}>
+          <WorkspaceServerOnboarding />
+        </Show>
+        <Show when={agentSetupOpen() && !serverOnboardingOpen()}>
+          <WorkspaceAgentSetup />
+        </Show>
+        <Show when={activePeopleEnabled() && !agentSetupOpen() && !channelOpen() && activeDirectMember()} keyed>
+          {(member) => <WorkspaceDirectConversation member={member} />}
+        </Show>
+        <Show when={!agentSetupOpen() && !channelOpen() && !activeDirectMember()}>
+          <WorkspaceConversation account={props.account} />
+        </Show>
+        <Show when={!agentSetupOpen() && channelOpen()}>
+          <WorkspaceChannelConversation />
+        </Show>
       </Show>
     </WorkspaceFrame>
   );

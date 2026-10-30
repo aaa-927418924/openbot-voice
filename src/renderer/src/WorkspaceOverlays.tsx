@@ -166,7 +166,7 @@ function SkillsMarketplace(props: {
 
   return (
     <MarketplaceOverlay
-      open={skillsMarketplaceOpen()}
+      open={Boolean(activeServer()) && skillsMarketplaceOpen()}
       onOpenChange={setSkillsMarketplaceOpen}
       server={activeServer()}
       agents={agentList()}
@@ -197,7 +197,7 @@ function SharedAgentInstall() {
 
   return (
     <SharedAgentInstallOverlay
-      templateId={pendingAgentTemplateId()}
+      templateId={activeServer() ? pendingAgentTemplateId() : null}
       server={activeServer()}
       onClose={() => setPendingAgentTemplateId(null)}
       onInstalled={openInstalledMarketplaceAgent}
@@ -646,6 +646,7 @@ function AppSettings(props: AccountProps) {
 
 /** Search across the agents, channels, conversations, routines and commands of the active server. */
 function GlobalMessageSearch() {
+  const { activeServer } = useServers();
   const { agentList } = useAgents();
   const { globalSearchOpen, searchGlobalMessages, setGlobalSearchVisibility, selectAgent, selectGlobalSearchMessage } =
     useNavigation();
@@ -653,7 +654,7 @@ function GlobalMessageSearch() {
 
   return (
     <GlobalSearchOverlay
-      open={globalSearchOpen()}
+      open={Boolean(activeServer()) && globalSearchOpen()}
       agents={agentList()}
       channels={sources.channels()}
       routines={sources.routines()}

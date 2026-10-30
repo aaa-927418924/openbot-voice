@@ -18,6 +18,7 @@ import {
   emitAgentEvent,
   emitDynamicIslandAction,
   emitPresence,
+  emitServers,
   installOpenbotStub,
   presenceMember,
   testConversationPage,
@@ -178,6 +179,22 @@ describe("OpenBot connected desktop shell", () => {
     render(() => <App />);
     await screen.findByRole("button", { name: "Create your first agent" });
     expect(JSON.parse(window.localStorage.getItem(AGENT_SELECTION_STORAGE_KEY) ?? "{}")).toEqual({ team: "other" });
+  });
+
+  it("hides local agents and chat when the available server list becomes empty", async () => {
+    vi.mocked(window.openbot.agent.listAgents).mockResolvedValue(AGENTS);
+    render(() => <App />);
+
+    expect(await screen.findByRole("button", { name: /Chief, Chief of staff/ })).toBeInTheDocument();
+    await waitFor(() => expect(emitServers).toBeDefined());
+    emitServers?.([]);
+    emitAgentEvent?.({ type: "agents-changed", agents: AGENTS });
+
+    await waitFor(() => expect(screen.queryByRole("button", { name: /Chief, Chief of staff/ })).toBeNull());
+    expect(screen.queryByRole("heading", { name: "Chief" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Create your first agent" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "New agent or channel" })).toBeNull();
+    expect(window.openbot.agent.listAgents).toHaveBeenCalledTimes(1);
   });
 
   it("keeps a saved selection after a failed agent load and restores it on retry", async () => {

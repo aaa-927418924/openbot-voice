@@ -1,8 +1,10 @@
 import type { AgentProfile } from "@openbot/ui/data";
 import { createEffect, createSignal, onCleanup } from "solid-js";
 import { createSimpleContext } from "../../simple-context";
+import { useServers } from "../servers/servers-context";
 import { createLiveVoiceController, type LiveVoiceState } from "./live-voice-controller";
 import { liveVoicePort } from "./live-voice-port";
+import { shouldStopLiveVoiceForMissingServer } from "./live-voice-server-scope";
 
 export interface LiveVoiceOrigin {
   agentId: string;
@@ -27,10 +29,24 @@ const IDLE: LiveVoiceState = {
 const LiveVoice = createSimpleContext({
   name: "LiveVoice",
   init: () => {
+    const { servers, initialServerListReady } = useServers();
     const [state, setState] = createSignal<LiveVoiceState>(IDLE);
     const [origin, setOrigin] = createSignal<LiveVoiceOrigin>();
     const api = liveVoicePort();
     const controller = createLiveVoiceController(api, setState);
+    createEffect(
+      () => ({
+        target: origin(),
+        servers: servers(),
+        serverListReady: initialServerListReady(),
+        state: state(),
+      }),
+      ({ target, servers: currentServers, serverListReady, state: currentState }) => {
+        if (shouldStopLiveVoiceForMissingServer(target?.serverId, currentServers, serverListReady, currentState)) {
+          void controller.stop();
+        }
+      },
+    );
     createEffect(
       () => {
         const current = state();

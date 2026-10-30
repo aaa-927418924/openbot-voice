@@ -177,6 +177,7 @@ export function createChannelsController(env: ChannelsEnvironment) {
     }
   }
   async function open(channelId: string) {
+    if (!supported()) return;
     env.beforeOpen();
     env.writeSelection(channelId);
     flush(() =>
@@ -187,6 +188,7 @@ export function createChannelsController(env: ChannelsEnvironment) {
     await refreshAfter();
   }
   async function perform(action: () => Promise<void>, afterAction?: () => void): Promise<boolean> {
+    if (!supported()) return false;
     const account = env.scopeKey();
     try {
       await action();
@@ -236,6 +238,7 @@ export function createChannelsController(env: ChannelsEnvironment) {
    * message must still leave the composer, or it comes back as a draft.
    */
   async function command(input: ChannelCommand, onAccepted?: (accepted: ChannelCommand) => void): Promise<boolean> {
+    if (!supported()) return false;
     const account = env.scopeKey();
     // Only the save that creates a channel opens it, and only while the reader has stayed where
     // the save started. The sidebar takes a click through a save of the settings, and settings
@@ -299,6 +302,7 @@ export function createChannelsController(env: ChannelsEnvironment) {
     }
   }
   async function loadOlder() {
+    if (!supported()) return;
     const channelId = state.selectedId;
     const beforeSequence = state.page?.olderCursor;
     const account = env.scopeKey();
@@ -396,6 +400,7 @@ export function createChannelsController(env: ChannelsEnvironment) {
     },
     open,
     editChannel: async (channelId: string) => {
+      if (!supported()) return;
       if (state.selectedId !== channelId) await open(channelId);
       if (state.page?.channel.id !== channelId || state.page.channel.archived) return;
       setState((state) => {
@@ -418,19 +423,23 @@ export function createChannelsController(env: ChannelsEnvironment) {
         Object.assign(state, { selectedId: null, page: null, editing: null });
       });
     },
-    edit: () =>
+    edit: () => {
+      if (!supported()) return;
       setState((state) => {
         if (!state.page?.channel.archived) Object.assign(state, { editing: "settings" });
-      }),
+      });
+    },
     closeEditor: () =>
       setState((state) => {
         state.editing = null;
       }),
-    create: () =>
+    create: () => {
+      if (!supported()) return;
       setState((state) => {
         state.editing = "create";
         state.error = null;
-      }),
+      });
+    },
     toggleArchived: () =>
       setState((state) => {
         Object.assign(state, { archived: !state.archived });
