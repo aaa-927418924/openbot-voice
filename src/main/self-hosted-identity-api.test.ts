@@ -303,7 +303,7 @@ describe("SelfHostedIdentityApiServer", () => {
       const otherImportExclusions = await fetch(new URL("/v1/me/servers/legacy-import-exclusions", apiUrl), {
         headers: { Authorization: `Bearer ${otherAccount.token}`, Connection: "close" },
       });
-      expect(await otherImportExclusions.json()).toEqual({ excludedHostIds: [] });
+      expect(await otherImportExclusions.json()).toEqual({ excludedHostIds: ["second-team-host"] });
       const otherRemove = await fetch(new URL("/v1/me/servers/linux-team-host", apiUrl), {
         method: "DELETE",
         headers: { Authorization: `Bearer ${otherAccount.token}`, Connection: "close" },
@@ -312,7 +312,9 @@ describe("SelfHostedIdentityApiServer", () => {
       const importExclusionsAfterRemove = await fetch(new URL("/v1/me/servers/legacy-import-exclusions", apiUrl), {
         headers: { Authorization: `Bearer ${otherAccount.token}`, Connection: "close" },
       });
-      expect(await importExclusionsAfterRemove.json()).toEqual({ excludedHostIds: ["linux-team-host"] });
+      expect(await importExclusionsAfterRemove.json()).toEqual({
+        excludedHostIds: ["second-team-host", "linux-team-host"],
+      });
       const staleImport = await fetch(new URL("/v1/me/servers", apiUrl), {
         method: "PUT",
         headers: {
@@ -527,6 +529,41 @@ describe("SelfHostedIdentityApiServer", () => {
         rejoin: true,
       }),
     ).toEqual([]);
+  });
+
+  it("merges stale directory instances before writing cross-device registrations and visibility", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-self-hosted-directory-processes-"));
+    roots.push(root);
+    const path = join(root, "server-directory.json");
+    const linuxDirectory = new SelfHostedAccountServerDirectory(path);
+    const windowsDirectory = new SelfHostedAccountServerDirectory(path);
+    await Promise.all([linuxDirectory.initialize(), windowsDirectory.initialize()]);
+    const publicKey = "directory-process-test-public-key";
+    const registration = (hostId: string, name: string) => ({
+      hostId,
+      name,
+      apiUrl: "http://100.100.10.2:43123",
+      fingerprint: remoteHostFingerprint(publicKey),
+      publicKey,
+      logoKey: null,
+      membershipId: `${hostId}-member`,
+      role: "owner" as const,
+    });
+
+    await Promise.all([
+      linuxDirectory.register("shared-account", registration("linux-host", "Linux")),
+      windowsDirectory.register("shared-account", registration("windows-host", "Windows")),
+    ]);
+
+    expect(await linuxDirectory.list("shared-account")).toHaveLength(2);
+    expect(await windowsDirectory.list("shared-account")).toHaveLength(2);
+
+    await linuxDirectory.setServerVisible("linux-host", false);
+    expect(
+      await windowsDirectory.list("shared-account").then((servers) => servers.map((server) => server.hostId)),
+    ).toEqual(["windows-host"]);
+    await linuxDirectory.setServerVisible("linux-host", true);
+    expect(await windowsDirectory.list("shared-account")).toHaveLength(2);
   });
 
   it("registers a separate account and keeps one-time QR credential setup tied to its stable account", async () => {

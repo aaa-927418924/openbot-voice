@@ -37,6 +37,7 @@
         "lucide-solid": "catalog:",
         "marked": "catalog:",
         "node-forge": "1.4.0",
+        "proper-lockfile": "4.1.2",
         "qrcode": "catalog:",
         "solid-js": "2.0.0-rc.0",
         "solid-recharts": "catalog:",

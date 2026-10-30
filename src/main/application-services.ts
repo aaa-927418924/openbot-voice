@@ -1660,6 +1660,8 @@ export async function createApplicationServices({
       localOnlyNetworking && selfHostedDesktopAccount.isSignedIn
         ? selfHostedDesktopAccount.redeemTeamAuthTicket(ticket, serverId).pipe(
             Effect.map((account) =>
+              // Local account email addresses are user-claimed, not verified. Do not use them
+              // to adopt a legacy Team member; the stable account ID remains the identity key.
               account ? { id: account.id, email: "", name: account.name, avatarUrl: account.avatarUrl } : null,
             ),
             Effect.mapError((cause) => new RemoteWorkflowError({ cause })),

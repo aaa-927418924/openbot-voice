@@ -1,4 +1,5 @@
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import type {
   AccountServerDirectoryEntry,
   AccountServerRegistration,
@@ -8,7 +9,21 @@ import type { TeamRole } from "@openbot/contracts/ipc";
 import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { remoteHostFingerprint } from "@openbot/team-client/remote-directory";
 import { Effect } from "effect";
+import lockDirectoryModule from "proper-lockfile";
 import { writeJsonFileAtomically } from "../backend/atomic-json-file";
+
+interface DirectoryLockOptions {
+  readonly realpath: false;
+  readonly stale: number;
+  readonly update: number;
+  readonly retries: { readonly retries: number; readonly minTimeout: number; readonly maxTimeout: number };
+}
+
+type DirectoryLockRelease = () => Promise<void>;
+type DirectoryLock = (path: string, options: DirectoryLockOptions) => Promise<DirectoryLockRelease>;
+
+// Import statically so both Electron and the standalone Bun server binary bundle this dependency.
+const lockDirectory: DirectoryLock = lockDirectoryModule;
 
 interface StoredServer {
   readonly hostId: string;
@@ -199,21 +214,20 @@ export class SelfHostedAccountServerDirectory {
   async initialize(): Promise<void> {
     await this.#exclusive(async () => {
       if (this.#initialized) return;
-      try {
-        this.#state = decodeDirectory(JSON.parse(await readFile(this.#path, "utf8")));
-      } catch (error) {
-        if (error !== null && typeof error === "object" && "code" in error && error.code === "ENOENT") {
-          this.#state = emptyDirectory();
-        } else {
-          throw new Error("The account server directory could not be read.");
-        }
-      }
+      this.#state = await this.#readDirectory();
       this.#initialized = true;
     });
   }
 
   async list(accountId: string): Promise<AccountServerDirectoryEntry[]> {
-    await this.#requireReady();
+    return this.#exclusive(async () => {
+      await this.#requireReady();
+      this.#state = await this.#readDirectory();
+      return this.#listFromState(accountId);
+    });
+  }
+
+  #listFromState(accountId: string): AccountServerDirectoryEntry[] {
     const hiddenHostIds = new Set(this.#state.hiddenHostIds);
     return this.#state.memberships
       .filter((membership) => membership.accountId === accountId && !hiddenHostIds.has(membership.hostId))
@@ -239,7 +253,14 @@ export class SelfHostedAccountServerDirectory {
   }
 
   async legacyImportExclusions(accountId: string): Promise<string[]> {
-    await this.#requireReady();
+    return this.#exclusive(async () => {
+      await this.#requireReady();
+      this.#state = await this.#readDirectory();
+      return this.#legacyImportExclusionsFromState(accountId);
+    });
+  }
+
+  #legacyImportExclusionsFromState(accountId: string): string[] {
     return [
       ...new Set([
         ...this.#state.hiddenHostIds,
@@ -252,8 +273,7 @@ export class SelfHostedAccountServerDirectory {
 
   async register(accountId: string, input: unknown): Promise<AccountServerDirectoryEntry[]> {
     const registration = decodeRegistration(input);
-    return this.#exclusive(async () => {
-      await this.#requireReady();
+    return this.#mutate(async () => {
       const removed = this.#state.removedMemberships.some(
         (membership) => membership.accountId === accountId && membership.hostId === registration.hostId,
       );
@@ -261,7 +281,7 @@ export class SelfHostedAccountServerDirectory {
       // Old clients and background metadata refreshes omit both markers. Neither may silently
       // undo an explicit account leave. Only a fresh invite/QR pairing opts into rejoining.
       if (hidden || (removed && !registration.rejoin)) {
-        return this.list(accountId);
+        return this.#listFromState(accountId);
       }
       const existing = this.#state.servers.find((server) => server.hostId === registration.hostId);
       if (
@@ -309,7 +329,7 @@ export class SelfHostedAccountServerDirectory {
       };
       await this.#persist(next);
       this.#state = next;
-      return this.list(accountId);
+      return this.#listFromState(accountId);
     });
   }
 
@@ -321,12 +341,11 @@ export class SelfHostedAccountServerDirectory {
    */
   async syncLocalOwnerRegistration(accountId: string, input: unknown): Promise<AccountServerDirectoryEntry[]> {
     const registration = decodeRegistration(input);
-    return this.#exclusive(async () => {
-      await this.#requireReady();
+    return this.#mutate(async () => {
       const removed = this.#state.removedMemberships.some(
         (membership) => membership.accountId === accountId && membership.hostId === registration.hostId,
       );
-      if (removed || this.#state.hiddenHostIds.includes(registration.hostId)) return this.list(accountId);
+      if (removed || this.#state.hiddenHostIds.includes(registration.hostId)) return this.#listFromState(accountId);
 
       const existing = this.#state.servers.find((server) => server.hostId === registration.hostId);
       if (
@@ -361,7 +380,7 @@ export class SelfHostedAccountServerDirectory {
         existingMembership?.membershipId === membership.membershipId &&
         existingMembership.role === membership.role
       ) {
-        return this.list(accountId);
+        return this.#listFromState(accountId);
       }
       const next: DirectoryFile = {
         ...this.#state,
@@ -377,7 +396,7 @@ export class SelfHostedAccountServerDirectory {
       };
       await this.#persist(next);
       this.#state = next;
-      return this.list(accountId);
+      return this.#listFromState(accountId);
     });
   }
 
@@ -388,8 +407,7 @@ export class SelfHostedAccountServerDirectory {
    */
   async setServerVisible(hostId: string, visible: boolean): Promise<void> {
     if (!validId(hostId)) throw new AccountServerDirectoryError(400, "invalid_request");
-    await this.#exclusive(async () => {
-      await this.#requireReady();
+    await this.#mutate(async () => {
       const hiddenHostIds = new Set(this.#state.hiddenHostIds);
       const wasHidden = hiddenHostIds.has(hostId);
       if (visible) hiddenHostIds.delete(hostId);
@@ -403,8 +421,7 @@ export class SelfHostedAccountServerDirectory {
 
   async removeMembership(accountId: string, hostId: string): Promise<void> {
     if (!validId(hostId)) throw new AccountServerDirectoryError(400, "invalid_request");
-    await this.#exclusive(async () => {
-      await this.#requireReady();
+    await this.#mutate(async () => {
       const memberships = this.#state.memberships.filter(
         (membership) => !(membership.accountId === accountId && membership.hostId === hostId),
       );
@@ -436,6 +453,52 @@ export class SelfHostedAccountServerDirectory {
 
   async #requireReady(): Promise<void> {
     if (!this.#initialized) throw new Error("The account server directory is unavailable.");
+  }
+
+  async #readDirectory(): Promise<DirectoryFile> {
+    try {
+      return decodeDirectory(JSON.parse(await readFile(this.#path, "utf8")));
+    } catch (error) {
+      if (error !== null && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+        return emptyDirectory();
+      }
+      throw new Error("The account server directory could not be read.");
+    }
+  }
+
+  #mutate<A>(operation: () => Promise<A>): Promise<A> {
+    return this.#exclusive(() =>
+      this.#withDirectoryLock(async () => {
+        await this.#requireReady();
+        // The CLI and desktop can use the same profile directory in separate processes. Reload only
+        // after acquiring the shared file lock so a stale in-memory snapshot cannot erase the other
+        // process's registrations, hides, or leaves.
+        this.#state = await this.#readDirectory();
+        return operation();
+      }),
+    );
+  }
+
+  async #withDirectoryLock<A>(operation: () => Promise<A>): Promise<A> {
+    await mkdir(dirname(this.#path), { recursive: true, mode: 0o700 });
+    let release: DirectoryLockRelease;
+    try {
+      release = await lockDirectory(this.#path, {
+        realpath: false,
+        stale: 30_000,
+        update: 10_000,
+        retries: { retries: 40, minTimeout: 25, maxTimeout: 125 },
+      });
+    } catch {
+      throw new Error("The account server directory is busy and could not be locked.");
+    }
+    try {
+      return await operation();
+    } finally {
+      await release().catch(() => {
+        throw new Error("The account server directory lock could not be released.");
+      });
+    }
   }
 
   async #persist(next: DirectoryFile): Promise<void> {
