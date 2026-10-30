@@ -46,6 +46,10 @@ it("filters the local server when local hosting is disabled", () => {
   expect(withLocalHostSummary([localServer, remoteServer], status, false)).toEqual([{ ...remoteServer, active: true }]);
 });
 
+it("returns no server when local hosting is disabled and no remote server exists", () => {
+  expect(withLocalHostSummary([localServer], status, false)).toEqual([]);
+});
+
 it("keeps and decorates the local server when local hosting is enabled", () => {
   expect(withLocalHostSummary([localServer, remoteServer], status, true)).toEqual([
     { ...localServer, name: "OpenBot host" },
