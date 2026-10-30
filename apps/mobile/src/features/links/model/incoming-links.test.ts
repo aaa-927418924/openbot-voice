@@ -33,6 +33,13 @@ function requestId(path: string): string {
 }
 
 describe("incoming mobile links", () => {
+  it.each(["openbot://", "openbot:///", "openbotvoice://", "openbotvoice:///", "openbotvoice:"])(
+    "routes an empty app launch URL to sign-in: %s",
+    (url) => {
+      expect(redirectIncomingLink(url)).toBe("/");
+    },
+  );
+
   it.each([createInviteUrl(payload), createOpenBotInviteUrl(payload)])(
     "keeps invitation secrets out of the route",
     (url) => {

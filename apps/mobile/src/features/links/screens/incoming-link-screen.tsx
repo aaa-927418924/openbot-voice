@@ -11,7 +11,7 @@ import { SignInScreen } from "@/features/auth/screens/sign-in-screen";
 import { haptics } from "@/shared/lib/haptics";
 import { useText } from "@/shared/lib/text";
 import { SplashContentReadyContext } from "@/shared/lib/use-splash-gate";
-import { findIncomingLink, forgetIncomingLink, pendingSignInLinkId, readIncomingLink } from "../model/incoming-links";
+import { findIncomingLink, forgetIncomingLink, pendingSignInLinkId } from "../model/incoming-links";
 
 export function IncomingLinkScreen() {
   const { request } = useLocalSearchParams<{ request?: string }>();
@@ -22,18 +22,18 @@ function IncomingLinkContent({ request }: { request?: string }) {
   const { t, errorMessage } = useText();
   const { session, connect } = useMobileSession();
   const reportContentReady = useContext(SplashContentReadyContext);
-  const [link] = useState(() => (request ? findIncomingLink(request) : readIncomingLink(request)));
+  const [link] = useState(() => (request ? findIncomingLink(request) : undefined));
   const currentLink = link ?? { kind: "invalid" as const };
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [paired, setPaired] = useState(false);
-  const restoreWorkspace = Boolean(session?.sessionToken && (!request || !link));
+  const restoreRoute = !request || !link;
   usePreventRemove(busy, () => {
     // Redemption saves a session. Keep this screen until that operation settles.
   });
   useEffect(() => {
-    if (restoreWorkspace) router.replace("/connected");
-  }, [restoreWorkspace]);
+    if (restoreRoute) router.replace(session?.sessionToken ? "/connected" : "/");
+  }, [restoreRoute, session?.sessionToken]);
   useEffect(() => {
     if (!paired || busy) return;
     const pending = pendingSignInLinkId();
@@ -85,11 +85,12 @@ function IncomingLinkContent({ request }: { request?: string }) {
     }
   }
 
-  // Request IDs are intentionally process-local. A restored route can outlive its request record;
-  // return an authenticated user to the workspace instead of replaying a one-use link or showing
-  // an invalid-link error. This route reports layout readiness because the root splash gate waits
-  // for route-owned screens, and a redirect itself does not lay out any content.
-  if (restoreWorkspace) {
+  // Request IDs are intentionally process-local. A restored route can outlive its request record,
+  // or app startup can enter this route without a link. Return to sign-in or the workspace instead
+  // of replaying a one-use link or showing an invalid-link error. This route reports layout
+  // readiness because the root splash gate waits for route-owned screens, and a redirect itself
+  // does not lay out any content.
+  if (restoreRoute) {
     return <View className="flex-1 bg-background" onLayout={() => reportContentReady()} />;
   }
 

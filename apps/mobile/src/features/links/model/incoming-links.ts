@@ -102,7 +102,12 @@ export function pendingSignInLinkId(): string | undefined {
 }
 
 export function redirectIncomingLink(path: string): string {
-  if (path === "openbot://" || path === "openbot:///" || path === "openbot:") return "/";
+  if (
+    ["openbot://", "openbot:///", "openbot:", "openbotvoice://", "openbotvoice:///", "openbotvoice:"].includes(
+      path.toLowerCase(),
+    )
+  )
+    return "/";
   // Expo Go and ordinary internal routes retain Expo Router's normal behavior.
   if (/^exps?:\/\//u.test(path)) return path;
   if (path.startsWith("/") && !path.startsWith("//")) {

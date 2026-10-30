@@ -84,6 +84,10 @@ vi.mock("expo-clipboard", () => ({
   hasStringAsync: async () => false,
   hasUrlAsync: async () => false,
 }));
+vi.mock("expo-crypto", () => ({
+  getRandomBytes: (size: number) => new Uint8Array(size),
+  randomUUID: () => "test-random-id",
+}));
 vi.mock("heroui-native", () => ({
   Typography: {
     Heading: ({ children }: PropsWithChildren) => <h1>{children}</h1>,
@@ -294,11 +298,23 @@ it("returns an authenticated user to the workspace when a restored route has no 
   expect(screen.queryByRole("heading", { name: "Link unavailable" })).toBeNull();
 });
 
-it("keeps a route without a request parameter unavailable while signed out", async () => {
+it("returns a route without a request parameter to sign-in while signed out", async () => {
   await act(() => root.render(<IncomingLinkScreen />));
 
-  expect(screen.getByRole("heading", { name: "Link unavailable" })).toBeTruthy();
+  expect(state.replace).toHaveBeenCalledWith("/");
+  expect(screen.queryByRole("heading", { name: "Link unavailable" })).toBeNull();
   expect(screen.queryByRole("link")).toBeNull();
+});
+
+it("returns a signed-out user to sign-in when a restored request has expired", async () => {
+  const id = receive(pairing);
+  forgetIncomingLink(id);
+
+  await act(() => root.render(<IncomingLinkScreen />));
+
+  expect(state.replace).toHaveBeenCalledWith("/");
+  expect(screen.queryByRole("heading", { name: "Link unavailable" })).toBeNull();
+  expect(state.redeem).not.toHaveBeenCalled();
 });
 
 it("opens a plugin in the browser only after a press", async () => {
