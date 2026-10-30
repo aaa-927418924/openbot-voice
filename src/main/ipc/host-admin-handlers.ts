@@ -30,6 +30,7 @@ import { withLocalHostSummary } from "./team-handlers";
 
 interface HostAdminRemoteServers {
   list(): ServerSummary[];
+  syncAccountDirectory(): Effect.Effect<ServerSummary[], RemoteWorkflowError>;
   supportsCapability(serverId: string, capability: TeamCurrentCapability): boolean;
   request<T>(
     serverId: string,
@@ -66,6 +67,9 @@ export function hostAdminIpcHandlers({
       updateIdentity: scopedHandler(parseHostIdentity, {
         local: async (input) => {
           const status = await runCauseEffect(host.updateIdentity(input));
+          // Directory publication is retried by the normal account refresh when the
+          // identity service is temporarily offline. Keep the successful local rename.
+          await runCauseEffect(remoteServers.syncAccountDirectory()).catch(() => undefined);
           const summary = withLocalHostSummary(remoteServers.list(), status).find(
             (server) => server.id === LOCAL_SERVER_ID,
           );

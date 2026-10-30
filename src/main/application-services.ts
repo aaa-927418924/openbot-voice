@@ -38,7 +38,7 @@ import { existsSync } from "node:fs";
 import { readdir, rm } from "node:fs/promises";
 import { homedir, hostname, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { selfHostedApiOrigin } from "@openbot/contracts/invite-links";
+import { isTailscaleApiUrl, selfHostedApiOrigin } from "@openbot/contracts/invite-links";
 import type {
   AgentStatus,
   AppVariant,
@@ -123,6 +123,8 @@ import { HostedServerStartRetry } from "./hosted-server-start-retry";
 import { HostedSiteDesktopService } from "./hosted-site-service";
 import { IdleRestart } from "./idle-restart";
 import { LanguageService } from "./language-service";
+import { canRegisterLocalHostForAccount } from "./local-host-account-registration";
+import { ensureLocalHostConfigured } from "./local-host-setup";
 import { localRoutineFeedDocument } from "./local-routine-calendar";
 import { LocalServerPreferenceStore } from "./local-server-preference-store";
 import { LogoColorService } from "./logo-color-service";
@@ -1359,12 +1361,25 @@ export async function createApplicationServices({
   const ensureLocalHost = async () => {
     if (!localOnlyNetworking) throw new Error("Local server mode is unavailable.");
     const user = signedInSelfHostedUser();
-    if (!teamStore.configured) {
-      await runCauseEffect(teamStore.activateLocalHost());
-      await runCauseEffect(teamStore.configure(hostname(), "owner", randomBytes(32).toString("base64url")));
-    }
+    const isCurrentAccount = () => {
+      const account = selfHostedDesktopAccount.getState();
+      return account.status === "signed_in" && account.user.id === user.id;
+    };
+    const requireCurrentAccount = () => {
+      if (!isCurrentAccount()) throw new Error("The signed-in account changed during local host setup.");
+    };
+    await ensureLocalHostConfigured(
+      teamStore,
+      hostname(),
+      randomBytes(32).toString("base64url"),
+      user.id,
+      user.email,
+      isCurrentAccount,
+    );
+    requireCurrentAccount();
     if (selfHostedIdentityAuthority) {
       // Only create a host-local identity after sign-in. Existing identity files stay intact.
+      requireCurrentAccount();
       await Effect.runPromise(
         selfHostedIdentityAuthority.ensureLocalAccount({
           id: user.id,
@@ -1372,34 +1387,35 @@ export async function createApplicationServices({
           avatarUrl: user.avatarUrl,
         }),
       );
+      requireCurrentAccount();
     }
     await runCauseEffect(
-      teamStore.syncSelfHostedOwner(selfHostedTeamProfile(user, selfHostedIdentityApi?.apiUrl ?? null)),
+      teamStore.syncSelfHostedOwner(
+        selfHostedTeamProfile(user, selfHostedIdentityApi?.apiUrl ?? null),
+        isCurrentAccount,
+      ),
     );
+    requireCurrentAccount();
+    await runCauseEffect(teamStore.activateLocalHost(user.id, user.email));
+    requireCurrentAccount();
     if (selfHostedIdentityApi) {
       void selfHostedIdentityApi
         .start()
-        .then((apiUrl) => runCauseEffect(teamStore.syncSelfHostedOwner(selfHostedTeamProfile(user, apiUrl))))
+        .then((apiUrl) => {
+          if (!isCurrentAccount()) return;
+          return runCauseEffect(teamStore.syncSelfHostedOwner(selfHostedTeamProfile(user, apiUrl), isCurrentAccount));
+        })
         .catch((error) => logger.warn("The Tailscale identity API is not listening yet:", toLogValue(error)));
     }
   };
+  let selfHostedIdentityReady = selfHostedIdentityAuthority !== null;
   if (
     localOnlyNetworking &&
     localHostPreference.enabled &&
-    !teamStore.configured &&
-    selfHostedDesktopAccount.getState().status === "signed_in"
-  ) {
-    await ensureLocalHost();
-  }
-  let selfHostedIdentityReady = selfHostedIdentityAuthority !== null;
-  if (
-    selfHostedIdentityAuthority &&
-    localHostPreference.enabled &&
-    teamStore.configured &&
     selfHostedDesktopAccount.getState().status === "signed_in"
   ) {
     try {
-      await runCauseEffect(teamStore.syncSelfHostedOwner(selfHostedTeamProfile(signedInSelfHostedUser(), null)));
+      await ensureLocalHost();
     } catch (error) {
       selfHostedIdentityReady = false;
       logger.error("The local host owner could not be linked to the signed-in account:", toLogValue(error));
@@ -1455,6 +1471,17 @@ export async function createApplicationServices({
           try {
             const profile = selfHostedTeamProfile(user, selfHostedIdentityApi?.apiUrl ?? null);
             if (user.id === teamStore.getOwnerAccountId()) {
+              const serverId = teamStore.getIdentity()?.serverId;
+              const isCurrentOwner = () => {
+                const auth = localOnlyNetworking ? selfHostedDesktopAccount.getState() : centralAuth.getState();
+                return (
+                  auth.status === "signed_in" &&
+                  auth.user.id === user.id &&
+                  teamStore.getOwnerAccountId() === user.id &&
+                  teamStore.getIdentity()?.serverId === serverId
+                );
+              };
+              if (!isCurrentOwner()) return;
               if (selfHostedIdentityAuthority?.getLocalAccount()?.id === user.id) {
                 await Effect.runPromise(
                   selfHostedIdentityAuthority.updateLocalProfile({
@@ -1464,7 +1491,8 @@ export async function createApplicationServices({
                   }),
                 );
               }
-              await runCauseEffect(teamStore.syncSelfHostedOwner(profile));
+              if (!isCurrentOwner()) return;
+              await runCauseEffect(teamStore.syncSelfHostedOwner(profile, isCurrentOwner));
             } else {
               await runCauseEffect(teamStore.syncAccount(profile));
             }
@@ -1806,6 +1834,43 @@ export async function createApplicationServices({
       allowTailscaleApiUrl: localOnlyNetworking,
       localOnlyNetworking,
       isLocalServerEnabled: () => localHostPreference.enabled,
+      getLocalAccountServerRegistration: () => {
+        const account = selfHostedDesktopAccount.getState();
+        if (
+          !canRegisterLocalHostForAccount({
+            signedInAccountId: account.status === "signed_in" ? account.user.id : null,
+            ownerAccountId: teamStore.getOwnerAccountId(),
+            localHostEnabled: localHostPreference.enabled,
+          })
+        ) {
+          return null;
+        }
+        const identity = teamStore.getIdentity();
+        const status = getHostStatusForAccountDirectory?.();
+        const membershipId = teamStore.getOwnerMemberId();
+        if (
+          !identity ||
+          !membershipId ||
+          !status ||
+          status.serverId !== identity.serverId ||
+          status.phase !== "online" ||
+          !status.apiOnline ||
+          !status.apiUrl ||
+          !isTailscaleApiUrl(status.apiUrl)
+        ) {
+          return null;
+        }
+        return {
+          hostId: identity.serverId,
+          name: identity.serverName,
+          apiUrl: status.apiUrl,
+          fingerprint: identity.fingerprint,
+          publicKey: identity.publicKey,
+          logoKey: identity.logoVersion,
+          membershipId,
+          role: "owner" as const,
+        };
+      },
       selfHostedApiOrigin: selfHostedApiOrigin(centralAuthApiUrl),
       appVersion: app.getVersion(),
       onRemoteViewerDiagnostic: (event) => {

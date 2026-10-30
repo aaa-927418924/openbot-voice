@@ -3,6 +3,10 @@ import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type {
+  AccountServerDirectoryEntry,
+  AccountServerRegistration,
+} from "@openbot/contracts/account-server-directory";
 import {
   TEAM_APP_VERSION_HEADER,
   TEAM_CAPABILITIES_HEADER,
@@ -42,6 +46,59 @@ class OpenEventSocket extends EventTarget {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("local-only server directory", () => {
+  it("publishes an enabled local host into the signed-in account directory", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "openbot-local-account-server-registration-"));
+    const registration: AccountServerRegistration = {
+      hostId: "00000000-0000-4000-8000-0000000000d2",
+      name: "OpenBot",
+      apiUrl: "http://100.100.10.2:43123/",
+      fingerprint: "local-fingerprint",
+      publicKey: "local-public-key",
+      logoKey: null,
+      membershipId: "local-owner-membership",
+      role: "owner",
+    };
+    let directoryEntries: AccountServerDirectoryEntry[] = [];
+    const registerAccountServer = vi.fn((value: AccountServerRegistration) => {
+      directoryEntries = [{ ...value, isOwner: true }];
+      return Effect.succeed(undefined);
+    });
+    const manager = new RemoteServerManager(
+      join(directory, "servers.json"),
+      { encrypt: (value) => Buffer.from(value), decrypt: (value) => value.toString() },
+      {
+        createTeamAuthTicket: () => Effect.succeed("unused"),
+        getEmail: () => "owner@example.test",
+        getAccountId: () => "owner-account-id",
+        isSelfHostedSignedIn: () => true,
+        listAccountServers: () => Effect.succeed(directoryEntries),
+        registerAccountServer,
+      },
+      {
+        localOnlyNetworking: true,
+        allowTailscaleApiUrl: true,
+        getLocalAccountServerRegistration: () => registration,
+        getLocalHostId: () => registration.hostId,
+      },
+    );
+
+    try {
+      await runCauseEffect(manager.initialize());
+      await runCauseEffect(manager.syncAccountDirectory());
+      expect(registerAccountServer).toHaveBeenCalledOnce();
+      expect(registerAccountServer).toHaveBeenCalledWith(registration);
+      expect(manager.list().map((server) => server.id)).toEqual(["local"]);
+
+      directoryEntries[0] = { ...registration, name: "Old local name", isOwner: true };
+      await runCauseEffect(manager.syncAccountDirectory());
+      expect(registerAccountServer).toHaveBeenCalledTimes(2);
+      expect(directoryEntries[0]?.name).toBe(registration.name);
+    } finally {
+      await runCauseEffect(manager.stop());
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("activates a joined remote host when Local hosting is disabled", async () => {
     const directory = await mkdtemp(join(tmpdir(), "openbot-hidden-local-active-host-"));
     const storePath = join(directory, "servers.json");

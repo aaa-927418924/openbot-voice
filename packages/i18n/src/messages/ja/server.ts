@@ -300,7 +300,7 @@ export const messages = {
   "server.localAdmin.invalidEmail": "有効なメールアドレスを入力してください。",
   "server.localAdmin.ttyRequired": "ターミナルから実行してください。",
   "server.localAdmin.actionFailed": "サービス操作に失敗しました。",
-  "server.localAdmin.trayOpen": "状態メニューを開く",
+  "server.localAdmin.trayOpen": "管理画面を開く",
   "server.localAdmin.trayStart": "サーバーを起動",
   "server.localAdmin.trayStop": "サーバーを停止",
   "server.localAdmin.trayRestart": "サーバーを再起動",

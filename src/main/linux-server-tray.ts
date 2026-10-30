@@ -124,7 +124,9 @@ export async function startLinuxServerTray(): Promise<void> {
   };
 
   const timer = setInterval(() => void refresh(), 3_000);
-  tray.on("double-click", openStatusTui);
+  // Linux users expect the tray's primary action to reveal its management screen.
+  // A double-click-only handler made the tray appear inert on common desktops.
+  tray.on("click", openStatusTui);
   app.on("before-quit", () => {
     closed = true;
     clearInterval(timer);

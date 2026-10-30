@@ -202,6 +202,8 @@ export class TeamStore {
   #file: StoredTeamFile = { version: 2, activeAccountId: null, hosts: [] };
   /** The host of the signed-in account. Every other method reads this one, never `#file.hosts`. */
   #state: StoredTeam | null = null;
+  /** Invalidates rollback from an older host-selection write after a newer account switch. */
+  #activeHostSelectionGeneration = 0;
   readonly #remoteSessions = new Map<
     string,
     { member: TeamMemberSummary; sessionId: string; createdAt: string; sessionExpiresAt: string }
@@ -315,6 +317,7 @@ export class TeamStore {
   readonly activateAccount = Effect.fn("TeamStore.activateAccount")(
     function* (this: TeamStore, user: CentralAuthUser): Effect.fn.Return<void, RemoteWorkflowError, TeamStoreFiles> {
       const email = yield* remoteDecode(() => normalizeEmail(user.email));
+      const selectionGeneration = ++this.#activeHostSelectionGeneration;
       const hosts = this.#file.hosts;
       const unbound = hosts.find((host) => {
         const owner = hostOwner(host);
@@ -359,8 +362,10 @@ export class TeamStore {
             // previous account, though: central authentication has already moved on, and leaving
             // its host answerable is the failure this whole change exists to prevent. Unbound
             // until an auth event or a restart records the switch.
-            this.#file = rollback;
-            this.#state = null;
+            if (this.#activeHostSelectionGeneration === selectionGeneration) {
+              this.#file = rollback;
+              this.#state = null;
+            }
             return yield* new RemoteWorkflowError({ cause: error });
           }),
         ),
@@ -376,6 +381,7 @@ export class TeamStore {
    * way to stop serving the previous one immediately; `activateAccount` records the switch.
    */
   unbindActiveHost(): void {
+    this.#activeHostSelectionGeneration += 1;
     this.#state = null;
   }
 
@@ -383,6 +389,7 @@ export class TeamStore {
 
   readonly deactivate = Effect.fn("TeamStore.deactivate")(
     function* (this: TeamStore): Effect.fn.Return<void, RemoteWorkflowError, TeamStoreFiles> {
+      const selectionGeneration = ++this.#activeHostSelectionGeneration;
       const previousState = this.#state;
       const previousAccountId = this.#file.activeAccountId;
       this.#state = null;
@@ -392,8 +399,10 @@ export class TeamStore {
       }).pipe(
         Effect.catch(({ cause: error }) =>
           Effect.gen({ self: this }, function* () {
-            this.#state = previousState;
-            this.#file.activeAccountId = previousAccountId;
+            if (this.#activeHostSelectionGeneration === selectionGeneration) {
+              this.#state = previousState;
+              this.#file.activeAccountId = previousAccountId;
+            }
             return yield* new RemoteWorkflowError({ cause: error });
           }),
         ),
@@ -442,14 +451,14 @@ export class TeamStore {
 
   assertOwnerAccount(user: CentralAuthUser): void {
     const owner = this.#state?.members.find((member) => member.role === "owner");
-    if (!owner?.email) {
+    if (!owner || (!owner.accountId && !owner.email)) {
       throw new TeamStoreError(sourceText("error.team.ownerNotLinked"));
     }
     // The account is the identity once one is recorded; the address is only what an owner
     // from before accounts can be recognized by, and it can change hands.
     const matches = owner.accountId
       ? owner.accountId === user.id
-      : normalizeEmail(user.email) === normalizeEmail(owner.email);
+      : owner.email !== null && normalizeEmail(user.email) === normalizeEmail(owner.email);
     if (!matches) {
       throw new TeamStoreError(sourceText("error.team.ownerEmailRequired"));
     }
@@ -468,10 +477,10 @@ export class TeamStore {
   }
 
   /**
-   * The password path, used by the development connection and by tests. It creates an
-   * owner-less host and deliberately leaves `activeAccountId` alone - no account owns it
-   * yet, and the first one to activate adopts it. `#assertNoHostFor` is what keeps a
-   * second owner-less host from being created beside it.
+   * The password path, used by the development connection and by tests. Without `accountId`
+   * it creates an owner-less host for the first account to adopt. Local-only setup passes
+   * the signed-in ID so an account switch during password hashing cannot leave an
+   * owner-less host that another account could adopt.
    */
 
   readonly configure = Effect.fn("TeamStore.configure")(
@@ -480,11 +489,19 @@ export class TeamStore {
       serverName: string,
       username: string,
       password: string,
+      accountId?: string,
+      isCurrentAccount: () => boolean = () => true,
     ): Effect.fn.Return<TeamIdentity, RemoteWorkflowError, TeamStoreFiles> {
       if (this.#state)
         return yield* new RemoteWorkflowError({
           cause: new TeamStoreError(sourceText("error.team.alreadyConfigured")),
         });
+      const activeAccountBefore = this.#file.activeAccountId;
+      if (accountId && (!isCurrentAccount() || (activeAccountBefore !== null && activeAccountBefore !== accountId))) {
+        return yield* new RemoteWorkflowError({
+          cause: new TeamStoreError(sourceText("error.team.accountChangedDuringCreate")),
+        });
+      }
       yield* remoteDecode(() => validateServerName(serverName));
       yield* remoteDecode(() => validateUsername(username));
       yield* remoteDecode(() => validatePassword(password));
@@ -496,11 +513,25 @@ export class TeamStore {
       );
       const credentials = yield* hashPasswordEffect(password);
       // Hashing yields, so a second request could have configured a host meanwhile.
-      if (this.#state)
+      if (
+        this.#state ||
+        (accountId &&
+          (!isCurrentAccount() ||
+            this.#file.activeAccountId !== activeAccountBefore ||
+            (this.#file.activeAccountId !== null && this.#file.activeAccountId !== accountId)))
+      )
         return yield* new RemoteWorkflowError({
-          cause: new TeamStoreError(sourceText("error.team.alreadyConfigured")),
+          cause: new TeamStoreError(
+            accountId &&
+              (!isCurrentAccount() ||
+                this.#file.activeAccountId !== activeAccountBefore ||
+                (this.#file.activeAccountId !== null && this.#file.activeAccountId !== accountId))
+              ? sourceText("error.team.accountChangedDuringCreate")
+              : sourceText("error.team.alreadyConfigured"),
+          ),
         });
-      this.#state = {
+      this.#activeHostSelectionGeneration += 1;
+      const created: StoredTeam = {
         version: 1,
         serverId: randomUUID(),
         serverName: serverName.trim(),
@@ -510,6 +541,7 @@ export class TeamStore {
         members: [
           {
             id: randomUUID(),
+            ...(accountId ? { accountId } : {}),
             username: username.trim().toLowerCase(),
             email: null,
             name: null,
@@ -524,16 +556,20 @@ export class TeamStore {
         sessions: [],
       };
       const previousActiveAccountId = this.#file.activeAccountId;
-      this.#file.hosts.push(this.#state);
-      this.#file.activeAccountId = null;
+      const selectionGeneration = this.#activeHostSelectionGeneration;
+      this.#state = created;
+      this.#file.hosts.push(created);
+      this.#file.activeAccountId = accountId ?? null;
       const attempt3 = yield* Effect.gen({ self: this }, function* () {
         yield* this.#persistFileEffect();
       }).pipe(Effect.result);
       if (Result.isFailure(attempt3)) {
         const error = attempt3.failure.cause;
-        this.#file.hosts.pop();
-        this.#file.activeAccountId = previousActiveAccountId;
-        this.#state = null;
+        this.#file.hosts = this.#file.hosts.filter((host) => host !== created);
+        if (this.#activeHostSelectionGeneration === selectionGeneration) {
+          this.#file.activeAccountId = previousActiveAccountId;
+          if (this.#state === created) this.#state = null;
+        }
         return yield* new RemoteWorkflowError({ cause: error });
       }
       const identity = this.getIdentity();
@@ -547,20 +583,47 @@ export class TeamStore {
 
   /** Selects an existing unowned host when this fork is running without an account directory. */
   readonly activateLocalHost = Effect.fn("TeamStore.activateLocalHost")(
-    function* (this: TeamStore): Effect.fn.Return<boolean, RemoteWorkflowError, TeamStoreFiles> {
-      if (this.#state) return true;
-      const localHost = this.#file.hosts.find((host) => ownerAccountId(host) === null);
+    function* (
+      this: TeamStore,
+      accountId: string | null,
+      accountEmail: string | null = null,
+    ): Effect.fn.Return<boolean, RemoteWorkflowError, TeamStoreFiles> {
+      const normalizedAccountEmail = accountEmail?.trim()
+        ? yield* remoteDecode(() => normalizeEmail(accountEmail))
+        : null;
+      const canSelectHost = (host: StoredTeam) => {
+        const owner = hostOwner(host);
+        if (!owner) return false;
+        if (owner.accountId) return owner.accountId === accountId;
+        // Before account IDs existed, the email is the only safe way to distinguish the
+        // original owner from another account. Only a genuinely unowned host may be adopted
+        // by whichever account is signing in first.
+        if (owner.email) {
+          return normalizedAccountEmail !== null && normalizeEmail(owner.email) === normalizedAccountEmail;
+        }
+        return true;
+      };
+      const accountHost = accountId ? this.#file.hosts.find((host) => ownerAccountId(host) === accountId) : undefined;
+      const localHost =
+        accountHost ??
+        (this.#state && canSelectHost(this.#state) ? this.#state : undefined) ??
+        this.#file.hosts.find(canSelectHost);
       if (!localHost) return false;
       const previousState = this.#state;
       const previousActiveAccountId = this.#file.activeAccountId;
+      const nextActiveAccountId = accountId && canSelectHost(localHost) ? accountId : null;
+      if (this.#state === localHost && this.#file.activeAccountId === nextActiveAccountId) return true;
+      const selectionGeneration = ++this.#activeHostSelectionGeneration;
       this.#state = localHost;
-      this.#file.activeAccountId = null;
+      this.#file.activeAccountId = nextActiveAccountId;
       const persisted = yield* Effect.gen({ self: this }, function* () {
         yield* this.#persistFileEffect();
       }).pipe(Effect.result);
       if (Result.isFailure(persisted)) {
-        this.#state = previousState;
-        this.#file.activeAccountId = previousActiveAccountId;
+        if (this.#activeHostSelectionGeneration === selectionGeneration) {
+          this.#state = previousState;
+          this.#file.activeAccountId = previousActiveAccountId;
+        }
         return yield* new RemoteWorkflowError({ cause: persisted.failure.cause });
       }
       return true;
@@ -635,6 +698,7 @@ export class TeamStore {
       this.#file.hosts.push(created);
       const previousState = this.#state;
       const previousAccountId = this.#file.activeAccountId;
+      this.#activeHostSelectionGeneration += 1;
       this.#state = created;
       this.#file.activeAccountId = user.id;
       const attempt4 = yield* Effect.gen({ self: this }, function* () {
@@ -1469,7 +1533,12 @@ export class TeamStore {
 
   /** Makes the self-hosted identity authority canonical for this local host's owner membership. */
   readonly syncSelfHostedOwner = Effect.fn("TeamStore.syncSelfHostedOwner")(
-    function* (this: TeamStore, user: CentralAuthUser): Effect.fn.Return<void, RemoteWorkflowError, TeamStoreFiles> {
+    function* (
+      this: TeamStore,
+      user: CentralAuthUser,
+      isCurrentAccount: () => boolean = () => true,
+    ): Effect.fn.Return<void, RemoteWorkflowError, TeamStoreFiles> {
+      if (!isCurrentAccount()) return;
       const state = yield* remoteDecode(() => this.#requireState());
       const owner = state.members.find((member) => member.role === "owner");
       if (!owner)
@@ -1480,6 +1549,9 @@ export class TeamStore {
       const username = accountUsername(user.id);
       const name = yield* remoteDecode(() => normalizeName(user.name));
       const avatarUrl = yield* remoteDecode(() => normalizeAvatarUrl(user.avatarUrl));
+      // Profile/host startup work can finish after another account signs in. Recheck after
+      // validation and immediately before mutation, with no asynchronous gap before the write.
+      if (!isCurrentAccount()) return;
       if (
         owner.accountId === user.id &&
         owner.email === null &&

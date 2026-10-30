@@ -117,8 +117,15 @@ export function accountIpcHandlers({
               onIdentityApiReady: async (apiUrl) => {
                 const state = account.getState();
                 if (state?.status !== "signed_in") throw new Error("サインインしてからQRコードを作成してください。");
+                const isCurrentAccount = () => {
+                  const current = account.getState();
+                  return current?.status === "signed_in" && current.user.id === state.user.id;
+                };
                 await runCauseEffect(
-                  selfHostedIdentity.teamStore.syncSelfHostedOwner(selfHostedTeamProfile(state.user, apiUrl)),
+                  selfHostedIdentity.teamStore.syncSelfHostedOwner(
+                    selfHostedTeamProfile(state.user, apiUrl),
+                    isCurrentAccount,
+                  ),
                 );
               },
               host,

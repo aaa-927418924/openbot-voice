@@ -1062,7 +1062,13 @@ if (!hasSingleInstanceLock) {
         const localHostRetry = new LocalTailnetHostStartRetry({
           startHost: async () => {
             await built.ensureLocalHost();
-            return runCauseEffect(host.start());
+            const status = await runCauseEffect(host.start());
+            if (status.phase === "online") {
+              void runCauseEffect(remoteServers.syncAccountDirectory()).catch((error) =>
+                logger.warn("Unable to publish the local server to the account directory yet:", toLogValue(error)),
+              );
+            }
+            return status;
           },
           onError: (error) =>
             logger.warn("Unable to start the Tailscale-only OpenBot host; retrying:", toLogValue(error)),

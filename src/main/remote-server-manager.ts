@@ -155,11 +155,18 @@ class LocalTailnetRemoteServerDirectory implements RemoteServerDirectory {
   readonly #store: RemoteServerStore;
   readonly #isLocalServerEnabled: () => boolean;
   readonly #getAccountId: () => string | null;
+  readonly #getLocalHostId: () => string | null;
 
-  constructor(store: RemoteServerStore, isLocalServerEnabled: () => boolean, getAccountId: () => string | null) {
+  constructor(
+    store: RemoteServerStore,
+    isLocalServerEnabled: () => boolean,
+    getAccountId: () => string | null,
+    getLocalHostId: () => string | null,
+  ) {
     this.#store = store;
     this.#isLocalServerEnabled = isLocalServerEnabled;
     this.#getAccountId = getAccountId;
+    this.#getLocalHostId = getLocalHostId;
   }
 
   get activeServerId(): string {
@@ -176,6 +183,7 @@ class LocalTailnetRemoteServerDirectory implements RemoteServerDirectory {
     return this.#store.servers.filter(
       (server) =>
         isTailscaleApiUrl(server.apiUrl) &&
+        server.id !== this.#getLocalHostId() &&
         (accountId ? server.accountId === accountId : server.accountId === undefined),
     );
   }
@@ -224,6 +232,8 @@ interface RemoteServerManagerOptions {
   localOnlyNetworking?: boolean;
   /** Whether this desktop publishes its Local host into the server list. */
   isLocalServerEnabled?: () => boolean;
+  /** Metadata for this device's active, account-owned Local host, when it is ready to publish. */
+  getLocalAccountServerRegistration?: () => AccountServerRegistration | null;
   /** The origin of the self-hosted account service that this app is configured to use. */
   selfHostedApiOrigin?: string | undefined;
   appVersion?: string;
@@ -284,6 +294,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   readonly #allowLocalDevelopmentInvites: boolean;
   readonly #localOnlyNetworking: boolean;
   readonly #isLocalServerEnabled: () => boolean;
+  readonly #getLocalAccountServerRegistration: () => AccountServerRegistration | null;
   readonly #inviteLinks: InviteLinkOptions;
   readonly #appVersion: string | null;
   #duplicateOperationIds = new Map<string, string>();
@@ -314,11 +325,13 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     this.#store = new RemoteServerStore({ path, cipher });
     this.#localOnlyNetworking = options.localOnlyNetworking ?? false;
     this.#isLocalServerEnabled = options.isLocalServerEnabled ?? (() => true);
+    this.#getLocalAccountServerRegistration = options.getLocalAccountServerRegistration ?? (() => null);
     this.#servers = this.#localOnlyNetworking
       ? new LocalTailnetRemoteServerDirectory(
           this.#store,
           this.#isLocalServerEnabled,
           () => centralAccount.getAccountId?.() ?? null,
+          options.getLocalHostId ?? (() => null),
         )
       : this.#store;
     this.#appVersion = options.appVersion ?? null;
@@ -766,6 +779,26 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         return this.list();
 
       let entries = yield* account.listAccountServers().pipe(toRemoteWorkflowError);
+      const localRegistration = this.#getLocalAccountServerRegistration();
+      if (localRegistration) {
+        const existingLocalEntry = entries.find((entry) => entry.hostId === localRegistration.hostId);
+        if (
+          !existingLocalEntry ||
+          existingLocalEntry.name !== localRegistration.name ||
+          existingLocalEntry.apiUrl !== localRegistration.apiUrl ||
+          existingLocalEntry.fingerprint !== localRegistration.fingerprint ||
+          existingLocalEntry.publicKey !== localRegistration.publicKey ||
+          existingLocalEntry.logoKey !== localRegistration.logoKey ||
+          existingLocalEntry.membershipId !== localRegistration.membershipId ||
+          existingLocalEntry.role !== localRegistration.role
+        ) {
+          // Local hosts used to be omitted from the shared directory. Publish the verified
+          // identity before treating that directory as authoritative, and refresh metadata
+          // after rename/address changes so other signed-in devices see the same server.
+          yield* account.registerAccountServer(localRegistration).pipe(toRemoteWorkflowError);
+          entries = yield* account.listAccountServers().pipe(toRemoteWorkflowError);
+        }
+      }
       // Old builds kept pairings only on each device. Import each device's old entries
       // idempotently; server-side tombstones prevent old caches from restoring removed memberships.
       // A fresh explicit invite join carries `rejoin` and is the only operation that restores one.
@@ -777,6 +810,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       const pendingLegacyImports = new Set<string>();
       const pendingAccountRejoins = new Set<string>();
       const accountId = account.getAccountId?.() ?? null;
+      const localHostId = this.#getLocalHostId();
       for (const server of [...this.#store.servers]) {
         if (
           !accountId ||
@@ -897,6 +931,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       }
       const previousActive = this.#store.activeServerId;
       for (const entry of entries) {
+        if (entry.hostId === localHostId) continue;
         if (this.#store.isHiddenHost(entry.hostId)) continue;
         const existing = this.#store.find(entry.hostId);
         if (existing && (existing.fingerprint !== entry.fingerprint || existing.publicKey !== entry.publicKey))

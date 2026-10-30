@@ -443,7 +443,7 @@ export const messages = defineMessages("server", {
   "server.localAdmin.invalidEmail": "Enter a valid email address.",
   "server.localAdmin.ttyRequired": "Run this command in a terminal.",
   "server.localAdmin.actionFailed": "The service action failed.",
-  "server.localAdmin.trayOpen": "Open status menu",
+  "server.localAdmin.trayOpen": "Open management screen",
   "server.localAdmin.trayStart": "Start server",
   "server.localAdmin.trayStop": "Stop server",
   "server.localAdmin.trayRestart": "Restart server",

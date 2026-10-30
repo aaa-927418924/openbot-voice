@@ -686,6 +686,10 @@ export class HostService extends EventEmitter<HostEvents> {
   }
 
   readonly start = Effect.fn("HostService.start")(function* (this: HostService) {
+    if (this.#options.localOnlyNetworking && this.#options.store.configured) {
+      const signedInUser = yield* remoteDecode(() => this.#options.getSignedInUser());
+      yield* remoteDecode(() => this.#options.store.assertOwnerAccount(signedInUser));
+    }
     if (this.#startOperation) return yield* Fiber.join(this.#startOperation);
     const operation = yield* Effect.forkIn(this.#provide(this.#startRuntimeOperation()), this.#runtime.scope, {
       startImmediately: false,
@@ -706,16 +710,40 @@ export class HostService extends EventEmitter<HostEvents> {
     const optionalListRemoteMembers = this.#options.listRemoteMembers;
     if (!this.#options.store.configured)
       return yield* new RemoteWorkflowError({ cause: new Error(sourceText("error.host.nameBeforePublish")) });
+    if (this.#options.localOnlyNetworking) {
+      const signedInUser = yield* remoteDecode(() => this.#options.getSignedInUser());
+      yield* remoteDecode(() => this.#options.store.assertOwnerAccount(signedInUser));
+    }
     if (
       (this.#status.phase === "online" &&
         (this.#webRtcOnline || (this.#options.localOnlyNetworking && this.#status.apiOnline))) ||
       this.#status.phase === "starting"
     ) {
+      if (this.#options.localOnlyNetworking) {
+        const identity = this.#options.store.getIdentity();
+        if (identity && this.#status.serverId !== identity.serverId) {
+          this.#setStatus({
+            configured: true,
+            serverId: identity.serverId,
+            serverName: identity.serverName,
+            logoUrl: identity.logoVersion ? serverLogoUrl(identity.logoVersion) : null,
+            enabledOnLaunch: identity.enabledOnLaunch,
+            phase: "online",
+            apiOnline: true,
+            message: sourceText("status.host.ready"),
+          });
+          this.#api.refreshIdentity();
+          this.#api.refreshPresence();
+        }
+      }
       return this.getStatus();
     }
     if (this.#status.phase === "stopping") return this.getStatus();
     const generation = ++this.#runtimeGeneration;
-    if (!this.#options.localOnlyNetworking) {
+    if (this.#options.localOnlyNetworking) {
+      const signedInUser = yield* remoteDecode(() => this.#options.getSignedInUser());
+      yield* remoteDecode(() => this.#options.store.assertOwnerAccount(signedInUser));
+    } else {
       const signedInUser = yield* remoteDecode(() => this.#options.getSignedInUser());
       yield* remoteDecode(() => this.#options.store.assertOwnerAccount(signedInUser));
       if (yield* this.#options.store.syncAccount(signedInUser)) this.#api.refreshPresence();
@@ -729,6 +757,16 @@ export class HostService extends EventEmitter<HostEvents> {
       if (!identity)
         return yield* new RemoteWorkflowError({ cause: new Error(sourceText("error.host.nameBeforePublish")) });
       if (this.#options.localOnlyNetworking) {
+        // Starting the API listener is asynchronous. Recheck the signed-in owner after it
+        // returns so a logout/account switch during startup cannot publish the old host.
+        const ownerCheck = yield* Effect.gen({ self: this }, function* () {
+          const signedInUser = yield* remoteDecode(() => this.#options.getSignedInUser());
+          yield* remoteDecode(() => this.#options.store.assertOwnerAccount(signedInUser));
+        }).pipe(Effect.result);
+        if (Result.isFailure(ownerCheck)) {
+          yield* this.#attemptTeardown(this.#stopRuntime());
+          return yield* new RemoteWorkflowError({ cause: ownerCheck.failure.cause });
+        }
         const apiUrl = this.#localApiUrl();
         if (!apiUrl)
           return yield* new RemoteWorkflowError({ cause: new Error(sourceText("error.host.publishFailed")) });

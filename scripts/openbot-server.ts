@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { access, chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
@@ -389,6 +389,15 @@ async function main(): Promise<void> {
       `${t("server.localAdmin.serviceInstalled")}\n${result.unitPath}\n${result.commandPath}\n${result.trayEntryPath ?? ""}\n`,
     );
     if (!result.trayEntryPath) process.stdout.write(`${t("server.localAdmin.trayEntryMissing")}\n`);
+    if (appExecutable && (process.env.DISPLAY || process.env.WAYLAND_DISPLAY)) {
+      const tray = spawn(appExecutable, ["--openbot-server-tray"], {
+        detached: true,
+        stdio: "ignore",
+        env: { ...process.env, OPENBOT_SERVER_RUNTIME_DIR: runtimeRoot },
+      });
+      tray.once("error", () => process.stderr.write(`${t("server.localAdmin.actionFailed")}\n`));
+      tray.unref();
+    }
     if (!result.lingerEnabled)
       process.stdout.write(`${t("server.localAdmin.lingerRequired", { user: process.env.USER ?? homedir() })}\n`);
     return;

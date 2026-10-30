@@ -5,7 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { SIGNED_OUT_CHANNEL_MEMBER_ID } from "@openbot/contracts/ipc";
+import { Effect } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import * as atomicJsonFile from "../backend/atomic-json-file";
 import { runCauseEffect } from "../backend/effect-boundary";
 import { TeamStore } from "./team-store";
 
@@ -29,6 +31,7 @@ describe("TeamStore", () => {
     };
 
     await runCauseEffect(store.syncSelfHostedOwner(profile));
+    await runCauseEffect(store.activateLocalHost(profile.id));
     const session = await runCauseEffect(store.loginWithAccount(profile));
 
     expect(store.listMembers()).toHaveLength(1);
@@ -41,6 +44,151 @@ describe("TeamStore", () => {
     });
     expect(store.authenticate(session.sessionToken)?.id).toBe(ownerId);
     expect((await readStoredHost(path)).members?.[0]?.accountId).toBe(profile.id);
+  });
+
+  it("restores the same account-owned local host after a restart", async () => {
+    const { store, path } = await createStore();
+    const created = await runCauseEffect(store.configure("Linux host", "owner", "correct horse battery"));
+    const profile = {
+      id: "shared-profile-id",
+      email: "",
+      name: "Shared profile",
+      avatarUrl: null,
+    };
+
+    await runCauseEffect(store.syncSelfHostedOwner(profile));
+    await runCauseEffect(store.activateLocalHost(profile.id));
+
+    const restarted = new TeamStore(path);
+    await runCauseEffect(restarted.initialize());
+    expect(restarted.getIdentity()).toMatchObject({ serverId: created.serverId, serverName: "Linux host" });
+    expect(restarted.getOwnerAccountId()).toBe(profile.id);
+  });
+
+  it("only lets the matching email adopt a legacy email-owned local host", async () => {
+    const { path } = await createStore();
+    const original = new TeamStore(path);
+    await runCauseEffect(
+      original.configureWithAccount("Legacy host", {
+        id: "pre-migration-account",
+        email: "owner@example.test",
+        name: "Legacy owner",
+        avatarUrl: null,
+      }),
+    );
+    const identity = original.getIdentity();
+    const saved: {
+      hosts: Array<{ members: Array<{ role: string; accountId?: string }> }>;
+    } = JSON.parse(await readFile(path, "utf8"));
+    const owner = saved.hosts[0]?.members.find((member) => member.role === "owner");
+    if (!owner) throw new Error("The legacy host owner was not created.");
+    delete owner.accountId;
+    await writeFile(path, JSON.stringify(saved));
+
+    const restored = new TeamStore(path);
+    await runCauseEffect(restored.initialize());
+    expect(restored.configured).toBe(false);
+
+    await expect(
+      runCauseEffect(restored.activateLocalHost("different-account", "attacker@example.test")),
+    ).resolves.toBe(false);
+    expect(restored.configured).toBe(false);
+
+    await expect(runCauseEffect(restored.activateLocalHost("same-owner-account", "OWNER@example.test"))).resolves.toBe(
+      true,
+    );
+    expect(restored.getIdentity()).toMatchObject({ serverId: identity?.serverId, serverName: "Legacy host" });
+  });
+
+  it("does not roll back a newer host selection when an older activation write fails", async () => {
+    const first = { id: "account-a", email: "a@example.test", name: "A", avatarUrl: null };
+    const second = { id: "account-b", email: "b@example.test", name: "B", avatarUrl: null };
+    const { path } = await createStore();
+    const firstStore = new TeamStore(path);
+    await runCauseEffect(firstStore.initialize());
+    await runCauseEffect(firstStore.configure("Host A", "owner", "owner password", first.id));
+    const firstSaved = JSON.parse(await readFile(path, "utf8"));
+
+    const secondRoot = await mkdtemp(join(tmpdir(), "openbot-team-second-"));
+    roots.push(secondRoot);
+    const secondPath = join(secondRoot, "team.json");
+    const secondStore = new TeamStore(secondPath);
+    await runCauseEffect(secondStore.initialize());
+    await runCauseEffect(secondStore.configure("Host B", "owner", "owner password", second.id));
+    const secondSaved = JSON.parse(await readFile(secondPath, "utf8"));
+
+    await writeFile(
+      path,
+      JSON.stringify({ version: 2, activeAccountId: null, hosts: [...firstSaved.hosts, ...secondSaved.hosts] }),
+    );
+    const store = new TeamStore(path);
+    await runCauseEffect(store.initialize());
+
+    let markFirstWriteStarted: () => void = () => undefined;
+    const firstWriteStarted = new Promise<void>((resolve) => {
+      markFirstWriteStarted = resolve;
+    });
+    let releaseFirstWrite: () => void = () => undefined;
+    const firstWriteGate = new Promise<void>((resolve) => {
+      releaseFirstWrite = resolve;
+    });
+    const writeFileAtomically = atomicJsonFile.writeFileAtomically;
+    const writeSpy = vi.spyOn(atomicJsonFile, "writeFileAtomically");
+    let delayAndFail = true;
+    writeSpy.mockImplementation((targetPath, content, options) => {
+      if (targetPath === path && delayAndFail) {
+        delayAndFail = false;
+        return Effect.tryPromise({
+          try: async () => {
+            markFirstWriteStarted();
+            await firstWriteGate;
+            throw new Error("simulated persistence failure");
+          },
+          catch: (cause) => new atomicJsonFile.AtomicFileWriteError({ operation: "write", cause }),
+        });
+      }
+      return writeFileAtomically(targetPath, content, options);
+    });
+
+    const olderActivation = runCauseEffect(store.activateLocalHost(first.id));
+    await firstWriteStarted;
+    const newerActivation = runCauseEffect(store.activateLocalHost(second.id));
+    releaseFirstWrite();
+
+    try {
+      const results = await Promise.allSettled([olderActivation, newerActivation]);
+      expect(results[0]?.status).toBe("rejected");
+      expect(results[1]).toMatchObject({ status: "fulfilled", value: true });
+      expect(store.getOwnerAccountId()).toBe(second.id);
+      expect(JSON.parse(await readFile(path, "utf8")).activeAccountId).toBe(second.id);
+    } finally {
+      releaseFirstWrite();
+      writeSpy.mockRestore();
+    }
+  });
+
+  it("does not apply a delayed profile sync after the signed-in account changes", async () => {
+    const { store } = await createStore();
+    await runCauseEffect(store.configure("Linux host", "owner", "correct horse battery"));
+    const profile = { id: "previous-account", email: "", name: "Previous", avatarUrl: null };
+
+    await runCauseEffect(store.syncSelfHostedOwner(profile, () => false));
+
+    expect(store.getOwnerAccountId()).toBeNull();
+  });
+
+  it("does not create an adoptable host when its signed-in account changes during setup", async () => {
+    const { store, path } = await createStore();
+    let checks = 0;
+
+    await expect(
+      runCauseEffect(
+        store.configure("Linux host", "owner", "correct horse battery", "account-a", () => ++checks === 1),
+      ),
+    ).rejects.toThrow("signed-in account changed");
+
+    expect(store.configured).toBe(false);
+    expect(await readStoredHosts(path)).toHaveLength(0);
   });
 
   it("resolves pre-sign-in channel authors to the current owner identity", async () => {
@@ -277,7 +425,7 @@ describe("TeamStore", () => {
     const restarted = new TeamStore(path);
     await runCauseEffect(restarted.initialize());
     expect(restarted.configured).toBe(false);
-    await expect(runCauseEffect(restarted.activateLocalHost())).resolves.toBe(true);
+    await expect(runCauseEffect(restarted.activateLocalHost(null))).resolves.toBe(true);
     expect(restarted.getIdentity()?.serverId).toBe(identity.serverId);
 
     const afterAnotherRestart = new TeamStore(path);

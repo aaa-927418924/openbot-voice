@@ -194,6 +194,17 @@ describe("HostService account binding", () => {
     expect(registerRemoteHost).not.toHaveBeenCalled();
   });
 
+  it("refuses to start an account-owned local host after another account signs in", async () => {
+    const { service, store, announce } = await createHostService({ localOnlyNetworking: true });
+    await runCauseEffect(store.configure("Tailnet host", "owner", "owner password", first.id));
+    await runCauseEffect(store.syncSelfHostedOwner(first));
+    await runCauseEffect(store.activateLocalHost(first.id));
+    announce(second);
+
+    await expect(runCauseEffect(service.start())).rejects.toThrow();
+    expect(service.getStatus().phase).not.toBe("online");
+  });
+
   it("uses the local caller for channels without requiring a cloud account", async () => {
     const { service, announce } = await createHostService();
     expect(service.channelActor()).toEqual({ id: "local", name: "You" });
