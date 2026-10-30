@@ -177,6 +177,7 @@ type IdentityRequestBody =
   | { readonly email: string; readonly password: string; readonly name?: string }
   | { readonly name: string }
   | { readonly serverId: string }
+  | { readonly ticket: string; readonly serverId: string }
   | AccountServerRegistration;
 
 function accountError(error: unknown): Error {
@@ -423,6 +424,26 @@ export class SelfHostedDesktopAccountManager {
         return yield* Effect.fail(new Error("アカウントサーバーから不正な接続チケットが返されました。"));
       }
       return value.ticket;
+    });
+
+  readonly redeemTeamAuthTicket = (ticket: string, serverId: string): Effect.Effect<CentralAuthUser | null, Error> =>
+    Effect.gen({ self: this }, function* () {
+      if (this.#record.mode !== "account" || !this.#record.apiUrl || !this.#token || !this.#record.user) {
+        return yield* Effect.fail(new Error("アカウントにサインインしてください。"));
+      }
+      const value = yield* this.#requestJson(this.#record.apiUrl, "/v1/team-auth/redeem", {
+        token: this.#token,
+        method: "POST",
+        body: { ticket, serverId },
+      });
+      if (!isDynamicRecord(value) || !("user" in value)) {
+        return yield* Effect.fail(new Error("アカウントサーバーから不正な接続確認結果が返されました。"));
+      }
+      const user = value.user === null ? null : validUser(value.user);
+      if (value.user !== null && !user) {
+        return yield* Effect.fail(new Error("アカウントサーバーから不正な接続確認結果が返されました。"));
+      }
+      return user;
     });
 
   readonly listAccountServers = (): Effect.Effect<AccountServerDirectoryEntry[], Error> =>

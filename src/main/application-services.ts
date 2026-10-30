@@ -1657,14 +1657,21 @@ export async function createApplicationServices({
     // state of the running app, not a startup-ordering artifact.
     getSignedInUser: () => (localOnlyNetworking ? signedInSelfHostedUser() : centralAuth.getSignedInUser()),
     redeemCentralTicket: (ticket, serverId) =>
-      localOnlyNetworking && selfHostedIdentityAuthority
-        ? selfHostedIdentityAuthority.consumeTeamTicket({ ticket, targetTeamServerId: serverId }).pipe(
+      localOnlyNetworking && selfHostedDesktopAccount.isSignedIn
+        ? selfHostedDesktopAccount.redeemTeamAuthTicket(ticket, serverId).pipe(
             Effect.map((account) =>
               account ? { id: account.id, email: "", name: account.name, avatarUrl: account.avatarUrl } : null,
             ),
             Effect.mapError((cause) => new RemoteWorkflowError({ cause })),
           )
-        : centralAuth.redeemTeamAuthTicket(ticket, serverId).pipe(toRemoteWorkflowError),
+        : localOnlyNetworking && selfHostedIdentityAuthority
+          ? selfHostedIdentityAuthority.consumeTeamTicket({ ticket, targetTeamServerId: serverId }).pipe(
+              Effect.map((account) =>
+                account ? { id: account.id, email: "", name: account.name, avatarUrl: account.avatarUrl } : null,
+              ),
+              Effect.mapError((cause) => new RemoteWorkflowError({ cause })),
+            )
+          : centralAuth.redeemTeamAuthTicket(ticket, serverId).pipe(toRemoteWorkflowError),
     sendTeamInviteEmail: (input) => centralAuth.sendTeamInviteEmail(input).pipe(toRemoteWorkflowError),
     platform: process.platform === "darwin" || process.platform === "win32" ? process.platform : "linux",
     unattended: false,

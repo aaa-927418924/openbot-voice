@@ -416,6 +416,23 @@ export class SelfHostedIdentityApiServer {
         return json(response, 200, grant);
       }
 
+      if (method === "POST" && url.pathname === "/v1/team-auth/redeem") {
+        const token = bearer(request);
+        if (!token) throw new ApiError(401, "unauthorized");
+        const authenticated = await Effect.runPromise(this.#authority.authenticateSession(token));
+        if (!authenticated) throw new ApiError(401, "unauthorized");
+        const body = await readJson(request);
+        const account = await Effect.runPromise(
+          this.#authority.consumeTeamTicket({
+            ticket: stringField(body, "ticket", 128),
+            targetTeamServerId: stringField(body, "serverId", 128),
+          }),
+        );
+        // The session authenticates the host performing redemption. The ticket itself identifies
+        // the joining account, which may be different from the host owner's account.
+        return json(response, 200, { user: account ? asCentralAuthUser(account) : null });
+      }
+
       if (method === "GET" && url.pathname === "/v1/me") {
         const token = bearer(request);
         if (!token) throw new ApiError(401, "unauthorized");

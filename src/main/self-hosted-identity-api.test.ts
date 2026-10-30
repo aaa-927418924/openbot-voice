@@ -224,7 +224,52 @@ describe("SelfHostedIdentityApiServer", () => {
         body: JSON.stringify({ serverId: "linux-team-host" }),
       });
       expect(ticketResponse.status).toBe(200);
-      expect(await ticketResponse.json()).toMatchObject({ ticket: expect.any(String), expiresAt: expect.any(Number) });
+      const ticketPayload = await ticketResponse.json();
+      expect(ticketPayload).toMatchObject({ ticket: expect.any(String), expiresAt: expect.any(Number) });
+      if (!isDynamicRecord(ticketPayload) || typeof ticketPayload.ticket !== "string") {
+        throw new Error("Team ticket response was invalid.");
+      }
+
+      const unauthorizedRedemption = await fetch(new URL("/v1/team-auth/redeem", apiUrl), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Connection: "close",
+        },
+        body: JSON.stringify({ ticket: ticketPayload.ticket, serverId: "linux-team-host" }),
+      });
+      expect(unauthorizedRedemption.status).toBe(401);
+
+      const redemption = await fetch(new URL("/v1/team-auth/redeem", apiUrl), {
+        method: "POST",
+        headers: {
+          // The receiving host can be signed in as its owner while this ticket belongs to an
+          // invited member. A valid API session authorizes redemption; the ticket chooses the user.
+          Authorization: `Bearer ${otherAccount.token}`,
+          "Content-Type": "application/json",
+          Connection: "close",
+        },
+        body: JSON.stringify({ ticket: ticketPayload.ticket, serverId: "linux-team-host" }),
+      });
+      expect(await redemption.json()).toEqual({
+        user: {
+          id: account.id,
+          email: "owner@openbot.test",
+          name: profile.name,
+          avatarUrl: profile.avatarUrl,
+        },
+      });
+
+      const teamReplay = await fetch(new URL("/v1/team-auth/redeem", apiUrl), {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${sessionToken}`,
+          "Content-Type": "application/json",
+          Connection: "close",
+        },
+        body: JSON.stringify({ ticket: ticketPayload.ticket, serverId: "linux-team-host" }),
+      });
+      expect(await teamReplay.json()).toEqual({ user: null });
 
       const profileResponse = await fetch(new URL("/v1/me/profile", apiUrl), {
         method: "PATCH",

@@ -145,6 +145,11 @@ describe("SelfHostedDesktopAccountManager", () => {
       if (url.pathname === "/v1/me/servers/legacy-import-exclusions" && (init?.method ?? "GET") === "GET") {
         return Response.json({ excludedHostIds });
       }
+      if (url.pathname === "/v1/team-auth/redeem" && init?.method === "POST") {
+        return Response.json({
+          user: { id: "account-3", email: "another@example.com", name: "Another member", avatarUrl: null },
+        });
+      }
       throw new Error(`Unexpected request: ${url.pathname}`);
     });
     vi.stubGlobal("fetch", request);
@@ -154,6 +159,20 @@ describe("SelfHostedDesktopAccountManager", () => {
     );
     expect(await Effect.runPromise(manager.listAccountServers())).toEqual([entry]);
     expect(await Effect.runPromise(manager.getLegacyAccountServerImportExclusions())).toEqual(excludedHostIds);
+    expect(await Effect.runPromise(manager.redeemTeamAuthTicket("t".repeat(43), entry.hostId))).toEqual({
+      id: "account-3",
+      email: "another@example.com",
+      name: "Another member",
+      avatarUrl: null,
+    });
+    expect(request).toHaveBeenLastCalledWith(
+      new URL("/v1/team-auth/redeem", "http://100.100.10.2:43124/"),
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ ticket: "t".repeat(43), serverId: entry.hostId }),
+        headers: expect.objectContaining({ Authorization: `Bearer ${token}` }),
+      }),
+    );
     const registration = {
       hostId: entry.hostId,
       name: entry.name,
