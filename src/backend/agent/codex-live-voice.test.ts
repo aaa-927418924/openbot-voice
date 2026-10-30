@@ -105,6 +105,22 @@ describe("CodexLiveVoiceAdapter", () => {
     expect(stopped).toBe(true);
   });
 
+  it("closes local realtime state when the provider stops without a close notification", async () => {
+    const client = new FakeClient();
+    const events: CodexRealtimeEvent[] = [];
+    const adapter = new CodexLiveVoiceAdapter({ client, onEvent: (event) => events.push(event) });
+    await Effect.runPromise(adapter.start("thread-a", "offer-sdp", "maple"));
+
+    adapter.closeForProviderStop("thread-a");
+
+    expect(adapter.isActive("thread-a")).toBe(false);
+    expect(events.filter((event) => event.type === "closed")).toEqual([
+      { type: "closed", threadId: "thread-a", reason: "Codex provider stopped." },
+    ]);
+    client.emit("notification", { method: "thread/realtime/closed", params: { threadId: "thread-a" } });
+    expect(events.filter((event) => event.type === "closed")).toHaveLength(1);
+  });
+
   it("does not dispatch a transcript-tail task when Live Voice stops", async () => {
     const client = new FakeClient();
     const adapter = new CodexLiveVoiceAdapter({ client, onEvent: () => undefined });
@@ -161,7 +177,7 @@ describe("CodexLiveVoiceAdapter", () => {
           },
         }),
       ),
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ id: "turn-a", status: "inProgress" });
     await expect(
       Effect.runPromise(
         adapter.startOrSteerUserTurn("thread-b", {

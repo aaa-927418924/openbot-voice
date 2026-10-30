@@ -244,6 +244,19 @@ export class CodexLiveVoiceAdapter {
     }
   }, Effect.uninterruptible).bind(this);
 
+  /** Closes local realtime state when the owning provider process stops without a close event. */
+  closeForProviderStop(threadId: string): void {
+    const session = this.#sessions.get(threadId);
+    if (!session) return;
+    session.stopped = true;
+    Deferred.doneUnsafe(session.closed, Effect.succeed(true));
+    Deferred.doneUnsafe(session.answer, Effect.succeed(null));
+    if (session.listener) this.#client.off("notification", session.listener);
+    if (session.exitListener) this.#client.off("exit", session.exitListener);
+    if (this.#sessions.get(threadId) === session) this.#sessions.delete(threadId);
+    this.#onEvent({ type: "closed", threadId, reason: "Codex provider stopped." });
+  }
+
   readonly startOrSteerUserTurn = Effect.fn("CodexLiveVoiceAdapter.startOrSteerUserTurn")(function* (
     this: CodexLiveVoiceAdapter,
     threadId: string,
@@ -251,7 +264,7 @@ export class CodexLiveVoiceAdapter {
   ) {
     const session = this.#sessions.get(threadId);
     if (!session || session.stopped || !this.#client.running) throw new Error("Codex Live is unavailable.");
-    yield* this.#client.request(
+    const response = yield* this.#client.request(
       "turn/start",
       {
         threadId,
@@ -268,6 +281,7 @@ export class CodexLiveVoiceAdapter {
       decodeTurnResponse,
       TURN_START_TIMEOUT_MS,
     );
+    return response.turn;
   }).bind(this);
 
   readonly dispose = Effect.fn("CodexLiveVoiceAdapter.dispose")(function* (this: CodexLiveVoiceAdapter) {

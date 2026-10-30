@@ -173,7 +173,7 @@ import { toMcpOperationError } from "./mcp-effects";
 import { McpServerStore } from "./mcp-server-store";
 import { MessagingThreads, toMessagingThreadFailed } from "./messaging/messaging-threads";
 import type { PasswordVault } from "./password-vault";
-import { decodeAccountReadResult, decodeRecordResponse } from "./protocol";
+import { decodeAccountReadResult, decodeRecordResponse, getRecord, getString } from "./protocol";
 import { ProviderClientOperationError } from "./provider-client-effects";
 import { NO_PROVIDER_CREDENTIALS, type ProviderClientContext } from "./provider-drivers";
 import { recordAgentRestartActivity } from "./restart-activity";
@@ -278,6 +278,17 @@ interface LiveVoiceStartReservation {
   readonly completed: Deferred.Deferred<void>;
   cancelled: boolean;
 }
+
+interface LiveVoiceTextTurn {
+  readonly agentId: string;
+  readonly turnId: string;
+  readonly providerThreadId: string;
+  readonly client: AgentClient;
+  readonly completed: Deferred.Deferred<void>;
+}
+
+const LIVE_VOICE_DELETE_INTERRUPT_TIMEOUT_MS = 30_000;
+const TERMINAL_TURN_STATUSES = new Set(["completed", "failed", "interrupted", "cancelled", "canceled"]);
 
 export interface AgentServiceOptions {
   store: AgentStore;
@@ -403,6 +414,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   #pendingLiveVoiceStart: LiveVoiceStartReservation | undefined;
   /** Typed voice submissions still awaiting their provider request for each agent. */
   readonly #pendingLiveVoiceTexts = new Map<string, Set<Deferred.Deferred<void>>>();
+  readonly #liveVoiceTextTurns = new Map<string, LiveVoiceTextTurn>();
   readonly #usedLiveVoiceSessionIds = new Set<string>();
   #initialized = false;
   #stopping = false;
@@ -524,13 +536,24 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       conversation: this.#conversation,
       hooks: {
         bindClient: (client) => {
-          client.on("notification", (notification) =>
+          client.on("notification", (notification) => {
+            const finishLiveVoiceTurn = () => {
+              if (notification.method !== "turn/completed") return;
+              const turnId = getString(getRecord(notification.params, "turn"), "id");
+              const providerThreadId = getString(notification.params, "threadId");
+              if (!turnId || !providerThreadId) return;
+              const tracked = this.#liveVoiceTextTurns.get(turnId);
+              if (!tracked || tracked.client !== client || tracked.providerThreadId !== providerThreadId) return;
+              this.#liveVoiceTextTurns.delete(turnId);
+              Deferred.doneUnsafe(tracked.completed, Effect.void);
+            };
             Effect.runFork(
-              this.#turn
-                .handleNotification(notification, client)
-                .pipe(Effect.forkIn(this.#scope, { startImmediately: true })),
-            ),
-          );
+              this.#turn.handleNotification(notification, client).pipe(
+                Effect.tap(() => Effect.sync(finishLiveVoiceTurn)),
+                Effect.forkIn(this.#scope, { startImmediately: true }),
+              ),
+            );
+          });
           client.on("request", (request) =>
             Effect.runFork(
               this.#tools.handle(client, request).pipe(Effect.forkIn(this.#scope, { startImmediately: true })),
@@ -546,6 +569,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             for (const agent of this.#store.list()) this.#drain.scheduleDrain(agent.id);
           }).pipe(toProviderOperationFailed),
         onProviderLost: (client) => {
+          this.#closeLiveVoiceForClient(client);
           this.#boot.orphanDeliveriesOf(client.provider, (agentId) => this.#providers.runsOnOwnProcess(agentId));
           this.#compaction.dispose();
           this.#attention.clearPrompts(client);
@@ -555,6 +579,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         },
         onClientStopped: (client) =>
           Effect.gen({ self: this }, function* () {
+            this.#closeLiveVoiceForClient(client);
             this.#attention.clearPrompts(client);
             this.#attention.clearBrowserTakeovers(client);
             this.#attention.clearApprovals(client);
@@ -1051,11 +1076,42 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
                 threadId: pending.threadId,
                 sessionId: pending.sessionId,
               });
-              return;
+            } else {
+              const session = this.#liveVoiceSessions.get(agentId);
+              if (session)
+                yield* this.stopLiveVoice({ agentId, threadId: session.threadId, sessionId: session.sessionId });
             }
-            const session = this.#liveVoiceSessions.get(agentId);
-            if (session)
-              yield* this.stopLiveVoice({ agentId, threadId: session.threadId, sessionId: session.sessionId });
+            const acceptedTextTurns = [...this.#liveVoiceTextTurns.values()].filter((turn) => turn.agentId === agentId);
+            for (const turn of acceptedTextTurns) {
+              if (!this.#liveVoiceTextTurns.has(turn.turnId)) continue;
+              const interrupt = turn.client
+                .request(
+                  "turn/interrupt",
+                  { threadId: turn.providerThreadId, turnId: turn.turnId },
+                  decodeRecordResponse,
+                )
+                .pipe(
+                  Effect.catch((failure) =>
+                    Deferred.await(turn.completed).pipe(
+                      Effect.as(true),
+                      Effect.timeoutOrElse({
+                        duration: LIVE_VOICE_DELETE_INTERRUPT_TIMEOUT_MS,
+                        orElse: () => Effect.succeed(false),
+                      }),
+                      Effect.flatMap((completed) => (completed ? Effect.void : Effect.fail(failure))),
+                    ),
+                  ),
+                );
+              yield* interrupt;
+              const completed = yield* Deferred.await(turn.completed).pipe(
+                Effect.as(true),
+                Effect.timeoutOrElse({
+                  duration: LIVE_VOICE_DELETE_INTERRUPT_TIMEOUT_MS,
+                  orElse: () => Effect.succeed(false),
+                }),
+              );
+              if (!completed) throw new Error("Live Voice work did not stop before agent deletion.");
+            }
           }),
       },
     });
@@ -1509,7 +1565,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           },
           session.channel,
         );
-      yield* session.adapter
+      const acceptedTurn = yield* session.adapter
         .startOrSteerUserTurn(session.providerThreadId, {
           clientUserMessageId,
           text: input.text,
@@ -1539,6 +1595,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             }),
           ),
         );
+      if (!acceptedTurn.status || !TERMINAL_TURN_STATUSES.has(acceptedTurn.status)) {
+        this.#liveVoiceTextTurns.set(acceptedTurn.id, {
+          agentId: agent.id,
+          turnId: acceptedTurn.id,
+          providerThreadId: session.providerThreadId,
+          client: session.client,
+          completed: Deferred.makeUnsafe<void>(),
+        });
+      }
       persistSubmission();
       if (this.#removal.deleting().has(agent.id))
         throw new LiveVoiceRefusedError(sourceText("error.liveVoice.unavailable"));
@@ -2883,6 +2948,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
    */
   #runsTurn(agentId: string): boolean {
     return this.#conversation.workingSnapshot(agentId) != null || !this.#compaction.mayDrain(agentId);
+  }
+
+  #closeLiveVoiceForClient(client: AgentClient): void {
+    for (const [turnId, turn] of this.#liveVoiceTextTurns) {
+      if (turn.client !== client) continue;
+      this.#liveVoiceTextTurns.delete(turnId);
+      Deferred.doneUnsafe(turn.completed, Effect.void);
+    }
+    for (const session of this.#liveVoiceSessions.values()) {
+      if (session.client === client) session.adapter.closeForProviderStop(session.providerThreadId);
+    }
   }
 
   /** Whether this provider reports a CLI that is installed, current, and signed in. */

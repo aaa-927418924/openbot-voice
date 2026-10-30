@@ -74,6 +74,10 @@ class FakeLiveVoiceClient extends FakeAgentClient {
   earlyTranscriptText: string | undefined;
   closeRealtimeStartAfterEarlyTranscript = false;
   realtimeStopHook: (() => Promise<void>) | undefined;
+  holdNextTurnStart = false;
+  emitHeldTurnStart = true;
+  completeInterruptedTurn = false;
+  turnStartHook: (() => Promise<void>) | undefined;
 
   constructor(_providerEcho: boolean, requestHook?: (method: string, provider: AgentProvider) => Promise<void>) {
     super("codex", "CODEX_DONE", true, true, {}, requestHook);
@@ -104,6 +108,36 @@ class FakeLiveVoiceClient extends FakeAgentClient {
       const error = this.liveTurnStartError;
       this.liveTurnStartError = undefined;
       return Effect.fail(new ProviderClientOperationError({ cause: error }));
+    }
+    if (method === "turn/start" && this.holdNextTurnStart) {
+      this.holdNextTurnStart = false;
+      const threadId = paramsRecord(params)?.threadId;
+      if (typeof threadId !== "string") throw new Error("Live Voice turn has no provider thread id.");
+      const turnId = "live-voice-delete-race-turn";
+      this.requests.push({ method, params: structuredClone(params) });
+      return Effect.promise(() => this.turnStartHook?.() ?? Promise.resolve()).pipe(
+        Effect.map(() => {
+          if (this.emitHeldTurnStart)
+            this.emit("notification", notification("turn/started", { threadId, turn: { id: turnId } }));
+          return decoder({ turn: { id: turnId, status: "inProgress" } });
+        }),
+      );
+    }
+    if (method === "turn/interrupt" && this.completeInterruptedTurn) {
+      const threadId = paramsRecord(params)?.threadId;
+      const turnId = paramsRecord(params)?.turnId;
+      if (typeof threadId !== "string" || typeof turnId !== "string")
+        throw new Error("Live Voice interruption has no thread or turn id.");
+      return super.request(method, params, decoder).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            this.emit(
+              "notification",
+              notification("turn/completed", { threadId, turn: { id: turnId, status: "interrupted" } }),
+            );
+          }),
+        ),
+      );
     }
     if (method !== "thread/realtime/start" && method !== "thread/realtime/stop")
       return super.request(method, params, decoder);
@@ -1708,6 +1742,124 @@ describe.sequential("AgentService: providers", () => {
     expect(textRequests).toContain("account/read");
     expect(textRequests).not.toContain("turn/start");
     expect(textRequests).not.toContain("thread/inject_items");
+    expect(service.listAgents().some((candidate) => candidate.id === agent.id)).toBe(false);
+  });
+
+  it("interrupts an accepted Live Voice text turn that races with agent deletion", async () => {
+    let pauseTurnStart = false;
+    let signalTurnStart!: () => void;
+    const turnStartReached = new Promise<void>((resolve) => {
+      signalTurnStart = resolve;
+    });
+    let releaseTurnStart!: () => void;
+    const turnStartGate = new Promise<void>((resolve) => {
+      releaseTurnStart = resolve;
+    });
+    const liveClient = new FakeLiveVoiceClient(false);
+    liveClient.turnStartHook = async () => {
+      if (!pauseTurnStart) return;
+      pauseTurnStart = false;
+      signalTurnStart();
+      await turnStartGate;
+    };
+    const { service: agentService } = await startService(root, {
+      preferredProvider: "codex",
+      client: () => liveClient,
+    });
+    service = agentService;
+    await runCauseEffect(service.sendMessage({ agentId: "chief", text: "Create the Codex thread." }));
+    await waitForQueue(service, "chief", (queue) =>
+      queue.deliveries.every((delivery) => delivery.status === "completed"),
+    );
+    const agent = service.listAgents().find((candidate) => candidate.id === "chief");
+    if (!agent?.threadId) throw new Error("The Codex thread was not created.");
+    const started = await runCauseEffect(
+      service.startLiveVoice({
+        agentId: agent.id,
+        threadId: agent.threadId,
+        clientSessionId: randomUUID(),
+        sdpOffer: "offer-sdp",
+      }),
+    );
+
+    liveClient.holdNextTurnStart = true;
+    liveClient.completeInterruptedTurn = true;
+    pauseTurnStart = true;
+    const text = runCauseEffect(
+      service.sendLiveVoiceText({
+        agentId: agent.id,
+        threadId: agent.threadId,
+        sessionId: started.sessionId,
+        text: "Start work while deletion begins.",
+      }),
+    ).then(
+      () => ({ ok: true as const }),
+      (cause: unknown) => ({ ok: false as const, cause }),
+    );
+    await turnStartReached;
+
+    const deletion = runCauseEffect(service.deleteAgent(agent.id)).then(
+      () => ({ ok: true as const }),
+      (cause: unknown) => ({ ok: false as const, cause }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    releaseTurnStart();
+
+    const [textResult, deletionResult] = await Promise.all([text, deletion]);
+    expect(textResult.ok).toBe(false);
+    if (!deletionResult.ok) throw deletionResult.cause;
+    expect(deletionResult.ok).toBe(true);
+    const interrupt = liveClient.liveRequests.find((request) => request.method === "turn/interrupt");
+    expect(interrupt?.params).toEqual({
+      threadId: liveClient.realtimeThreadId,
+      turnId: "live-voice-delete-race-turn",
+    });
+    expect(service.listAgents().some((candidate) => candidate.id === agent.id)).toBe(false);
+  });
+
+  it("releases accepted Live Voice turns when the provider exits before completion", async () => {
+    const liveClient = new FakeLiveVoiceClient(false);
+    const { service: agentService } = await startService(root, {
+      preferredProvider: "codex",
+      client: () => liveClient,
+    });
+    service = agentService;
+    await runCauseEffect(service.sendMessage({ agentId: "chief", text: "Create the Codex thread." }));
+    await waitForQueue(service, "chief", (queue) =>
+      queue.deliveries.every((delivery) => delivery.status === "completed"),
+    );
+    const agent = service.listAgents().find((candidate) => candidate.id === "chief");
+    if (!agent?.threadId) throw new Error("The Codex provider thread was not created.");
+    const started = await runCauseEffect(
+      service.startLiveVoice({
+        agentId: agent.id,
+        threadId: agent.threadId,
+        clientSessionId: randomUUID(),
+        sdpOffer: "offer-sdp",
+      }),
+    );
+    let liveVoiceClosed = false;
+    service.on("liveVoice", (event) => {
+      if (event.agentId === agent.id && event.status === "closed") liveVoiceClosed = true;
+    });
+
+    liveClient.holdNextTurnStart = true;
+    liveClient.emitHeldTurnStart = false;
+    await runCauseEffect(
+      service.sendLiveVoiceText({
+        agentId: agent.id,
+        threadId: agent.threadId,
+        sessionId: started.sessionId,
+        text: "Start work before the provider exits.",
+      }),
+    );
+    liveClient.completeInterruptedTurn = true;
+    liveClient.emit("exit", new Error("Codex App Server exited during Live Voice work."));
+    await waitFor(() => liveVoiceClosed);
+
+    await runCauseEffect(service.deleteAgent(agent.id));
+
+    expect(liveClient.liveRequests.filter((request) => request.method === "turn/interrupt")).toHaveLength(0);
     expect(service.listAgents().some((candidate) => candidate.id === agent.id)).toBe(false);
   });
 
