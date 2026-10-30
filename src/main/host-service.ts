@@ -540,12 +540,32 @@ export class HostService extends EventEmitter<HostEvents> {
   readonly configure = Effect.fn("HostService.configure")(
     function* (this: HostService, input: ConfigureHostInput): Effect.fn.Return<HostStatus, RemoteWorkflowError> {
       if (this.#options.localOnlyNetworking) {
+        const account = yield* remoteDecode(() => this.#options.getSignedInUser());
+        const isCurrentAccount = () => this.#signedInAccountId() === account.id;
         const identity = yield* this.#options.store.configure(
           input.serverName,
           "owner",
           randomBytes(32).toString("base64url"),
+          account.id,
+          isCurrentAccount,
         );
+        if (!isCurrentAccount()) {
+          this.#options.store.unbindActiveHost();
+          this.#status = initialHostStatus(null, this.#options.unattended ?? false);
+          this.emit("changed", this.getStatus());
+          return yield* new RemoteWorkflowError({
+            cause: new Error(sourceText("error.team.accountChangedDuringCreate")),
+          });
+        }
         if (input.logo !== undefined) yield* this.#options.store.updateIdentity({ logo: input.logo });
+        if (!isCurrentAccount()) {
+          this.#options.store.unbindActiveHost();
+          this.#status = initialHostStatus(null, this.#options.unattended ?? false);
+          this.emit("changed", this.getStatus());
+          return yield* new RemoteWorkflowError({
+            cause: new Error(sourceText("error.team.accountChangedDuringCreate")),
+          });
+        }
         this.#setStatus({
           phase: "idle",
           configured: true,
