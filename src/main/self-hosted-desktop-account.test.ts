@@ -129,6 +129,7 @@ describe("SelfHostedDesktopAccountManager", () => {
       role: "owner",
       isOwner: true,
     };
+    const excludedHostIds = ["removed-host"];
     const request = vi.fn<typeof fetch>(async (input, init) => {
       const url = new URL(input instanceof Request ? input.url : String(input));
       if (url.pathname === "/v1/auth/login") {
@@ -141,6 +142,9 @@ describe("SelfHostedDesktopAccountManager", () => {
         return Response.json({ servers: [entry] });
       }
       if (url.pathname === "/v1/me/servers" && init?.method === "PUT") return new Response(null, { status: 204 });
+      if (url.pathname === "/v1/me/servers/legacy-import-exclusions" && (init?.method ?? "GET") === "GET") {
+        return Response.json({ excludedHostIds });
+      }
       throw new Error(`Unexpected request: ${url.pathname}`);
     });
     vi.stubGlobal("fetch", request);
@@ -149,6 +153,7 @@ describe("SelfHostedDesktopAccountManager", () => {
       manager.signIn({ serverAddress: "http://100.100.10.2:43124", email: "person@example.com", password }),
     );
     expect(await Effect.runPromise(manager.listAccountServers())).toEqual([entry]);
+    expect(await Effect.runPromise(manager.getLegacyAccountServerImportExclusions())).toEqual(excludedHostIds);
     const registration = {
       hostId: entry.hostId,
       name: entry.name,

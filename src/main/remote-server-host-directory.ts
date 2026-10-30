@@ -33,10 +33,11 @@ import { fingerprint } from "./team-store";
 export function watchRemoteHostDirectory(options: {
   isActive(): boolean;
   refresh(): Effect.Effect<void, RemoteWorkflowError>;
+  intervalMs?: number;
 }): () => void {
   const timer = setInterval(() => {
     if (options.isActive()) void Effect.runPromise(options.refresh().pipe(Effect.catch(() => Effect.void)));
-  }, REMOTE_ACCOUNT_CHECK_INTERVAL_MS);
+  }, options.intervalMs ?? REMOTE_ACCOUNT_CHECK_INTERVAL_MS);
   timer.unref();
   return () => clearInterval(timer);
 }

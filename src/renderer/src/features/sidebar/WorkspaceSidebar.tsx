@@ -150,7 +150,7 @@ export function WorkspaceSidebar(props: { peopleEnabled: boolean }) {
         void channels.markAllRead();
       }}
       hasUnread={agentList().some((agent) => (unreadReplies()[agent.id] ?? 0) > 0) || channels.hasUnread()}
-      serverName={activeServer()?.name ?? "Local"}
+      serverName={activeServer()?.name ?? t("mobile.agent.home.noServers")}
       onOpenServerSettings={(trigger) => {
         const server = activeServer();
         if (server) openServerSettings(server.id, trigger);

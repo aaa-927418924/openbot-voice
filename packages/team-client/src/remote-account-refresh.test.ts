@@ -62,3 +62,17 @@ it("does not start queued account work after background entry", async () => {
   expect(load).toHaveBeenCalledTimes(1);
   refresh.dispose();
 });
+
+it("uses the requested foreground interval without changing the default", async () => {
+  vi.useFakeTimers();
+  const load = vi.fn(async () => {});
+  const refresh = createRemoteAccountRefresh(() => Effect.tryPromise(load), Date.now, 10_000);
+  refresh.setActive(true);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(load).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(9_999);
+  expect(load).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(load).toHaveBeenCalledTimes(2);
+  refresh.dispose();
+});

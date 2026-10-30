@@ -50,6 +50,8 @@ export interface LocalTailnetServer {
   sessionToken: string;
   membershipId: string;
   role: "owner" | "admin" | "member";
+  /** Account that confirmed this device-only Team session. */
+  accountId?: string;
 }
 
 /** Use the verified host-local role on a paired device, then the account server's owner hint. */
@@ -309,6 +311,7 @@ export async function loginTailnetAccountServer(
     fetch?: TailnetFetch;
     randomBytes: TailnetRandomBytes;
     identitySession: { apiUrl: string; sessionToken: string };
+    accountId?: string;
   },
 ): Promise<LocalTailnetServer> {
   if (
@@ -359,6 +362,7 @@ export async function loginTailnetAccountServer(
     sessionToken: joined.sessionToken,
     membershipId: joined.membershipId,
     role: joined.role,
+    ...(options.accountId ? { accountId: options.accountId } : {}),
   };
 }
 
@@ -454,6 +458,7 @@ export async function pairTailnetInvite(
     displayName?: string | null;
     existingSessionToken?: string | null;
     identitySession?: { apiUrl: string; sessionToken: string };
+    accountId?: string;
   },
 ): Promise<LocalTailnetServer> {
   const deviceLink = isTailnetMemberDeviceLink(inviteUrl);
@@ -535,6 +540,7 @@ export async function pairTailnetInvite(
     sessionToken: joined.sessionToken,
     membershipId: joined.membershipId,
     role: joined.role,
+    ...(options.accountId ? { accountId: options.accountId } : {}),
   };
 }
 

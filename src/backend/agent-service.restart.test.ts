@@ -657,6 +657,83 @@ describe.sequential("AgentService: restart", () => {
       ["From Ada", { id: "member-ada", name: "Ada" }],
       ["From nobody", undefined],
     ]);
+    expect(
+      (await runCauseEffect(service.readConversationFor("chief", "member-other"))).messages.find(
+        (message) => message.text === "From nobody",
+      )?.senderMember,
+    ).toBeUndefined();
+  });
+
+  it("does not assign an owner to legacy user messages without stored sender provenance", async () => {
+    const { store, mailbox } = stores(root);
+    const owner = { id: "member-owner", name: "Owner profile" };
+    const other = { id: "member-other", name: "Another member" };
+    service = createTestService({ store, mailbox });
+    await runCauseEffect(store.initialize());
+    await runCauseEffect(mailbox.initialize());
+    const agent = await runCauseEffect(store.getOrCreate("chief"));
+    const threadId = await runCauseEffect(store.ensureThreadId(agent.id));
+    const legacyMessage = {
+      id: "legacy-user-message",
+      author: "user" as const,
+      text: "Sent before sign-in",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      status: "completed" as const,
+    };
+    const messageFromOtherMember = {
+      id: "other-user-message",
+      author: "user" as const,
+      text: "Sent by another member",
+      createdAt: "2026-01-01T00:00:04.000Z",
+      status: "completed" as const,
+      senderMember: other,
+      replyToMessageId: legacyMessage.id,
+    };
+    store.database.persistConversation(
+      {
+        agentId: agent.id,
+        threadId,
+        activeTurnId: null,
+        revision: 1,
+        messages: [
+          legacyMessage,
+          {
+            id: "assistant-message",
+            author: "assistant",
+            text: "Reply",
+            createdAt: "2026-01-01T00:00:02.000Z",
+            status: "completed",
+          },
+          {
+            id: "system-message",
+            author: "system",
+            text: "System event",
+            createdAt: "2026-01-01T00:00:03.000Z",
+            status: "completed",
+          },
+          messageFromOtherMember,
+        ],
+      },
+      "conversation.test",
+    );
+
+    const fullView = await runCauseEffect(service.readConversation(agent.id));
+    expect(fullView.messages.find((message) => message.id === legacyMessage.id)?.senderMember).toBeUndefined();
+    expect(fullView.messages.find((message) => message.id === messageFromOtherMember.id)?.senderMember).toEqual(other);
+
+    const ownerView = await runCauseEffect(service.readConversationFor(agent.id, owner.id));
+    expect(ownerView.messages.find((message) => message.id === legacyMessage.id)?.senderMember).toBeUndefined();
+    expect(ownerView.messages.find((message) => message.id === messageFromOtherMember.id)?.senderMember).toEqual(other);
+    expect(ownerView.messages.find((message) => message.id === "assistant-message")?.senderMember).toBeUndefined();
+    expect(ownerView.messages.find((message) => message.id === "system-message")?.senderMember).toBeUndefined();
+
+    const page = await runCauseEffect(service.readConversationPageFor(agent.id, owner.id, { type: "latest" }, 1));
+    expect(page.messages[0]?.senderMember).toEqual(other);
+    expect(page.references[legacyMessage.id]?.senderMember).toBeUndefined();
+
+    const raw = store.database.readConversation(agent.id, threadId).messages;
+    expect(raw.find((message) => message.id === legacyMessage.id)?.senderMember).toBeUndefined();
+    expect(raw.find((message) => message.id === messageFromOtherMember.id)?.senderMember).toEqual(other);
   });
 
   it("unarchives a stored Codex thread and resumes the queued delivery", async () => {

@@ -9,6 +9,7 @@ import {
   type ChannelTask,
   channelRoutingConversationEvent,
   channelRoutingConversationEventItemType,
+  SIGNED_OUT_CHANNEL_MEMBER_ID,
 } from "@openbot/contracts/ipc";
 import { validateProfileName } from "@openbot/contracts/validation";
 import { Effect } from "effect";
@@ -378,6 +379,43 @@ describe("shared channel coordination", () => {
     expect(service.store.list("linux-device")[0]?.unreadCount).toBe(0);
     expect(service.store.list("other-member")[0]?.unreadCount).toBe(1);
     expect(service.store.list("android-device")[0]?.lastMessage?.authorName).toBe(actor.name);
+  });
+
+  it("projects signed-out channel messages as the owner without rewriting stored authors", () => {
+    const owner = { id: "profile-owner", name: "Owner profile", memberIds: ["profile-owner"] };
+    service.store.setMemberIdentityResolver((memberId) =>
+      memberId === SIGNED_OUT_CHANNEL_MEMBER_ID || memberId === owner.id ? owner : null,
+    );
+    const message: ChannelMessage = {
+      id: "legacy-local-message",
+      channelId: "channel-1",
+      sequence: 1,
+      author: { kind: "member", id: "local", name: "You" },
+      taskId: null,
+      superseded: false,
+      message: {
+        id: "legacy-local-message",
+        author: "user",
+        text: "Sent before sign-in",
+        createdAt: new Date().toISOString(),
+        status: "completed",
+      },
+    };
+    service.store.update(service.store.get("channel-1"), { messages: [message] });
+
+    expect(service.store.page("channel-1", undefined, owner.id).messages[0]?.author).toMatchObject({
+      kind: "member",
+      id: owner.id,
+      name: owner.name,
+      identityId: owner.id,
+    });
+    expect(service.store.page("channel-1", undefined, "another-member").messages[0]?.author).toMatchObject({
+      kind: "member",
+      id: owner.id,
+      name: owner.name,
+      identityId: owner.id,
+    });
+    expect(service.store.messages("channel-1")[0]?.author).toEqual(message.author);
   });
   it("removes a member the deletion of its agent left behind, and still refuses a new one", async () => {
     // Both members are deleted agents. The draft the settings panel sends holds the other one.

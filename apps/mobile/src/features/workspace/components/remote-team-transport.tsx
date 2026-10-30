@@ -20,6 +20,7 @@ import {
 import * as Application from "expo-application";
 import * as Crypto from "expo-crypto";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import type { MobileSession } from "@/features/auth/api/mobile-auth";
 import { useMobileSession } from "@/features/auth/context/mobile-session-context";
 import { supportLog, supportLogUrl } from "@/features/support/model/support-log";
 import {
@@ -86,6 +87,42 @@ function isLiveVoiceRoute(path: string): boolean {
   );
 }
 
+function isPairingAuthorizedForSession(server: Pick<LocalTailnetServer, "accountId">, session: MobileSession | null) {
+  if (!session?.localOnly) return false;
+  return session.sessionToken ? server.accountId === session.user.id : server.accountId === undefined;
+}
+
+function matchesAccountServer(server: LocalTailnetServer, accountServer: AccountServerDirectoryEntry): boolean {
+  return (
+    server.hostId === accountServer.hostId &&
+    server.apiUrl === accountServer.apiUrl &&
+    server.publicKey === accountServer.publicKey &&
+    server.fingerprint === accountServer.fingerprint &&
+    server.membershipId === accountServer.membershipId
+  );
+}
+
+function isPairingCurrent(
+  server: LocalTailnetServer,
+  context: {
+    session: MobileSession | null;
+    localTailnetServer?: LocalTailnetServer;
+    accountServer?: AccountServerDirectoryEntry;
+  },
+): boolean {
+  if (!isPairingAuthorizedForSession(server, context.session)) return false;
+  if (context.localTailnetServer?.hostId === server.hostId) {
+    return (
+      context.localTailnetServer.accountId === server.accountId &&
+      context.localTailnetServer.apiUrl === server.apiUrl &&
+      context.localTailnetServer.publicKey === server.publicKey &&
+      context.localTailnetServer.fingerprint === server.fingerprint &&
+      context.localTailnetServer.membershipId === server.membershipId
+    );
+  }
+  return Boolean(context.accountServer && matchesAccountServer(server, context.accountServer));
+}
+
 export const RemoteTeamTransport = forwardRef<RemoteTeamTransportRef, RemoteTeamTransportProps>(
   function RemoteTeamTransport(
     {
@@ -111,8 +148,13 @@ export const RemoteTeamTransport = forwardRef<RemoteTeamTransportRef, RemoteTeam
     // The server of this transport, for support log lines. Requests do not name it.
     const hostIdRef = useRef<string | null>(null);
     const directClient = useRef<DirectTailnetTeamClient | null>(null);
+    const connectedPairing = useRef<LocalTailnetServer | null>(null);
+    const authContext = useRef({ session, localTailnetServer, accountServer });
+    authContext.current = { session, localTailnetServer, accountServer };
     const directServer = useRef<LocalTailnetServer | null>(localTailnetServer ?? null);
-    directServer.current = localTailnetServer ?? directServer.current;
+    // Never retain a device-wide cached Team token after the account directory stops confirming
+    // that this exact membership belongs to the signed-in account.
+    directServer.current = localTailnetServer ?? null;
     const directGeneration = useRef(0);
     const callbacks = useRef({ onConnectionUpdate, onTeamEvent });
     callbacks.current = { onConnectionUpdate, onTeamEvent };
@@ -122,9 +164,50 @@ export const RemoteTeamTransport = forwardRef<RemoteTeamTransportRef, RemoteTeam
         directGeneration.current += 1;
         directClient.current?.disconnect();
         directClient.current = null;
+        connectedPairing.current = null;
       },
       [],
     );
+
+    useEffect(() => {
+      const connected = connectedPairing.current;
+      if (!connected || !directClient.current) return;
+
+      const matches = (server: {
+        hostId: string;
+        apiUrl: string;
+        publicKey: string;
+        fingerprint: string;
+        membershipId: string;
+      }) =>
+        server.hostId === connected.hostId &&
+        server.apiUrl === connected.apiUrl &&
+        server.publicKey === connected.publicKey &&
+        server.fingerprint === connected.fingerprint &&
+        server.membershipId === connected.membershipId;
+      const stillTrusted = localTailnetServer
+        ? isPairingAuthorizedForSession(localTailnetServer, session) &&
+          matches(localTailnetServer) &&
+          localTailnetServer.accountId === connected.accountId
+        : Boolean(
+            accountServer &&
+              session?.localOnly &&
+              session.sessionToken &&
+              session.user.id === connected.accountId &&
+              matches(accountServer),
+          );
+      if (stillTrusted) return;
+
+      directGeneration.current += 1;
+      directClient.current.disconnect();
+      directClient.current = null;
+      connectedPairing.current = null;
+      callbacks.current.onConnectionUpdate({
+        hostId: connected.hostId,
+        state: "offline",
+        message: sourceText("error.remote.desktopOffline"),
+      });
+    }, [accountServer, localTailnetServer, session]);
 
     // Upload progress arrives from the web view by command ID, while the command is still pending.
     const uploadListeners = useRef(new Map<string, (fraction: number) => void>());
@@ -152,35 +235,102 @@ export const RemoteTeamTransport = forwardRef<RemoteTeamTransportRef, RemoteTeam
       ref,
       () => ({
         connect: async (hostId, hostPublicKey) => {
+          const generation = ++directGeneration.current;
+          directClient.current?.disconnect();
+          directClient.current = null;
+          connectedPairing.current = null;
           hostIdRef.current = hostId;
-          let server = directServer.current?.hostId === hostId ? directServer.current : null;
-          if (!server && accountServer?.hostId === hostId && session?.localOnly && session.sessionToken) {
+          const initialAuth = authContext.current;
+          const connectSession = initialAuth.session;
+          let server =
+            initialAuth.localTailnetServer?.hostId === hostId &&
+            isPairingAuthorizedForSession(initialAuth.localTailnetServer, connectSession)
+              ? initialAuth.localTailnetServer
+              : null;
+          const initialAccountServer = initialAuth.accountServer;
+          if (
+            !server &&
+            initialAccountServer?.hostId === hostId &&
+            connectSession?.localOnly &&
+            connectSession.sessionToken
+          ) {
             callbacks.current.onConnectionUpdate({ hostId, state: "connecting", message: null });
-            server = await loginTailnetAccountServer(accountServer, {
+            const pairedServer = await loginTailnetAccountServer(initialAccountServer, {
               appVersion: Application.nativeApplicationVersion ?? "",
               randomBytes: (size) => Crypto.getRandomBytes(size),
-              identitySession: { apiUrl: session.apiUrl, sessionToken: session.sessionToken },
+              accountId: connectSession.user.id,
+              identitySession: { apiUrl: connectSession.apiUrl, sessionToken: connectSession.sessionToken },
             });
-            await saveLocalTailnetServer(server);
+            if (generation !== directGeneration.current) return;
+            let currentAuth = authContext.current;
+            const stillCurrentAccount =
+              currentAuth.session?.localOnly === true &&
+              currentAuth.session.sessionToken.length > 0 &&
+              currentAuth.session.user.id === connectSession.user.id &&
+              currentAuth.session.apiUrl === connectSession.apiUrl &&
+              currentAuth.accountServer !== undefined &&
+              matchesAccountServer(pairedServer, currentAuth.accountServer) &&
+              isPairingAuthorizedForSession(pairedServer, currentAuth.session);
+            if (!stillCurrentAccount) {
+              callbacks.current.onConnectionUpdate({
+                hostId,
+                state: "offline",
+                message: sourceText("error.remote.desktopOffline"),
+              });
+              return;
+            }
+            await saveLocalTailnetServer(pairedServer);
+            if (generation !== directGeneration.current) return;
+            currentAuth = authContext.current;
+            if (
+              !currentAuth.session?.localOnly ||
+              !currentAuth.session.sessionToken ||
+              currentAuth.session.user.id !== connectSession.user.id ||
+              currentAuth.session.apiUrl !== connectSession.apiUrl ||
+              !currentAuth.accountServer ||
+              !matchesAccountServer(pairedServer, currentAuth.accountServer) ||
+              !isPairingAuthorizedForSession(pairedServer, currentAuth.session)
+            ) {
+              callbacks.current.onConnectionUpdate({
+                hostId,
+                state: "offline",
+                message: sourceText("error.remote.desktopOffline"),
+              });
+              return;
+            }
+            server = pairedServer;
             directServer.current = server;
             onAccountServerPaired?.(server);
           }
-          if (server?.hostId === hostId) {
-            directClient.current?.disconnect();
-            const generation = ++directGeneration.current;
+          if (generation !== directGeneration.current) return;
+          if (server?.hostId === hostId && isPairingCurrent(server, authContext.current)) {
             const client = new DirectTailnetTeamClient(server, {
               appVersion: Application.nativeApplicationVersion ?? "",
               randomBytes: (size) => Crypto.getRandomBytes(size),
             });
             directClient.current = client;
+            connectedPairing.current = server;
             callbacks.current.onConnectionUpdate({ hostId, state: "connecting", message: null });
             try {
               await client.connect();
+              if (
+                generation !== directGeneration.current ||
+                directClient.current !== client ||
+                !isPairingCurrent(server, authContext.current)
+              ) {
+                if (directClient.current === client) {
+                  directClient.current = null;
+                  connectedPairing.current = null;
+                  client.disconnect();
+                }
+                return;
+              }
               await client.openEvents(
                 (event) => callbacks.current.onTeamEvent(hostId, event),
                 () => {
                   if (generation !== directGeneration.current || directClient.current !== client) return;
                   directClient.current = null;
+                  connectedPairing.current = null;
                   callbacks.current.onConnectionUpdate({
                     hostId,
                     state: "offline",
@@ -209,6 +359,7 @@ export const RemoteTeamTransport = forwardRef<RemoteTeamTransportRef, RemoteTeam
               client.disconnect();
               if (generation === directGeneration.current && directClient.current === client) {
                 directClient.current = null;
+                connectedPairing.current = null;
                 callbacks.current.onConnectionUpdate({
                   hostId,
                   state: "offline",
@@ -227,6 +378,7 @@ export const RemoteTeamTransport = forwardRef<RemoteTeamTransportRef, RemoteTeam
             directGeneration.current += 1;
             directClient.current?.disconnect();
             directClient.current = null;
+            connectedPairing.current = null;
             return;
           }
           const result = await enqueue({ type: "disconnect" });
@@ -302,7 +454,7 @@ export const RemoteTeamTransport = forwardRef<RemoteTeamTransportRef, RemoteTeam
           return decode(result.body);
         },
       }),
-      [accountServer, enqueue, onAccountServerPaired, session?.apiUrl, session?.localOnly, session?.sessionToken],
+      [enqueue, onAccountServerPaired],
     );
 
     const handleCommandResult = useCallback(

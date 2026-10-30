@@ -1745,7 +1745,15 @@ export async function createApplicationServices({
         localOnlyNetworking
           ? (selfHostedDesktopAccount.signedInAccount?.email ?? "")
           : centralAuth.getSignedInUser().email,
+      getAccountId: () => {
+        const state = localOnlyNetworking ? selfHostedDesktopAccount.getState() : centralAuth.getState();
+        return state.status === "signed_in" ? state.user.id : null;
+      },
       isSelfHostedSignedIn: () => localOnlyNetworking && selfHostedDesktopAccount.isSignedIn,
+      getLegacyAccountServerImportExclusions: () =>
+        selfHostedDesktopAccount
+          .getLegacyAccountServerImportExclusions()
+          .pipe(Effect.mapError((cause) => new CentralAuthOperationError({ cause }))),
       listAccountServers: () =>
         selfHostedDesktopAccount
           .listAccountServers()
@@ -1753,6 +1761,10 @@ export async function createApplicationServices({
       registerAccountServer: (registration) =>
         selfHostedDesktopAccount
           .registerAccountServer(registration)
+          .pipe(Effect.mapError((cause) => new CentralAuthOperationError({ cause }))),
+      removeAccountServer: (hostId) =>
+        selfHostedDesktopAccount
+          .removeAccountServer(hostId)
           .pipe(Effect.mapError((cause) => new CentralAuthOperationError({ cause }))),
       getDisplayName: () => {
         const state = localOnlyNetworking ? selfHostedDesktopAccount.getState() : centralAuth.getState();
@@ -1764,6 +1776,7 @@ export async function createApplicationServices({
       allowLocalDevelopmentInvites: developmentRemoteRole !== null,
       allowTailscaleApiUrl: localOnlyNetworking,
       localOnlyNetworking,
+      isLocalServerEnabled: () => localHostPreference.enabled,
       selfHostedApiOrigin: selfHostedApiOrigin(centralAuthApiUrl),
       appVersion: app.getVersion(),
       onRemoteViewerDiagnostic: (event) => {
@@ -2148,8 +2161,10 @@ export async function createApplicationServices({
           if (hostId) await selfHostedAccountServerDirectory?.setServerVisible(hostId, false);
           await runCauseEffect(host.stop(false));
           await localHostPreference.setEnabled(false);
+          await runCauseEffect(remoteServers.localHostVisibilityChanged());
         } catch (error) {
           if (hostId) await selfHostedAccountServerDirectory?.setServerVisible(hostId, true).catch(() => undefined);
+          await localHostPreference.setEnabled(true).catch(() => undefined);
           localHostRetry?.start();
           throw error;
         }
@@ -2163,6 +2178,7 @@ export async function createApplicationServices({
         }
         if (hostId) await selfHostedAccountServerDirectory?.setServerVisible(hostId, true);
         await localHostPreference.setEnabled(true);
+        await runCauseEffect(remoteServers.localHostVisibilityChanged());
         if (localHostRetry) localHostRetry.start();
         else await runCauseEffect(host.start());
       } catch (error) {

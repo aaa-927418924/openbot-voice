@@ -4,6 +4,7 @@ import { mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
+import { SIGNED_OUT_CHANNEL_MEMBER_ID } from "@openbot/contracts/ipc";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runCauseEffect } from "../backend/effect-boundary";
 import { TeamStore } from "./team-store";
@@ -40,6 +41,26 @@ describe("TeamStore", () => {
     });
     expect(store.authenticate(session.sessionToken)?.id).toBe(ownerId);
     expect((await readStoredHost(path)).members?.[0]?.accountId).toBe(profile.id);
+  });
+
+  it("resolves pre-sign-in channel authors to the current owner identity", async () => {
+    const { store } = await createStore();
+    await runCauseEffect(
+      store.configureWithAccount("Linux host", {
+        id: "owner-account",
+        email: "owner@example.test",
+        name: "Owner profile",
+        avatarUrl: null,
+      }),
+    );
+    const ownerId = store.getOwnerMemberId();
+    if (!ownerId) throw new Error("The local owner was not created.");
+
+    expect(store.getChannelIdentity(SIGNED_OUT_CHANNEL_MEMBER_ID)).toEqual({
+      id: ownerId,
+      name: "Owner profile",
+      memberIds: [ownerId],
+    });
   });
 
   it("migrates a legacy owner account link to the self-hosted account without changing the member ID", async () => {

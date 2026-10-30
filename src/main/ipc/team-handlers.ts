@@ -33,6 +33,7 @@ interface TeamIpcDependencies {
   host: HostService;
   remoteDesktop: RemoteDesktopManager;
   remoteServers: RemoteServerManager;
+  isLocalServerEnabled: () => boolean;
   takePendingInvite: () => string | null;
 }
 
@@ -40,29 +41,30 @@ export function teamIpcHandlers({
   host,
   remoteDesktop,
   remoteServers,
+  isLocalServerEnabled,
   takePendingInvite,
 }: TeamIpcDependencies): Pick<IpcGroupHandlers, "servers" | "host" | "remoteDesktop"> {
   return {
     servers: {
       setMuted: payloadHandler(parseSetServerMuted, ({ serverId, muted, durationMs }) =>
         runCauseEffect(remoteServers.setMuted(serverId, muted, durationMs)).then((servers) =>
-          withLocalHostSummary(servers, host.getStatus()),
+          withLocalHostSummary(servers, host.getStatus(), isLocalServerEnabled()),
         ),
       ),
       setNotificationLevel: payloadHandler(parseSetServerNotificationLevel, ({ serverId, level }) =>
         runCauseEffect(remoteServers.setNotificationLevel(serverId, level)).then((servers) =>
-          withLocalHostSummary(servers, host.getStatus()),
+          withLocalHostSummary(servers, host.getStatus(), isLocalServerEnabled()),
         ),
       ),
-      list: handler(() => withLocalHostSummary(remoteServers.list(), host.getStatus())),
+      list: handler(() => withLocalHostSummary(remoteServers.list(), host.getStatus(), isLocalServerEnabled())),
       select: payloadHandler(stringPayload("serverId"), (serverId) =>
         runCauseEffect(remoteServers.select(serverId)).then((servers) =>
-          withLocalHostSummary(servers, host.getStatus()),
+          withLocalHostSummary(servers, host.getStatus(), isLocalServerEnabled()),
         ),
       ),
       reorder: payloadHandler(parseReorderServers, (request) =>
         runCauseEffect(remoteServers.reorder(request.serverIds)).then((servers) =>
-          withLocalHostSummary(servers, host.getStatus()),
+          withLocalHostSummary(servers, host.getStatus(), isLocalServerEnabled()),
         ),
       ),
       join: payloadHandler(parseJoinServer, (request) => runCauseEffect(remoteServers.join(request))),
@@ -211,18 +213,30 @@ export function teamIpcHandlers({
   };
 }
 
-export function withLocalHostSummary(servers: ServerSummary[], status: HostStatus): ServerSummary[] {
-  return servers.map((server) =>
-    server.id === LOCAL_SERVER_ID
-      ? {
-          ...server,
-          name: status.serverName ?? "Local",
-          logoUrl: status.logoUrl,
-          apiUrl: status.apiUrl,
-          remoteDesktopAvailable: status.remoteDesktopReady,
-          state: status.phase === "error" ? "error" : "online",
-          role: status.configured ? "owner" : null,
-        }
-      : server,
-  );
+export function withLocalHostSummary(
+  servers: ServerSummary[],
+  status: HostStatus | null,
+  isLocalServerEnabled = true,
+): ServerSummary[] {
+  const visible = servers
+    .filter((server) => isLocalServerEnabled || server.id !== LOCAL_SERVER_ID)
+    .map((server) =>
+      server.id === LOCAL_SERVER_ID && status
+        ? {
+            ...server,
+            name: status.serverName ?? "Local",
+            logoUrl: status.logoUrl,
+            apiUrl: status.apiUrl,
+            remoteDesktopAvailable: status.remoteDesktopReady,
+            state: status.phase === "error" ? ("error" as const) : ("online" as const),
+            role: status.configured ? ("owner" as const) : null,
+          }
+        : server,
+    );
+  // When Local is hidden, it cannot remain the active renderer destination. This also covers
+  // callers that receive summaries before the manager has persisted its remote fallback.
+  if (!isLocalServerEnabled && visible.length > 0 && !visible.some((server) => server.active)) {
+    return visible.map((server, index) => (index === 0 ? { ...server, active: true } : server));
+  }
+  return visible;
 }

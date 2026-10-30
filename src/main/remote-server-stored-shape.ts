@@ -48,6 +48,10 @@ export interface StoredRemoteServer {
   role: TeamRole;
   /** Membership identifier returned by account auth; used to seed cross-device server sync. */
   membershipId?: string;
+  /** Account that confirmed this device-only Team session. */
+  accountId?: string;
+  /** Account id awaiting a successful directory rejoin after an explicit invite. */
+  pendingAccountRejoinId?: string;
   transport?: "webrtc-v2";
   /** The active members that the host's plan allows, from the account server's host list. */
   memberLimit?: number;
@@ -243,6 +247,14 @@ function readStoredRemoteServer(value: unknown): StoredRemoteServer | null {
     !(value.remoteDesktopAvailable === undefined || isBoolean(value.remoteDesktopAvailable)) ||
     !(value.logoVersion === undefined || value.logoVersion === null || isString(value.logoVersion)) ||
     !(value.transport === undefined || value.transport === "webrtc-v2") ||
+    !(
+      value.pendingAccountRejoinId === undefined ||
+      (isString(value.pendingAccountRejoinId) && value.pendingAccountRejoinId.length <= 128)
+    ) ||
+    !(
+      value.accountId === undefined ||
+      (isString(value.accountId) && value.accountId.length > 0 && value.accountId.length <= 128)
+    ) ||
     !isOneOf(["owner", "admin", "member"] as const, value.role)
   ) {
     return null;
@@ -261,6 +273,10 @@ function readStoredRemoteServer(value: unknown): StoredRemoteServer | null {
     ...(isString(value.membershipId) && value.membershipId.length > 0 && value.membershipId.length <= 128
       ? { membershipId: value.membershipId }
       : {}),
+    ...(isString(value.pendingAccountRejoinId) && value.pendingAccountRejoinId.length > 0
+      ? { pendingAccountRejoinId: value.pendingAccountRejoinId }
+      : {}),
+    ...(isString(value.accountId) && value.accountId.length > 0 ? { accountId: value.accountId } : {}),
     ...(value.transport === undefined ? {} : { transport: value.transport }),
     // A bad limit drops only the limit: the next host list writes it again.
     ...(isMemberLimit(value.memberLimit) ? { memberLimit: value.memberLimit } : {}),

@@ -22,6 +22,7 @@ import type {
   TeamRole,
   TeamSessionSummary,
 } from "@openbot/contracts/ipc";
+import { SIGNED_OUT_CHANNEL_MEMBER_ID } from "@openbot/contracts/ipc";
 import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { normalizeEmailAddress, slugifyTeamServerName, validateProfileName } from "@openbot/contracts/validation";
 import { sourceText } from "@openbot/i18n/source";
@@ -959,7 +960,12 @@ export class TeamStore {
       }
       return member;
     };
-    const selected = members.find((candidate) => candidate.id === memberId);
+    // Before sign-in, channel messages use this fixed author id. Resolve it to the active host
+    // owner so old messages keep the same identity on every signed-in device.
+    const selected =
+      memberId === SIGNED_OUT_CHANNEL_MEMBER_ID
+        ? members.find((candidate) => candidate.role === "owner")
+        : members.find((candidate) => candidate.id === memberId);
     if (!selected) return null;
     const canonical = resolve(selected);
     return {

@@ -5,6 +5,7 @@ import { afterEach, assert, beforeEach, describe, expect, it, vi } from "vitest"
 import { resolveSessionValidation } from "../context/session-validation";
 import {
   configureMobileLoginCredentials,
+  getLegacyAccountServerDirectoryExclusions,
   listAccountServers,
   listMobileAccountSessions,
   loginToSelfHostedIdentityServer,
@@ -18,6 +19,7 @@ import {
   redeemMobileConnectUrl,
   registerAccountServer,
   registerSelfHostedIdentityAccount,
+  removeAccountServer,
   retryMobileSessionRevocations,
   revokeMobileAccountSession,
   updateMobileProfile,
@@ -31,11 +33,12 @@ const native = vi.hoisted(() => ({
   fetch: vi.fn<typeof fetch>(),
   pairTailnetInvite: vi.fn(),
   saveLocalTailnetServer: vi.fn(),
+  uuid: 0,
 }));
 vi.mock("expo/fetch", () => ({ fetch: native.fetch }));
 vi.mock("expo-crypto", () => ({
   getRandomBytes: (size: number) => new Uint8Array(size),
-  randomUUID: () => "device-id",
+  randomUUID: () => `device-id-${++native.uuid}`,
 }));
 vi.mock("expo-device", () => ({ deviceName: null, modelName: null }));
 vi.mock("@/shared/lib/mobile-features", () => ({ mobileAppVersion: () => "1.1.0-test" }));
@@ -72,6 +75,7 @@ const qrCode = createMobileConnectUrl({ apiUrl: session.apiUrl, ticket: "t".repe
 
 beforeEach(() => {
   native.storage.clear();
+  native.uuid = 0;
   native.storage.set(key, JSON.stringify(session));
   native.fetch.mockReset();
   native.pairTailnetInvite.mockReset();
@@ -623,6 +627,37 @@ describe("stored mobile desktop binding", () => {
 });
 
 describe("account server directory sync", () => {
+  const localIdentitySession: MobileSession = {
+    apiUrl: "http://100.100.10.2:43124",
+    sessionToken: "account-session-token",
+    user: { id: "account", email: "user@example.com", name: "User", avatarUrl: null },
+    localOnly: true,
+  };
+
+  it("reads account-specific legacy import exclusions", async () => {
+    native.fetch.mockResolvedValueOnce(Response.json({ excludedHostIds: ["deleted-host", "hidden-host"] }));
+
+    await expect(getLegacyAccountServerDirectoryExclusions(localIdentitySession)).resolves.toEqual([
+      "deleted-host",
+      "hidden-host",
+    ]);
+
+    expect(native.fetch).toHaveBeenCalledWith(
+      "http://100.100.10.2:43124/v1/me/servers/legacy-import-exclusions",
+      expect.objectContaining({
+        method: "GET",
+        headers: { Authorization: "Bearer account-session-token" },
+      }),
+    );
+  });
+
+  it("rejects malformed legacy import exclusions", async () => {
+    native.fetch.mockResolvedValueOnce(Response.json({ excludedHostIds: ["valid-host", null] }));
+    await expect(getLegacyAccountServerDirectoryExclusions(localIdentitySession)).rejects.toThrow(
+      "The account server returned an invalid legacy import exclusion list.",
+    );
+  });
+
   it("sends server metadata to the signed-in account without forwarding the device Team token", async () => {
     const publicKey = "public-key";
     const pairedHost = {
@@ -638,12 +673,6 @@ describe("account server directory sync", () => {
     };
     const { sessionToken: deviceToken, ...registration } = pairedHost;
     const directoryEntry = { ...registration, role: "member" as const, isOwner: false };
-    const localIdentitySession: MobileSession = {
-      apiUrl: "http://100.100.10.2:43124",
-      sessionToken: "account-session-token",
-      user: { id: "account", email: "user@example.com", name: "User", avatarUrl: null },
-      localOnly: true,
-    };
     native.fetch
       .mockResolvedValueOnce(Response.json({ servers: [directoryEntry] }))
       .mockResolvedValueOnce(Response.json({ servers: [directoryEntry] }));
@@ -657,7 +686,120 @@ describe("account server directory sync", () => {
     expect(request?.body).not.toContain(deviceToken);
   });
 
-  it("retries a queued metadata-only server update before the next directory read", async () => {
+  it("distinguishes legacy imports, metadata registration, and explicit rejoin", async () => {
+    const publicKey = "public-key";
+    const registration = {
+      hostId: "11111111-1111-4111-8111-111111111111",
+      name: "Team server",
+      apiUrl: "http://100.100.10.2:43123",
+      fingerprint: remoteHostFingerprint(publicKey),
+      publicKey,
+      logoKey: null,
+      membershipId: "member-id",
+      role: "member" as const,
+    };
+    const directoryEntry = { ...registration, isOwner: false };
+    native.fetch
+      .mockResolvedValueOnce(Response.json({ servers: [directoryEntry] }))
+      .mockResolvedValueOnce(Response.json({ servers: [directoryEntry] }))
+      .mockResolvedValueOnce(Response.json({ servers: [directoryEntry] }))
+      .mockResolvedValueOnce(Response.json({ servers: [directoryEntry] }))
+      .mockResolvedValueOnce(Response.json({ servers: [directoryEntry] }))
+      .mockResolvedValueOnce(Response.json({ servers: [directoryEntry] }));
+
+    await registerAccountServer(localIdentitySession, registration, { legacyImport: true });
+    await registerAccountServer(localIdentitySession, registration);
+    await registerAccountServer(localIdentitySession, registration, { rejoin: true });
+
+    expect(native.fetch.mock.calls.map(([, request]) => request?.body)).toEqual([
+      JSON.stringify({ ...registration, legacyImport: true }),
+      undefined,
+      JSON.stringify(registration),
+      undefined,
+      JSON.stringify({ ...registration, rejoin: true }),
+      undefined,
+    ]);
+  });
+
+  it("preserves an explicit rejoin marker while retrying a queued registration", async () => {
+    const publicKey = "public-key";
+    const registration = {
+      hostId: "11111111-1111-4111-8111-111111111111",
+      name: "Team server",
+      apiUrl: "http://100.100.10.2:43123",
+      fingerprint: remoteHostFingerprint(publicKey),
+      publicKey,
+      logoKey: null,
+      membershipId: "member-id",
+      role: "member" as const,
+    };
+    native.fetch.mockRejectedValueOnce(new TypeError("Network request failed"));
+
+    await expect(registerAccountServer(localIdentitySession, registration, { rejoin: true })).rejects.toThrow();
+    const pendingChanges = [...native.storage.entries()].find(([key]) =>
+      key.startsWith("openbot.account-server.pending-changes.v1."),
+    );
+    expect(JSON.parse(pendingChanges?.[1] ?? "[]")).toEqual([expect.objectContaining({ rejoin: true })]);
+
+    const directoryEntry = { ...registration, isOwner: false };
+    native.fetch
+      .mockResolvedValueOnce(Response.json({ servers: [directoryEntry] }))
+      .mockResolvedValueOnce(Response.json({ servers: [directoryEntry] }));
+    await expect(listAccountServers(localIdentitySession)).resolves.toEqual([directoryEntry]);
+    expect(native.fetch.mock.calls.map(([, request]) => request?.body)).toEqual([
+      JSON.stringify({ ...registration, rejoin: true }),
+      JSON.stringify({ ...registration, rejoin: true }),
+      undefined,
+    ]);
+  });
+
+  it("serializes a queued rejoin after an in-flight account removal", async () => {
+    const hostId = "11111111-1111-4111-8111-111111111111";
+    const publicKey = "public-key";
+    const registration = {
+      hostId,
+      name: "Team server",
+      apiUrl: "http://100.100.10.2:43123",
+      fingerprint: remoteHostFingerprint(publicKey),
+      publicKey,
+      logoKey: null,
+      membershipId: "member-id",
+      role: "member" as const,
+    };
+    const directoryEntry = { ...registration, isOwner: false };
+    const deleteStarted = Promise.withResolvers<void>();
+    const deleteResponse = Promise.withResolvers<Response>();
+    native.fetch.mockImplementation(async (input, request) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      if (request?.method === "DELETE") {
+        deleteStarted.resolve();
+        return deleteResponse.promise;
+      }
+      if (request?.method === "PUT" || request?.method === "GET") {
+        return Response.json({ servers: [directoryEntry] });
+      }
+      throw new Error(`Unexpected account directory request: ${request?.method} ${url.pathname}`);
+    });
+
+    const removal = removeAccountServer(localIdentitySession, hostId);
+    await deleteStarted.promise;
+    const rejoin = registerAccountServer(localIdentitySession, registration, { rejoin: true });
+    await vi.waitFor(() => {
+      const pending = [...native.storage.entries()].find(([storedKey]) =>
+        storedKey.startsWith("openbot.account-server.pending-changes.v1."),
+      );
+      expect(JSON.parse(pending?.[1] ?? "[]")).toEqual([expect.objectContaining({ rejoin: true })]);
+    });
+    expect(native.fetch.mock.calls).toHaveLength(1);
+
+    deleteResponse.resolve(new Response(null, { status: 204 }));
+    await Promise.all([removal, rejoin]);
+
+    expect(native.fetch.mock.calls.map(([, request]) => request?.method)).toEqual(["DELETE", "PUT", "GET"]);
+    expect(native.fetch.mock.calls[1]?.[1]?.body).toBe(JSON.stringify({ ...registration, rejoin: true }));
+  });
+
+  it("preserves the legacy import marker while retrying a queued server registration", async () => {
     const publicKey = "public-key";
     const registration = {
       hostId: "11111111-1111-4111-8111-111111111111",
@@ -678,7 +820,7 @@ describe("account server directory sync", () => {
     const directoryEntry = { ...registration, isOwner: false };
     native.fetch.mockRejectedValueOnce(new TypeError("Network request failed"));
 
-    await expect(registerAccountServer(localIdentitySession, registration)).rejects.toThrow();
+    await expect(registerAccountServer(localIdentitySession, registration, { legacyImport: true })).rejects.toThrow();
     expect(
       [...native.storage.keys()].some((storedKey) =>
         storedKey.startsWith("openbot.account-server.pending-changes.v1."),
@@ -694,6 +836,8 @@ describe("account server directory sync", () => {
       ["http://100.100.10.2:43124/v1/me/servers", "PUT"],
       ["http://100.100.10.2:43124/v1/me/servers", "GET"],
     ]);
+    expect(native.fetch.mock.calls[0]?.[1]?.body).toBe(JSON.stringify({ ...registration, legacyImport: true }));
+    expect(native.fetch.mock.calls[1]?.[1]?.body).toBe(JSON.stringify({ ...registration, legacyImport: true }));
     expect(
       [...native.storage.keys()].some((storedKey) =>
         storedKey.startsWith("openbot.account-server.pending-changes.v1."),

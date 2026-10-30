@@ -26,16 +26,23 @@ interface StoredMembership {
   readonly role: TeamRole;
 }
 
+interface RemovedMembership {
+  readonly accountId: string;
+  readonly hostId: string;
+}
+
 interface DirectoryFile {
-  readonly version: 2;
+  readonly version: 4;
   readonly servers: readonly StoredServer[];
   readonly memberships: readonly StoredMembership[];
   /** Hidden hosts stay stored for reversible, account-wide removal from server lists. */
   readonly hiddenHostIds: readonly string[];
+  /** Explicit account-level leaves prevent another device's old cache from re-adding membership. */
+  readonly removedMemberships: readonly RemovedMembership[];
 }
 
 function emptyDirectory(): DirectoryFile {
-  return { version: 2, servers: [], memberships: [], hiddenHostIds: [] };
+  return { version: 4, servers: [], memberships: [], hiddenHostIds: [], removedMemberships: [] };
 }
 
 function validId(value: unknown): value is string {
@@ -103,10 +110,25 @@ function decodeHiddenHostIds(value: unknown): string[] {
   return hostIds;
 }
 
+function decodeRemovedMemberships(value: unknown): RemovedMembership[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 100_000) throw new Error("The account server directory is invalid.");
+  const removed = value.map((entry) => {
+    if (!isDynamicRecord(entry) || !validId(entry.accountId) || !validId(entry.hostId)) {
+      throw new Error("The account server directory is invalid.");
+    }
+    return { accountId: entry.accountId, hostId: entry.hostId };
+  });
+  if (new Set(removed.map(({ accountId, hostId }) => `${accountId}\0${hostId}`)).size !== removed.length) {
+    throw new Error("The account server directory is invalid.");
+  }
+  return removed;
+}
+
 function decodeDirectory(value: unknown): DirectoryFile {
   if (
     !isDynamicRecord(value) ||
-    (value.version !== 1 && value.version !== 2) ||
+    (value.version !== 1 && value.version !== 2 && value.version !== 3 && value.version !== 4) ||
     !Array.isArray(value.servers) ||
     value.servers.length > 10_000 ||
     !Array.isArray(value.memberships) ||
@@ -126,11 +148,18 @@ function decodeDirectory(value: unknown): DirectoryFile {
     throw new Error("The account server directory is invalid.");
   }
   const hiddenHostIds = decodeHiddenHostIds(value.hiddenHostIds);
-  return { version: 2, servers, memberships, hiddenHostIds };
+  const removedMemberships = decodeRemovedMemberships(value.removedMemberships);
+  return { version: 4, servers, memberships, hiddenHostIds, removedMemberships };
 }
 
 function decodeRegistration(value: unknown): AccountServerRegistration {
-  if (!isDynamicRecord(value) || !validId(value.membershipId) || !validRole(value.role)) {
+  if (
+    !isDynamicRecord(value) ||
+    !validId(value.membershipId) ||
+    !validRole(value.role) ||
+    (value.legacyImport !== undefined && typeof value.legacyImport !== "boolean") ||
+    (value.rejoin !== undefined && typeof value.rejoin !== "boolean")
+  ) {
     throw new AccountServerDirectoryError(400, "invalid_request");
   }
   let server: StoredServer;
@@ -148,6 +177,8 @@ function decodeRegistration(value: unknown): AccountServerRegistration {
     logoKey: server.logoKey,
     membershipId: value.membershipId,
     role: value.role,
+    ...(value.legacyImport === true ? { legacyImport: true } : {}),
+    ...(value.rejoin === true ? { rejoin: true } : {}),
   };
 }
 
@@ -207,10 +238,31 @@ export class SelfHostedAccountServerDirectory {
       });
   }
 
+  async legacyImportExclusions(accountId: string): Promise<string[]> {
+    await this.#requireReady();
+    return [
+      ...new Set([
+        ...this.#state.hiddenHostIds,
+        ...this.#state.removedMemberships
+          .filter((membership) => membership.accountId === accountId)
+          .map(({ hostId }) => hostId),
+      ]),
+    ];
+  }
+
   async register(accountId: string, input: unknown): Promise<AccountServerDirectoryEntry[]> {
     const registration = decodeRegistration(input);
     return this.#exclusive(async () => {
       await this.#requireReady();
+      const removed = this.#state.removedMemberships.some(
+        (membership) => membership.accountId === accountId && membership.hostId === registration.hostId,
+      );
+      const hidden = this.#state.hiddenHostIds.includes(registration.hostId);
+      // Old clients and background metadata refreshes omit both markers. Neither may silently
+      // undo an explicit account leave. Only a fresh invite/QR pairing opts into rejoining.
+      if (hidden || (removed && !registration.rejoin)) {
+        return this.list(accountId);
+      }
       const existing = this.#state.servers.find((server) => server.hostId === registration.hostId);
       if (
         existing &&
@@ -237,7 +289,7 @@ export class SelfHostedAccountServerDirectory {
         role: registration.role,
       };
       const next: DirectoryFile = {
-        version: 2,
+        version: 4,
         servers: existing
           ? this.#state.servers.map((candidate) => (candidate.hostId === server.hostId ? server : candidate))
           : [...this.#state.servers, server],
@@ -249,6 +301,11 @@ export class SelfHostedAccountServerDirectory {
             )
           : [...this.#state.memberships, membership],
         hiddenHostIds: this.#state.hiddenHostIds,
+        removedMemberships: registration.rejoin
+          ? this.#state.removedMemberships.filter(
+              (membership) => !(membership.accountId === accountId && membership.hostId === server.hostId),
+            )
+          : this.#state.removedMemberships,
       };
       await this.#persist(next);
       this.#state = next;
@@ -270,7 +327,7 @@ export class SelfHostedAccountServerDirectory {
       if (visible) hiddenHostIds.delete(hostId);
       else hiddenHostIds.add(hostId);
       if (wasHidden === !visible) return;
-      const next: DirectoryFile = { ...this.#state, version: 2, hiddenHostIds: [...hiddenHostIds] };
+      const next: DirectoryFile = { ...this.#state, version: 4, hiddenHostIds: [...hiddenHostIds] };
       await this.#persist(next);
       this.#state = next;
     });
@@ -283,16 +340,27 @@ export class SelfHostedAccountServerDirectory {
       const memberships = this.#state.memberships.filter(
         (membership) => !(membership.accountId === accountId && membership.hostId === hostId),
       );
+      const removedMemberships = this.#state.removedMemberships.some(
+        (membership) => membership.accountId === accountId && membership.hostId === hostId,
+      )
+        ? this.#state.removedMemberships
+        : [...this.#state.removedMemberships, { accountId, hostId }];
       const referencedHosts = new Set(memberships.map((membership) => membership.hostId));
       const servers = this.#state.servers.filter((server) => referencedHosts.has(server.hostId));
-      const retainedHosts = new Set(servers.map((server) => server.hostId));
       const next: DirectoryFile = {
-        version: 2,
+        version: 4,
         servers,
         memberships,
-        hiddenHostIds: this.#state.hiddenHostIds.filter((candidate) => retainedHosts.has(candidate)),
+        // A hidden local host may not have a directory membership. Keep that global tombstone
+        // independent from membership cleanup so stale device caches cannot import it again.
+        hiddenHostIds: this.#state.hiddenHostIds,
+        removedMemberships,
       };
-      if (next.memberships.length === this.#state.memberships.length) return;
+      if (
+        next.memberships.length === this.#state.memberships.length &&
+        next.removedMemberships.length === this.#state.removedMemberships.length
+      )
+        return;
       await this.#persist(next);
       this.#state = next;
     });

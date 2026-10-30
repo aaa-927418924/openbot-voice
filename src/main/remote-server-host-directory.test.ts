@@ -179,6 +179,21 @@ describe("reconcileWebRtcHosts", () => {
   });
 });
 
+it("uses the configured foreground sync interval", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
+  const refresh = vi.fn(() => Effect.void);
+  const stop = watchRemoteHostDirectory({ isActive: () => true, refresh, intervalMs: 10_000 });
+  try {
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(refresh).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(refresh).toHaveBeenCalledTimes(1);
+  } finally {
+    stop();
+    vi.useRealTimers();
+  }
+});
+
 it("refreshes cross-device memberships only while active and stops on shutdown", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
   let active = false;

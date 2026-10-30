@@ -95,4 +95,5 @@ export const pt = {
   ...island,
   ...computerUse,
   ...connector,
+  "mobile.agent.home.noServers": "Nenhum servidor disponível",
 } as const satisfies PartialTranslation<AppMessages>;

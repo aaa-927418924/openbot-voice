@@ -1,7 +1,7 @@
 import { remoteCall } from "./remote-service-effects";
 // @vitest-environment node
 
-import type { AgentEvent, AgentSummary, LiveVoiceEvent, ServerSummary } from "@openbot/contracts/ipc";
+import type { AgentEvent, AgentSummary, HostStatus, LiveVoiceEvent, ServerSummary } from "@openbot/contracts/ipc";
 import { createFormat, translateFor } from "@openbot/i18n";
 import type { AgentNotificationContent } from "@openbot/team-client/agent-notifications";
 import { BrowserWindow } from "electron";
@@ -79,7 +79,7 @@ function server(id: string): ServerSummary {
     notificationLevel: "all",
   };
 }
-function setup() {
+function setup(isLocalServerEnabled: () => boolean = () => true) {
   const servers = [server("local"), server("alpha"), server("beta")];
   const request = vi.fn(async (_serverId: string): Promise<AgentSummary[]> => [{ ...agent, name: "Remote Chief" }]);
   let lookupSettled = Promise.resolve();
@@ -101,6 +101,7 @@ function setup() {
           return result;
         }),
     }),
+    isLocalServerEnabled,
     showMainWindow: vi.fn(),
     getTranslate: () => translateFor("en"),
     getFormat: () => createFormat("en"),
@@ -113,6 +114,37 @@ beforeEach(() => {
   mocks.clickListeners = [];
   mocks.focused = false;
   mocks.desktopNotifications = true;
+});
+
+const hostStatus: HostStatus = {
+  phase: "idle",
+  configured: false,
+  enabledOnLaunch: false,
+  serverId: null,
+  serverName: null,
+  apiUrl: null,
+  logoUrl: null,
+  apiOnline: false,
+  remoteDesktopReady: false,
+  remoteDesktopScreenRecordingDenied: false,
+  remoteDesktopUnattended: false,
+  remoteDesktopActiveSessions: 0,
+  remoteDesktopMaxSessions: 0,
+  message: null,
+};
+
+it("omits the local server from host and server change events when local hosting is disabled", () => {
+  const fixture = setup(() => false);
+  fixture.forwardHostStatus(hostStatus);
+  const forwardedHostServers = mocks.send.mock.calls.find(([channel]) => channel === "servers:event")?.[1];
+  expect(forwardedHostServers).toMatchObject([{ id: "alpha", active: true }, { id: "beta" }]);
+  expect(forwardedHostServers).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: "local" })]));
+
+  mocks.send.mockClear();
+  fixture.forwardServers(fixture.servers);
+  const forwardedServers = mocks.send.mock.calls.find(([channel]) => channel === "servers:event")?.[1];
+  expect(forwardedServers).toMatchObject([{ id: "alpha", active: true }, { id: "beta" }]);
+  expect(forwardedServers).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: "local" })]));
 });
 
 it("mutes only the selected server while forwarding its live events", async () => {

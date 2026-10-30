@@ -189,6 +189,9 @@ describe("SelfHostedIdentityApiServer", () => {
       await directoryReadback.setServerVisible("second-team-host", false);
       expect(await directoryReadback.list(account.id)).toEqual([]);
       expect(await directoryReadback.list(otherAccount.account.id)).toEqual([]);
+      expect(await directoryReadback.legacyImportExclusions(account.id)).toEqual(
+        expect.arrayContaining(["linux-team-host", "second-team-host"]),
+      );
 
       const visibilityAfterRestart = new SelfHostedAccountServerDirectory(join(root, "server-directory.json"));
       await visibilityAfterRestart.initialize();
@@ -252,6 +255,78 @@ describe("SelfHostedIdentityApiServer", () => {
       expect(await otherAccountAfterRemove.json()).toMatchObject({
         servers: [{ hostId: "linux-team-host", membershipId: "other-membership" }],
       });
+      const otherImportExclusions = await fetch(new URL("/v1/me/servers/legacy-import-exclusions", apiUrl), {
+        headers: { Authorization: `Bearer ${otherAccount.token}`, Connection: "close" },
+      });
+      expect(await otherImportExclusions.json()).toEqual({ excludedHostIds: [] });
+      const otherRemove = await fetch(new URL("/v1/me/servers/linux-team-host", apiUrl), {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${otherAccount.token}`, Connection: "close" },
+      });
+      expect(otherRemove.status).toBe(204);
+      const importExclusionsAfterRemove = await fetch(new URL("/v1/me/servers/legacy-import-exclusions", apiUrl), {
+        headers: { Authorization: `Bearer ${otherAccount.token}`, Connection: "close" },
+      });
+      expect(await importExclusionsAfterRemove.json()).toEqual({ excludedHostIds: ["linux-team-host"] });
+      const staleImport = await fetch(new URL("/v1/me/servers", apiUrl), {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${otherAccount.token}`,
+          "Content-Type": "application/json",
+          Connection: "close",
+        },
+        body: JSON.stringify({
+          hostId: "linux-team-host",
+          name: "Renamed host",
+          apiUrl: "http://100.100.10.2:43123",
+          fingerprint: remoteHostFingerprint(publicKey),
+          publicKey,
+          logoKey: null,
+          membershipId: "other-membership",
+          role: "member",
+          legacyImport: true,
+        }),
+      });
+      expect(await staleImport.json()).toEqual({ servers: [] });
+      const unmarkedStaleRegistration = await fetch(new URL("/v1/me/servers", apiUrl), {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${otherAccount.token}`,
+          "Content-Type": "application/json",
+          Connection: "close",
+        },
+        body: JSON.stringify({
+          hostId: "linux-team-host",
+          name: "Renamed host",
+          apiUrl: "http://100.100.10.2:43123",
+          fingerprint: remoteHostFingerprint(publicKey),
+          publicKey,
+          logoKey: null,
+          membershipId: "other-membership",
+          role: "member",
+        }),
+      });
+      expect(await unmarkedStaleRegistration.json()).toEqual({ servers: [] });
+      const explicitRejoin = await fetch(new URL("/v1/me/servers", apiUrl), {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${otherAccount.token}`,
+          "Content-Type": "application/json",
+          Connection: "close",
+        },
+        body: JSON.stringify({
+          hostId: "linux-team-host",
+          name: "Renamed host",
+          apiUrl: "http://100.100.10.2:43123",
+          fingerprint: remoteHostFingerprint(publicKey),
+          publicKey,
+          logoKey: null,
+          membershipId: "other-membership",
+          role: "member",
+          rejoin: true,
+        }),
+      });
+      expect(await explicitRejoin.json()).toMatchObject({ servers: [{ hostId: "linux-team-host" }] });
 
       const loginResponse = await fetch(new URL("/v1/auth/login", apiUrl), {
         method: "POST",
@@ -298,6 +373,37 @@ describe("SelfHostedIdentityApiServer", () => {
     } finally {
       await api.stop();
     }
+  });
+
+  it("keeps an orphaned hidden-host tombstone when an unrelated membership is removed", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-self-hosted-hidden-host-tombstone-"));
+    roots.push(root);
+    const directory = new SelfHostedAccountServerDirectory(join(root, "server-directory.json"));
+    await directory.initialize();
+    const publicKey = "directory-test-public-key";
+    const host = {
+      hostId: "listed-host",
+      name: "Listed host",
+      apiUrl: "http://100.100.10.2:43123",
+      fingerprint: remoteHostFingerprint(publicKey),
+      publicKey,
+      logoKey: null,
+      membershipId: "member-id",
+      role: "member" as const,
+    };
+
+    await directory.setServerVisible("hidden-local-host", false);
+    await directory.register("account", host);
+    await directory.removeMembership("account", host.hostId);
+
+    expect(await directory.legacyImportExclusions("account")).toContain("hidden-local-host");
+    expect(
+      await directory.register("account", {
+        ...host,
+        hostId: "hidden-local-host",
+        rejoin: true,
+      }),
+    ).toEqual([]);
   });
 
   it("registers a separate account and keeps one-time QR credential setup tied to its stable account", async () => {

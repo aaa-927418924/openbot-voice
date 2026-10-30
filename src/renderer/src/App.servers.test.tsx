@@ -821,7 +821,7 @@ describe("OpenBot connected desktop shell", () => {
   });
 
   it.each([true, false])(
-    "opens, hides, resumes, and disconnects Remote Control with cached availability %s",
+    "opens, hides, and resumes Remote Control with cached availability %s",
     async (remoteDesktopAvailable) => {
       vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([
         {
@@ -898,10 +898,13 @@ describe("OpenBot connected desktop shell", () => {
       await fireEvent.click(screen.getByRole("button", { name: "Resume remote control" }));
       expect(await screen.findByTitle("Sunshine remote desktop")).toBeInTheDocument();
       expect(window.openbot.remoteDesktop.connect).toHaveBeenCalledTimes(remoteDesktopAvailable ? 1 : 2);
-      await fireEvent.click(screen.getByRole("button", { name: "Disconnect" }));
-      await waitFor(() => expect(window.openbot.remoteDesktop.disconnect).toHaveBeenCalledWith("desktop-1"));
-      await waitFor(() => expect(screen.queryByTitle("Sunshine remote desktop")).not.toBeInTheDocument());
-      expect(screen.getByRole("button", { name: "Open remote control" })).toBeInTheDocument();
+      const resumedWorkspace = screen.getByRole("main", { name: "Remote control" });
+      await fireEvent.click(within(resumedWorkspace).getByRole("button", { name: "Back to OpenBot" }));
+      await waitFor(() => expect(resumedWorkspace).toHaveAttribute("aria-hidden", "true"));
+      expect(resumedWorkspace.inert).toBe(true);
+      expect(screen.getByTitle("Sunshine remote desktop")).toBeInTheDocument();
+      expect(window.openbot.remoteDesktop.disconnect).not.toHaveBeenCalled();
+      expect(screen.getByRole("button", { name: "Resume remote control" })).toBeInTheDocument();
     },
   );
 
@@ -1280,6 +1283,19 @@ describe("OpenBot connected desktop shell", () => {
     expect(menu).toBeInTheDocument();
     expect(menu).toBeVisible();
     expect(menu).toHaveTextContent("Local");
+  });
+
+  it("shows the localized empty state instead of Local when no servers are joined", async () => {
+    window.localStorage.setItem("openbot:server-view", "menu");
+    vi.mocked(window.openbot.servers.list).mockResolvedValue([]);
+    render(() => <App />);
+
+    const trigger = await screen.findByRole("button", { name: "Open server menu for No servers available" });
+    await fireEvent.pointerDown(trigger, { button: 0, pointerType: "mouse" });
+    const menu = document.querySelector(".server-menu");
+    expect(menu).toBeInTheDocument();
+    expect(menu).toHaveTextContent("No servers available");
+    expect(menu).not.toHaveTextContent("Local");
   });
 
   it("shows the server rail and opens the join flow", async () => {

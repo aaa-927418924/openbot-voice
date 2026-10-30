@@ -153,18 +153,31 @@ type ParsedJoinLink =
 
 class LocalTailnetRemoteServerDirectory implements RemoteServerDirectory {
   readonly #store: RemoteServerStore;
+  readonly #isLocalServerEnabled: () => boolean;
+  readonly #getAccountId: () => string | null;
 
-  constructor(store: RemoteServerStore) {
+  constructor(store: RemoteServerStore, isLocalServerEnabled: () => boolean, getAccountId: () => string | null) {
     this.#store = store;
+    this.#isLocalServerEnabled = isLocalServerEnabled;
+    this.#getAccountId = getAccountId;
   }
 
   get activeServerId(): string {
     const activeServerId = this.#store.activeServerId;
+    if (!this.#isLocalServerEnabled()) {
+      if (this.has(activeServerId)) return activeServerId;
+      return this.servers.find((server) => !this.#store.isHiddenHost(server.id))?.id ?? LOCAL_SERVER_ID;
+    }
     return activeServerId === LOCAL_SERVER_ID || this.has(activeServerId) ? activeServerId : LOCAL_SERVER_ID;
   }
 
   get servers(): readonly StoredRemoteServerView[] {
-    return this.#store.servers.filter((server) => isTailscaleApiUrl(server.apiUrl));
+    const accountId = this.#getAccountId();
+    return this.#store.servers.filter(
+      (server) =>
+        isTailscaleApiUrl(server.apiUrl) &&
+        (accountId ? server.accountId === accountId : server.accountId === undefined),
+    );
   }
 
   require(serverId: string): StoredRemoteServerView {
@@ -174,8 +187,7 @@ class LocalTailnetRemoteServerDirectory implements RemoteServerDirectory {
   }
 
   find(serverId: string): StoredRemoteServerView | null {
-    const server = this.#store.find(serverId);
-    return server && isTailscaleApiUrl(server.apiUrl) ? server : null;
+    return this.servers.find((server) => server.id === serverId) ?? null;
   }
 
   has(serverId: string): boolean {
@@ -190,9 +202,12 @@ class LocalTailnetRemoteServerDirectory implements RemoteServerDirectory {
 interface CentralAccountSession {
   createTeamAuthTicket: (serverId: string) => Effect.Effect<string, CentralAuthOperationError>;
   getEmail: () => string;
+  getAccountId?: () => string | null;
   isSelfHostedSignedIn?: () => boolean;
   listAccountServers?: () => Effect.Effect<AccountServerDirectoryEntry[], CentralAuthOperationError>;
+  getLegacyAccountServerImportExclusions?: () => Effect.Effect<string[], CentralAuthOperationError>;
   registerAccountServer?: (registration: AccountServerRegistration) => Effect.Effect<void, CentralAuthOperationError>;
+  removeAccountServer?: (hostId: string) => Effect.Effect<void, CentralAuthOperationError>;
   getDisplayName?: () => string;
   sendTeamInviteEmail?: (input: {
     email: string;
@@ -207,6 +222,8 @@ interface RemoteServerManagerOptions {
   allowTailscaleApiUrl?: boolean;
   /** Do not expose or connect to hosts that depend on the OpenBot account directory. */
   localOnlyNetworking?: boolean;
+  /** Whether this desktop publishes its Local host into the server list. */
+  isLocalServerEnabled?: () => boolean;
   /** The origin of the self-hosted account service that this app is configured to use. */
   selfHostedApiOrigin?: string | undefined;
   appVersion?: string;
@@ -266,6 +283,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   readonly #centralAccount: CentralAccountSession;
   readonly #allowLocalDevelopmentInvites: boolean;
   readonly #localOnlyNetworking: boolean;
+  readonly #isLocalServerEnabled: () => boolean;
   readonly #inviteLinks: InviteLinkOptions;
   readonly #appVersion: string | null;
   #duplicateOperationIds = new Map<string, string>();
@@ -295,7 +313,14 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     super();
     this.#store = new RemoteServerStore({ path, cipher });
     this.#localOnlyNetworking = options.localOnlyNetworking ?? false;
-    this.#servers = this.#localOnlyNetworking ? new LocalTailnetRemoteServerDirectory(this.#store) : this.#store;
+    this.#isLocalServerEnabled = options.isLocalServerEnabled ?? (() => true);
+    this.#servers = this.#localOnlyNetworking
+      ? new LocalTailnetRemoteServerDirectory(
+          this.#store,
+          this.#isLocalServerEnabled,
+          () => centralAccount.getAccountId?.() ?? null,
+        )
+      : this.#store;
     this.#appVersion = options.appVersion ?? null;
     this.#connections = new RemoteServerConnections({
       appVersion: this.#appVersion,
@@ -504,6 +529,13 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         previousServer?.fingerprint === invite.fingerprint
           ? previousServer.username
           : `device-${randomBytes(8).toString("hex")}`;
+      const accountRejoinId =
+        this.#localOnlyNetworking &&
+        isTailscaleApiUrl(invite.apiUrl) &&
+        this.#centralAccount.isSelfHostedSignedIn?.() === true &&
+        this.#centralAccount.registerAccountServer
+          ? (this.#centralAccount.getAccountId?.() ?? undefined)
+          : undefined;
       const stored: StoredRemoteServer = {
         id: invite.serverId,
         name: identity.serverName,
@@ -515,11 +547,32 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         remoteDesktopAvailable: false,
         logoVersion: identity.logoVersion,
         role: result.member.role,
+        ...(result.member.id ? { membershipId: result.member.id } : {}),
+        ...(accountRejoinId ? { pendingAccountRejoinId: accountRejoinId } : {}),
+        ...(accountRejoinId ? { accountId: accountRejoinId } : {}),
       };
       this.#connections.setCompatibility(stored.id, identity.compatibility);
       this.#connections.clearIssue(stored.id);
       this.#connections.setState(stored.id, "online");
       yield* this.#store.adopt(stored);
+      if (accountRejoinId && stored.membershipId && this.#centralAccount.registerAccountServer) {
+        const registration = yield* this.#centralAccount
+          .registerAccountServer({
+            hostId: stored.id,
+            name: stored.name,
+            apiUrl: stored.apiUrl,
+            fingerprint: stored.fingerprint,
+            publicKey: identity.publicKey,
+            logoKey: stored.logoVersion ?? null,
+            membershipId: stored.membershipId,
+            role: stored.role,
+            rejoin: true,
+          })
+          .pipe(Effect.result);
+        if (Result.isSuccess(registration)) {
+          yield* this.#store.update(stored.id, { pendingAccountRejoinId: null });
+        }
+      }
       const remoteDesktopAvailable = yield* this.#client
         .probeRemoteDesktop(stored)
         .pipe(Effect.catch(() => Effect.succeed(false)));
@@ -564,6 +617,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         logoVersion: identity.logoVersion,
         role: result.member.role,
         ...(result.member.id ? { membershipId: result.member.id } : { membershipId: entry.membershipId }),
+        ...(this.#centralAccount.getAccountId?.()
+          ? { accountId: this.#centralAccount.getAccountId?.() ?? undefined }
+          : {}),
       };
       this.#connections.setCompatibility(stored.id, identity.compatibility);
       this.#connections.clearIssue(stored.id);
@@ -619,6 +675,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       const transport = this.#webrtcTransport;
 
       yield* this.#store.load();
+      yield* this.#ensureVisibleActiveServer();
       this.#scheduleMuteExpiry();
       if (transport && !this.#localOnlyNetworking) yield* this.#syncWebRtcHosts().pipe(Effect.catch(() => Effect.void));
       for (const server of this.#servers.servers) {
@@ -709,16 +766,103 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         return this.list();
 
       let entries = yield* account.listAccountServers().pipe(toRemoteWorkflowError);
-      const byId = new Map(entries.map((entry) => [entry.hostId, entry]));
-      // Older devices paired servers locally before the account directory existed. Authenticate
-      // them with the signed-in account once, then publish the verified membership to the directory.
+      // Old builds kept pairings only on each device. Import each device's old entries
+      // idempotently; server-side tombstones prevent old caches from restoring removed memberships.
+      // A fresh explicit invite join carries `rejoin` and is the only operation that restores one.
+      const excludedHostIds = new Set(
+        account.getLegacyAccountServerImportExclusions
+          ? yield* account.getLegacyAccountServerImportExclusions().pipe(toRemoteWorkflowError)
+          : [],
+      );
+      const pendingLegacyImports = new Set<string>();
+      const pendingAccountRejoins = new Set<string>();
+      const accountId = account.getAccountId?.() ?? null;
       for (const server of [...this.#store.servers]) {
-        if (!isTailscaleApiUrl(server.apiUrl) || byId.has(server.id) || this.#store.isHiddenHost(server.id)) continue;
-        const seeded = yield* this.login({ serverId: server.id }).pipe(Effect.result);
-        if (Result.isFailure(seeded)) continue;
+        if (
+          !accountId ||
+          server.pendingAccountRejoinId !== accountId ||
+          !isTailscaleApiUrl(server.apiUrl) ||
+          !server.membershipId ||
+          !server.publicKey
+        )
+          continue;
+        const registered = yield* account
+          .registerAccountServer({
+            hostId: server.id,
+            name: server.name,
+            apiUrl: server.apiUrl,
+            fingerprint: server.fingerprint,
+            publicKey: server.publicKey,
+            logoKey: server.logoVersion ?? null,
+            membershipId: server.membershipId,
+            role: server.role,
+            rejoin: true,
+          })
+          .pipe(Effect.result);
+        if (Result.isFailure(registered)) pendingAccountRejoins.add(server.id);
+      }
+      if (
+        pendingAccountRejoins.size > 0 ||
+        this.#store.servers.some((server) => server.pendingAccountRejoinId === accountId)
+      ) {
+        entries = yield* account.listAccountServers().pipe(toRemoteWorkflowError);
+        const confirmed = new Map(entries.map((entry) => [entry.hostId, entry]));
+        for (const server of [...this.#store.servers]) {
+          if (server.pendingAccountRejoinId !== accountId) continue;
+          if (confirmed.get(server.id)?.membershipId === server.membershipId) {
+            yield* this.#store.update(server.id, { pendingAccountRejoinId: null, accountId: accountId ?? undefined });
+          } else {
+            pendingAccountRejoins.add(server.id);
+          }
+        }
+      }
+      // Include hosts registered by the pending-rejoin pass; they must not be imported again as
+      // legacy pairings from this device's cache.
+      const listedHostIds = new Set(entries.map((entry) => entry.hostId));
+      for (const server of [...this.#store.servers]) {
+        if (
+          !isTailscaleApiUrl(server.apiUrl) ||
+          listedHostIds.has(server.id) ||
+          excludedHostIds.has(server.id) ||
+          (server.pendingAccountRejoinId !== undefined && server.pendingAccountRejoinId !== accountId) ||
+          this.#store.isHiddenHost(server.id)
+        )
+          continue;
+        // Older per-device entries have no account provenance. They may be migrated only after a
+        // fresh account ticket authenticates against the pinned host identity. Never reuse their
+        // saved Team token to infer ownership, and never adopt an entry already claimed elsewhere.
+        if (!accountId || (server.accountId !== undefined && server.accountId !== accountId)) {
+          pendingLegacyImports.add(server.id);
+          continue;
+        }
+        let seeded = false;
+        if (server.accountId === accountId) {
+          seeded = Result.isSuccess(yield* this.login({ serverId: server.id }).pipe(Effect.result));
+        } else if (server.publicKey && server.membershipId) {
+          seeded = Result.isSuccess(
+            yield* this.#adoptAccountServer({
+              hostId: server.id,
+              name: server.name,
+              apiUrl: server.apiUrl,
+              fingerprint: server.fingerprint,
+              publicKey: server.publicKey,
+              logoKey: server.logoVersion ?? null,
+              membershipId: server.membershipId,
+              role: server.role,
+              isOwner: server.role === "owner",
+            }).pipe(Effect.result),
+          );
+        }
+        if (!seeded) {
+          pendingLegacyImports.add(server.id);
+          continue;
+        }
         const refreshed = this.#store.find(server.id);
-        if (!refreshed?.membershipId || !refreshed.publicKey) continue;
-        yield* account
+        if (!refreshed?.membershipId || !refreshed.publicKey) {
+          pendingLegacyImports.add(server.id);
+          continue;
+        }
+        const registered = yield* account
           .registerAccountServer({
             hostId: refreshed.id,
             name: refreshed.name,
@@ -728,10 +872,29 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
             logoKey: refreshed.logoVersion ?? null,
             membershipId: refreshed.membershipId,
             role: refreshed.role,
+            legacyImport: true,
           })
-          .pipe(Effect.catch(() => Effect.void));
+          .pipe(Effect.result);
+        if (Result.isFailure(registered)) pendingLegacyImports.add(server.id);
       }
       entries = yield* account.listAccountServers().pipe(toRemoteWorkflowError);
+
+      // The account directory is authoritative once it can be read. Drop stale per-device
+      // pairings, but keep owner-hidden entries so the local hide choice stays reversible.
+      const authoritativeHostIds = new Set(entries.map((entry) => entry.hostId));
+      for (const server of [...this.#store.servers]) {
+        if (
+          isTailscaleApiUrl(server.apiUrl) &&
+          !authoritativeHostIds.has(server.id) &&
+          !this.#store.isHiddenHost(server.id) &&
+          (server.pendingAccountRejoinId === undefined || server.pendingAccountRejoinId === accountId) &&
+          !pendingAccountRejoins.has(server.id) &&
+          !pendingLegacyImports.has(server.id)
+        ) {
+          this.#clearServerConnectionState(server.id);
+          yield* this.#store.remove(server.id);
+        }
+      }
       const previousActive = this.#store.activeServerId;
       for (const entry of entries) {
         if (this.#store.isHiddenHost(entry.hostId)) continue;
@@ -739,14 +902,25 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         if (existing && (existing.fingerprint !== entry.fingerprint || existing.publicKey !== entry.publicKey))
           continue;
         if (existing) {
-          const refreshed = yield* this.login({ serverId: existing.id }).pipe(Effect.result);
-          if (Result.isFailure(refreshed)) continue;
-        } else {
-          yield* this.#adoptAccountServer(entry).pipe(Effect.catch(() => Effect.void));
+          // A directory poll must not replace a valid per-device Team session. The account entry
+          // is shared, but each device's encrypted session token is local to that device. If this
+          // cache belongs to another account (or an older build did not tag it), authenticate the
+          // current account with a fresh host-bound ticket before replacing it.
+          if (existing.accountId === accountId && existing.membershipId === entry.membershipId) {
+            const patch = {
+              ...(existing.name !== entry.name ? { name: entry.name } : {}),
+              ...(existing.logoVersion !== entry.logoKey ? { logoVersion: entry.logoKey } : {}),
+            };
+            if (Object.keys(patch).length > 0) yield* this.#store.update(existing.id, patch);
+            continue;
+          }
         }
+        yield* this.#adoptAccountServer(entry).pipe(Effect.catch(() => Effect.void));
       }
       const active =
-        previousActive === LOCAL_SERVER_ID || this.#servers.has(previousActive) ? previousActive : LOCAL_SERVER_ID;
+        previousActive !== LOCAL_SERVER_ID && this.#servers.has(previousActive)
+          ? previousActive
+          : this.#servers.activeServerId;
       if (this.#store.activeServerId !== active) {
         this.#store.setActiveServerId(active);
         yield* this.#store.persist();
@@ -757,6 +931,25 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     },
     (operation) => this.#owned(operation),
   ).bind(this);
+
+  /** Re-select a joined server immediately when the Local host is turned off. */
+  readonly localHostVisibilityChanged = Effect.fn("RemoteManager.localHostVisibilityChanged")(function* (
+    this: RemoteServerManager,
+  ) {
+    yield* this.#ensureVisibleActiveServer();
+    this.#events.syncScopes();
+    this.#emitChanged();
+  }).bind(this);
+
+  readonly #ensureVisibleActiveServer = Effect.fn("RemoteManager.ensureVisibleActiveServer")(function* (
+    this: RemoteServerManager,
+  ) {
+    if (!this.#localOnlyNetworking || this.#isLocalServerEnabled()) return;
+    const activeServerId = this.#servers.activeServerId;
+    if (activeServerId === this.#store.activeServerId) return;
+    this.#store.setActiveServerId(activeServerId);
+    yield* this.#store.persist();
+  }).bind(this);
 
   get activeServerId(): string {
     return this.#servers.activeServerId;
@@ -934,7 +1127,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       const username = useAccountTicket
         ? this.#centralAccount.getEmail().trim().toLowerCase()
         : `device-${randomBytes(8).toString("hex")}`;
-      const displayName = useAccountTicket ? this.#centralAccount.getDisplayName?.().trim() : undefined;
+      const displayName = this.#centralAccount.getDisplayName?.().trim();
       const result = !useAccountTicket
         ? yield* requestJson(invite.apiUrl, TEAM_API_ROUTES.join.server, decodeJoinResult, {
             method: "POST",
@@ -976,6 +1169,13 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
               ),
             );
           });
+      const accountRejoinId =
+        this.#localOnlyNetworking &&
+        isTailnetInvite &&
+        this.#centralAccount.isSelfHostedSignedIn?.() === true &&
+        this.#centralAccount.registerAccountServer
+          ? (this.#centralAccount.getAccountId?.() ?? undefined)
+          : undefined;
       const stored: StoredRemoteServer = {
         id: invite.serverId,
         name: verifiedIdentity.serverName,
@@ -988,11 +1188,37 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         logoVersion: verifiedIdentity.logoVersion,
         role: result.member.role,
         ...(result.member.id ? { membershipId: result.member.id } : {}),
+        ...(accountRejoinId ? { pendingAccountRejoinId: accountRejoinId } : {}),
+        ...(accountRejoinId ? { accountId: accountRejoinId } : {}),
       };
       this.#connections.setCompatibility(stored.id, verifiedIdentity.compatibility);
       this.#connections.clearIssue(stored.id);
       this.#connections.setState(stored.id, "online");
       yield* this.#store.adopt(stored);
+      if (
+        this.#localOnlyNetworking &&
+        isTailnetInvite &&
+        this.#centralAccount.isSelfHostedSignedIn?.() === true &&
+        stored.membershipId &&
+        this.#centralAccount.registerAccountServer
+      ) {
+        const registration = yield* this.#centralAccount
+          .registerAccountServer({
+            hostId: stored.id,
+            name: stored.name,
+            apiUrl: stored.apiUrl,
+            fingerprint: stored.fingerprint,
+            publicKey: verifiedIdentity.publicKey,
+            logoKey: stored.logoVersion ?? null,
+            membershipId: stored.membershipId,
+            role: stored.role,
+            rejoin: true,
+          })
+          .pipe(Effect.result);
+        if (Result.isSuccess(registration) && accountRejoinId) {
+          yield* this.#store.update(stored.id, { pendingAccountRejoinId: null });
+        }
+      }
       // The probe authenticates with the session token created by the join. It must run after adopt,
       // because the remote client resolves that token through the persisted server directory. A probe
       // is only a capability hint, so a failed probe must not turn a successful (and now consumed)
@@ -1169,6 +1395,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         this.#connections.clearIssue(server.id);
         const signedIn = yield* this.#store.update(server.id, {
           username: this.#centralAccount.getEmail().trim().toLowerCase(),
+          ...(this.#centralAccount.getAccountId?.()
+            ? { accountId: this.#centralAccount.getAccountId?.() ?? undefined }
+            : {}),
           role: result.member.role,
           ...(result.member.id ? { membershipId: result.member.id } : {}),
           encryptedToken: yield* remoteDecode(() => this.#store.sealToken(result.sessionToken)),
@@ -1294,8 +1523,21 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
           : TEAM_API_ROUTES.auth.logout;
         yield* this.request(serverId, path, decodeVoid, { method: "POST" }).pipe(Effect.catch(() => Effect.void));
       }
+      if (
+        this.#localOnlyNetworking &&
+        server &&
+        isTailscaleApiUrl(server.apiUrl) &&
+        server.role !== "owner" &&
+        this.#centralAccount.isSelfHostedSignedIn?.() === true &&
+        this.#centralAccount.removeAccountServer
+      ) {
+        // Make the account directory authoritative before removing the local cache. If this
+        // request fails, keep the list entry so it cannot silently return on the next poll.
+        yield* this.#centralAccount.removeAccountServer(serverId).pipe(toRemoteWorkflowError);
+      }
       this.#clearServerConnectionState(serverId);
       yield* this.#store.remove(serverId, { hideHost });
+      yield* this.#ensureVisibleActiveServer();
       this.#emitChanged();
     },
     (operation) => this.#owned(operation),

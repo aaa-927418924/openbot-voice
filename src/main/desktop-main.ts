@@ -3,7 +3,11 @@ import { selfHostedApiOrigin } from "@openbot/contracts/invite-links";
 import { type AppLogoColor, type CentralAuthState, IPC_ENDPOINTS, LOCAL_SERVER_ID } from "@openbot/contracts/ipc";
 import { createFormat, resolveLocale, translateFor } from "@openbot/i18n";
 import { createOpenBotLogger, toLogValue } from "@openbot/logging";
-import { createRemoteDirectoryRefresh } from "@openbot/team-client/remote-directory";
+import {
+  createRemoteDirectoryRefresh,
+  REMOTE_ACCOUNT_CHECK_INTERVAL_MS,
+  SELF_HOSTED_ACCOUNT_CHECK_INTERVAL_MS,
+} from "@openbot/team-client/remote-directory";
 import { Effect, Semaphore } from "effect";
 import {
   app,
@@ -226,6 +230,10 @@ protocol.registerSchemesAsPrivileged([
  * treats a null as a recoverable state beyond the startup window it really is.
  */
 let services: ApplicationServices | null = null;
+const isLocalServerEnabled = (): boolean => {
+  const settings = services?.getLocalHostSettings();
+  return settings ? !settings.supported || settings.enabled : true;
+};
 let activeRemotePrincipalId: string | null = null;
 /** Counts account transitions, so queued work for a superseded one is dropped rather than applied. */
 let centralAuthGeneration = 0;
@@ -296,6 +304,7 @@ const {
   getHostService: () => services?.host ?? null,
   getHostAnalytics: () => services?.analytics ?? null,
   getRemoteServerManager: () => services?.remoteServers ?? null,
+  isLocalServerEnabled,
   showMainWindow,
   // An agent event cannot arrive before the services that raise it, so the fallback stands only so
   // that this module-level value needs no null check on the notification path.
@@ -559,6 +568,7 @@ function registerIpcHandlers({
       host,
       remoteDesktop,
       remoteServers,
+      isLocalServerEnabled,
       takePendingInvite: () => takePendingDeepLink("invite"),
     }),
     ...pluginIpcHandlers({
@@ -1032,11 +1042,6 @@ if (!hasSingleInstanceLock) {
       performance.mark("openbot:renderer-loaded");
       // After the load: `sendToRenderer` drops events aimed at a window that is still loading.
       await Effect.runPromise(remoteServers.startEventConnections());
-      if (built.localOnlyNetworking && built.selfHostedDesktopAccount.isSignedIn) {
-        void runCauseEffect(remoteServers.syncAccountDirectory()).catch((error) =>
-          logger.warn("Unable to synchronize self-hosted account servers:", toLogValue(error)),
-        );
-      }
       const reconcileDynamicIsland = () =>
         void Effect.runPromise(dynamicIsland.reconcileWindow()).catch((error) =>
           logger.error("Unable to reconcile Dynamic Island displays:", toLogValue(error)),
@@ -1087,21 +1092,37 @@ if (!hasSingleInstanceLock) {
         logger.error("Unable to initialize the local agent backend:", toLogValue(error));
       });
 
-      const directoryRefresh = createRemoteDirectoryRefresh(() => {
-        const generation = centralAuthGeneration;
-        return remoteAccountGate
-          .withPermit(
-            Effect.gen(function* () {
-              if (generation !== centralAuthGeneration || built.centralAuth.getState().status !== "signed_in") return;
-              yield* remoteServers.syncRemoteHosts();
-            }),
-          )
-          .pipe(
-            Effect.catch((error) =>
-              Effect.sync(() => logger.error("Unable to refresh joined servers:", toLogValue(error.cause))),
-            ),
-          );
-      });
+      const directoryRefreshIntervalMs = built.localOnlyNetworking
+        ? SELF_HOSTED_ACCOUNT_CHECK_INTERVAL_MS
+        : REMOTE_ACCOUNT_CHECK_INTERVAL_MS;
+      const directoryRefresh = createRemoteDirectoryRefresh(
+        () => {
+          const generation = centralAuthGeneration;
+          return remoteAccountGate
+            .withPermit(
+              Effect.gen(function* () {
+                const signedIn = built.localOnlyNetworking
+                  ? built.selfHostedDesktopAccount.isSignedIn
+                  : built.centralAuth.getState().status === "signed_in";
+                if (!signedIn || (!built.localOnlyNetworking && generation !== centralAuthGeneration)) return;
+                if (built.localOnlyNetworking) yield* remoteServers.syncAccountDirectory();
+                else yield* remoteServers.syncRemoteHosts();
+              }),
+            )
+            .pipe(
+              Effect.catch((error) =>
+                Effect.sync(() => logger.error("Unable to refresh joined servers:", toLogValue(error.cause))),
+              ),
+            );
+        },
+        Date.now,
+        directoryRefreshIntervalMs,
+      );
+      if (built.localOnlyNetworking && built.selfHostedDesktopAccount.isSignedIn) {
+        void Effect.runPromise(directoryRefresh.refresh(true)).catch((error) =>
+          logger.warn("Unable to synchronize self-hosted account servers:", toLogValue(error)),
+        );
+      }
       app.on("browser-window-focus", (_event, window) => {
         if (window === windowHolder.current) {
           startDirectoryWatch();
@@ -1119,7 +1140,11 @@ if (!hasSingleInstanceLock) {
         stopDirectoryWatch();
         stopDirectoryWatch = watchRemoteHostDirectory({
           isActive: () =>
-            Boolean(windowHolder.current?.isFocused()) && built.centralAuth.getState().status === "signed_in",
+            Boolean(windowHolder.current?.isFocused()) &&
+            (built.localOnlyNetworking
+              ? built.selfHostedDesktopAccount.isSignedIn
+              : built.centralAuth.getState().status === "signed_in"),
+          intervalMs: directoryRefreshIntervalMs,
           refresh: () => directoryRefresh.refresh(),
         });
       };

@@ -48,6 +48,7 @@ import {
   type RemoteWorkspacePreferences,
   readAgentAnalytics,
   runTeamEffect,
+  SELF_HOSTED_ACCOUNT_CHECK_INTERVAL_MS,
 } from "@openbot/team-client";
 import { createHostedServerWake, WAKE_RECONNECT_DELAY_MS } from "@openbot/team-client/hosted-server-wake";
 import type { RemoteFileUpload } from "@openbot/team-client/remote-peer";
@@ -79,7 +80,12 @@ import {
 import { Alert, View } from "react-native";
 import { mobileAnalytics } from "@/features/analytics/mobile-analytics";
 import { trackWorkspaceActions } from "@/features/analytics/workspace-actions";
-import { listAccountServers, registerAccountServer, removeAccountServer } from "@/features/auth/api/mobile-auth";
+import {
+  getLegacyAccountServerDirectoryExclusions,
+  listAccountServers,
+  registerAccountServer,
+  removeAccountServer,
+} from "@/features/auth/api/mobile-auth";
 import { useMobileSession } from "@/features/auth/context/mobile-session-context";
 import { MobileChannelStore } from "@/features/channels/model/channel-store";
 import { useLiveActivity } from "@/features/live-activity/use-live-activity";
@@ -123,6 +129,7 @@ import {
   decodeTailnetMemberDeviceLink,
   isTailnetMemberDeviceLink,
   type LocalTailnetServer,
+  loginTailnetAccountServer,
   pairTailnetInvite,
   parseTailnetMemberDeviceLink,
 } from "@/features/workspace/model/local-tailnet";
@@ -362,9 +369,12 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
 
   const installLocalHosts = useCallback(
     (hosts: LocalTailnetServer[]) => {
-      localTailnetHosts.current = new Map(hosts.map((host) => [host.hostId, host]));
+      const visibleHosts = hosts.filter((host) =>
+        session.sessionToken ? host.accountId === session.user.id : host.accountId === undefined,
+      );
+      localTailnetHosts.current = new Map(visibleHosts.map((host) => [host.hostId, host]));
       installHosts(
-        hosts.map((host) => ({
+        visibleHosts.map((host) => ({
           hostId: host.hostId,
           name: host.name,
           logoKey: host.logoKey,
@@ -374,132 +384,203 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
         })),
       );
       setActiveServerId((current) =>
-        hosts.some((host) => host.hostId === current) ? current : (hosts[0]?.hostId ?? null),
+        visibleHosts.some((host) => host.hostId === current) ? current : (visibleHosts[0]?.hostId ?? null),
       );
     },
-    [installHosts],
+    [installHosts, session.sessionToken, session.user.id],
   );
 
   const directoryRefresh = useMemo(
     () =>
-      createRemoteAccountRefresh(() =>
-        Effect.gen(function* () {
-          const generation = ++directoryGeneration.current;
-          setServerDirectoryState("loading");
-          setServerDirectoryError(null);
-          const localHosts = () =>
-            Effect.tryPromise({
-              try: async () => {
-                const deviceHosts = await readLocalTailnetServers();
-                if (!session.sessionToken) {
-                  accountDirectoryHosts.current.clear();
-                  localTailnetHosts.current = new Map(deviceHosts.map((host) => [host.hostId, host]));
-                  return deviceHosts.map((host) => ({
-                    hostId: host.hostId,
-                    name: host.name,
-                    logoKey: host.logoKey,
-                    devicePublicKey: host.publicKey,
-                    membershipId: host.membershipId,
-                    role: host.role,
-                  }));
-                }
-
-                // Seed a signed-in account's directory from existing device pairings once. After
-                // that first successful read the account service is authoritative, so a removed
-                // server does not silently reappear from another device's local cache.
-                const synced = await (async () => {
-                  try {
-                    let accountHosts = await listAccountServers(session);
-                    const seedKey = `openbot.account-server-directory-seeded.v1.${serverOrderKey(session.apiUrl, session.user.id)}`;
-                    if (!(await SecureStore.getItemAsync(seedKey))) {
-                      for (const host of deviceHosts) {
-                        if (accountHosts.some((entry) => entry.hostId === host.hostId)) continue;
-                        await registerAccountServer(session, accountServerRegistration(host));
-                      }
-                      await SecureStore.setItemAsync(seedKey, "1", {
-                        keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
-                      });
-                      accountHosts = await listAccountServers(session);
-                    }
-                    return accountHosts;
-                  } catch {
-                    return null;
+      createRemoteAccountRefresh(
+        () =>
+          Effect.gen(function* () {
+            const generation = ++directoryGeneration.current;
+            setServerDirectoryState("loading");
+            setServerDirectoryError(null);
+            const localHosts = () =>
+              Effect.tryPromise({
+                try: async () => {
+                  let deviceHosts = await readLocalTailnetServers();
+                  if (generation !== directoryGeneration.current) return [];
+                  if (!session.localOnly) {
+                    accountDirectoryHosts.current.clear();
+                    localTailnetHosts.current = new Map();
+                    return [];
                   }
-                })();
-                if (!synced) {
-                  accountDirectoryHosts.current.clear();
-                  localTailnetHosts.current = new Map(deviceHosts.map((host) => [host.hostId, host]));
-                  return deviceHosts.map((host) => ({
-                    hostId: host.hostId,
-                    name: host.name,
-                    logoKey: host.logoKey,
-                    devicePublicKey: host.publicKey,
-                    membershipId: host.membershipId,
-                    role: host.role,
-                  }));
-                }
+                  if (!session.sessionToken) {
+                    // The unauthenticated local profile can still use direct invite pairings, but
+                    // must not surface entries that another signed-in account claimed on this device.
+                    accountDirectoryHosts.current.clear();
+                    const unclaimedHosts = deviceHosts.filter((host) => host.accountId === undefined);
+                    localTailnetHosts.current = new Map(unclaimedHosts.map((host) => [host.hostId, host]));
+                    return unclaimedHosts.map((host) => ({
+                      hostId: host.hostId,
+                      name: host.name,
+                      logoKey: host.logoKey,
+                      devicePublicKey: host.publicKey,
+                      membershipId: host.membershipId,
+                      role: host.role,
+                    }));
+                  }
 
-                const directoryById = new Map(synced.map((host) => [host.hostId, host]));
-                accountDirectoryHosts.current = directoryById;
-                const pairedById = new Map(
-                  deviceHosts
-                    .filter((host) => {
-                      const shared = directoryById.get(host.hostId);
-                      return shared?.fingerprint === host.fingerprint && shared.publicKey === host.publicKey;
-                    })
-                    .map((host) => [host.hostId, host]),
-                );
-                localTailnetHosts.current = pairedById;
-                return synced.map((host) => {
-                  const local = pairedById.get(host.hostId);
-                  return {
-                    hostId: host.hostId,
-                    name: host.name,
-                    logoKey: host.logoKey,
-                    devicePublicKey: host.publicKey,
-                    membershipId: local?.membershipId ?? host.membershipId,
-                    role: accountServerRole(host, local?.role),
-                  };
-                });
-              },
-              catch: (error) => new RemoteDirectoryError(500, error instanceof Error ? error.message : String(error)),
-            });
-          const loadHosts = session.localOnly
-            ? localHosts()
-            : (() => {
-                if (!directory) throw new Error("Account directory is unavailable in local-only mode.");
-                return directory
-                  .listHosts()
-                  .pipe(
-                    Effect.mapError((error) =>
-                      error instanceof RemoteDirectoryError
-                        ? error
-                        : new RemoteDirectoryError(500, error instanceof Error ? error.message : String(error)),
-                    ),
+                  // Import any old pairings from this device idempotently. The server's exclusions
+                  // prevent deleted or hidden hosts from being restored by another device's cache.
+                  const synced = await (async () => {
+                    try {
+                      let accountHosts = await listAccountServers(session);
+                      const excludedHostIds = new Set(await getLegacyAccountServerDirectoryExclusions(session));
+                      for (let host of deviceHosts) {
+                        // Device storage can outlive sign-out. Never attach a token already claimed
+                        // by a different account. An unclaimed legacy pairing must first prove this
+                        // account through a fresh host-bound account ticket.
+                        if (host.accountId && host.accountId !== session.user.id) continue;
+                        if (
+                          accountHosts.some((entry) => entry.hostId === host.hostId) ||
+                          excludedHostIds.has(host.hostId)
+                        ) {
+                          continue;
+                        }
+                        if (host.accountId !== session.user.id) {
+                          if (!host.membershipId) continue;
+                          try {
+                            host = await loginTailnetAccountServer(
+                              {
+                                hostId: host.hostId,
+                                name: host.name,
+                                logoKey: host.logoKey,
+                                apiUrl: host.apiUrl,
+                                publicKey: host.publicKey,
+                                fingerprint: host.fingerprint,
+                                membershipId: host.membershipId,
+                                role: host.role,
+                                isOwner: host.role === "owner",
+                              },
+                              {
+                                appVersion: mobileAppVersion(),
+                                randomBytes: (size) => Crypto.getRandomBytes(size),
+                                identitySession: { apiUrl: session.apiUrl, sessionToken: session.sessionToken },
+                                accountId: session.user.id,
+                              },
+                            );
+                            await saveLocalTailnetServer(host);
+                            deviceHosts = deviceHosts.map((candidate) =>
+                              candidate.hostId === host.hostId ? host : candidate,
+                            );
+                          } catch {
+                            // Preserve the old pairing but keep it out of this account until auth succeeds.
+                            continue;
+                          }
+                        }
+                        accountHosts = await registerAccountServer(session, accountServerRegistration(host), {
+                          legacyImport: true,
+                        });
+                      }
+                      return accountHosts;
+                    } catch {
+                      return null;
+                    }
+                  })();
+                  if (generation !== directoryGeneration.current) return [];
+                  if (!synced) {
+                    // Use only memberships previously confirmed for this account. The secure local
+                    // pairing cache is device-wide and may contain another signed-in account's token.
+                    const knownEntries = [...accountDirectoryHosts.current.values()];
+                    const knownById = new Map(knownEntries.map((entry) => [entry.hostId, entry]));
+                    const pairedById = new Map(
+                      deviceHosts
+                        .filter((host) => {
+                          if (host.accountId !== session.user.id) return false;
+                          const shared = knownById.get(host.hostId);
+                          return (
+                            shared?.membershipId === host.membershipId &&
+                            shared.fingerprint === host.fingerprint &&
+                            shared.publicKey === host.publicKey
+                          );
+                        })
+                        .map((host) => [host.hostId, host]),
+                    );
+                    localTailnetHosts.current = pairedById;
+                    return knownEntries.map((host) => {
+                      const local = pairedById.get(host.hostId);
+                      return {
+                        hostId: host.hostId,
+                        name: host.name,
+                        logoKey: host.logoKey,
+                        devicePublicKey: host.publicKey,
+                        membershipId: host.membershipId,
+                        role: accountServerRole(host, local?.role),
+                      };
+                    });
+                  }
+
+                  const directoryById = new Map(synced.map((host) => [host.hostId, host]));
+                  accountDirectoryHosts.current = directoryById;
+                  const pairedById = new Map(
+                    deviceHosts
+                      .filter((host) => {
+                        if (host.accountId !== session.user.id) return false;
+                        const shared = directoryById.get(host.hostId);
+                        return (
+                          shared?.membershipId === host.membershipId &&
+                          shared.fingerprint === host.fingerprint &&
+                          shared.publicKey === host.publicKey
+                        );
+                      })
+                      .map((host) => [host.hostId, host]),
                   );
-              })();
-          const hosts = yield* loadHosts.pipe(
-            Effect.tapError((error) =>
-              Effect.sync(() => {
-                if (generation !== directoryGeneration.current) return;
-                setServerDirectoryState("error");
-                const text = currentText();
-                setServerDirectoryError(
-                  text.errorMessage(error, text.t("mobile.workspace.error.directoryUnavailable")),
-                );
-              }),
-            ),
-          );
-          if (generation !== directoryGeneration.current) return;
-          installHosts(hosts);
-          if (session.localOnly) {
-            const localHosts = [...localTailnetHosts.current.values()];
-            setActiveServerId((current) =>
-              localHosts.some((host) => host.hostId === current) ? current : (localHosts[0]?.hostId ?? null),
+                  localTailnetHosts.current = pairedById;
+                  return synced.map((host) => {
+                    const local = pairedById.get(host.hostId);
+                    return {
+                      hostId: host.hostId,
+                      name: host.name,
+                      logoKey: host.logoKey,
+                      devicePublicKey: host.publicKey,
+                      membershipId: local?.membershipId ?? host.membershipId,
+                      role: accountServerRole(host, local?.role),
+                    };
+                  });
+                },
+                catch: (error) => new RemoteDirectoryError(500, error instanceof Error ? error.message : String(error)),
+              });
+            const loadHosts = session.localOnly
+              ? localHosts()
+              : (() => {
+                  if (!directory) throw new Error("Account directory is unavailable in local-only mode.");
+                  return directory
+                    .listHosts()
+                    .pipe(
+                      Effect.mapError((error) =>
+                        error instanceof RemoteDirectoryError
+                          ? error
+                          : new RemoteDirectoryError(500, error instanceof Error ? error.message : String(error)),
+                      ),
+                    );
+                })();
+            const hosts = yield* loadHosts.pipe(
+              Effect.tapError((error) =>
+                Effect.sync(() => {
+                  if (generation !== directoryGeneration.current) return;
+                  setServerDirectoryState("error");
+                  const text = currentText();
+                  setServerDirectoryError(
+                    text.errorMessage(error, text.t("mobile.workspace.error.directoryUnavailable")),
+                  );
+                }),
+              ),
             );
-          }
-          setServerDirectoryState("ready");
-        }),
+            if (generation !== directoryGeneration.current) return;
+            installHosts(hosts);
+            if (session.localOnly) {
+              setActiveServerId((current) =>
+                hosts.some((host) => host.hostId === current) ? current : (hosts[0]?.hostId ?? null),
+              );
+            }
+            setServerDirectoryState("ready");
+          }),
+        Date.now,
+        session.localOnly && session.sessionToken ? SELF_HOSTED_ACCOUNT_CHECK_INTERVAL_MS : undefined,
       ),
     [directory, installHosts, session],
   );
@@ -1310,9 +1391,18 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
         const server = serversRef.current.find((candidate) => candidate.id === serverId);
         if (!server || server.role === "owner")
           throw new Error(currentText().t("mobile.workspace.error.leaveOwnServer"));
+        let directoryInvalidated = false;
         if (session.localOnly) {
-          if (session.sessionToken) await removeAccountServer(session, server.id).catch(() => undefined);
-          await removeLocalTailnetServer(server.id);
+          // Keep the local pairing until the account-wide removal is confirmed. If this request
+          // fails, the user can retry instead of silently leaving the membership on other devices.
+          if (session.sessionToken) {
+            await removeAccountServer(session, server.id);
+            accountDirectoryHosts.current.delete(server.id);
+            directoryGeneration.current += 1;
+            directoryRefresh.invalidate();
+            directoryInvalidated = true;
+          }
+          await removeLocalTailnetServer(server.id, session.sessionToken ? session.user.id : undefined);
           localTailnetHosts.current.delete(server.id);
         } else {
           if (!directory) throw new Error("Account directory is unavailable in local-only mode.");
@@ -1320,8 +1410,10 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
         }
         removedServers.current.add(serverId);
         readRefresh.invalidate(serverId);
-        directoryGeneration.current += 1;
-        directoryRefresh.invalidate();
+        if (!directoryInvalidated) {
+          directoryGeneration.current += 1;
+          directoryRefresh.invalidate();
+        }
         setServerDirectoryState("ready");
         setServerDirectoryError(null);
         const removedIds = serverAgentIds.current.get(serverId) ?? new Set<string>();
@@ -1384,7 +1476,10 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
             const link = parseTailnetMemberDeviceLink(inviteUrl);
             const existingHost = (await readLocalTailnetServers()).find(
               (host) =>
-                host.hostId === link.serverId && host.apiUrl === link.apiUrl && host.fingerprint === link.fingerprint,
+                host.accountId === (session.sessionToken ? session.user.id : undefined) &&
+                host.hostId === link.serverId &&
+                new URL(host.apiUrl).toString() === new URL(link.apiUrl).toString() &&
+                host.fingerprint === link.fingerprint,
             );
             existingSessionToken = existingHost?.sessionToken;
           }
@@ -1392,6 +1487,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
             appVersion: mobileAppVersion(),
             randomBytes: (size) => Crypto.getRandomBytes(size),
             displayName: session.user.name,
+            ...(session.sessionToken ? { accountId: session.user.id } : {}),
             existingSessionToken,
             ...(session.localOnly && session.sessionToken
               ? { identitySession: { apiUrl: session.apiUrl, sessionToken: session.sessionToken } }
@@ -1399,7 +1495,9 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
           });
           await saveLocalTailnetServer(host);
           if (session.sessionToken)
-            await registerAccountServer(session, accountServerRegistration(host)).catch(() => undefined);
+            await registerAccountServer(session, accountServerRegistration(host), { rejoin: true }).catch(
+              () => undefined,
+            );
           const localHosts = await readLocalTailnetServers();
           directoryGeneration.current += 1;
           directoryRefresh.invalidate();

@@ -63,6 +63,10 @@ export interface RemoteServerPatch {
   encryptedToken?: string;
   logoVersion?: string | null;
   remoteDesktopAvailable?: boolean;
+  /** Set to null to clear an explicit account rejoin that has been confirmed. */
+  pendingAccountRejoinId?: string | null;
+  /** Account that confirmed this device-only Team session. */
+  accountId?: string;
 }
 
 // What a reader needs. Consumers that only look things up take this, not the class, so their tests
@@ -244,7 +248,12 @@ export class RemoteServerStore implements RemoteServerDirectory {
   ): Effect.fn.Return<StoredRemoteServerView | null, RemoteWorkflowError> {
     const current = this.find(serverId);
     if (!current) return null;
-    const updated: StoredRemoteServer = { ...current, ...patch };
+    const { pendingAccountRejoinId, ...fields } = patch;
+    const updated: StoredRemoteServer = { ...current, ...fields };
+    if ("pendingAccountRejoinId" in patch) {
+      if (pendingAccountRejoinId) updated.pendingAccountRejoinId = pendingAccountRejoinId;
+      else delete updated.pendingAccountRejoinId;
+    }
     this.#state.servers = this.#state.servers.map((candidate) => (candidate.id === serverId ? updated : candidate));
     yield* this.persist();
     return updated;

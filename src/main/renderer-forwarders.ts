@@ -42,6 +42,7 @@ export interface RendererForwarderDependencies {
   getHostService: () => HostService | null;
   getHostAnalytics: () => HostAnalytics | null;
   getRemoteServerManager: () => Pick<RemoteServerManager, "list" | "request"> | null;
+  isLocalServerEnabled: () => boolean;
   showMainWindow: (window: BrowserWindow) => void;
   /** The language every desktop notification is written in, read at the moment one is raised. */
   getTranslate: () => AppTranslate;
@@ -61,6 +62,7 @@ export function createRendererForwarders({
   getHostService,
   getHostAnalytics,
   getRemoteServerManager,
+  isLocalServerEnabled,
   showMainWindow,
   getTranslate,
   getFormat,
@@ -208,7 +210,11 @@ export function createRendererForwarders({
     sendToRenderer(window, IPC_ENDPOINTS.host.event, status);
     const remoteServers = getRemoteServerManager();
     if (remoteServers) {
-      sendToRenderer(window, IPC_ENDPOINTS.servers.event, withLocalHostSummary(remoteServers.list(), status));
+      sendToRenderer(
+        window,
+        IPC_ENDPOINTS.servers.event,
+        withLocalHostSummary(remoteServers.list(), status, isLocalServerEnabled()),
+      );
     }
   }
 
@@ -225,7 +231,7 @@ export function createRendererForwarders({
     sendToRenderer(
       window,
       IPC_ENDPOINTS.servers.event,
-      host ? withLocalHostSummary(servers, host.getStatus()) : servers,
+      withLocalHostSummary(servers, host?.getStatus() ?? null, isLocalServerEnabled()),
     );
   }
 

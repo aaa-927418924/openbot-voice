@@ -104,6 +104,7 @@ export const en = {
   ...island,
   ...computerUse,
   ...connector,
+  "mobile.agent.home.noServers": "No servers available",
 } as const satisfies MessageCatalog;
 
 export type AppMessages = typeof en;

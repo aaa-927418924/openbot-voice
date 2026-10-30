@@ -657,6 +657,24 @@ describe("directory refresh", () => {
     await runTeamEffect(refresh.refresh(true)).catch(() => undefined);
     expect(load).toHaveBeenCalledTimes(3);
   });
+
+  it("uses the requested foreground interval while keeping the default cadence elsewhere", async () => {
+    let now = 0;
+    const load = vi.fn(async () => {});
+    const refresh = createRemoteDirectoryRefresh(
+      () => Effect.tryPromise(load),
+      () => now,
+      10_000,
+    );
+
+    await runTeamEffect(refresh.refresh());
+    now = 9_999;
+    await runTeamEffect(refresh.refresh());
+    expect(load).toHaveBeenCalledTimes(1);
+    now = 10_000;
+    await runTeamEffect(refresh.refresh());
+    expect(load).toHaveBeenCalledTimes(2);
+  });
 });
 
 it("finds memberships accepted on another device and stops polling on cleanup", async () => {

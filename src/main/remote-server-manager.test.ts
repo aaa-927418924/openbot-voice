@@ -7,7 +7,11 @@ import { generateKeyPairSync, sign } from "node:crypto";
 import { mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseMemberDeviceLinkUrl } from "@openbot/contracts/invite-links";
+import type {
+  AccountServerDirectoryEntry,
+  AccountServerRegistration,
+} from "@openbot/contracts/account-server-directory";
+import { createMemberDeviceLinkUrl, parseMemberDeviceLinkUrl } from "@openbot/contracts/invite-links";
 import type { RemoteDesktopSession } from "@openbot/contracts/ipc";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import { TEAM_CURRENT_CAPABILITIES } from "@openbot/contracts/team-protocol/current";
@@ -188,6 +192,111 @@ describe("remote server links", () => {
     const preview = remoteAttachmentPreviewUrl("00000000-0000-4000-8000-000000000000", "draft 1");
     expect(preview).toBe("openbot-remote-attachment://00000000-0000-4000-8000-000000000000/draft%201");
     expect(preview).not.toContain("token");
+  });
+
+  it("registers a member-device link redemption as an account rejoin", async () => {
+    const serverId = "11111111-1111-4111-8111-111111111111";
+    const apiUrl = "http://100.100.100.107:43123/";
+    const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+    const publicKeyPem = publicKey.export({ type: "spki", format: "pem" }).toString();
+    const hostFingerprint = fingerprint(publicKeyPem);
+    const stub = stubTeamFetch({
+      compatibility: {
+        appVersion: "1.1.0",
+        protocol: { minimum: 1, maximum: 6 },
+        capabilities: [TEAM_MEMBER_DEVICE_LINK_CAPABILITY],
+      },
+      routes: {
+        "/v1/identity": ({ url }) => {
+          const challenge = url.searchParams.get("challenge") ?? "";
+          return Response.json({
+            serverId,
+            publicKey: publicKeyPem,
+            serverName: "Capability Host",
+            fingerprint: hostFingerprint,
+            challenge,
+            signature: sign(null, Buffer.from(challenge), privateKey).toString("base64url"),
+            enabledOnLaunch: true,
+            logoVersion: null,
+          });
+        },
+        [TEAM_MEMBER_DEVICE_LINK_ROUTES.redeem]: () =>
+          Response.json({
+            member: { id: "member-id", role: "member" },
+            sessionToken: "session-token",
+            sessionExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+          }),
+        "/v1/remote-screen/capabilities": () =>
+          Response.json({ error: "Remote control is unavailable.", code: "host_unavailable" }, { status: 503 }),
+      },
+    });
+    const registerAccountServer = vi.fn(() => authCall(async () => []));
+    const fixture = await createRemoteManager({
+      servers: [],
+      appVersion: "1.1.0",
+      account: {
+        getAccountId: () => "member-account",
+        isSelfHostedSignedIn: () => true,
+        registerAccountServer,
+      },
+      managerOptions: { allowTailscaleApiUrl: true, localOnlyNetworking: true },
+    });
+    class ClosedWebSocket extends EventTarget {
+      close(): void {
+        this.dispatchEvent(new Event("close"));
+      }
+    }
+    vi.stubGlobal("WebSocket", ClosedWebSocket);
+    const inviteUrl = createMemberDeviceLinkUrl(
+      { apiUrl, serverId, fingerprint: hostFingerprint, token: "d".repeat(43) },
+      { allowTailscaleApiUrl: true },
+    );
+
+    await expect(runCauseEffect(fixture.manager.join({ inviteUrl }))).resolves.toMatchObject({ id: serverId });
+
+    expect(registerAccountServer).toHaveBeenCalledWith({
+      hostId: serverId,
+      name: "Capability Host",
+      apiUrl,
+      fingerprint: hostFingerprint,
+      publicKey: publicKeyPem,
+      logoKey: null,
+      membershipId: "member-id",
+      role: "member",
+      rejoin: true,
+    });
+    expect(stub.requests(TEAM_MEMBER_DEVICE_LINK_ROUTES.redeem)).toHaveLength(1);
+  });
+
+  it("keeps a pending rejoin host away from another account's legacy import", async () => {
+    const hostId = "22222222-2222-4222-8222-222222222222";
+    const registerAccountServer = vi.fn(() => authCall(async () => []));
+    const fixture = await createRemoteManager({
+      servers: [
+        storedHttpsServer(hostId, {
+          apiUrl: "http://100.100.100.107:43123/",
+          accountId: "account-a",
+          pendingAccountRejoinId: "account-a",
+          membershipId: "member-from-account-a",
+        }),
+      ],
+      account: {
+        getAccountId: () => "account-b",
+        isSelfHostedSignedIn: () => true,
+        listAccountServers: () => authCall(async () => []),
+        getLegacyAccountServerImportExclusions: () => authCall(async () => []),
+        registerAccountServer,
+      },
+      managerOptions: { allowTailscaleApiUrl: true, localOnlyNetworking: true },
+    });
+    const login = vi.spyOn(fixture.manager, "login");
+
+    await runCauseEffect(fixture.manager.syncAccountDirectory());
+
+    expect(login).not.toHaveBeenCalled();
+    expect(registerAccountServer).not.toHaveBeenCalled();
+    expect(fixture.manager.list().map((server) => server.id)).not.toContain(hostId);
+    expect(await readFile(fixture.statePath, "utf8")).toContain("pendingAccountRejoinId");
   });
 
   it("rejects a WebRTC invitation whose pinned host key does not match the control plane", async () => {
@@ -1111,11 +1220,169 @@ describe("remote connection failures", () => {
 });
 
 describe("remote control capability discovery", () => {
-  it("joins a server when remote control is unavailable", async () => {
+  it("does not import or prune a host with a pending rejoin for another account", async () => {
+    const hostId = "22222222-2222-4222-8222-222222222222";
+    const registerAccountServer = vi.fn(() => authCall(async () => []));
+    const fixture = await createRemoteManager({
+      servers: [
+        storedHttpsServer(hostId, {
+          apiUrl: "http://100.100.100.107:43123/",
+          membershipId: "member-from-account-a",
+          accountId: "account-a",
+          pendingAccountRejoinId: "account-a",
+        }),
+      ],
+      account: {
+        getAccountId: () => "account-b",
+        isSelfHostedSignedIn: () => true,
+        listAccountServers: () => authCall(async () => []),
+        getLegacyAccountServerImportExclusions: () => authCall(async () => []),
+        registerAccountServer,
+      },
+      managerOptions: { allowTailscaleApiUrl: true, localOnlyNetworking: true },
+    });
+    const login = vi.spyOn(fixture.manager, "login");
+
+    await runCauseEffect(fixture.manager.syncAccountDirectory());
+
+    expect(login).not.toHaveBeenCalled();
+    expect(registerAccountServer).not.toHaveBeenCalled();
+    expect(fixture.manager.list().map((server) => server.id)).not.toContain(hostId);
+    expect(await readFile(fixture.statePath, "utf8")).toContain("member-from-account-a");
+  });
+
+  it("does not import an unclaimed local host without a pinned identity", async () => {
+    const hostId = "unclaimed-local-host";
+    const registerAccountServer = vi.fn(() => authCall(async () => []));
+    const fixture = await createRemoteManager({
+      servers: [
+        storedHttpsServer(hostId, {
+          apiUrl: "http://100.100.100.107:43123/",
+          membershipId: "legacy-membership",
+        }),
+      ],
+      account: {
+        getAccountId: () => "account-b",
+        isSelfHostedSignedIn: () => true,
+        listAccountServers: () => authCall(async () => []),
+        getLegacyAccountServerImportExclusions: () => authCall(async () => []),
+        registerAccountServer,
+      },
+      managerOptions: { allowTailscaleApiUrl: true, localOnlyNetworking: true },
+    });
+
+    await runCauseEffect(fixture.manager.syncAccountDirectory());
+
+    expect(registerAccountServer).not.toHaveBeenCalled();
+    expect(fixture.manager.list().map((server) => server.id)).not.toContain(hostId);
+    expect(await readFile(fixture.statePath, "utf8")).toContain("legacy-membership");
+  });
+
+  it("migrates a legacy pairing only after the current account authenticates with a fresh ticket", async () => {
+    const hostId = "legacy-account-host";
+    const apiUrl = "http://100.100.100.107:43123/";
+    const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+    const publicKeyPem = publicKey.export({ type: "spki", format: "pem" }).toString();
+    const hostFingerprint = fingerprint(publicKeyPem);
+    const { requests } = stubTeamFetch({
+      compatibility: { capabilities: [] },
+      routes: {
+        "/v1/identity": ({ url }) => {
+          const challenge = url.searchParams.get("challenge") ?? "";
+          return Response.json({
+            serverId: hostId,
+            publicKey: publicKeyPem,
+            serverName: "Legacy host",
+            fingerprint: hostFingerprint,
+            challenge,
+            signature: sign(null, Buffer.from(challenge), privateKey).toString("base64url"),
+            enabledOnLaunch: true,
+            logoVersion: null,
+          });
+        },
+        "/v1/auth/account": () =>
+          Response.json({
+            member: {
+              id: "confirmed-member",
+              username: "member",
+              email: "person@example.com",
+              name: null,
+              avatarUrl: null,
+              role: "member",
+              createdAt: new Date().toISOString(),
+              disabled: false,
+            },
+            sessionToken: "fresh-account-session",
+            sessionExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+          }),
+        "/v1/remote-screen/capabilities": () =>
+          Response.json({ error: "Remote control is unavailable.", code: "host_unavailable" }, { status: 503 }),
+      },
+    });
+    let entries: AccountServerDirectoryEntry[] = [];
+    const registerAccountServer = vi.fn((registration: AccountServerRegistration) =>
+      authCall(async () => {
+        const { legacyImport: _legacyImport, rejoin: _rejoin, ...entry } = registration;
+        entries = [{ ...entry, isOwner: false }];
+      }),
+    );
+    const fixture = await createRemoteManager({
+      servers: [
+        storedHttpsServer(hostId, {
+          apiUrl,
+          fingerprint: hostFingerprint,
+          publicKey: publicKeyPem,
+          membershipId: "legacy-member",
+        }),
+      ],
+      account: {
+        createTeamAuthTicket: () => authCall(async () => "current-account-ticket"),
+        getAccountId: () => "account-b",
+        getLegacyAccountServerImportExclusions: () => authCall(async () => []),
+        listAccountServers: () => authCall(async () => entries),
+        isSelfHostedSignedIn: () => true,
+        registerAccountServer,
+      },
+      managerOptions: { allowTailscaleApiUrl: true, localOnlyNetworking: true },
+    });
+
+    await runCauseEffect(fixture.manager.syncAccountDirectory());
+
+    expect(requests(TEAM_API_ROUTES.auth.account)).toHaveLength(1);
+    expect(requests(TEAM_API_ROUTES.auth.account)[0]?.body).toEqual({ accountTicket: "current-account-ticket" });
+    expect(registerAccountServer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hostId,
+        membershipId: "confirmed-member",
+        legacyImport: true,
+      }),
+    );
+    expect(fixture.server(hostId)).toMatchObject({ id: hostId, role: "member", state: "online" });
+    expect(JSON.parse(await readFile(fixture.statePath, "utf8"))).toMatchObject({
+      servers: expect.arrayContaining([
+        expect.objectContaining({
+          id: hostId,
+          accountId: "account-b",
+          membershipId: "confirmed-member",
+        }),
+      ]),
+    });
+  });
+
+  it("publishes a self-hosted Tailscale join without failing if directory registration is unavailable", async () => {
     const directory = await mkdtemp(join(tmpdir(), "openbot-remote-capability-"));
     const statePath = join(directory, "servers.json");
     const serverId = "00000000-0000-4000-8000-000000000000";
-    const apiUrl = "https://remote-capability.trycloudflare.com/";
+    const apiUrl = "http://100.100.100.107:43123/";
+    let directoryEntries: AccountServerDirectoryEntry[] = [];
+    let registrationAttempts = 0;
+    const registerAccountServer = vi.fn((registration: AccountServerRegistration) =>
+      authCall(async () => {
+        if (registrationAttempts++ === 0) throw new Error("Account directory is unavailable.");
+        const { legacyImport: _legacyImport, rejoin: _rejoin, ...entry } = registration;
+        directoryEntries = [{ ...entry, isOwner: false }];
+      }),
+    );
     const { publicKey, privateKey } = generateKeyPairSync("ed25519");
     const publicKeyPem = publicKey.export({ type: "spki", format: "pem" }).toString();
     const expectedFingerprint = fingerprint(publicKeyPem);
@@ -1175,17 +1442,25 @@ describe("remote control capability discovery", () => {
     vi.stubGlobal("WebSocket", ClosedWebSocket);
 
     try {
-      const manager = new RemoteServerManager(
-        statePath,
-        {
-          encrypt: (value) => Buffer.from(value),
-          decrypt: (value) => value.toString(),
-        },
-        {
-          createTeamAuthTicket: () => authCall(async () => "account-ticket"),
-          getEmail: () => "member@example.com",
-        },
-      );
+      const makeManager = () =>
+        new RemoteServerManager(
+          statePath,
+          {
+            encrypt: (value) => Buffer.from(value),
+            decrypt: (value) => value.toString(),
+          },
+          {
+            createTeamAuthTicket: () => authCall(async () => "account-ticket"),
+            getEmail: () => "member@example.com",
+            getAccountId: () => "member-account",
+            isSelfHostedSignedIn: () => true,
+            listAccountServers: () => authCall(async () => directoryEntries),
+            getLegacyAccountServerImportExclusions: () => authCall(async () => [serverId]),
+            registerAccountServer,
+          },
+          { localOnlyNetworking: true, allowTailscaleApiUrl: true },
+        );
+      let manager = makeManager();
       await runCauseEffect(manager.initialize());
 
       await expect(runCauseEffect(manager.join({ inviteUrl: inviteUrl.toString() }))).resolves.toMatchObject({
@@ -1193,10 +1468,138 @@ describe("remote control capability discovery", () => {
         remoteDesktopAvailable: false,
         state: "online",
       });
+      expect(registerAccountServer).toHaveBeenCalledWith({
+        hostId: serverId,
+        name: "Capability Host",
+        apiUrl,
+        fingerprint: expectedFingerprint,
+        publicKey: publicKeyPem,
+        logoKey: null,
+        membershipId: "member-id",
+        role: "member",
+        rejoin: true,
+      });
+      await runCauseEffect(manager.stop());
+
+      // The invitation is single-use. A later account-directory retry must find the durable pending
+      // rejoin marker, retry with the same device token, and keep the host in the local list.
+      manager = makeManager();
+      await runCauseEffect(manager.initialize());
+      await runCauseEffect(manager.syncAccountDirectory());
+      expect(registerAccountServer).toHaveBeenCalledTimes(2);
+      expect(registerAccountServer.mock.calls[1]?.[0]).toMatchObject({ rejoin: true, membershipId: "member-id" });
+      expect(manager.list().map((server) => server.id)).toContain(serverId);
+      expect(await readFile(statePath, "utf8")).not.toContain("pendingAccountRejoinId");
       await runCauseEffect(manager.stop());
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
+  });
+});
+
+describe("self-hosted account server directory", () => {
+  it("keeps the existing device session when the pinned membership is already in the directory", async () => {
+    const hostId = "directory-host";
+    const createTeamAuthTicket = vi.fn(() => authCall(async () => "account-ticket"));
+    const fixture = await createRemoteManager({
+      servers: [
+        storedHttpsServer(hostId, {
+          name: "Old name",
+          apiUrl: "http://100.100.100.107:43123/",
+          fingerprint: "pinned-fingerprint",
+          publicKey: "pinned-public-key",
+          membershipId: "member-1",
+          accountId: "account-a",
+          role: "admin",
+        }),
+      ],
+      account: {
+        createTeamAuthTicket,
+        getAccountId: () => "account-a",
+        isSelfHostedSignedIn: () => true,
+        getLegacyAccountServerImportExclusions: () => authCall(async () => []),
+        listAccountServers: () =>
+          authCall(async () => [
+            {
+              hostId,
+              name: "New name",
+              apiUrl: "http://100.100.100.107:43123/",
+              fingerprint: "pinned-fingerprint",
+              publicKey: "pinned-public-key",
+              logoKey: "logo-2",
+              membershipId: "member-1",
+              // The production account API deliberately exposes only a member hint; Team auth
+              // remains authoritative for the per-device admin role.
+              role: "member",
+              isOwner: false,
+            },
+          ]),
+        registerAccountServer: () => authCall(async () => undefined),
+      },
+      managerOptions: { localOnlyNetworking: true, allowTailscaleApiUrl: true },
+    });
+
+    await runCauseEffect(fixture.manager.syncAccountDirectory());
+
+    expect(createTeamAuthTicket).not.toHaveBeenCalled();
+    expect(fixture.server(hostId)).toMatchObject({ name: "New name", role: "admin" });
+  });
+
+  it("does not restore a server removed from the authoritative directory from an old device cache", async () => {
+    const hostId = "removed-directory-host";
+    const registerAccountServer = vi.fn(() => authCall(async () => undefined));
+    const createTeamAuthTicket = vi.fn(() => authCall(async () => "account-ticket"));
+    const fixture = await createRemoteManager({
+      servers: [
+        storedHttpsServer(hostId, {
+          apiUrl: "http://100.100.100.107:43123/",
+          fingerprint: "pinned-fingerprint",
+          publicKey: "pinned-public-key",
+          membershipId: "member-1",
+          role: "member",
+        }),
+      ],
+      account: {
+        createTeamAuthTicket,
+        isSelfHostedSignedIn: () => true,
+        getLegacyAccountServerImportExclusions: () => authCall(async () => [hostId]),
+        listAccountServers: () => authCall(async () => []),
+        registerAccountServer,
+      },
+      managerOptions: { localOnlyNetworking: true, allowTailscaleApiUrl: true },
+    });
+
+    await runCauseEffect(fixture.manager.syncAccountDirectory());
+
+    expect(fixture.server(hostId)).toBeUndefined();
+    expect(createTeamAuthTicket).not.toHaveBeenCalled();
+    expect(registerAccountServer).not.toHaveBeenCalled();
+  });
+
+  it("removes a non-owner membership from the signed-in account directory", async () => {
+    const hostId = "leave-directory-host";
+    const removeAccountServer = vi.fn(() => authCall(async () => undefined));
+    const fixture = await createRemoteManager({
+      servers: [
+        storedHttpsServer(hostId, {
+          apiUrl: "http://100.100.100.107:43123/",
+          membershipId: "member-1",
+          role: "member",
+        }),
+      ],
+      account: {
+        createTeamAuthTicket: () => authCall(async () => "account-ticket"),
+        getEmail: () => "member@example.com",
+        isSelfHostedSignedIn: () => true,
+        removeAccountServer,
+      },
+      managerOptions: { localOnlyNetworking: true, allowTailscaleApiUrl: true },
+    });
+
+    await runCauseEffect(fixture.manager.remove(hostId));
+
+    expect(removeAccountServer).toHaveBeenCalledWith(hostId);
+    expect(fixture.server(hostId)).toBeUndefined();
   });
 });
 

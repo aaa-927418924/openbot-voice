@@ -561,6 +561,7 @@ function decodeInvite(value: unknown): RemoteTeamInvite {
 }
 
 export const REMOTE_ACCOUNT_CHECK_INTERVAL_MS = 15 * 60_000;
+export const SELF_HOSTED_ACCOUNT_CHECK_INTERVAL_MS = 10_000;
 
 /** The caller starts this watcher in the foreground and stops it on background entry. */
 export function watchRemoteDirectory<E>(refresh: () => Effect.Effect<void, E>): () => void {
@@ -572,12 +573,16 @@ export function watchRemoteDirectory<E>(refresh: () => Effect.Effect<void, E>): 
 }
 
 /** Refresh on demand or foreground entry; coalesce requests and rate-limit automatic retries. */
-export function createRemoteDirectoryRefresh<E, R>(load: () => Effect.Effect<void, E, R>, now = Date.now) {
+export function createRemoteDirectoryRefresh<E, R>(
+  load: () => Effect.Effect<void, E, R>,
+  now = Date.now,
+  checkIntervalMs = REMOTE_ACCOUNT_CHECK_INTERVAL_MS,
+) {
   let pending: Deferred.Deferred<void, E> | null = null;
   let lastAttempt = Number.NEGATIVE_INFINITY;
   const refresh = Effect.fn("RemoteDirectory.refresh")(function* (force = false) {
     if (pending) return yield* Deferred.await(pending);
-    if (!force && now() - lastAttempt < REMOTE_ACCOUNT_CHECK_INTERVAL_MS) return;
+    if (!force && now() - lastAttempt < checkIntervalMs) return;
     lastAttempt = now();
     const operation = Deferred.makeUnsafe<void, E>();
     pending = operation;

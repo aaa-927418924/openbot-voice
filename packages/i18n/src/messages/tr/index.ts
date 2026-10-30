@@ -99,4 +99,5 @@ export const tr = {
   ...island,
   ...computerUse,
   ...connector,
+  "mobile.agent.home.noServers": "Kullanılabilir sunucu yok",
 } as const satisfies PartialTranslation<AppMessages>;

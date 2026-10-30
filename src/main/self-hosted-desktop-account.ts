@@ -434,6 +434,25 @@ export class SelfHostedDesktopAccountManager {
       return yield* Effect.try({ try: () => decodeAccountServers(value), catch: accountError });
     });
 
+  readonly getLegacyAccountServerImportExclusions = (): Effect.Effect<string[], Error> =>
+    Effect.gen({ self: this }, function* () {
+      if (this.#record.mode !== "account" || !this.#record.apiUrl || !this.#token) {
+        return yield* Effect.fail(new Error("アカウントにサインインしてください。"));
+      }
+      const value = yield* this.#requestJson(this.#record.apiUrl, "/v1/me/servers/legacy-import-exclusions", {
+        token: this.#token,
+      });
+      if (
+        !isDynamicRecord(value) ||
+        !Array.isArray(value.excludedHostIds) ||
+        value.excludedHostIds.length > 10_000 ||
+        !value.excludedHostIds.every((hostId) => typeof hostId === "string")
+      ) {
+        return yield* Effect.fail(new Error("アカウントのサーバー除外一覧が不正です。"));
+      }
+      return [...new Set(value.excludedHostIds.filter((hostId): hostId is string => typeof hostId === "string"))];
+    });
+
   readonly registerAccountServer = (registration: AccountServerRegistration): Effect.Effect<void, Error> =>
     Effect.gen({ self: this }, function* () {
       if (this.#record.mode !== "account" || !this.#record.apiUrl || !this.#token) {

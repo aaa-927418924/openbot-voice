@@ -5,7 +5,11 @@ import { REMOTE_ACCOUNT_CHECK_INTERVAL_MS } from "./remote-directory";
 const ACCOUNT_RETRY_INTERVAL_MS = 60_000;
 
 /** One endpoint per account: absolute freshness, shared requests, and no background polling. */
-export function createRemoteAccountRefresh<E>(load: () => Effect.Effect<void, E>, now = Date.now) {
+export function createRemoteAccountRefresh<E>(
+  load: () => Effect.Effect<void, E>,
+  now = Date.now,
+  checkIntervalMs = REMOTE_ACCOUNT_CHECK_INTERVAL_MS,
+) {
   let active = false;
   let disposed = false;
   let pending: Deferred.Deferred<void, E> | null = null;
@@ -45,7 +49,7 @@ export function createRemoteAccountRefresh<E>(load: () => Effect.Effect<void, E>
           }),
         ),
       );
-      dueAt = revision === startedRevision ? now() + REMOTE_ACCOUNT_CHECK_INTERVAL_MS : now();
+      dueAt = revision === startedRevision ? now() + checkIntervalMs : now();
     }).pipe(
       Effect.onExit((exit) =>
         Effect.gen(function* () {

@@ -42,9 +42,10 @@ const LOCAL_IDENTITY_DEFAULT_PORT = "43124";
 let mobileSessionStorageTail = Promise.resolve();
 let mobileProfileTail = Promise.resolve();
 let mobileConnectInFlight = false;
+const accountServerFlushTails = new Map<string, Promise<void>>();
 
 type PendingAccountServerChange =
-  | { id: string; kind: "register"; server: AccountServerRegistration }
+  | { id: string; kind: "register"; server: AccountServerRegistration; legacyImport?: true; rejoin?: true }
   | { id: string; kind: "remove"; hostId: string };
 
 function decodePendingAccountServerChange(value: unknown): PendingAccountServerChange | null {
@@ -58,6 +59,8 @@ function decodePendingAccountServerChange(value: unknown): PendingAccountServerC
     return {
       id: value.id,
       kind: "register",
+      ...(value.legacyImport === true ? { legacyImport: true as const } : {}),
+      ...(value.rejoin === true ? { rejoin: true as const } : {}),
       server: {
         hostId: server.hostId,
         name: server.name,
@@ -145,6 +148,8 @@ async function accountServerRequest(
   host?: AccountServerRegistration,
   hostId?: string,
   flushPending = true,
+  legacyImport = false,
+  rejoin = false,
 ): Promise<AccountServerDirectoryEntry[]> {
   if (!session.localOnly || !session.sessionToken) {
     throw new Error("Sign in to the self-hosted account server to sync the server list.");
@@ -162,7 +167,14 @@ async function accountServerRequest(
         Authorization: `Bearer ${session.sessionToken}`,
         ...(method === "PUT" ? { "Content-Type": "application/json" } : {}),
       },
-      body: method === "PUT" && host ? JSON.stringify(host) : undefined,
+      body:
+        method === "PUT" && host
+          ? JSON.stringify({
+              ...host,
+              ...(legacyImport ? { legacyImport: true } : {}),
+              ...(rejoin ? { rejoin: true } : {}),
+            })
+          : undefined,
       signal,
     });
     return { response: request, body: await readResponseBody(request, signal) };
@@ -177,16 +189,45 @@ export function listAccountServers(session: MobileSession): Promise<AccountServe
   return accountServerRequest(session, "GET");
 }
 
+export async function getLegacyAccountServerDirectoryExclusions(session: MobileSession): Promise<string[]> {
+  if (!session.localOnly || !session.sessionToken) {
+    throw new Error("Sign in to the self-hosted account server to sync the server list.");
+  }
+  const { response, body } = await withMobileAuthRequestTimeout(async (signal) => {
+    const request = await fetch(new URL("/v1/me/servers/legacy-import-exclusions", session.apiUrl).toString(), {
+      method: "GET",
+      headers: { Authorization: `Bearer ${session.sessionToken}` },
+      signal,
+    });
+    return { response: request, body: await readResponseBody(request, signal) };
+  });
+  await checkMobileAuthorization(response, session);
+  if (!response.ok) throw new Error(apiErrorMessage(body) ?? "The account server list could not be synchronized.");
+  if (
+    !isDynamicRecord(body) ||
+    !Array.isArray(body.excludedHostIds) ||
+    !body.excludedHostIds.every((hostId) => isString(hostId) && hostId.length > 0)
+  ) {
+    throw new Error("The account server returned an invalid legacy import exclusion list.");
+  }
+  return body.excludedHostIds;
+}
+
 export function registerAccountServer(
   session: MobileSession,
   host: AccountServerRegistration,
+  options: { legacyImport?: boolean; rejoin?: boolean } = {},
 ): Promise<AccountServerDirectoryEntry[]> {
-  return enqueueAccountServerChange(session, { id: Crypto.randomUUID(), kind: "register", server: host }).then(
-    async () => {
-      await flushPendingAccountServerChanges(session);
-      return accountServerRequest(session, "GET");
-    },
-  );
+  return enqueueAccountServerChange(session, {
+    id: Crypto.randomUUID(),
+    kind: "register",
+    server: host,
+    ...(options.legacyImport ? { legacyImport: true as const } : {}),
+    ...(options.rejoin ? { rejoin: true as const } : {}),
+  }).then(async () => {
+    await flushPendingAccountServerChanges(session);
+    return accountServerRequest(session, "GET");
+  });
 }
 
 export function removeAccountServer(session: MobileSession, hostId: string): Promise<void> {
@@ -225,6 +266,19 @@ async function enqueueAccountServerChange(session: MobileSession, change: Pendin
 
 async function flushPendingAccountServerChanges(session: MobileSession): Promise<void> {
   const key = `${ACCOUNT_SERVER_CHANGES_KEY}.${serverOrderKey(session.apiUrl, session.user.id)}`;
+  const previous = accountServerFlushTails.get(key) ?? Promise.resolve();
+  let current: Promise<void>;
+  current = previous
+    .catch(() => undefined)
+    .then(() => flushPendingAccountServerChangesSerial(session, key))
+    .finally(() => {
+      if (accountServerFlushTails.get(key) === current) accountServerFlushTails.delete(key);
+    });
+  accountServerFlushTails.set(key, current);
+  return current;
+}
+
+async function flushPendingAccountServerChangesSerial(session: MobileSession, key: string): Promise<void> {
   for (;;) {
     const change = await serializeMobileSessionStorage(async () => {
       const stored = await SecureStore.getItemAsync(key);
@@ -238,7 +292,15 @@ async function flushPendingAccountServerChanges(session: MobileSession): Promise
     });
     if (!change) return;
     if (change.kind === "register") {
-      await accountServerRequest(session, "PUT", change.server, undefined, false);
+      await accountServerRequest(
+        session,
+        "PUT",
+        change.server,
+        undefined,
+        false,
+        change.legacyImport === true,
+        change.rejoin === true,
+      );
     } else {
       await accountServerRequest(session, "DELETE", undefined, change.hostId, false);
     }
@@ -335,13 +397,16 @@ async function redeemMobileConnectSession(value: string): Promise<MobileSession>
       appVersion: mobileAppVersion(),
       randomBytes: (size) => Crypto.getRandomBytes(size),
       displayName: session.user.name,
+      accountId: session.user.id,
     });
     if (host.hostId !== binding.hostId || host.fingerprint !== binding.fingerprint) {
       throw new Error("The Mobile Connect QR code contains a different Team server.");
     }
     await saveLocalTailnetServer(host);
     // Sync only verified host metadata. The Team session token remains in this device's secure store.
-    await registerAccountServer(session, accountServerRegistrationForHost(host)).catch(() => undefined);
+    await registerAccountServer(session, accountServerRegistrationForHost(host), { rejoin: true }).catch(
+      () => undefined,
+    );
   }
   await saveMobileSession(session);
   return session;

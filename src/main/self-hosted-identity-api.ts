@@ -38,6 +38,8 @@ interface IdentityRequestBody {
   logoKey?: unknown;
   membershipId?: unknown;
   role?: unknown;
+  legacyImport?: unknown;
+  rejoin?: unknown;
 }
 
 export interface SelfHostedIdentityApiOptions {
@@ -133,6 +135,8 @@ async function readJson(request: IncomingMessage): Promise<IdentityRequestBody> 
     logoKey: value.logoKey,
     membershipId: value.membershipId,
     role: value.role,
+    legacyImport: value.legacyImport,
+    rejoin: value.rejoin,
   };
 }
 
@@ -422,6 +426,16 @@ export class SelfHostedIdentityApiServer {
         });
       }
 
+      if (url.pathname === "/v1/me/servers/legacy-import-exclusions" && method === "GET") {
+        const token = bearer(request);
+        if (!token) throw new ApiError(401, "unauthorized");
+        const account = await Effect.runPromise(this.#authority.authenticateSession(token));
+        if (!account) throw new ApiError(401, "unauthorized");
+        return json(response, 200, {
+          excludedHostIds: await this.#serverDirectory.legacyImportExclusions(account.id),
+        });
+      }
+
       if (method === "PUT" && url.pathname === "/v1/me/servers") {
         const token = bearer(request);
         if (!token) throw new ApiError(401, "unauthorized");
@@ -430,6 +444,12 @@ export class SelfHostedIdentityApiServer {
         const body = await readJson(request);
         const role = body.role;
         if (role !== "owner" && role !== "admin" && role !== "member") throw new ApiError(400, "invalid_request");
+        if (body.legacyImport !== undefined && typeof body.legacyImport !== "boolean") {
+          throw new ApiError(400, "invalid_request");
+        }
+        if (body.rejoin !== undefined && typeof body.rejoin !== "boolean") {
+          throw new ApiError(400, "invalid_request");
+        }
         const registration: AccountServerRegistration = {
           hostId: stringField(body, "hostId", 128),
           name: stringField(body, "name", 128),
@@ -441,6 +461,8 @@ export class SelfHostedIdentityApiServer {
           // A server directory entry is not a permission grant. The Team host remains the
           // authority for real role checks; clients apply their locally paired role on this device.
           role: "member" satisfies TeamRole,
+          ...(body.legacyImport === true ? { legacyImport: true } : {}),
+          ...(body.rejoin === true ? { rejoin: true } : {}),
         };
         return json(response, 200, {
           servers: this.#withOwnerStatus(account.id, await this.#serverDirectory.register(account.id, registration)),

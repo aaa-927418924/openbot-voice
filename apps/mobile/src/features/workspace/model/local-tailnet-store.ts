@@ -20,6 +20,10 @@ export function decodeLocalTailnetServers(value: unknown): LocalTailnetServer[] 
       !isString(entry.fingerprint) ||
       !isString(entry.sessionToken) ||
       !isString(entry.membershipId) ||
+      !(
+        entry.accountId === undefined ||
+        (isString(entry.accountId) && entry.accountId.length > 0 && entry.accountId.length <= 128)
+      ) ||
       (entry.role !== "owner" && entry.role !== "admin" && entry.role !== "member")
     ) {
       throw new Error("The saved Tailscale host list is invalid.");
@@ -38,9 +42,10 @@ export function decodeLocalTailnetServers(value: unknown): LocalTailnetServer[] 
       sessionToken: entry.sessionToken,
       membershipId: entry.membershipId,
       role: entry.role,
+      ...(isString(entry.accountId) ? { accountId: entry.accountId } : {}),
     };
   });
-  if (new Set(hosts.map((host) => host.hostId)).size !== hosts.length)
+  if (new Set(hosts.map((host) => JSON.stringify([host.hostId, host.accountId ?? null]))).size !== hosts.length)
     throw new Error("The saved Tailscale host list contains duplicates.");
   return hosts;
 }
@@ -66,20 +71,27 @@ export async function saveLocalTailnetServer(server: LocalTailnetServer): Promis
   await serialized(async () => {
     const stored = await SecureStore.getItemAsync(LOCAL_TAILNET_SERVERS_KEY);
     const current = stored ? decodeLocalTailnetServers(JSON.parse(stored)) : [];
-    const next = decodeLocalTailnetServers([...current.filter((host) => host.hostId !== server.hostId), server]);
+    const next = decodeLocalTailnetServers([
+      ...current.filter((host) => host.hostId !== server.hostId || host.accountId !== server.accountId),
+      server,
+    ]);
     await SecureStore.setItemAsync(LOCAL_TAILNET_SERVERS_KEY, JSON.stringify(next), {
       keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
     });
   });
 }
 
-export async function removeLocalTailnetServer(hostId: string): Promise<void> {
+export async function removeLocalTailnetServer(hostId: string, accountId?: string): Promise<void> {
   await serialized(async () => {
     const stored = await SecureStore.getItemAsync(LOCAL_TAILNET_SERVERS_KEY);
     const current = stored ? decodeLocalTailnetServers(JSON.parse(stored)) : [];
     await SecureStore.setItemAsync(
       LOCAL_TAILNET_SERVERS_KEY,
-      JSON.stringify(current.filter((host) => host.hostId !== hostId)),
+      JSON.stringify(
+        current.filter(
+          (host) => host.hostId !== hostId || (host.accountId !== undefined && host.accountId !== accountId),
+        ),
+      ),
       { keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY },
     );
   });

@@ -16,4 +16,9 @@ export interface AccountServerDirectoryEntry {
 }
 
 /** Device-independent fields only. Team session tokens remain in each device's secure storage. */
-export type AccountServerRegistration = Omit<AccountServerDirectoryEntry, "isOwner">;
+export type AccountServerRegistration = Omit<AccountServerDirectoryEntry, "isOwner"> & {
+  /** Internal migration hint; never confers access and is not returned by the directory. */
+  readonly legacyImport?: boolean;
+  /** Set only after an explicit invite/QR pairing to clear this account's leave tombstone. */
+  readonly rejoin?: boolean;
+};

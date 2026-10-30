@@ -105,4 +105,5 @@ export const ja = {
   ...island,
   ...computerUse,
   ...connector,
+  "mobile.agent.home.noServers": "利用できるサーバーはありません",
 } as const satisfies PartialTranslation<AppMessages>;

@@ -1,3 +1,4 @@
+import type { AccountServerDirectoryEntry } from "@openbot/contracts/account-server-directory";
 import type {
   AgentEvent,
   ChannelSummary,
@@ -20,6 +21,7 @@ import { act, type PropsWithChildren, useImperativeHandle, useRef } from "react"
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
 import type { RemoteTeamTransportRef } from "../components/remote-team-transport";
+import { createTailnetMemberDeviceLinkUrl } from "../model/local-tailnet";
 import { mobileSidebarItems } from "../model/sidebar-layout";
 import { MobileWorkspaceProvider, useMobileWorkspace } from "./mobile-workspace-context";
 
@@ -27,6 +29,16 @@ const native = vi.hoisted(() => ({
   state: "active",
   listeners: new Set<(state: string) => void>(),
   storage: new Map<string, string>(),
+}));
+const accountDirectory = vi.hoisted(() => ({
+  list: vi.fn(async (): Promise<AccountServerDirectoryEntry[]> => []),
+  getExclusions: vi.fn(async (): Promise<string[]> => []),
+  register: vi.fn(async (): Promise<AccountServerDirectoryEntry[]> => []),
+  remove: vi.fn(async () => {}),
+}));
+const localTailnetAuth = vi.hoisted(() => ({
+  login: vi.fn(),
+  pair: vi.fn(),
 }));
 const sent = vi.hoisted((): { method: string; path: string; body: unknown }[] => []);
 const routedRequests = vi.hoisted((): { hostId: string | null; method: string; path: string; body: unknown }[] => []);
@@ -64,6 +76,20 @@ const session = {
 vi.mock("@/features/auth/context/mobile-session-context", () => ({
   useMobileSession: () => ({ session, sessionScope: 1 }),
 }));
+vi.mock("@/features/auth/api/mobile-auth", () => ({
+  getLegacyAccountServerDirectoryExclusions: accountDirectory.getExclusions,
+  listAccountServers: accountDirectory.list,
+  registerAccountServer: accountDirectory.register,
+  removeAccountServer: accountDirectory.remove,
+}));
+vi.mock("@/features/workspace/model/local-tailnet", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/features/workspace/model/local-tailnet")>();
+  return {
+    ...actual,
+    loginTailnetAccountServer: localTailnetAuth.login,
+    pairTailnetInvite: localTailnetAuth.pair,
+  };
+});
 // Native storage, lifecycle, and the DOM bridge have no runtime in this React harness.
 vi.mock("react-native", () => ({
   View: ({ children }: PropsWithChildren) => <div>{children}</div>,
@@ -235,9 +261,20 @@ afterEach(async () => {
   Object.assign(host, { name: "Desktop", logoKey: null, role: "owner" });
   session.apiUrl = "https://account.example.com";
   session.sessionToken = "test-token";
+  session.host.hostId = host.hostId;
   session.localOnly = false;
   sidebarRequest.mockReset();
   sidebarRequest.mockResolvedValue(initialLayout);
+  accountDirectory.list.mockReset();
+  accountDirectory.list.mockResolvedValue([]);
+  accountDirectory.getExclusions.mockReset();
+  accountDirectory.getExclusions.mockResolvedValue([]);
+  accountDirectory.register.mockReset();
+  accountDirectory.register.mockResolvedValue([]);
+  accountDirectory.remove.mockReset();
+  accountDirectory.remove.mockResolvedValue();
+  localTailnetAuth.login.mockReset();
+  localTailnetAuth.pair.mockReset();
 });
 
 it.each(["foreground", "manual"])(
@@ -533,6 +570,287 @@ it("loads a local-only workspace without constructing an account directory clien
   await vi.waitFor(() => expect(current.serverDirectoryState).toBe("ready"));
   expect(current.servers).toEqual([]);
   expect(current.serverDirectoryError).toBeNull();
+});
+
+it("keeps direct unclaimed Tailnet pairings in the unauthenticated local profile", async () => {
+  session.apiUrl = "http://127.0.0.1/";
+  session.sessionToken = "";
+  session.localOnly = true;
+  const { localHost } = addLegacyLocalTailnetServer(null);
+  native.storage.set(
+    "openbot.mobile.local-tailnet.v1",
+    JSON.stringify([{ ...localHost, hostId: "previous-account-host", accountId: "previous-account" }, localHost]),
+  );
+
+  await mountWorkspace();
+
+  await vi.waitFor(() => expect(current.serverDirectoryState).toBe("ready"));
+  expect(current.servers.map((server) => server.id)).toEqual([localHost.hostId]);
+  expect(current.servers[0]).toHaveProperty("tailnet");
+  expect(accountDirectory.list).not.toHaveBeenCalled();
+});
+
+it("does not expose another account's cached pairing immediately after an unauthenticated pairing", async () => {
+  session.apiUrl = "http://127.0.0.1/";
+  session.sessionToken = "";
+  session.localOnly = true;
+  const { localHost: foreignHost } = addLegacyLocalTailnetServer("account-b");
+  const { accountId: _accountId, ...unclaimedBase } = foreignHost;
+  const unclaimedHost = {
+    ...unclaimedBase,
+    hostId: "00000000-0000-4000-8000-000000000002",
+    membershipId: "new-membership",
+    role: "member" as const,
+  };
+  const inviteUrl = createTailnetMemberDeviceLinkUrl(unclaimedHost, "e".repeat(43));
+  localTailnetAuth.pair.mockResolvedValue(unclaimedHost);
+
+  await mountWorkspace();
+  await vi.waitFor(() => expect(current.serverDirectoryState).toBe("ready"));
+
+  await act(async () => current.addRemoteServer({ inviteUrl }));
+
+  expect(current.servers.map((server) => server.id)).toEqual([unclaimedHost.hostId]);
+  expect(current.servers[0]).toMatchObject({ tailnet: { membershipId: unclaimedHost.membershipId } });
+});
+
+it("reuses an unclaimed local token for a member device link while signed out", async () => {
+  session.apiUrl = "http://127.0.0.1/";
+  session.sessionToken = "";
+  session.localOnly = true;
+  const { localHost: legacyHost } = addLegacyLocalTailnetServer();
+  const localHost = {
+    ...legacyHost,
+    hostId: "00000000-0000-4000-8000-000000000003",
+    role: "owner" as const,
+  };
+  native.storage.set("openbot.mobile.local-tailnet.v1", JSON.stringify([localHost]));
+  const inviteUrl = createTailnetMemberDeviceLinkUrl(localHost, "f".repeat(43));
+  localTailnetAuth.pair.mockResolvedValue(localHost);
+
+  await mountWorkspace();
+  await vi.waitFor(() => expect(current.serverDirectoryState).toBe("ready"));
+
+  await act(async () => current.addRemoteServer({ inviteUrl }));
+
+  expect(localTailnetAuth.pair).toHaveBeenCalledWith(
+    inviteUrl,
+    expect.objectContaining({ existingSessionToken: localHost.sessionToken }),
+  );
+  expect(localTailnetAuth.pair.mock.calls[0]?.[1]).not.toHaveProperty("accountId");
+});
+
+it("selects an account-listed server when this device has no local pairing", async () => {
+  session.localOnly = true;
+  const remoteEntry: AccountServerDirectoryEntry = {
+    hostId: "remote-host",
+    name: "Remote host",
+    logoKey: null,
+    apiUrl: "http://100.100.10.3:43123/",
+    publicKey: "remote-key",
+    fingerprint: remoteHostFingerprint("remote-key"),
+    membershipId: "remote-membership",
+    role: "member",
+    isOwner: false,
+  };
+  accountDirectory.list.mockResolvedValue([remoteEntry]);
+
+  await mountWorkspace();
+
+  await vi.waitFor(() => expect(current.serverDirectoryState).toBe("ready"));
+  expect(current.servers.map((server) => server.id)).toEqual([remoteEntry.hostId]);
+  expect(current.activeServer.id).toBe(remoteEntry.hostId);
+});
+
+function addLegacyLocalTailnetServer(accountId: string | null = null) {
+  const fingerprint = remoteHostFingerprint(host.devicePublicKey);
+  const localHost = {
+    hostId: host.hostId,
+    name: host.name,
+    logoKey: host.logoKey,
+    apiUrl: "http://100.100.10.2:43123",
+    publicKey: host.devicePublicKey,
+    fingerprint,
+    sessionToken: "team-device-token",
+    membershipId: host.membershipId,
+    role: "owner",
+    ...(accountId ? { accountId } : {}),
+  };
+  const directoryEntry: AccountServerDirectoryEntry = {
+    hostId: localHost.hostId,
+    name: localHost.name,
+    logoKey: localHost.logoKey,
+    apiUrl: localHost.apiUrl,
+    publicKey: localHost.publicKey,
+    fingerprint: localHost.fingerprint,
+    membershipId: localHost.membershipId,
+    role: "owner",
+    isOwner: true,
+  };
+  native.storage.set("openbot.mobile.local-tailnet.v1", JSON.stringify([localHost]));
+  return { localHost, directoryEntry };
+}
+
+it("imports an old local pairing for this device with the legacyImport marker", async () => {
+  session.localOnly = true;
+  const { localHost, directoryEntry } = addLegacyLocalTailnetServer();
+  const accountHost = { ...localHost, accountId: session.user.id, sessionToken: "account-ticket-token" };
+  localTailnetAuth.login.mockResolvedValue(accountHost);
+  accountDirectory.list.mockResolvedValue([]);
+  accountDirectory.register.mockResolvedValue([directoryEntry]);
+
+  await mountWorkspace();
+
+  await vi.waitFor(() => expect(current.serverDirectoryState).toBe("ready"));
+  expect(localTailnetAuth.login).toHaveBeenCalledWith(
+    expect.objectContaining({ hostId: localHost.hostId, membershipId: localHost.membershipId }),
+    expect.objectContaining({
+      accountId: session.user.id,
+      identitySession: { apiUrl: session.apiUrl, sessionToken: session.sessionToken },
+    }),
+  );
+  expect(accountDirectory.register).toHaveBeenCalledWith(
+    session,
+    expect.objectContaining({
+      hostId: localHost.hostId,
+      apiUrl: localHost.apiUrl,
+      publicKey: localHost.publicKey,
+    }),
+    { legacyImport: true },
+  );
+  expect(current.servers.map((server) => server.id)).toEqual([host.hostId]);
+  expect(JSON.parse(native.storage.get("openbot.mobile.local-tailnet.v1") ?? "[]")).toContainEqual({
+    ...accountHost,
+    apiUrl: `${localHost.apiUrl}/`,
+  });
+});
+
+it("does not import a legacy pairing excluded by the account server", async () => {
+  session.localOnly = true;
+  addLegacyLocalTailnetServer();
+  accountDirectory.list.mockResolvedValue([]);
+  accountDirectory.getExclusions.mockResolvedValue([host.hostId]);
+
+  await mountWorkspace();
+
+  await vi.waitFor(() => expect(current.serverDirectoryState).toBe("ready"));
+  expect(accountDirectory.register).not.toHaveBeenCalled();
+  expect(current.servers).toEqual([]);
+});
+
+it("keeps an unclaimed device pairing out of another account's directory", async () => {
+  session.localOnly = true;
+  const { localHost } = addLegacyLocalTailnetServer(null);
+  accountDirectory.list.mockResolvedValue([]);
+
+  await mountWorkspace();
+
+  await vi.waitFor(() => expect(current.serverDirectoryState).toBe("ready"));
+  expect(accountDirectory.register).not.toHaveBeenCalled();
+  expect(current.servers).toEqual([]);
+  expect(JSON.parse(native.storage.get("openbot.mobile.local-tailnet.v1") ?? "[]")).toContainEqual(localHost);
+});
+
+it("does not reuse another account's cached token when redeeming a member device link", async () => {
+  session.localOnly = true;
+  const { localHost } = addLegacyLocalTailnetServer("previous-account");
+  const linkHost = { ...localHost, hostId: "00000000-0000-4000-8000-000000000001", role: "owner" as const };
+  native.storage.set("openbot.mobile.local-tailnet.v1", JSON.stringify([linkHost]));
+  const inviteUrl = createTailnetMemberDeviceLinkUrl(linkHost, "d".repeat(43));
+  localTailnetAuth.pair.mockResolvedValue({ ...linkHost, accountId: session.user.id });
+
+  await mountWorkspace();
+  await vi.waitFor(() => expect(current.serverDirectoryState).toBe("ready"));
+
+  await act(async () => current.addRemoteServer({ inviteUrl }));
+
+  expect(localTailnetAuth.pair).toHaveBeenCalledWith(
+    inviteUrl,
+    expect.objectContaining({ existingSessionToken: undefined, accountId: session.user.id }),
+  );
+});
+
+it("does not re-register a legacy pairing that is already in the account directory", async () => {
+  session.localOnly = true;
+  const { directoryEntry } = addLegacyLocalTailnetServer();
+  accountDirectory.list.mockResolvedValue([directoryEntry]);
+
+  await mountWorkspace();
+
+  await vi.waitFor(() => expect(current.serverDirectoryState).toBe("ready"));
+  expect(accountDirectory.register).not.toHaveBeenCalled();
+  expect(current.servers.map((server) => server.id)).toEqual([host.hostId]);
+});
+
+it("does not reuse a device token from a different account membership on the same host", async () => {
+  session.localOnly = true;
+  const { localHost, directoryEntry } = addLegacyLocalTailnetServer("user");
+  localHost.membershipId = "previous-account-membership";
+  localHost.role = "owner";
+  native.storage.set("openbot.mobile.local-tailnet.v1", JSON.stringify([localHost]));
+  accountDirectory.list.mockResolvedValue([
+    { ...directoryEntry, membershipId: "current-account-membership", role: "member", isOwner: false },
+  ]);
+
+  await mountWorkspace();
+
+  await vi.waitFor(() => expect(current.serverDirectoryState).toBe("ready"));
+  expect(current.servers).toMatchObject([
+    { id: host.hostId, membershipId: "current-account-membership", role: "member" },
+  ]);
+  expect(current.servers[0]).not.toHaveProperty("tailnet");
+});
+
+it("does not reuse a device token confirmed for another account even when the membership id matches", async () => {
+  session.localOnly = true;
+  const { localHost, directoryEntry } = addLegacyLocalTailnetServer("previous-account");
+  accountDirectory.list.mockResolvedValue([directoryEntry]);
+
+  await mountWorkspace();
+
+  await vi.waitFor(() => expect(current.serverDirectoryState).toBe("ready"));
+  expect(current.servers).toMatchObject([{ id: host.hostId, membershipId: host.membershipId }]);
+  expect(current.servers[0]).not.toHaveProperty("tailnet");
+  expect(JSON.parse(native.storage.get("openbot.mobile.local-tailnet.v1") ?? "[]")).toContainEqual(localHost);
+});
+
+it("keeps the local pairing when removing the account directory membership fails", async () => {
+  session.localOnly = true;
+  host.role = "member";
+  const { localHost, directoryEntry } = addLegacyLocalTailnetServer("user");
+  localHost.role = "member";
+  native.storage.set("openbot.mobile.local-tailnet.v1", JSON.stringify([localHost]));
+  const memberEntry = { ...directoryEntry, role: "member" as const, isOwner: false };
+  accountDirectory.list.mockResolvedValue([memberEntry]);
+  accountDirectory.remove.mockRejectedValueOnce(new Error("Account server unavailable."));
+
+  await mountWorkspace();
+  await vi.waitFor(() => expect(current.servers.map((server) => server.id)).toContain(host.hostId));
+
+  await expect(current.leaveServer(host.hostId)).rejects.toThrow("Account server unavailable.");
+  expect(current.servers.map((server) => server.id)).toContain(host.hostId);
+  expect(JSON.parse(native.storage.get("openbot.mobile.local-tailnet.v1") ?? "[]")).toHaveLength(1);
+});
+
+it("does not restore a server after confirmed leave when the directory refresh fails", async () => {
+  session.localOnly = true;
+  session.host.hostId = "own-host";
+  host.role = "member";
+  const { localHost, directoryEntry } = addLegacyLocalTailnetServer("user");
+  localHost.role = "member";
+  native.storage.set("openbot.mobile.local-tailnet.v1", JSON.stringify([localHost]));
+  const memberEntry = { ...directoryEntry, role: "member" as const, isOwner: false };
+  accountDirectory.list.mockResolvedValue([memberEntry]);
+
+  await mountWorkspace();
+  await vi.waitFor(() => expect(current.servers.map((server) => server.id)).toContain(host.hostId));
+  expect(current.servers.find((server) => server.id === host.hostId)?.role).toBe("member");
+  accountDirectory.list.mockRejectedValueOnce(new Error("Account server unavailable."));
+
+  await act(async () => current.leaveServer(host.hostId));
+  await vi.waitFor(() => expect(accountDirectory.list).toHaveBeenCalledTimes(2));
+  await vi.waitFor(() => expect(current.servers.map((server) => server.id)).not.toContain(host.hostId));
+  expect(current.servers).toEqual([]);
 });
 
 it("capability-gates direct history operations on older hosts", async () => {

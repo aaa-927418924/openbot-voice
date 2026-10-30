@@ -42,6 +42,55 @@ class OpenEventSocket extends EventTarget {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("local-only server directory", () => {
+  it("activates a joined remote host when Local hosting is disabled", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "openbot-hidden-local-active-host-"));
+    const storePath = join(directory, "servers.json");
+    const hostId = "00000000-0000-4000-8000-0000000000d1";
+    await writeFile(
+      storePath,
+      JSON.stringify({
+        version: 3,
+        activeServerId: "local",
+        servers: [
+          {
+            id: hostId,
+            name: "Remote host",
+            apiUrl: "http://100.100.10.3:43123/",
+            fingerprint: "remote-fingerprint",
+            username: "account@example.com",
+            encryptedToken: Buffer.from("remote-token").toString("base64"),
+            remoteDesktopAvailable: false,
+            role: "member",
+          },
+        ],
+        hiddenHostIds: [],
+      }),
+    );
+    const manager = new RemoteServerManager(
+      storePath,
+      { encrypt: (value) => Buffer.from(value), decrypt: (value) => value.toString() },
+      { createTeamAuthTicket: () => Effect.succeed("unused"), getEmail: () => "unused@example.com" },
+      {
+        localOnlyNetworking: true,
+        allowTailscaleApiUrl: true,
+        isLocalServerEnabled: () => false,
+      },
+    );
+
+    try {
+      await runCauseEffect(manager.initialize());
+      expect(manager.list().map((server) => ({ id: server.id, active: server.active }))).toEqual([
+        { id: "local", active: false },
+        { id: hostId, active: true },
+      ]);
+      expect(manager.activeServerId).toBe(hostId);
+      expect(JSON.parse(await readFile(storePath, "utf8"))).toMatchObject({ activeServerId: hostId });
+    } finally {
+      await runCauseEffect(manager.stop());
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("keeps persisted cloud entries but never exposes or reconnects to them", async () => {
     const directory = await mkdtemp(join(tmpdir(), "openbot-local-only-directory-"));
     const storePath = join(directory, "servers.json");

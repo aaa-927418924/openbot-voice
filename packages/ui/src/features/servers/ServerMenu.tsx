@@ -194,6 +194,11 @@ export function ServerMenu(props: ServerMenuProps) {
               <div class="ui-menu-label" aria-hidden="true">
                 {t("server.rail.label")}
               </div>
+              <Show when={props.servers.length === 0}>
+                <div class="ui-menu-label" role="status">
+                  {t("mobile.agent.home.noServers")}
+                </div>
+              </Show>
               <For each={props.servers} keyed={(server) => server.id}>
                 {(server) => (
                   <DropdownMenu.Sub>
