@@ -123,7 +123,6 @@ import { HostedServerStartRetry } from "./hosted-server-start-retry";
 import { HostedSiteDesktopService } from "./hosted-site-service";
 import { IdleRestart } from "./idle-restart";
 import { LanguageService } from "./language-service";
-import { defaultLocalProfileName, LocalProfileStore } from "./local-profile-store";
 import { localRoutineFeedDocument } from "./local-routine-calendar";
 import { LocalServerPreferenceStore } from "./local-server-preference-store";
 import { LogoColorService } from "./logo-color-service";
@@ -359,7 +358,6 @@ export interface ApplicationServices {
   remoteDesktop: RemoteDesktopManager;
   remoteServers: RemoteServerManager;
   centralAuth: CentralAuthManager;
-  localProfile: LocalProfileStore;
   selfHostedDesktopAccount: SelfHostedDesktopAccountManager;
   selfHostedIdentityAuthority: SelfHostedIdentityAuthority | null;
   selfHostedIdentityApi: SelfHostedIdentityApiServer | null;
@@ -367,6 +365,7 @@ export interface ApplicationServices {
   getLocalHostSettings: () => LocalHostSettings;
   setLocalHostSettings: (enabled: boolean) => Promise<LocalHostSettings>;
   setLocalHostRetry: (retry: { start: () => void; stop: () => Promise<void> } | null) => void;
+  startLocalHostAfterSignIn: () => void;
   localOnlyNetworking: boolean;
   skills: SkillMarketplaceService;
   hostedSites: HostedSiteDesktopService;
@@ -609,16 +608,17 @@ export async function createApplicationServices({
   // Fork builds run as a private Tailscale host by default. Hosted-server installs and the
   // explicit development-account harness retain their existing account-directory behavior.
   const localOnlyNetworking = !hostedServer && !serverModeEnvironment && developmentRemoteRole === null;
+  const setupFile = join(app.getPath("userData"), SETUP_FILE);
+  const setupState = await runCauseEffect(readSetupState(setupFile));
   const localHostPreference = new LocalServerPreferenceStore(
     join(app.getPath("userData"), "local-server-preference-v1.json"),
   );
-  await localHostPreference.initialize();
+  // New installs do not create a server by default. Existing completed installs keep their
+  // historical default when the preference file is missing; an explicit saved choice wins.
+  await localHostPreference.initialize(setupState.completed);
   let localHostRetry: { start: () => void; stop: () => Promise<void> } | null = null;
-  const localProfile = new LocalProfileStore(join(app.getPath("userData"), "local-profile.json"));
-  await runCauseEffect(localProfile.load());
   const selfHostedDesktopAccount = new SelfHostedDesktopAccountManager({
     path: join(app.getPath("userData"), "self-hosted-desktop-account-v1.json"),
-    profile: localProfile,
     cipher: safeStorageCipher("error.app.secretStorageUnavailable"),
   });
   if (localOnlyNetworking) await selfHostedDesktopAccount.initialize();
@@ -628,16 +628,9 @@ export async function createApplicationServices({
       path: join(app.getPath("userData"), "self-hosted-identity.json"),
     });
     try {
+      // Loading the identity authority does not create a user. The first local-host owner is
+      // materialized only after a real account signs in and explicitly enables this host.
       await Effect.runPromise(authority.initialize());
-      const profile = localProfile.getUser();
-      const account = await Effect.runPromise(
-        authority.ensureLocalAccount({
-          id: profile.id,
-          name: profile.name ?? defaultLocalProfileName(),
-          avatarUrl: profile.avatarUrl,
-        }),
-      );
-      await runCauseEffect(localProfile.synchronizeSharedProfile(account));
       selfHostedIdentityAuthority = authority;
     } catch (error) {
       // Do not replace a damaged account file or block the local workspace. Identity sharing stays
@@ -645,7 +638,6 @@ export async function createApplicationServices({
       logger.error("The self-hosted identity authority could not initialize:", toLogValue(error));
     }
   }
-  const localProfileState = localProfile.getState();
   // Registered before `initialize()`, which publishes `{ status: "loading" }` synchronously: the
   // listener therefore runs on the next line with most of this function's services still unbuilt.
   teardown.push(TEARDOWN_ORDER.centralAuth, "the account runtime", () => Effect.runPromise(centralAuth.dispose()));
@@ -793,11 +785,9 @@ export async function createApplicationServices({
   });
   teardown.push(TEARDOWN_ORDER.browserPictureInPicture, "picture in picture", () => browserPictureInPicture.destroy());
   browser.onChanged((tabs, activeTabId) => forwardBrowserDisplayState({ tabs, activeTabId }));
-  const setupFile = join(app.getPath("userData"), SETUP_FILE);
   const analyticsPreferenceFile = join(app.getPath("userData"), ANALYTICS_PREFERENCE_FILE);
   const updatePreferenceFile = join(app.getPath("userData"), UPDATE_PREFERENCE_FILE);
   const routineHoldFile = join(app.getPath("userData"), ROUTINE_HOLD_FILE);
-  const setupState = await runCauseEffect(readSetupState(setupFile));
   const analyticsPreference = await Effect.runPromise(readAnalyticsPreference(analyticsPreferenceFile));
   // Loaded before the first window and before the application menu is built, so every native
   // surface draws in the saved language on the first frame rather than switching after startup.
@@ -1360,28 +1350,58 @@ export async function createApplicationServices({
   service.channels.store.setMemberIdentityResolver((memberId) => teamStore.getChannelIdentity(memberId));
   let selfHostedIdentityApi: SelfHostedIdentityApiServer | null = null;
   let selfHostedAccountServerDirectory: SelfHostedAccountServerDirectory | null = null;
+  const signedInSelfHostedUser = () => {
+    const state = selfHostedDesktopAccount.getState();
+    if (state.status !== "signed_in") throw new Error("サインインしてからローカルサーバーを開始してください。");
+    return state.user;
+  };
   const ensureLocalHost = async () => {
     if (!localOnlyNetworking) throw new Error("Local server mode is unavailable.");
+    const user = signedInSelfHostedUser();
     if (!teamStore.configured) {
       await runCauseEffect(teamStore.activateLocalHost());
       await runCauseEffect(teamStore.configure(hostname(), "owner", randomBytes(32).toString("base64url")));
     }
     if (selfHostedIdentityAuthority) {
-      await runCauseEffect(
-        teamStore.syncSelfHostedOwner(
-          selfHostedTeamProfile(localProfile.getUser(), selfHostedIdentityApi?.apiUrl ?? null),
-        ),
+      // Only create a host-local identity after sign-in. Existing identity files stay intact.
+      await Effect.runPromise(
+        selfHostedIdentityAuthority.ensureLocalAccount({
+          id: user.id,
+          name: user.name ?? "OpenBot",
+          avatarUrl: user.avatarUrl,
+        }),
       );
     }
+    await runCauseEffect(
+      teamStore.syncSelfHostedOwner(selfHostedTeamProfile(user, selfHostedIdentityApi?.apiUrl ?? null)),
+    );
+    if (selfHostedIdentityApi) {
+      void selfHostedIdentityApi
+        .start()
+        .then((apiUrl) => runCauseEffect(teamStore.syncSelfHostedOwner(selfHostedTeamProfile(user, apiUrl))))
+        .catch((error) => logger.warn("The Tailscale identity API is not listening yet:", toLogValue(error)));
+    }
   };
-  if (localOnlyNetworking && localHostPreference.enabled && !teamStore.configured) await ensureLocalHost();
+  if (
+    localOnlyNetworking &&
+    localHostPreference.enabled &&
+    !teamStore.configured &&
+    selfHostedDesktopAccount.getState().status === "signed_in"
+  ) {
+    await ensureLocalHost();
+  }
   let selfHostedIdentityReady = selfHostedIdentityAuthority !== null;
-  if (selfHostedIdentityAuthority && teamStore.configured) {
+  if (
+    selfHostedIdentityAuthority &&
+    localHostPreference.enabled &&
+    teamStore.configured &&
+    selfHostedDesktopAccount.getState().status === "signed_in"
+  ) {
     try {
-      await runCauseEffect(teamStore.syncSelfHostedOwner(selfHostedTeamProfile(localProfile.getUser(), null)));
+      await runCauseEffect(teamStore.syncSelfHostedOwner(selfHostedTeamProfile(signedInSelfHostedUser(), null)));
     } catch (error) {
       selfHostedIdentityReady = false;
-      logger.error("The local host owner could not be linked to the self-hosted account:", toLogValue(error));
+      logger.error("The local host owner could not be linked to the signed-in account:", toLogValue(error));
     }
   }
   if (selfHostedIdentityReady && selfHostedIdentityAuthority) {
@@ -1406,8 +1426,16 @@ export async function createApplicationServices({
         onProfileChanged: async (user) => {
           try {
             const profile = selfHostedTeamProfile(user, selfHostedIdentityApi?.apiUrl ?? null);
-            if (user.id === localProfile.getUser().id) {
-              await runCauseEffect(localProfile.synchronizeSharedProfile(user));
+            if (user.id === teamStore.getOwnerAccountId()) {
+              if (selfHostedIdentityAuthority?.getLocalAccount()?.id === user.id) {
+                await Effect.runPromise(
+                  selfHostedIdentityAuthority.updateLocalProfile({
+                    id: user.id,
+                    name: user.name ?? "OpenBot",
+                    avatarUrl: user.avatarUrl,
+                  }),
+                );
+              }
               await runCauseEffect(teamStore.syncSelfHostedOwner(profile));
             } else {
               await runCauseEffect(teamStore.syncAccount(profile));
@@ -1422,14 +1450,7 @@ export async function createApplicationServices({
   if (selfHostedIdentityApi) {
     const identityApi = selfHostedIdentityApi;
     teardown.push(TEARDOWN_ORDER.selfHostedIdentityApi, "the Tailscale identity API", () => identityApi.stop());
-    // Tailscale may start after the desktop. A QR request calls start() again, and concurrent starts
-    // share one listener attempt; this background start publishes the member avatar URL after launch.
-    void identityApi
-      .start()
-      .then((apiUrl) =>
-        runCauseEffect(teamStore.syncSelfHostedOwner(selfHostedTeamProfile(localProfile.getUser(), apiUrl))),
-      )
-      .catch((error) => logger.warn("The Tailscale identity API is not listening yet:", toLogValue(error)));
+    // The listener starts only when an authenticated user enables the host or requests a QR link.
   }
   slackIngressHostId = () => teamStore.getIdentity()?.serverId ?? null;
   slackIngress.reconnect();
@@ -1578,7 +1599,7 @@ export async function createApplicationServices({
       }),
     // Still a function, and still throws when nobody is signed in: the account is a lifetime
     // state of the running app, not a startup-ordering artifact.
-    getSignedInUser: () => (localOnlyNetworking ? localProfile.getUser() : centralAuth.getSignedInUser()),
+    getSignedInUser: () => (localOnlyNetworking ? signedInSelfHostedUser() : centralAuth.getSignedInUser()),
     redeemCentralTicket: (ticket, serverId) =>
       localOnlyNetworking && selfHostedIdentityAuthority
         ? selfHostedIdentityAuthority.consumeTeamTicket({ ticket, targetTeamServerId: serverId }).pipe(
@@ -1639,7 +1660,7 @@ export async function createApplicationServices({
       }),
   });
   teardown.push(TEARDOWN_ORDER.host, "the local host", () => runCauseEffect(host.shutdown()));
-  const signedInState = localOnlyNetworking ? localProfileState : centralAuth.getState();
+  const signedInState = localOnlyNetworking ? selfHostedDesktopAccount.getState() : centralAuth.getState();
   if (!localOnlyNetworking && signedInState.status === "signed_in") {
     await runCauseEffect(host.applySignedInAccount(signedInState.user));
   } else if (!localOnlyNetworking && signedInState.status === "signed_out") {
@@ -2105,7 +2126,6 @@ export async function createApplicationServices({
     remoteDesktop,
     remoteServers,
     centralAuth,
-    localProfile,
     selfHostedDesktopAccount,
     selfHostedIdentityAuthority,
     selfHostedIdentityApi,
@@ -2113,7 +2133,11 @@ export async function createApplicationServices({
     getLocalHostSettings: () => ({ supported: localOnlyNetworking, enabled: localHostPreference.enabled }),
     setLocalHostSettings: async (enabled) => {
       if (!localOnlyNetworking) return { supported: false, enabled: false };
-      if (enabled === localHostPreference.enabled) return { supported: true, enabled };
+      if (enabled === localHostPreference.enabled) {
+        // Persist an explicit skip even when the fresh-install default is already disabled.
+        if (!enabled) await localHostPreference.setEnabled(false);
+        return { supported: true, enabled };
+      }
       if (!enabled) {
         const hostId = teamStore.getIdentity()?.serverId;
         try {
@@ -2150,6 +2174,16 @@ export async function createApplicationServices({
     },
     setLocalHostRetry: (retry) => {
       localHostRetry = retry;
+    },
+    startLocalHostAfterSignIn: () => {
+      if (!localOnlyNetworking || !localHostPreference.enabled) return;
+      if (localHostRetry) {
+        localHostRetry.start();
+        return;
+      }
+      void ensureLocalHost()
+        .then(() => runCauseEffect(host.start()))
+        .catch((error) => logger.warn("The local host could not start after sign-in:", toLogValue(error)));
     },
     localOnlyNetworking,
     skills,

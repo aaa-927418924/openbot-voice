@@ -78,6 +78,14 @@ const Setup = createSimpleContext({
       }
     }
 
+    async function skipSetup() {
+      const state = await onboardingPort().skipSetup();
+      flush(() => {
+        setSetupState(state);
+        setPermissionsOpen(false);
+      });
+    }
+
     async function previewInvite(input: { inviteUrl: string }) {
       return onboardingPort().servers.previewInvite(input);
     }
@@ -90,6 +98,7 @@ const Setup = createSimpleContext({
       permissionsOpen,
       setPermissionsOpen,
       saveSetup,
+      skipSetup,
       previewInvite,
     };
   },

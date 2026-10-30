@@ -1,11 +1,10 @@
 // @vitest-environment node
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AccountServerDirectoryEntry } from "@openbot/contracts/account-server-directory";
 import { Effect } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { LocalProfileStore } from "./local-profile-store";
 import { SelfHostedDesktopAccountManager } from "./self-hosted-desktop-account";
 
 const roots: string[] = [];
@@ -20,11 +19,12 @@ async function createAccountManager(cipherCanPersist = true) {
   const root = await mkdtemp(join(tmpdir(), "openbot-self-hosted-desktop-account-"));
   roots.push(root);
   const profilePath = join(root, "local-profile.json");
-  const profile = new LocalProfileStore(profilePath);
-  await Effect.runPromise(profile.load());
+  await writeFile(
+    profilePath,
+    JSON.stringify({ version: 1, id: "legacy-profile-id", name: "Legacy profile", avatar: null }),
+  );
   const manager = new SelfHostedDesktopAccountManager({
     path: join(root, "account.json"),
-    profile,
     cipher: {
       canPersist: () => cipherCanPersist,
       encrypt: (value) => Buffer.from(`encrypted:${value}`),
@@ -36,6 +36,41 @@ async function createAccountManager(cipherCanPersist = true) {
 }
 
 describe("SelfHostedDesktopAccountManager", () => {
+  it("does not treat a saved machine profile as an authenticated account", async () => {
+    const { manager } = await createAccountManager();
+
+    expect(manager.getState()).toEqual({ status: "signed_out" });
+    expect(manager.isSignedIn).toBe(false);
+  });
+
+  it("migrates a legacy machine-profile mode to signed out without deleting profile data", async () => {
+    const { manager, profilePath, root } = await createAccountManager();
+    const profileBefore = await readFile(profilePath);
+    const accountPath = join(root, "account.json");
+    await writeFile(
+      accountPath,
+      JSON.stringify({
+        version: 1,
+        mode: "local",
+        apiUrl: "http://100.100.10.2:43124",
+        encryptedToken: null,
+        user: null,
+      }),
+    );
+
+    await manager.initialize();
+
+    expect(manager.getState()).toEqual({ status: "signed_out" });
+    expect(JSON.parse(await readFile(accountPath, "utf8"))).toMatchObject({
+      version: 1,
+      mode: "signed_out",
+      apiUrl: "http://100.100.10.2:43124",
+      encryptedToken: null,
+      user: null,
+    });
+    expect(await readFile(profilePath)).toEqual(profileBefore);
+  });
+
   it("signs out of the account session without deleting this computer's profile", async () => {
     const { manager, profilePath, root } = await createAccountManager();
     const profileBefore = await readFile(profilePath);

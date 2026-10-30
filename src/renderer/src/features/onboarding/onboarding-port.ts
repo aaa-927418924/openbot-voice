@@ -7,6 +7,7 @@ import type { OpenBotDesktopApi } from "@openbot/contracts/ipc";
 export interface OnboardingPort {
   getSetupState: OpenBotDesktopApi["getSetupState"];
   saveSetup: OpenBotDesktopApi["saveSetup"];
+  skipSetup: OpenBotDesktopApi["skipSetup"];
   servers: Pick<OpenBotDesktopApi["servers"], "previewInvite">;
 }
 

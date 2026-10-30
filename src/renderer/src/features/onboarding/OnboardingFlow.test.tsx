@@ -28,7 +28,11 @@ afterEach(() => {
 });
 
 function renderFlow(
-  options: { onSave?: (provider: AgentProviderId) => Promise<void>; platform?: "darwin" | "win32" | "linux" } = {},
+  options: {
+    onSave?: (provider: AgentProviderId) => Promise<void>;
+    onSkip?: () => Promise<void>;
+    platform?: "darwin" | "win32" | "linux";
+  } = {},
 ) {
   activeMock = createMockOpenBot();
   window.openbot = activeMock.api;
@@ -39,6 +43,7 @@ function renderFlow(
         agentStatus={STORY_AGENT_STATUS}
         platform={options.platform ?? "darwin"}
         onSave={options.onSave ?? (async (_provider: AgentProviderId) => undefined)}
+        onSkip={options.onSkip}
       />
       <Toaster />
     </>
@@ -56,6 +61,17 @@ const AGENT_STATUS_WITH_OPENCODE: AgentStatus = {
 };
 
 describe("OnboardingFlow", () => {
+  it("lets self-hosted desktop users skip provider and local-server setup", async () => {
+    const onSkip = vi.fn(async () => undefined);
+    const onSave = vi.fn(async (_provider: AgentProviderId) => undefined);
+    const view = renderFlow({ onSkip, onSave });
+
+    await fireEvent.click(view.getByRole("button", { name: "Skip without setting up a local server" }));
+
+    await waitFor(() => expect(onSkip).toHaveBeenCalledOnce());
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
   it("supports provider selection and forward/back navigation", async () => {
     const view = renderFlow();
     const providers = view.getByRole("radiogroup", { name: "Default provider" });

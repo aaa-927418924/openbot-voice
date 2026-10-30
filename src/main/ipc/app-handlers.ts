@@ -28,7 +28,7 @@ import type { LanguageService } from "../language-service";
 import type { LogoColorService } from "../logo-color-service";
 import { MAC_PERMISSION_URLS } from "../mac-permission-urls";
 import { exportDiagnostics, exportOpenBotData, exportRemoteDesktopSupportLog } from "../maintenance-service";
-import { readSetupState, writeSetupState } from "../setup-store";
+import { readSetupState, writeSetupState, writeSkippedSetupState } from "../setup-store";
 import type { UpdateService } from "../update-service";
 import type { WindowsStartupController } from "../windows-startup";
 import {
@@ -177,10 +177,16 @@ export function appIpcHandlers({
       getLocalHostSettings: handler(getLocalHostSettings),
       setLocalHostSettings: payloadHandler(parseSetLocalHostSettings, (parsed) => setLocalHostSettings(parsed.enabled)),
       saveSetup: payloadHandler(parseSetup, async (input): Promise<AppSetupState> => {
+        const previous = await runCauseEffect(readSetupState(setupFile));
+        if (!previous.completed && getLocalHostSettings().supported) await setLocalHostSettings(true);
         const state = await runCauseEffect(writeSetupState(setupFile, input));
         await runCauseEffect(service.setPreferredProvider(input.preferredProvider, input.preferredModel));
         await initializeAgent();
         return state;
+      }),
+      skipSetup: handler(async (): Promise<AppSetupState> => {
+        if (getLocalHostSettings().supported) await setLocalHostSettings(false);
+        return runCauseEffect(writeSkippedSetupState(setupFile));
       }),
       openExternal: payloadHandler(parseExternalDestination, (parsed) => {
         return shell.openExternal(EXTERNAL_DESTINATIONS[parsed]);

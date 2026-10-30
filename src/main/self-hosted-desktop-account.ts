@@ -10,7 +10,6 @@ import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { normalizeEmailAddress, validateProfileName } from "@openbot/contracts/validation";
 import { Effect, Result } from "effect";
 import { isMissingFileError } from "../backend/file-errors";
-import type { LocalProfileStore } from "./local-profile-store";
 import { type PreferenceFileFailure, readPreferenceFile, writePreferenceFile } from "./preference-file";
 
 const IDENTITY_API_PORT = "43124";
@@ -187,21 +186,19 @@ function accountError(error: unknown): Error {
 
 /**
  * Desktop sign-in for the fork's local identity service. Only the bearer token is encrypted at
- * rest; the password is never persisted. The local device profile remains available as a separate
- * sign-in choice, and logout never removes conversations or provider data.
+ * rest; the password is never persisted. Legacy device-profile data stays on disk for compatibility,
+ * but it is never an authentication fallback. Logout never removes conversations or provider data.
  */
 export class SelfHostedDesktopAccountManager {
   readonly #path: string;
-  readonly #profile: LocalProfileStore;
   readonly #cipher: DesktopSecretCipher;
-  #record: StoredAccountState = { version: 1, mode: "local", apiUrl: null, encryptedToken: null, user: null };
+  #record: StoredAccountState = { version: 1, mode: "signed_out", apiUrl: null, encryptedToken: null, user: null };
   #token: string | null = null;
   #loadFailure: PreferenceFileFailure | null = null;
   #sessionIssue: CentralAuthState | null = null;
 
-  constructor(input: { path: string; profile: LocalProfileStore; cipher: DesktopSecretCipher }) {
+  constructor(input: { path: string; cipher: DesktopSecretCipher }) {
     this.#path = input.path;
-    this.#profile = input.profile;
     this.#cipher = input.cipher;
   }
 
@@ -209,6 +206,23 @@ export class SelfHostedDesktopAccountManager {
     const loaded = await Effect.runPromise(Effect.result(readPreferenceFile(this.#path, decodeStoredState)));
     if (Result.isSuccess(loaded)) {
       this.#record = loaded.success;
+      // Older builds silently treated the machine-local profile as a signed-in account. Keep its
+      // files intact, but migrate that mode to signed-out so the user must authenticate explicitly.
+      if (this.#record.mode === "local") {
+        this.#record = {
+          version: 1,
+          mode: "signed_out",
+          apiUrl: this.#record.apiUrl,
+          encryptedToken: null,
+          user: null,
+        };
+        try {
+          await Effect.runPromise(this.#persist());
+        } catch {
+          // The in-memory state still requires sign-in; a future login can retry the save.
+        }
+        return;
+      }
       if (this.#record.mode === "account" && this.#record.encryptedToken) {
         try {
           this.#token = this.#cipher.decrypt(Buffer.from(this.#record.encryptedToken, "base64"));
@@ -230,7 +244,7 @@ export class SelfHostedDesktopAccountManager {
 
   getState(): CentralAuthState {
     if (this.#sessionIssue) return this.#sessionIssue;
-    if (this.#record.mode === "local") return this.#profile.getState();
+    if (this.#record.mode === "local") return { status: "signed_out" };
     if (this.#record.mode === "signed_out") return { status: "signed_out" };
     return this.#record.user ? { status: "signed_in", user: this.#record.user } : { status: "signed_out" };
   }
@@ -240,11 +254,11 @@ export class SelfHostedDesktopAccountManager {
   }
 
   get isUsingLocalProfile(): boolean {
-    return this.#record.mode === "local";
+    return false;
   }
 
   get isSignedIn(): boolean {
-    return this.#record.mode === "account" && this.#token !== null;
+    return this.getState().status === "signed_in";
   }
 
   readonly saveServerAddress = Effect.fn("SelfHostedDesktopAccountManager.saveServerAddress")(function* (
@@ -315,7 +329,7 @@ export class SelfHostedDesktopAccountManager {
   readonly retry = Effect.fn("SelfHostedDesktopAccountManager.retry")(function* (
     this: SelfHostedDesktopAccountManager,
   ): Effect.fn.Return<CentralAuthState, Error> {
-    if (this.#record.mode === "local") return this.#profile.getState();
+    if (this.#record.mode === "local") return { status: "signed_out" };
     if (!this.#record.apiUrl) return { status: "signed_out" };
     if (this.#record.mode === "account" && this.#token) {
       const user = yield* this.#requestJson(this.#record.apiUrl, "/v1/me", { token: this.#token });
@@ -350,20 +364,11 @@ export class SelfHostedDesktopAccountManager {
     return { status: "signed_out" };
   });
 
+  /** Kept for IPC compatibility with older renderers; local profiles are no longer an auth mode. */
   readonly useLocalProfile = Effect.fn("SelfHostedDesktopAccountManager.useLocalProfile")(function* (
     this: SelfHostedDesktopAccountManager,
   ): Effect.fn.Return<CentralAuthState, Error> {
-    if (this.#record.mode === "account" && this.#record.apiUrl && this.#token) {
-      yield* this.#requestJson(this.#record.apiUrl, "/v1/mobile-auth/session", {
-        token: this.#token,
-        method: "DELETE",
-      }).pipe(Effect.catch(() => Effect.succeed(null)));
-    }
-    this.#record = { version: 1, mode: "local", apiUrl: this.#record.apiUrl, encryptedToken: null, user: null };
-    this.#token = null;
-    this.#sessionIssue = null;
-    yield* this.#persist();
-    return this.#profile.getState();
+    return yield* this.logout();
   });
 
   readonly updateName = Effect.fn("SelfHostedDesktopAccountManager.updateName")(function* (
@@ -372,7 +377,6 @@ export class SelfHostedDesktopAccountManager {
   ): Effect.fn.Return<CentralAuthState, Error> {
     const validation = validateProfileName(name);
     if (validation.error) return yield* Effect.fail(new Error("アカウント名を確認してください。"));
-    if (this.#record.mode === "local") return yield* this.#profile.updateName(validation.name);
     if (this.#record.mode !== "account" || !this.#record.apiUrl || !this.#token) {
       return yield* Effect.fail(new Error("サインインしてから変更してください。"));
     }
@@ -391,7 +395,6 @@ export class SelfHostedDesktopAccountManager {
     this: SelfHostedDesktopAccountManager,
     image: AvatarImageInput | null,
   ): Effect.fn.Return<CentralAuthState, Error> {
-    if (this.#record.mode === "local") return yield* this.#profile.updateAvatar(image);
     if (this.#record.mode !== "account" || !this.#record.apiUrl || !this.#token) {
       return yield* Effect.fail(new Error("サインインしてから変更してください。"));
     }

@@ -75,7 +75,7 @@ export class LocalProfileStore extends EventEmitter<LocalProfileEvents> {
         return;
       }
       if (isMissingFileError(loaded.failure.cause)) {
-        yield* this.#persist(this.#record);
+        // A device label is only an in-memory fallback. Do not create a pseudo-account on first run.
         return;
       }
       // A bad or future profile is left untouched. The user can still open the app, but a later

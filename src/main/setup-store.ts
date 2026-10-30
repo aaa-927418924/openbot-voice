@@ -13,7 +13,7 @@ import { type PreferenceFileFailure, readPreferenceFile, writePreferenceFile } f
 
 interface StoredSetup {
   version: 2;
-  preferredProvider: AgentProviderId;
+  preferredProvider: AgentProviderId | null;
   /**
    * Added after version 2 shipped, and the version stays at 2 on purpose: a bump would make every
    * completed setup unreadable and send those users through onboarding again. A file without the
@@ -31,7 +31,7 @@ export function readSetupState(path: string): Effect.Effect<AppSetupState, Prefe
       !isDynamicRecord(parsed) ||
       !isNumber(parsed.version) ||
       parsed.version !== 2 ||
-      !isAgentProvider(parsed.preferredProvider) ||
+      !(parsed.preferredProvider === null || isAgentProvider(parsed.preferredProvider)) ||
       !isString(parsed.completedAt)
     ) {
       return { ...EMPTY_SETUP };
@@ -65,5 +65,18 @@ export function writeSetupState(
     };
     yield* writePreferenceFile(path, stored);
     return { completed: true, ...input };
+  });
+}
+
+/** Completes first-run setup without selecting a provider or enabling the local server. */
+export function writeSkippedSetupState(path: string): Effect.Effect<AppSetupState, PreferenceFileFailure> {
+  return Effect.gen(function* () {
+    const stored: StoredSetup = {
+      version: 2,
+      preferredProvider: null,
+      completedAt: new Date().toISOString(),
+    };
+    yield* writePreferenceFile(path, stored);
+    return { completed: true, preferredProvider: null, preferredModel: null };
   });
 }

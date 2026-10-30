@@ -444,12 +444,13 @@ function registerIpcHandlers({
   remoteDesktop,
   remoteServers,
   centralAuth,
-  localProfile,
   selfHostedDesktopAccount,
   selfHostedIdentityAuthority,
   selfHostedIdentityApi,
+  ensureLocalHost,
   getLocalHostSettings,
   setLocalHostSettings,
+  startLocalHostAfterSignIn,
   localOnlyNetworking,
   teamStore,
   skills,
@@ -514,8 +515,9 @@ function registerIpcHandlers({
     ...accountIpcHandlers({
       centralAuth,
       host,
-      localProfile: localOnlyNetworking ? localProfile : undefined,
       selfHostedDesktopAccount: localOnlyNetworking ? selfHostedDesktopAccount : undefined,
+      onSelfHostedSignIn: localOnlyNetworking ? startLocalHostAfterSignIn : undefined,
+      prepareSelfHostedHost: localOnlyNetworking ? ensureLocalHost : undefined,
       remoteServers,
       selfHostedIdentity:
         selfHostedIdentityAuthority && selfHostedIdentityApi
@@ -900,11 +902,6 @@ if (!hasSingleInstanceLock) {
         prepareForUpdateInstall,
       });
       services = built;
-      if (built.selfHostedIdentityAuthority) {
-        built.localProfile.on("changed", (state) => {
-          sendToRenderer(windows.getMainWindow(), IPC_ENDPOINTS.auth.event, state);
-        });
-      }
       performance.mark("openbot:services-built");
       // `forwardCentralAuth` reaches the host, the remote servers and analytics only through
       // `services`, so every account change announced during construction was dropped.
@@ -1066,7 +1063,9 @@ if (!hasSingleInstanceLock) {
             logger.warn("Unable to start the Tailscale-only OpenBot host; retrying:", toLogValue(error)),
         });
         built.setLocalHostRetry(localHostRetry);
-        if (built.getLocalHostSettings().enabled) localHostRetry.start();
+        if (built.getLocalHostSettings().enabled && built.selfHostedDesktopAccount.isSignedIn) {
+          localHostRetry.start();
+        }
         teardown.push(0, "Tailscale host start retry", () => localHostRetry.stop());
       } else if (built.serverMode) {
         const serverModeControl = built.serverMode;

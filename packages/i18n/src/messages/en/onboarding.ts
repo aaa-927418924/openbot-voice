@@ -89,6 +89,7 @@ export const messages = defineMessages("onboarding", {
   "onboarding.opening": "Opening OpenBot…",
   "onboarding.action.connect": "Connect",
   "onboarding.action.open": "Open OpenBot",
+  "onboarding.action.skipWithoutLocalServer": "Skip without setting up a local server",
   "onboarding.action.next": "Next",
   "onboarding.server.title": "Set up {server}",
   "onboarding.server.description":

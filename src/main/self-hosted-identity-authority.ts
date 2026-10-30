@@ -41,7 +41,7 @@ export class SelfHostedIdentityFailure extends Schema.TaggedError<SelfHostedIden
 export type SelfHostedIdentityFailureCode = SelfHostedIdentityFailure["code"];
 
 export interface LocalProfileBootstrap {
-  /** The ID returned by LocalProfileStore.getUser(). It remains the canonical account ID. */
+  /** The authenticated account ID used as the canonical owner ID for this local host. */
   readonly id: string;
   readonly name: string;
   readonly avatarUrl: string | null;
@@ -783,7 +783,7 @@ export class SelfHostedIdentityAuthority {
   });
 
   /**
-   * Create the one canonical account from the authority PC's existing LocalProfileStore profile.
+   * Create the host-local account from the authenticated account profile, when the host is enabled.
    * The socket address must be a loopback address. The account ID, name, and avatar are retained.
    */
   readonly bootstrapFirstAccount = Effect.fn("SelfHostedIdentityAuthority.bootstrapFirstAccount")(function* (

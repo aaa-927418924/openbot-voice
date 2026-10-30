@@ -14,6 +14,17 @@ afterEach(async () => {
 });
 
 describe("LocalProfileStore", () => {
+  it("does not persist a machine-name profile when a new install loads", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-local-profile-empty-"));
+    roots.push(root);
+    const path = join(root, "profile.json");
+    const profile = new LocalProfileStore(path);
+
+    await runCauseEffect(profile.load());
+
+    await expect(readFile(path, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("persists a display name locally without an email account", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-local-profile-"));
     roots.push(root);

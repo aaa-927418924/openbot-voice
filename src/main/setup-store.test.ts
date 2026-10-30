@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { readSetupState, writeSetupState } from "./setup-store";
+import { readSetupState, writeSetupState, writeSkippedSetupState } from "./setup-store";
 
 const roots: string[] = [];
 
@@ -48,6 +48,22 @@ describe("setup store", () => {
     // A newer version number would make every setup written before this field unreadable, and would
     // send those users through onboarding again.
     expect(JSON.parse(await readFile(path, "utf8")).version).toBe(2);
+  });
+
+  it("records skipped setup without selecting a provider", async () => {
+    const root = await temporaryRoot();
+    const path = join(root, "openbot-setup-v2.json");
+
+    await expect(Effect.runPromise(writeSkippedSetupState(path))).resolves.toEqual({
+      completed: true,
+      preferredProvider: null,
+      preferredModel: null,
+    });
+    await expect(Effect.runPromise(readSetupState(path))).resolves.toEqual({
+      completed: true,
+      preferredProvider: null,
+      preferredModel: null,
+    });
   });
 
   it("reads a setup written before the preferred model existed", async () => {

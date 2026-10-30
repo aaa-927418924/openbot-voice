@@ -96,6 +96,7 @@ export const messages = {
   "onboarding.opening": "OpenBot を開いています…",
   "onboarding.action.connect": "接続",
   "onboarding.action.open": "OpenBot を開く",
+  "onboarding.action.skipWithoutLocalServer": "ローカルサーバーを設定せずにスキップ",
   "onboarding.action.next": "次へ",
   "onboarding.server.title": "{server} をセットアップ",
   "onboarding.server.description":

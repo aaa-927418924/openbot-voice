@@ -15,7 +15,6 @@ export interface AccountPort {
     | "logout"
     | "selfHostedLogin"
     | "selfHostedRegister"
-    | "useLocalProfile"
     | "getSelfHostedServerAddress"
     | "onEvent"
     | "requestEmailCode"

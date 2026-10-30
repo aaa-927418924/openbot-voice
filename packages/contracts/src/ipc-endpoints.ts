@@ -428,6 +428,7 @@ export const IPC_ENDPOINTS = {
     getAppInfo: request<undefined, AppInfo>()("app:get-info"),
     getSetupState: request<undefined, AppSetupState>()("app:get-setup-state"),
     saveSetup: request<SaveSetupInput, AppSetupState>()("app:save-setup"),
+    skipSetup: request<undefined, AppSetupState>()("app:skip-setup"),
     getAnalyticsPreference: request<undefined, AnalyticsPreference>()("app:get-analytics-preference"),
     setAnalyticsPreference: request<SetAnalyticsPreferenceInput, AnalyticsPreference>()("app:set-analytics-preference"),
     getApprovalAutomation: request<undefined, ApprovalAutomationPreference>()("app:get-approval-automation"),

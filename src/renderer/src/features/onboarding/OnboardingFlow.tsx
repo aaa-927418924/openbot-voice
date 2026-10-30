@@ -18,6 +18,8 @@ export interface OnboardingFlowProps extends SetupProviderProps {
    * names the endpoint the user just described when they chose their own.
    */
   onSave: (provider: AgentProviderId, model: AgentModelId | null) => Promise<void>;
+  /** Completes first run without creating the local server or selecting a provider. */
+  onSkip?: () => Promise<void>;
   /** Runs when the provider step is shown. First run scans once, so the host ignores a repeat. */
   onProviderStepShown?: () => void;
   /** Adds a step that turns sound feedback on or off. */
@@ -114,6 +116,18 @@ export function OnboardingFlow(props: OnboardingFlowProps) {
   function previousStep(): void {
     const previous = steps()[stepNumber() - 2];
     if (previous) moveTo(previous, "back");
+  }
+
+  async function skipSetup(): Promise<void> {
+    if (!props.onSkip || saving()) return;
+    setSaving(true);
+    providers.setError("");
+    try {
+      await props.onSkip();
+    } catch (cause) {
+      providers.setError(errorMessage(cause, t("onboarding.error.finish")));
+      setSaving(false);
+    }
   }
 
   async function finish(): Promise<void> {
@@ -362,6 +376,17 @@ export function OnboardingFlow(props: OnboardingFlowProps) {
         </Show>
 
         <div class="onboarding-actions">
+          <Show when={props.onSkip}>
+            <Button
+              type="button"
+              variant="ghost"
+              class="onboarding-skip"
+              disabled={saving()}
+              onClick={() => void skipSetup()}
+            >
+              {t("onboarding.action.skipWithoutLocalServer")}
+            </Button>
+          </Show>
           <Show when={step() !== "meet"}>
             <Button type="button" variant="outline" class="onboarding-back" disabled={saving()} onClick={previousStep}>
               {t("common.back")}

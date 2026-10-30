@@ -13,7 +13,8 @@ export class LocalServerPreferenceStore {
     this.#path = path;
   }
 
-  async initialize(): Promise<void> {
+  async initialize(defaultEnabled = true): Promise<void> {
+    this.#enabled = defaultEnabled;
     try {
       const parsed = JSON.parse(await readFile(this.#path, "utf8"));
       if (!isDynamicRecord(parsed) || parsed.version !== 1 || typeof parsed.enabled !== "boolean") {

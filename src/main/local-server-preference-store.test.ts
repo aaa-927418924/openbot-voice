@@ -11,18 +11,18 @@ afterEach(async () => {
 });
 
 describe("LocalServerPreferenceStore", () => {
-  it("defaults to enabled and keeps a disabled value across restarts", async () => {
+  it("uses the setup default for a new install and keeps an explicit choice across restarts", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-local-server-preference-"));
     roots.push(root);
     const path = join(root, "preference.json");
     const first = new LocalServerPreferenceStore(path);
-    await first.initialize();
-    expect(first.enabled).toBe(true);
-    await first.setEnabled(false);
+    await first.initialize(false);
+    expect(first.enabled).toBe(false);
+    await first.setEnabled(true);
 
     const restarted = new LocalServerPreferenceStore(path);
-    await restarted.initialize();
-    expect(restarted.enabled).toBe(false);
+    await restarted.initialize(false);
+    expect(restarted.enabled).toBe(true);
   });
 
   it("does not re-enable the server when its preference file is malformed", async () => {

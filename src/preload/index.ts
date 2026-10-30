@@ -471,6 +471,7 @@ const openbotApi: OpenBotDesktopApi = {
     getAppInfo: decodeAppInfo,
     getSetupState: decodeAppSetupState,
     saveSetup: decodeAppSetupState,
+    skipSetup: decodeAppSetupState,
     getAnalyticsPreference: decodeAnalyticsPreference,
     setAnalyticsPreference: decodeAnalyticsPreference,
     getApprovalAutomation: decodeApprovalAutomationPreference,

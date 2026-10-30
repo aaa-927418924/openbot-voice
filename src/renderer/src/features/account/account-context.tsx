@@ -170,11 +170,6 @@ const Auth = createSimpleContext({
       applyCentralAuthState(state);
     }
 
-    async function useLocalProfile(): Promise<void> {
-      const state = await accountPort().auth.useLocalProfile();
-      applyCentralAuthState(state);
-    }
-
     function getSelfHostedServerAddress(): Promise<string> {
       return accountPort().auth.getSelfHostedServerAddress();
     }
@@ -309,7 +304,6 @@ const Auth = createSimpleContext({
       verifyEmailCode,
       signInSelfHosted,
       registerSelfHosted,
-      useLocalProfile,
       getSelfHostedServerAddress,
       logoutCentralAccount,
       updateAccountName,

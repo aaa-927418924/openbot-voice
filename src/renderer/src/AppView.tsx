@@ -91,7 +91,6 @@ export function AppAccessGate() {
                   onRetry={auth.retryCentralAccount}
                   onSignIn={auth.signInSelfHosted}
                   onRegister={auth.registerSelfHosted}
-                  onUseLocalProfile={auth.useLocalProfile}
                   getServerAddress={auth.getSelfHostedServerAddress}
                 />
               </Loading>
@@ -113,6 +112,7 @@ export function AppAccessGate() {
                         }
                         platform={platform.appInfo()?.platform ?? "darwin"}
                         onSave={setup.saveSetup}
+                        onSkip={platform.appInfo()?.accountMode === "self_hosted" ? setup.skipSetup : undefined}
                         onProviderStepShown={detection.scanOnce}
                         soundFeedback={soundFeedback}
                       />

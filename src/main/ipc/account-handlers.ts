@@ -7,7 +7,6 @@ import { Effect } from "effect";
 import { runCauseEffect } from "../../backend/effect-boundary";
 import type { CentralAuthManager } from "../central-auth-manager";
 import type { HostService } from "../host-service";
-import type { LocalProfileStore } from "../local-profile-store";
 import { createHostedMobileConnect, createSelfHostedMobileConnect } from "../mobile-connect-host";
 import type { RemoteServerManager } from "../remote-server-manager";
 import type { SelfHostedDesktopAccountManager } from "../self-hosted-desktop-account";
@@ -44,7 +43,6 @@ function parseSelfHostedRegistration(input: unknown): SelfHostedAccountRegistrat
 
 export interface AccountIpcDependencies {
   centralAuth: CentralAuthManager;
-  localProfile?: LocalProfileStore;
   selfHostedDesktopAccount?: SelfHostedDesktopAccountManager;
   remoteServers?: Pick<RemoteServerManager, "syncAccountDirectory">;
   selfHostedIdentity?: {
@@ -52,39 +50,26 @@ export interface AccountIpcDependencies {
     api: SelfHostedIdentityApiServer;
     teamStore: TeamStore;
   };
+  onSelfHostedSignIn?: () => void;
+  prepareSelfHostedHost?: () => Promise<void>;
   host: Pick<HostService, "configure" | "getStatus" | "start" | "getMobileConnectHost" | "createMemberDeviceLink">;
 }
 
 export function accountIpcHandlers({
   centralAuth,
   host,
-  localProfile,
   selfHostedDesktopAccount,
   remoteServers,
   selfHostedIdentity,
+  onSelfHostedSignIn,
+  prepareSelfHostedHost,
 }: AccountIpcDependencies): Pick<IpcGroupHandlers, "auth"> {
-  if (localProfile) {
+  if (selfHostedDesktopAccount) {
     const disabled = () => {
       throw new Error("OpenBot account services are disabled in local-only mode.");
     };
-    const updateLocalProfile = async (state: ReturnType<LocalProfileStore["getState"]>) => {
-      const identity = selfHostedIdentity;
-      if (identity) {
-        const apiUrl = await identity.api.start().catch(() => null);
-        const user = localProfile.getUser();
-        await Effect.runPromise(
-          identity.authority.updateLocalProfile({
-            id: user.id,
-            name: user.name ?? "OpenBot",
-            avatarUrl: user.avatarUrl,
-          }),
-        );
-        await runCauseEffect(identity.teamStore.syncSelfHostedOwner(selfHostedTeamProfile(user, apiUrl)));
-      }
-      return state;
-    };
     const account = selfHostedDesktopAccount;
-    const state = () => account?.getState() ?? localProfile.getState();
+    const state = () => account.getState();
     const synchronizeServers = async () => {
       if (!account?.isSignedIn || !remoteServers) return;
       await runCauseEffect(remoteServers.syncAccountDirectory()).catch(() => undefined);
@@ -93,56 +78,55 @@ export function accountIpcHandlers({
       auth: {
         getState: handler(state),
         retry: handler(async () => {
-          const next = account ? await Effect.runPromise(account.retry()) : localProfile.getState();
+          const next = await Effect.runPromise(account.retry());
           await synchronizeServers();
+          if (next.status === "signed_in") onSelfHostedSignIn?.();
           return next;
         }),
         selfHostedLogin: payloadHandler(parseSelfHostedLogin, async (input) => {
-          if (!account) return disabled();
           const next = await Effect.runPromise(account.signIn(input));
           await synchronizeServers();
+          if (next.status === "signed_in") onSelfHostedSignIn?.();
           return next;
         }),
         selfHostedRegister: payloadHandler(parseSelfHostedRegistration, async (input) => {
-          if (!account) return disabled();
           const next = await Effect.runPromise(account.register(input));
           await synchronizeServers();
+          if (next.status === "signed_in") onSelfHostedSignIn?.();
           return next;
         }),
         useLocalProfile: handler(async () => {
-          if (!account) return localProfile.getState();
           return Effect.runPromise(account.useLocalProfile());
         }),
         getSelfHostedServerAddress: handler(() => account?.getServerAddress() ?? ""),
         requestEmailCode: payloadHandler(stringPayload("email", INPUT_LIMITS.email), disabled),
         verifyEmailCode: payloadHandler(parseEmailCodeVerification, disabled),
         updateName: payloadHandler(parseProfileName, async (name) => {
-          const next = account
-            ? await Effect.runPromise(account.updateName(name))
-            : await runCauseEffect(localProfile.updateName(name));
-          return account?.isUsingLocalProfile === false ? next : updateLocalProfile(next);
+          return Effect.runPromise(account.updateName(name));
         }),
         updateAvatar: payloadHandler(parseAvatarImage, async (parsed) => {
-          const next = account
-            ? await Effect.runPromise(account.updateAvatar(parsed))
-            : await runCauseEffect(localProfile.updateAvatar(parsed));
-          return account?.isUsingLocalProfile === false ? next : updateLocalProfile(next);
+          return Effect.runPromise(account.updateAvatar(parsed));
         }),
-        createMobileConnect: handler(() => {
+        createMobileConnect: handler(async () => {
           if (!selfHostedIdentity) return disabled();
+          await prepareSelfHostedHost?.();
           return runCauseEffect(
             createSelfHostedMobileConnect({
               authority: selfHostedIdentity.authority,
               identityApi: selfHostedIdentity.api,
               onIdentityApiReady: async (apiUrl) => {
+                const state = account.getState();
+                if (state?.status !== "signed_in") throw new Error("サインインしてからQRコードを作成してください。");
                 await runCauseEffect(
-                  selfHostedIdentity.teamStore.syncSelfHostedOwner(
-                    selfHostedTeamProfile(localProfile.getUser(), apiUrl),
-                  ),
+                  selfHostedIdentity.teamStore.syncSelfHostedOwner(selfHostedTeamProfile(state.user, apiUrl)),
                 );
               },
               host,
-              accountId: localProfile.getUser().id,
+              accountId: (() => {
+                const state = account.getState();
+                if (state?.status !== "signed_in") throw new Error("サインインしてからQRコードを作成してください。");
+                return state.user.id;
+              })(),
             }),
           );
         }),
@@ -154,7 +138,6 @@ export function accountIpcHandlers({
           () => undefined,
         ),
         logout: handler(async () => {
-          if (!account) return { status: "signed_out" as const };
           return Effect.runPromise(account.logout());
         }),
       },

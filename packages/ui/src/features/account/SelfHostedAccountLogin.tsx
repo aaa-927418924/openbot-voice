@@ -10,7 +10,7 @@ import { createSignal, onSettled, Show } from "solid-js";
 import { useText } from "../../text";
 
 type FormMode = "sign_in" | "register";
-type PendingAction = "retry" | "submit" | "local" | null;
+type PendingAction = "retry" | "submit" | null;
 
 interface SelfHostedAccountLoginProps {
   variant: AppVariant;
@@ -18,7 +18,6 @@ interface SelfHostedAccountLoginProps {
   onRetry: () => Promise<void>;
   onSignIn: (input: SelfHostedAccountLoginInput) => Promise<void>;
   onRegister: (input: SelfHostedAccountRegistrationInput) => Promise<void>;
-  onUseLocalProfile: () => Promise<void>;
   getServerAddress: () => Promise<string>;
 }
 
@@ -62,19 +61,6 @@ export function SelfHostedAccountLogin(props: SelfHostedAccountLoginProps) {
     setPending("retry");
     try {
       await props.onRetry();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : t("account.selfHosted.failed"));
-    } finally {
-      setPending(null);
-    }
-  }
-
-  async function useLocal(): Promise<void> {
-    if (pending()) return;
-    setPending("local");
-    setError(null);
-    try {
-      await props.onUseLocalProfile();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t("account.selfHosted.failed"));
     } finally {
@@ -226,18 +212,6 @@ export function SelfHostedAccountLogin(props: SelfHostedAccountLoginProps) {
               </Show>
             </Button>
           </Show>
-          <Button
-            variant="ghost"
-            type="button"
-            class="account-login-code-action"
-            disabled={pending() !== null}
-            onClick={() => void useLocal()}
-          >
-            <Show when={pending() === "local"} fallback={t("account.selfHosted.useLocalProfile")}>
-              <span class="account-login-button-spinner" aria-hidden="true" />
-              {t("account.selfHosted.working")}
-            </Show>
-          </Button>
         </section>
       </div>
     </main>

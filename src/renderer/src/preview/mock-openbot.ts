@@ -449,6 +449,10 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
       setupState = { completed: true, preferredProvider, preferredModel };
       return clone(setupState);
     },
+    skipSetup: async () => {
+      setupState = { completed: true, preferredProvider: null, preferredModel: null };
+      return clone(setupState);
+    },
     getAnalyticsPreference: async () => clone(analyticsPreference),
     setAnalyticsPreference: async ({ enabled }) => {
       analyticsPreference = { enabled };
