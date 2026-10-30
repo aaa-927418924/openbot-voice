@@ -1498,6 +1498,57 @@ describe("remote control capability discovery", () => {
 });
 
 describe("self-hosted account server directory", () => {
+  it("keeps an account-listed host visible while its Team API is temporarily unreachable", async () => {
+    const hostId = "linux-account-server";
+    const apiUrl = "http://100.100.100.107:43123/";
+    const publicKey = "directory-public-key";
+    const entry: AccountServerDirectoryEntry = {
+      hostId,
+      name: "Linux server",
+      apiUrl,
+      fingerprint: fingerprint(publicKey),
+      publicKey,
+      logoKey: null,
+      membershipId: "account-member",
+      role: "member",
+      isOwner: false,
+    };
+    const hostFetch = stubTeamFetch({
+      routes: {
+        "/v1/identity": () => Response.json({ error: "Host unavailable." }, { status: 503 }),
+      },
+    });
+    const fixture = await createRemoteManager({
+      servers: [],
+      account: {
+        getAccountId: () => "account-a",
+        getEmail: () => "person@example.com",
+        isSelfHostedSignedIn: () => true,
+        getLegacyAccountServerImportExclusions: () => authCall(async () => []),
+        listAccountServers: () => authCall(async () => [entry]),
+        registerAccountServer: () => authCall(async () => undefined),
+      },
+      managerOptions: { localOnlyNetworking: true, allowTailscaleApiUrl: true },
+    });
+
+    await runCauseEffect(fixture.manager.syncAccountDirectory());
+
+    expect(hostFetch.requests("/v1/identity")).toHaveLength(1);
+    expect(fixture.server(hostId)).toMatchObject({ id: hostId, name: "Linux server", state: "offline" });
+    expect(fixture.manager.activeServerId).toBe("local");
+    expect(JSON.parse(await readFile(fixture.statePath, "utf8")).servers).toContainEqual(
+      expect.objectContaining({
+        accountId: "account-a",
+        membershipId: "account-member",
+        pendingAccountAuthentication: true,
+        encryptedToken: "",
+      }),
+    );
+    await expect(runCauseEffect(fixture.manager.request(hostId, "/v1/test", (value) => value))).rejects.toThrow(
+      "The selected server is offline.",
+    );
+  });
+
   it("keeps the existing device session when the pinned membership is already in the directory", async () => {
     const hostId = "directory-host";
     const createTeamAuthTicket = vi.fn(() => authCall(async () => "account-ticket"));

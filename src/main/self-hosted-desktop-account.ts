@@ -499,7 +499,10 @@ export class SelfHostedDesktopAccountManager {
       });
     });
 
-  readonly setAccountServerVisibility = (proof: AccountServerVisibilityProof): Effect.Effect<void, Error> =>
+  readonly setAccountServerVisibility = (
+    proof: AccountServerVisibilityProof,
+    registration?: AccountServerRegistration,
+  ): Effect.Effect<void, Error> =>
     Effect.gen({ self: this }, function* () {
       if (this.#record.mode !== "account" || !this.#record.apiUrl || !this.#token) {
         return yield* Effect.fail(new Error("アカウントにサインインしてください。"));
@@ -507,7 +510,7 @@ export class SelfHostedDesktopAccountManager {
       yield* this.#requestJson(this.#record.apiUrl, `/v1/me/servers/${encodeURIComponent(proof.hostId)}/visibility`, {
         token: this.#token,
         method: "PUT",
-        body: proof,
+        body: { ...proof, ...(registration ? { registration } : {}) },
       });
     });
 

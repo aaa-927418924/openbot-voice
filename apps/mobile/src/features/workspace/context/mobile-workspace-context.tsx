@@ -426,19 +426,28 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
 
                   // Import any old pairings from this device idempotently. The server's exclusions
                   // prevent deleted or hidden hosts from being restored by another device's cache.
-                  const synced = await (async () => {
+                  // Once the primary list succeeds it is authoritative. Optional legacy-cache
+                  // migration must not turn a valid empty list into a fallback to stale servers.
+                  let synced: AccountServerDirectoryEntry[] | null;
+                  try {
+                    synced = await listAccountServers(session);
+                  } catch {
+                    synced = null;
+                  }
+                  if (synced) {
+                    let excludedHostIds: Set<string> | null = null;
                     try {
-                      let accountHosts = await listAccountServers(session);
-                      const excludedHostIds = new Set(await getLegacyAccountServerDirectoryExclusions(session));
+                      excludedHostIds = new Set(await getLegacyAccountServerDirectoryExclusions(session));
+                    } catch {
+                      // Without tombstones, importing a device cache could resurrect a hidden server.
+                    }
+                    if (excludedHostIds) {
                       for (let host of deviceHosts) {
                         // Device storage can outlive sign-out. Never attach a token already claimed
                         // by a different account. An unclaimed legacy pairing must first prove this
                         // account through a fresh host-bound account ticket.
                         if (host.accountId && host.accountId !== session.user.id) continue;
-                        if (
-                          accountHosts.some((entry) => entry.hostId === host.hostId) ||
-                          excludedHostIds.has(host.hostId)
-                        ) {
+                        if (synced.some((entry) => entry.hostId === host.hostId) || excludedHostIds.has(host.hostId)) {
                           continue;
                         }
                         if (host.accountId !== session.user.id) {
@@ -472,15 +481,16 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
                             continue;
                           }
                         }
-                        accountHosts = await registerAccountServer(session, accountServerRegistration(host), {
-                          legacyImport: true,
-                        });
+                        try {
+                          synced = await registerAccountServer(session, accountServerRegistration(host), {
+                            legacyImport: true,
+                          });
+                        } catch {
+                          // Keep the confirmed directory view; retry this optional import next refresh.
+                        }
                       }
-                      return accountHosts;
-                    } catch {
-                      return null;
                     }
-                  })();
+                  }
                   if (generation !== directoryGeneration.current) return [];
                   if (!synced) {
                     // Use only memberships previously confirmed for this account. The secure local

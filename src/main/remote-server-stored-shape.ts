@@ -52,6 +52,8 @@ export interface StoredRemoteServer {
   accountId?: string;
   /** Account id awaiting a successful directory rejoin after an explicit invite. */
   pendingAccountRejoinId?: string;
+  /** Directory entry is visible, but this device has not yet authenticated to its host. */
+  pendingAccountAuthentication?: boolean;
   transport?: "webrtc-v2";
   /** The active members that the host's plan allows, from the account server's host list. */
   memberLimit?: number;
@@ -247,6 +249,8 @@ function readStoredRemoteServer(value: unknown): StoredRemoteServer | null {
     !(value.remoteDesktopAvailable === undefined || isBoolean(value.remoteDesktopAvailable)) ||
     !(value.logoVersion === undefined || value.logoVersion === null || isString(value.logoVersion)) ||
     !(value.transport === undefined || value.transport === "webrtc-v2") ||
+    !(value.pendingAccountAuthentication === undefined || isBoolean(value.pendingAccountAuthentication)) ||
+    (value.pendingAccountAuthentication === true && value.encryptedToken !== "") ||
     !(
       value.pendingAccountRejoinId === undefined ||
       (isString(value.pendingAccountRejoinId) && value.pendingAccountRejoinId.length <= 128)
@@ -277,6 +281,7 @@ function readStoredRemoteServer(value: unknown): StoredRemoteServer | null {
       ? { pendingAccountRejoinId: value.pendingAccountRejoinId }
       : {}),
     ...(isString(value.accountId) && value.accountId.length > 0 ? { accountId: value.accountId } : {}),
+    ...(value.pendingAccountAuthentication === true ? { pendingAccountAuthentication: true } : {}),
     ...(value.transport === undefined ? {} : { transport: value.transport }),
     // A bad limit drops only the limit: the next host list writes it again.
     ...(isMemberLimit(value.memberLimit) ? { memberLimit: value.memberLimit } : {}),

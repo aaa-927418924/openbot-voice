@@ -561,7 +561,7 @@ function decodeInvite(value: unknown): RemoteTeamInvite {
 }
 
 export const REMOTE_ACCOUNT_CHECK_INTERVAL_MS = 15 * 60_000;
-export const SELF_HOSTED_ACCOUNT_CHECK_INTERVAL_MS = 10_000;
+export const SELF_HOSTED_ACCOUNT_CHECK_INTERVAL_MS = 5_000;
 
 /** The caller starts this watcher in the foreground and stops it on background entry. */
 export function watchRemoteDirectory<E>(refresh: () => Effect.Effect<void, E>): () => void {

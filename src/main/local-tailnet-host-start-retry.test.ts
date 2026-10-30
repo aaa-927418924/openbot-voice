@@ -10,19 +10,26 @@ afterEach(() => vi.useRealTimers());
 describe("LocalTailnetHostStartRetry", () => {
   it("retries after Tailscale is unavailable and stops after the host starts", async () => {
     vi.useFakeTimers();
-    const startHost = vi.fn().mockResolvedValueOnce(offline).mockResolvedValueOnce(online);
+    const startHost = vi
+      .fn()
+      .mockResolvedValueOnce(offline)
+      .mockResolvedValueOnce(online)
+      .mockResolvedValueOnce(online);
     const onError = vi.fn();
     const retry = new LocalTailnetHostStartRetry({ startHost, onError });
 
-    retry.start();
-    await vi.waitFor(() => expect(startHost).toHaveBeenCalledTimes(1));
+    const initial = retry.start();
+    await expect(initial).resolves.toMatchObject(offline);
+    expect(startHost).toHaveBeenCalledTimes(1);
     expect(onError).toHaveBeenCalledOnce();
     await vi.advanceTimersByTimeAsync(999);
     expect(startHost).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(1);
-    await vi.waitFor(() => expect(startHost).toHaveBeenCalledTimes(2));
-    await vi.advanceTimersByTimeAsync(60_000);
     expect(startHost).toHaveBeenCalledTimes(2);
+    // The explicit call can recover immediately while the retry loop is already running.
+    await expect(retry.start()).resolves.toMatchObject(online);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(startHost).toHaveBeenCalledTimes(3);
     await retry.stop();
   });
 
@@ -31,7 +38,7 @@ describe("LocalTailnetHostStartRetry", () => {
     const startHost = vi.fn().mockResolvedValue(offline);
     const retry = new LocalTailnetHostStartRetry({ startHost, onError: vi.fn() });
 
-    retry.start();
+    await expect(retry.start()).resolves.toMatchObject(offline);
     await vi.waitFor(() => expect(startHost).toHaveBeenCalledTimes(1));
     await retry.stop();
     await vi.advanceTimersByTimeAsync(60_000);

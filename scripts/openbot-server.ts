@@ -6,14 +6,20 @@ import { emitKeypressEvents } from "node:readline";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import type { AccountServerRegistration } from "@openbot/contracts/account-server-directory";
 import { resolveLocale, translateFor } from "@openbot/i18n";
 import { Effect } from "effect";
 import { defaultLocalProfileName, LocalProfileStore } from "../src/main/local-profile-store";
-import { SelfHostedAccountServerDirectory } from "../src/main/self-hosted-account-server-directory";
+import { LocalServerPreferenceStore } from "../src/main/local-server-preference-store";
+import {
+  type AccountServerDirectoryOverviewEntry,
+  SelfHostedAccountServerDirectory,
+} from "../src/main/self-hosted-account-server-directory";
 import { SELF_HOSTED_IDENTITY_API_PORT, SelfHostedIdentityApiServer } from "../src/main/self-hosted-identity-api";
 import type { LocalProfileBootstrap } from "../src/main/self-hosted-identity-authority";
 import { SelfHostedIdentityAuthority } from "../src/main/self-hosted-identity-authority";
-import { tailscaleAddresses } from "../src/main/tailscale-network";
+import { LOCAL_TAILNET_API_PORT, tailnetUrl, tailscaleAddresses } from "../src/main/tailscale-network";
+import { TeamStore } from "../src/main/team-store";
 import { installedOpenBotExecutable, installUserService, removeUserService } from "./openbot-server/autostart";
 import { assertTcpPortAvailable } from "./openbot-server/identity-api-port-guard";
 import { openBotUserDataDirectory, runtimeDirectory } from "./openbot-server/paths";
@@ -35,6 +41,9 @@ const runtimeRoot = runtimeDirectory();
 const statusPath = statusFilePath(runtimeRoot);
 const identityPath = resolve(userDataDirectory, "self-hosted-identity.json");
 const profilePath = resolve(userDataDirectory, "local-profile.json");
+const teamPath = resolve(userDataDirectory, "openbot-team-server-v2.json");
+const legacyTeamPath = resolve(userDataDirectory, "openbot-team-server-v1.json");
+const localServerPreferencePath = resolve(userDataDirectory, "local-server-preference-v1.json");
 const statusIntervalMs = 3_000;
 
 function bootstrapProfile(profile: LocalProfileStore): LocalProfileBootstrap {
@@ -78,7 +87,20 @@ function displayState(status: OpenBotServerStatus, now: number): string {
   return stateLabel(status.state);
 }
 
-function drawStatus(status: OpenBotServerStatus | null, now = Date.now()): void {
+function accountNumbers(servers: readonly AccountServerDirectoryOverviewEntry[]): Map<string, number> {
+  const numbers = new Map<string, number>();
+  for (const server of servers) {
+    if (!numbers.has(server.accountId)) numbers.set(server.accountId, numbers.size + 1);
+  }
+  return numbers;
+}
+
+function drawStatus(
+  status: OpenBotServerStatus | null,
+  directory: readonly AccountServerDirectoryOverviewEntry[] = [],
+  selectedServer = 0,
+  now = Date.now(),
+): void {
   const width = Math.max(52, Math.min(100, process.stdout.columns ?? 80));
   const line = "─".repeat(width);
   const title = t("server.localAdmin.title");
@@ -105,6 +127,19 @@ function drawStatus(status: OpenBotServerStatus | null, now = Date.now()): void 
         return `  ${t("server.localAdmin.deviceRow", { name, platform, date })}`;
       })
     : [`  ${t("server.localAdmin.deviceNone")}`];
+  const accountNumberById = accountNumbers(directory);
+  const serverLines = directory.length
+    ? directory.map((server, index) => {
+        const marker = server.visible ? "●" : "○";
+        const selected = index === selectedServer ? ">" : " ";
+        const account = t("server.localAdmin.accountLabel", {
+          number: accountNumberById.get(server.accountId) ?? 0,
+        });
+        const name = terminalSafe(server.name).slice(0, 24);
+        const hostId = terminalSafe(server.hostId).slice(0, 20);
+        return `  ${selected} ${marker} ${name} · ${account} · ${hostId}`;
+      })
+    : [`  ${t("server.localAdmin.serverNone")}`];
   const rows = [
     `  ${t("server.localAdmin.summary")}`,
     "",
@@ -114,11 +149,15 @@ function drawStatus(status: OpenBotServerStatus | null, now = Date.now()): void 
     `  ${t("server.localAdmin.devices")} (${current.devices.length})`,
     ...deviceLines,
     "",
+    `  ${t("server.localAdmin.accountServers")} (${directory.length})`,
+    ...serverLines,
+    "",
     `  ${t("server.localAdmin.host")}`,
     `  ${t("server.localAdmin.cpu")}: ${cpu}     ${t("server.localAdmin.memory")}: ${memory}`,
     `  ${t("server.localAdmin.gpu")}: ${host?.gpu ? terminalSafe(host.gpu) : t("server.localAdmin.gpuUnavailable")}`,
     "",
-    `  ${t("server.localAdmin.controls")}`,
+    `  ${t("server.localAdmin.controls")} · j/k ${t("server.localAdmin.selectServer")} · v ${t("server.localAdmin.toggleServer")}`,
+    `  ${t("server.localAdmin.visibilityScope")}`,
   ];
   process.stdout.write(`\u001b[2J\u001b[H\u001b[1;36m┌${line}┐\u001b[0m\n`);
   process.stdout.write(
@@ -142,22 +181,41 @@ async function runServiceAction(action: "start" | "stop" | "restart"): Promise<v
 }
 
 async function runTui(): Promise<void> {
+  const directory = new SelfHostedAccountServerDirectory(
+    resolve(userDataDirectory, "self-hosted-account-server-directory-v1.json"),
+  );
+  await directory.initialize();
   if (!process.stdin.isTTY || !process.stdout.isTTY || !process.stdin.setRawMode) {
     const status = await readServerStatus(statusPath);
-    if (!status) {
+    const servers = await directory.overview();
+    const accountNumberById = accountNumbers(servers);
+    if (!status && servers.length === 0) {
       process.stdout.write(`${t("server.localAdmin.noStatus")}\n`);
       return;
     }
     process.stdout.write(
-      `${t("server.localAdmin.title")} · ${stateLabel(status.state)} · ${t("server.localAdmin.endpoint")}: ${status.apiUrl ?? "—"}\n`,
+      `${t("server.localAdmin.title")} · ${status ? stateLabel(status.state) : t("server.localAdmin.state.stopped")} · ${t("server.localAdmin.endpoint")}: ${status?.apiUrl ?? "—"}\n${servers
+        .map((server) => {
+          const account = t("server.localAdmin.accountLabel", {
+            number: accountNumberById.get(server.accountId) ?? 0,
+          });
+          return `${server.visible ? "●" : "○"} ${terminalSafe(server.name)} · ${account} · ${terminalSafe(server.hostId)}`;
+        })
+        .join("\n")}\n`,
     );
     return;
   }
   emitKeypressEvents(process.stdin);
   process.stdin.setRawMode(true);
   process.stdin.resume();
-  drawStatus(await readServerStatus(statusPath));
-  const poll = setInterval(() => void readServerStatus(statusPath).then((status) => drawStatus(status)), 1_000);
+  let selectedServer = 0;
+  const draw = async () => {
+    const [status, servers] = await Promise.all([readServerStatus(statusPath), directory.overview()]);
+    selectedServer = servers.length === 0 ? 0 : Math.min(selectedServer, servers.length - 1);
+    drawStatus(status, servers, selectedServer);
+  };
+  await draw();
+  const poll = setInterval(() => void draw(), 1_000);
   await new Promise<void>((resolvePromise) => {
     const onKey = (value: string) => {
       if (value === "q" || value === "\u0003") {
@@ -172,6 +230,23 @@ async function runTui(): Promise<void> {
       if (value === "s") void runServiceAction("start");
       if (value === "x") void runServiceAction("stop");
       if (value === "r") void runServiceAction("restart");
+      if (value === "j")
+        void directory.overview().then((servers) => {
+          if (servers.length) selectedServer = (selectedServer + 1) % servers.length;
+          return draw();
+        });
+      if (value === "k")
+        void directory.overview().then((servers) => {
+          if (servers.length) selectedServer = (selectedServer + servers.length - 1) % servers.length;
+          return draw();
+        });
+      if (value === "v")
+        void directory.overview().then(async (servers) => {
+          const selected = servers[selectedServer];
+          if (!selected) return;
+          await directory.setServerVisibleFromAdmin(selected.hostId, !selected.visible);
+          await draw();
+        });
     };
     const listener = (_character: string, key: { sequence?: string } | undefined) => onKey(key?.sequence ?? "");
     process.stdin.on("keypress", listener);
@@ -283,17 +358,54 @@ async function assertIdentityApiPortAvailable(): Promise<void> {
 }
 
 async function serve(): Promise<void> {
-  await assertIdentityApiPortAvailable();
   const profile = new LocalProfileStore(profilePath);
   await Effect.runPromise(profile.load());
   const authority = new SelfHostedIdentityAuthority({ path: identityPath });
   await Effect.runPromise(authority.initialize());
   await Effect.runPromise(authority.ensureLocalAccount(bootstrapProfile(profile)));
+  const serverDirectory = new SelfHostedAccountServerDirectory(
+    resolve(userDataDirectory, "self-hosted-account-server-directory-v1.json"),
+  );
   const api = new SelfHostedIdentityApiServer({
     authority,
-    serverDirectory: new SelfHostedAccountServerDirectory(
-      resolve(userDataDirectory, "self-hosted-account-server-directory-v1.json"),
-    ),
+    serverDirectory,
+    isOwnerOfHost: async (accountId, hostId) => {
+      const teamStore = new TeamStore(teamPath, legacyTeamPath);
+      await Effect.runPromise(teamStore.initialize());
+      return (
+        teamStore.configured &&
+        teamStore.getOwnerAccountId() === accountId &&
+        teamStore.getIdentity()?.serverId === hostId
+      );
+    },
+    getLocalOwnerServerRegistration: async (accountId): Promise<AccountServerRegistration | null> => {
+      try {
+        // Read the same durable Team and preference files as the GUI on each account-directory
+        // request. That keeps host renames and enable/disable changes visible without a second
+        // in-memory copy becoming stale in the long-running TUI service.
+        const teamStore = new TeamStore(teamPath, legacyTeamPath);
+        await Effect.runPromise(teamStore.initialize());
+        if (!teamStore.configured || teamStore.getOwnerAccountId() !== accountId) return null;
+        const preference = new LocalServerPreferenceStore(localServerPreferencePath);
+        await preference.initialize(true);
+        const [binding] = tailscaleAddresses();
+        const identity = teamStore.getIdentity();
+        const membershipId = teamStore.getOwnerMemberId();
+        if (!preference.enabled || !binding || !identity || !membershipId) return null;
+        return {
+          hostId: identity.serverId,
+          name: identity.serverName,
+          apiUrl: tailnetUrl({ ...binding, port: LOCAL_TAILNET_API_PORT }),
+          fingerprint: identity.fingerprint,
+          publicKey: identity.publicKey,
+          logoKey: identity.logoVersion,
+          membershipId,
+          role: "member",
+        };
+      } catch {
+        return null;
+      }
+    },
   });
   const startedAt = Date.now();
   const sampleHostMetrics = createHostMetricsSampler();
@@ -376,7 +488,6 @@ async function main(): Promise<void> {
   }
   if (command === "install-autostart") {
     if (process.platform !== "linux") throw new Error(t("server.localAdmin.serviceUnavailable"));
-    await assertIdentityApiPortAvailable();
     const appExecutable = await installedOpenBotExecutable(homedir(), process.env);
     const serverExecutable = await installCompiledServer(homedir());
     const result = await installUserService({

@@ -14,6 +14,7 @@
 // exception -- a mutation whose write is somebody else's job is the hazard this module exists to end.
 
 import { readFile } from "node:fs/promises";
+import type { AccountServerDirectoryEntry } from "@openbot/contracts/account-server-directory";
 import type { ServerNotificationLevel, TeamRole } from "@openbot/contracts/ipc";
 import { LOCAL_SERVER_ID } from "@openbot/contracts/ipc";
 import { isString } from "@openbot/contracts/runtime-values";
@@ -180,6 +181,7 @@ export class RemoteServerStore implements RemoteServerDirectory {
   }
 
   token(server: StoredRemoteServerView): string {
+    if (server.pendingAccountAuthentication) return "";
     return this.#cipher.decrypt(Buffer.from(server.encryptedToken, "base64"));
   }
 
@@ -235,6 +237,34 @@ export class RemoteServerStore implements RemoteServerDirectory {
     this.#forgetUnreadable(server.id);
     this.#state.servers = [...this.#state.servers.filter((candidate) => candidate.id !== server.id), server];
     this.setActiveServerId(server.id);
+    yield* this.persist();
+  });
+
+  /** Keep a directory entry visible while this device waits for the host to become reachable. */
+  readonly stageAccountServer = Effect.fn("RemoteStore.stageAccountServer")(function* (
+    this: RemoteServerStore,
+    entry: AccountServerDirectoryEntry,
+    accountId: string,
+    username: string,
+  ): Effect.fn.Return<void, RemoteWorkflowError> {
+    const existing = this.find(entry.hostId);
+    if (existing && (!existing.pendingAccountAuthentication || existing.accountId !== accountId)) return;
+    const staged: StoredRemoteServer = {
+      id: entry.hostId,
+      name: entry.name,
+      apiUrl: entry.apiUrl,
+      fingerprint: entry.fingerprint,
+      publicKey: entry.publicKey,
+      username,
+      encryptedToken: "",
+      remoteDesktopAvailable: false,
+      logoVersion: entry.logoKey,
+      role: entry.role,
+      membershipId: entry.membershipId,
+      accountId,
+      pendingAccountAuthentication: true,
+    };
+    this.#state.servers = [...this.#state.servers.filter((server) => server.id !== entry.hostId), staged];
     yield* this.persist();
   });
 

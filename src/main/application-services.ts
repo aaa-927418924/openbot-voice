@@ -1,3 +1,4 @@
+import type { AccountServerRegistration } from "@openbot/contracts/account-server-directory";
 import { isManagedRuntimeProvider } from "@openbot/contracts/agent-providers";
 import { Effect, Fiber } from "effect";
 import { toAgentRemovalFailed } from "../backend/agent/agent-removal";
@@ -46,6 +47,7 @@ import type {
   CapabilityState,
   CentralAuthState,
   ComputerUseState,
+  HostStatus,
   LocalHostSettings,
   ProviderRuntimeSnapshot,
   VoiceModelStatus,
@@ -127,6 +129,7 @@ import { canRegisterLocalHostForAccount } from "./local-host-account-registratio
 import { ensureLocalHostConfigured } from "./local-host-setup";
 import { localRoutineFeedDocument } from "./local-routine-calendar";
 import { LocalServerPreferenceStore } from "./local-server-preference-store";
+import { mirrorLocalServerVisibility } from "./local-server-visibility-mirror";
 import { LogoColorService } from "./logo-color-service";
 import type { MacHapticFeedback } from "./mac-haptic-feedback";
 import {
@@ -366,7 +369,7 @@ export interface ApplicationServices {
   ensureLocalHost: () => Promise<void>;
   getLocalHostSettings: () => LocalHostSettings;
   setLocalHostSettings: (enabled: boolean) => Promise<LocalHostSettings>;
-  setLocalHostRetry: (retry: { start: () => void; stop: () => Promise<void> } | null) => void;
+  setLocalHostRetry: (retry: { start: () => Promise<HostStatus | null>; stop: () => Promise<void> } | null) => void;
   startLocalHostAfterSignIn: () => void;
   localOnlyNetworking: boolean;
   skills: SkillMarketplaceService;
@@ -618,7 +621,7 @@ export async function createApplicationServices({
   // New installs do not create a server by default. Existing completed installs keep their
   // historical default when the preference file is missing; an explicit saved choice wins.
   await localHostPreference.initialize(setupState.completed);
-  let localHostRetry: { start: () => void; stop: () => Promise<void> } | null = null;
+  let localHostRetry: { start: () => Promise<HostStatus | null>; stop: () => Promise<void> } | null = null;
   const selfHostedDesktopAccount = new SelfHostedDesktopAccountManager({
     path: join(app.getPath("userData"), "self-hosted-desktop-account-v1.json"),
     cipher: safeStorageCipher("error.app.secretStorageUnavailable"),
@@ -1408,6 +1411,39 @@ export async function createApplicationServices({
         .catch((error) => logger.warn("The Tailscale identity API is not listening yet:", toLogValue(error)));
     }
   };
+  const getLocalOwnerServerRegistration = (
+    accountId: string,
+    includeDisabled = false,
+  ): AccountServerRegistration | null => {
+    if ((!includeDisabled && !localHostPreference.enabled) || accountId !== teamStore.getOwnerAccountId()) {
+      return null;
+    }
+    const identity = teamStore.getIdentity();
+    const status = getHostStatusForAccountDirectory?.();
+    const membershipId = teamStore.getOwnerMemberId();
+    if (
+      !identity ||
+      !membershipId ||
+      !status ||
+      status.serverId !== identity.serverId ||
+      status.phase !== "online" ||
+      !status.apiOnline ||
+      !status.apiUrl ||
+      !isTailscaleApiUrl(status.apiUrl)
+    ) {
+      return null;
+    }
+    return {
+      hostId: identity.serverId,
+      name: identity.serverName,
+      apiUrl: status.apiUrl,
+      fingerprint: identity.fingerprint,
+      publicKey: identity.publicKey,
+      logoKey: identity.logoVersion,
+      membershipId,
+      role: "member",
+    };
+  };
   let selfHostedIdentityReady = selfHostedIdentityAuthority !== null;
   if (
     localOnlyNetworking &&
@@ -1440,33 +1476,7 @@ export async function createApplicationServices({
         serverDirectory,
         isOwnerOfHost: (accountId, hostId) =>
           hostId === teamStore.getIdentity()?.serverId && accountId === teamStore.getOwnerAccountId(),
-        getLocalOwnerServerRegistration: (accountId) => {
-          if (!localHostPreference.enabled || accountId !== teamStore.getOwnerAccountId()) return null;
-          const identity = teamStore.getIdentity();
-          const status = getHostStatusForAccountDirectory?.();
-          const membershipId = teamStore.getOwnerMemberId();
-          if (
-            !identity ||
-            !membershipId ||
-            !status ||
-            status.serverId !== identity.serverId ||
-            status.phase !== "online" ||
-            !status.apiOnline ||
-            !status.apiUrl
-          ) {
-            return null;
-          }
-          return {
-            hostId: identity.serverId,
-            name: identity.serverName,
-            apiUrl: status.apiUrl,
-            fingerprint: identity.fingerprint,
-            publicKey: identity.publicKey,
-            logoKey: identity.logoVersion,
-            membershipId,
-            role: "member" as const,
-          };
-        },
+        getLocalOwnerServerRegistration: (accountId) => getLocalOwnerServerRegistration(accountId),
         onProfileChanged: async (user) => {
           try {
             const profile = selfHostedTeamProfile(user, selfHostedIdentityApi?.apiUrl ?? null);
@@ -2254,55 +2264,84 @@ export async function createApplicationServices({
         if (!enabled) await localHostPreference.setEnabled(false);
         return { supported: true, enabled };
       }
-      const updateAccountServerVisibility = async (hostId: string | undefined, visible: boolean) => {
+      const updateAccountServerVisibility = async (
+        hostId: string | undefined,
+        visible: boolean,
+        registration?: AccountServerRegistration | null,
+      ) => {
         const account = selfHostedDesktopAccount.signedInAccount;
-        if (!account || !hostId) return;
+        if (!account || !hostId) throw new Error("Sign in to manage the local server.");
         const proof = teamStore.getAccountServerVisibilityProof({
           accountId: account.id,
           hostId,
           visible,
           nonce: randomBytes(24).toString("base64url"),
+          ...(registration ? { registration } : {}),
         });
         if (!proof) throw new Error(sourceText("error.team.visibilityOwnerRequired"));
-        await Effect.runPromise(selfHostedDesktopAccount.setAccountServerVisibility(proof));
+        await Effect.runPromise(selfHostedDesktopAccount.setAccountServerVisibility(proof, registration ?? undefined));
       };
       if (!enabled) {
         const hostId = teamStore.getIdentity()?.serverId;
+        const account = selfHostedDesktopAccount.signedInAccount;
         try {
           await localHostRetry?.stop();
+          const registration = account ? getLocalOwnerServerRegistration(account.id, true) : null;
           if (hostId && selfHostedIdentityApi && !selfHostedAccountServerDirectory) {
             throw new Error(sourceText("error.team.serverDirectoryUnavailable"));
           }
-          if (hostId) await selfHostedAccountServerDirectory?.setServerVisible(hostId, false);
-          await updateAccountServerVisibility(hostId, false);
+          await updateAccountServerVisibility(hostId, false, registration);
+          await mirrorLocalServerVisibility(selfHostedAccountServerDirectory, hostId, false, (error) =>
+            logger.warn("Could not update the local server-directory mirror:", toLogValue(error)),
+          );
           await runCauseEffect(host.stop(false));
           await localHostPreference.setEnabled(false);
           await runCauseEffect(remoteServers.localHostVisibilityChanged());
         } catch (error) {
-          if (hostId) await selfHostedAccountServerDirectory?.setServerVisible(hostId, true).catch(() => undefined);
-          await updateAccountServerVisibility(hostId, true).catch(() => undefined);
+          logger.error("Could not disable the local server:", toLogValue(error));
+          await mirrorLocalServerVisibility(selfHostedAccountServerDirectory, hostId, true, (mirrorError) =>
+            logger.warn("Could not restore the local server-directory mirror:", toLogValue(mirrorError)),
+          );
+          const registration = account ? getLocalOwnerServerRegistration(account.id, true) : null;
+          await updateAccountServerVisibility(hostId, true, registration).catch(() => undefined);
           await localHostPreference.setEnabled(true).catch(() => undefined);
-          localHostRetry?.start();
+          void localHostRetry?.start();
           throw error;
         }
         return { supported: true, enabled: false };
       }
-      await ensureLocalHost();
-      const hostId = teamStore.getIdentity()?.serverId;
+      let hostId = teamStore.getIdentity()?.serverId;
+      const previousPreference = localHostPreference.enabled;
       try {
+        await ensureLocalHost();
+        hostId = teamStore.getIdentity()?.serverId;
         if (hostId && selfHostedIdentityApi && !selfHostedAccountServerDirectory) {
           throw new Error(sourceText("error.team.serverDirectoryUnavailable"));
         }
-        await updateAccountServerVisibility(hostId, true);
-        if (hostId) await selfHostedAccountServerDirectory?.setServerVisible(hostId, true);
+        const status = localHostRetry ? await localHostRetry.start() : await runCauseEffect(host.start());
+        if (status?.phase !== "online" || !status.apiOnline) {
+          throw new Error(status?.message || sourceText("error.team.serverDirectoryUnavailable"));
+        }
+        const account = selfHostedDesktopAccount.signedInAccount;
+        const registration = account ? getLocalOwnerServerRegistration(account.id, true) : null;
+        if (!registration) throw new Error(sourceText("error.team.visibilityOwnerRequired"));
+        await updateAccountServerVisibility(hostId, true, registration);
+        await mirrorLocalServerVisibility(selfHostedAccountServerDirectory, hostId, true, (error) =>
+          logger.warn("Could not update the local server-directory mirror:", toLogValue(error)),
+        );
         await localHostPreference.setEnabled(true);
         await runCauseEffect(remoteServers.localHostVisibilityChanged());
-        if (localHostRetry) localHostRetry.start();
-        else await runCauseEffect(host.start());
       } catch (error) {
-        await localHostPreference.setEnabled(false).catch(() => undefined);
-        if (hostId) await selfHostedAccountServerDirectory?.setServerVisible(hostId, false).catch(() => undefined);
-        await updateAccountServerVisibility(hostId, false).catch(() => undefined);
+        logger.error("Could not enable the local server:", toLogValue(error));
+        if (!previousPreference) await localHostRetry?.stop();
+        if (!previousPreference) await localHostPreference.setEnabled(false).catch(() => undefined);
+        await mirrorLocalServerVisibility(selfHostedAccountServerDirectory, hostId, false, (mirrorError) =>
+          logger.warn("Could not restore the local server-directory mirror:", toLogValue(mirrorError)),
+        );
+        const account = selfHostedDesktopAccount.signedInAccount;
+        const registration = account ? getLocalOwnerServerRegistration(account.id, true) : null;
+        await updateAccountServerVisibility(hostId, false, registration).catch(() => undefined);
+        if (!previousPreference) await runCauseEffect(host.stop(false)).catch(() => undefined);
         throw error;
       }
       return { supported: true, enabled: true };

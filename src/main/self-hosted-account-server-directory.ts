@@ -49,6 +49,13 @@ interface RemovedMembership {
   readonly hostId: string;
 }
 
+export interface AccountServerDirectoryOverviewEntry {
+  readonly accountId: string;
+  readonly hostId: string;
+  readonly name: string;
+  readonly visible: boolean;
+}
+
 interface DirectoryFile {
   readonly version: 4;
   readonly servers: readonly StoredServer[];
@@ -228,6 +235,35 @@ export class SelfHostedAccountServerDirectory {
       this.#state = await this.#readDirectory();
       return this.#listFromState(accountId);
     });
+  }
+
+  /** A local TUI view. It contains account IDs and server metadata only, never credentials or chats. */
+  async overview(): Promise<AccountServerDirectoryOverviewEntry[]> {
+    return this.#exclusive(async () => {
+      await this.#requireReady();
+      this.#state = await this.#readDirectory();
+      const hiddenHostIds = new Set(this.#state.hiddenHostIds);
+      return this.#state.memberships
+        .flatMap((membership) => {
+          const server = this.#state.servers.find((candidate) => candidate.hostId === membership.hostId);
+          return server
+            ? [
+                {
+                  accountId: membership.accountId,
+                  hostId: server.hostId,
+                  name: server.name,
+                  visible: !hiddenHostIds.has(server.hostId),
+                },
+              ]
+            : [];
+        })
+        .sort((left, right) => left.accountId.localeCompare(right.accountId) || left.name.localeCompare(right.name));
+    });
+  }
+
+  /** Trusted local-admin operation: hide/show one host for every account without deleting data. */
+  async setServerVisibleFromAdmin(hostId: string, visible: boolean): Promise<void> {
+    await this.setServerVisible(hostId, visible);
   }
 
   #listFromState(accountId: string): AccountServerDirectoryEntry[] {
@@ -422,7 +458,11 @@ export class SelfHostedAccountServerDirectory {
     });
   }
 
-  async setServerVisibleWithOwnerProof(accountId: string, proof: AccountServerVisibilityProof): Promise<void> {
+  async setServerVisibleWithOwnerProof(
+    accountId: string,
+    proof: AccountServerVisibilityProof,
+    registrationInput?: unknown,
+  ): Promise<void> {
     if (
       !validId(accountId) ||
       !validId(proof.hostId) ||
@@ -432,18 +472,54 @@ export class SelfHostedAccountServerDirectory {
     ) {
       throw new AccountServerDirectoryError(400, "invalid_request");
     }
+    const registration = registrationInput === undefined ? null : decodeRegistration(registrationInput);
+    if (registration && registration.hostId !== proof.hostId) {
+      throw new AccountServerDirectoryError(400, "invalid_request");
+    }
     await this.#mutate(async () => {
-      const server = this.#state.servers.find((candidate) => candidate.hostId === proof.hostId);
-      if (!server) return;
+      const existing = this.#state.servers.find((candidate) => candidate.hostId === proof.hostId);
+      if (
+        existing &&
+        registration &&
+        (existing.fingerprint !== registration.fingerprint || existing.publicKey !== registration.publicKey)
+      ) {
+        throw new AccountServerDirectoryError(409, "host_identity_conflict");
+      }
+      if (!existing && !registration) throw new AccountServerDirectoryError(404, "not_found");
+      let server: StoredServer;
+      if (existing) {
+        server = registration
+          ? {
+              ...existing,
+              name: registration.name,
+              apiUrl: registration.apiUrl,
+              logoKey: registration.logoKey,
+            }
+          : existing;
+      } else {
+        if (!registration) throw new AccountServerDirectoryError(404, "not_found");
+        server = {
+          hostId: registration.hostId,
+          name: registration.name,
+          apiUrl: registration.apiUrl,
+          fingerprint: registration.fingerprint,
+          publicKey: registration.publicKey,
+          logoKey: registration.logoKey,
+        };
+      }
       const membership = this.#state.memberships.find(
         (candidate) => candidate.accountId === accountId && candidate.hostId === proof.hostId,
       );
-      if (!membership) throw new AccountServerDirectoryError(404, "not_found");
+      if (!membership && !registration) throw new AccountServerDirectoryError(404, "not_found");
+      const removedMembership = this.#state.removedMemberships.some(
+        (removed) => removed.accountId === accountId && removed.hostId === proof.hostId,
+      );
+      if (!proof.visible && removedMembership) throw new AccountServerDirectoryError(404, "not_found");
       let validProof = false;
       try {
         validProof = verify(
           null,
-          Buffer.from(accountServerVisibilityPayload(accountId, proof), "utf8"),
+          Buffer.from(accountServerVisibilityPayload(accountId, proof, registration ?? undefined), "utf8"),
           server.publicKey,
           Buffer.from(proof.signature, "base64url"),
         );
@@ -456,8 +532,46 @@ export class SelfHostedAccountServerDirectory {
       const wasHidden = hiddenHostIds.has(proof.hostId);
       if (proof.visible) hiddenHostIds.delete(proof.hostId);
       else hiddenHostIds.add(proof.hostId);
-      if (wasHidden === !proof.visible) return;
-      const next: DirectoryFile = { ...this.#state, version: 4, hiddenHostIds: [...hiddenHostIds] };
+      let nextMembership: StoredMembership;
+      if (membership) nextMembership = membership;
+      else {
+        if (!registration) throw new AccountServerDirectoryError(404, "not_found");
+        nextMembership = {
+          accountId,
+          hostId: proof.hostId,
+          membershipId: registration.membershipId,
+          // A directory registration is a discovery hint, never a permission grant.
+          role: "member",
+        };
+      }
+      const next: DirectoryFile = {
+        version: 4,
+        servers: existing
+          ? this.#state.servers.map((candidate) => (candidate.hostId === server.hostId ? server : candidate))
+          : [...this.#state.servers, server],
+        memberships: membership ? this.#state.memberships : [...this.#state.memberships, nextMembership],
+        hiddenHostIds: [...hiddenHostIds],
+        // A fresh, host-signed visibility action is the owner's explicit decision to restore this
+        // host to their account. Old cached registrations still cannot clear these tombstones.
+        removedMemberships: proof.visible
+          ? this.#state.removedMemberships.filter(
+              (removed) => !(removed.accountId === accountId && removed.hostId === proof.hostId),
+            )
+          : this.#state.removedMemberships,
+      };
+      if (
+        existing &&
+        membership &&
+        wasHidden === !proof.visible &&
+        existing.name === server.name &&
+        existing.apiUrl === server.apiUrl &&
+        existing.logoKey === server.logoKey &&
+        (!proof.visible ||
+          !this.#state.removedMemberships.some(
+            (removed) => removed.accountId === accountId && removed.hostId === proof.hostId,
+          ))
+      )
+        return;
       await this.#persist(next);
       this.#state = next;
     });

@@ -5,13 +5,20 @@ import { mkdtemp, rm } from "node:fs/promises";
 import type { Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { accountServerVisibilityPayload } from "@openbot/contracts/account-server-directory";
+import {
+  type AccountServerRegistration,
+  accountServerVisibilityPayload,
+} from "@openbot/contracts/account-server-directory";
 import { isDynamicRecord } from "@openbot/contracts/runtime-values";
 import { remoteHostFingerprint } from "@openbot/team-client/remote-directory";
 import { Effect } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 import { SelfHostedAccountServerDirectory } from "./self-hosted-account-server-directory";
-import { SelfHostedIdentityApiServer, selfHostedTeamProfile } from "./self-hosted-identity-api";
+import {
+  isSelfHostedIdentityProbeResponse,
+  SelfHostedIdentityApiServer,
+  selfHostedTeamProfile,
+} from "./self-hosted-identity-api";
 import { SelfHostedIdentityAuthority } from "./self-hosted-identity-authority";
 
 const roots: string[] = [];
@@ -26,6 +33,175 @@ afterEach(async () => {
 });
 
 describe("SelfHostedIdentityApiServer", () => {
+  it("only treats the same OpenBot identity service as a healthy shared listener", () => {
+    const expectedFingerprint = "openbot-identity-fingerprint";
+    expect(isSelfHostedIdentityProbeResponse({ ok: true }, expectedFingerprint)).toBe(false);
+    expect(
+      isSelfHostedIdentityProbeResponse(
+        {
+          ok: true,
+          service: "openbot-self-hosted-identity",
+          apiVersion: 1,
+          identityFingerprint: "different-identity",
+        },
+        expectedFingerprint,
+      ),
+    ).toBe(false);
+    expect(
+      isSelfHostedIdentityProbeResponse(
+        {
+          ok: true,
+          service: "openbot-self-hosted-identity",
+          apiVersion: 1,
+          identityFingerprint: expectedFingerprint,
+        },
+        expectedFingerprint,
+      ),
+    ).toBe(true);
+    expect(isSelfHostedIdentityProbeResponse({ ok: true }, null)).toBe(false);
+  });
+
+  it("reuses the healthy shared identity API when the GUI or CLI already owns the port", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-self-hosted-identity-reuse-"));
+    roots.push(root);
+    const authority = new SelfHostedIdentityAuthority({ path: join(root, "identity.json") });
+    await Effect.runPromise(authority.initialize());
+    await Effect.runPromise(
+      authority.registerAccount({ email: "owner@openbot.test", password: "owner-password-123", name: "Owner" }),
+    );
+    const directory = new SelfHostedAccountServerDirectory(join(root, "server-directory.json"));
+    await directory.initialize();
+    const api = new SelfHostedIdentityApiServer({
+      authority,
+      serverDirectory: directory,
+      port: 43124,
+      listen: async () => {
+        throw Object.assign(new Error("address already in use"), { code: "EADDRINUSE" });
+      },
+      discoverExistingApiUrl: async (port, identityFingerprint) =>
+        port === 43124 && identityFingerprint !== null ? "http://100.100.10.2:43124" : null,
+    });
+
+    await expect(api.start()).resolves.toBe("http://100.100.10.2:43124");
+    expect(api.apiUrl).toBe("http://100.100.10.2:43124");
+    await api.stop();
+  });
+
+  it("accepts an asynchronous local-host ownership check", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-self-hosted-async-owner-"));
+    roots.push(root);
+    const authority = new SelfHostedIdentityAuthority({ path: join(root, "identity.json") });
+    await Effect.runPromise(authority.initialize());
+    const owner = await Effect.runPromise(
+      authority.registerAccount({ email: "owner@openbot.test", password: "owner-password-123", name: "Owner" }),
+    );
+    const directory = new SelfHostedAccountServerDirectory(join(root, "server-directory.json"));
+    await directory.initialize();
+    const { publicKey } = generateKeyPairSync("ed25519", {
+      publicKeyEncoding: { type: "spki", format: "pem" },
+      privateKeyEncoding: { type: "pkcs8", format: "pem" },
+    });
+    await directory.register(owner.account.id, {
+      hostId: "linux-team-host",
+      name: "Linux host",
+      apiUrl: "http://100.100.10.2:43123",
+      fingerprint: remoteHostFingerprint(publicKey),
+      publicKey,
+      logoKey: null,
+      membershipId: "member-owner",
+      role: "member",
+    });
+    const api = new SelfHostedIdentityApiServer({
+      authority,
+      serverDirectory: directory,
+      port: 0,
+      listen: (httpServer: Server) =>
+        new Promise((resolve, reject) => {
+          httpServer.once("error", reject);
+          httpServer.listen(0, "127.0.0.1", () => {
+            const address = httpServer.address();
+            if (!address || typeof address === "string") return reject(new Error("No listener address."));
+            resolve({ address: "127.0.0.1", family: 4, port: address.port });
+          });
+        }),
+      isOwnerOfHost: async (accountId, hostId) => {
+        await Promise.resolve();
+        return accountId === owner.account.id && hostId === "linux-team-host";
+      },
+    });
+    const apiUrl = await api.start();
+    try {
+      const response = await fetch(new URL("/v1/me/servers", apiUrl), {
+        headers: { Authorization: `Bearer ${owner.token}`, Connection: "close" },
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        servers: [{ hostId: "linux-team-host", isOwner: true, role: "owner" }],
+      });
+      const probeResponse = await fetch(new URL("/health/identity", apiUrl), { headers: { Connection: "close" } });
+      expect(await probeResponse.json()).toMatchObject({
+        ok: true,
+        service: "openbot-self-hosted-identity",
+        apiVersion: 1,
+        identityFingerprint: expect.any(String),
+      });
+    } finally {
+      await api.stop();
+    }
+  });
+
+  it("does not sync a local server when asynchronous owner verification fails", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-self-hosted-unverified-owner-"));
+    roots.push(root);
+    const authority = new SelfHostedIdentityAuthority({ path: join(root, "identity.json") });
+    await Effect.runPromise(authority.initialize());
+    const owner = await Effect.runPromise(
+      authority.registerAccount({ email: "owner@openbot.test", password: "owner-password-123", name: "Owner" }),
+    );
+    const directory = new SelfHostedAccountServerDirectory(join(root, "server-directory.json"));
+    await directory.initialize();
+    const { publicKey } = generateKeyPairSync("ed25519", {
+      publicKeyEncoding: { type: "spki", format: "pem" },
+      privateKeyEncoding: { type: "pkcs8", format: "pem" },
+    });
+    const api = new SelfHostedIdentityApiServer({
+      authority,
+      serverDirectory: directory,
+      port: 0,
+      listen: (httpServer: Server) =>
+        new Promise((resolve, reject) => {
+          httpServer.once("error", reject);
+          httpServer.listen(0, "127.0.0.1", () => {
+            const address = httpServer.address();
+            if (!address || typeof address === "string") return reject(new Error("No listener address."));
+            resolve({ address: "127.0.0.1", family: 4, port: address.port });
+          });
+        }),
+      isOwnerOfHost: async () => false,
+      getLocalOwnerServerRegistration: async () => ({
+        hostId: "linux-team-host",
+        name: "Linux host",
+        apiUrl: "http://100.100.10.2:43123",
+        fingerprint: remoteHostFingerprint(publicKey),
+        publicKey,
+        logoKey: null,
+        membershipId: "member-owner",
+        role: "member",
+      }),
+    });
+    const apiUrl = await api.start();
+    try {
+      const response = await fetch(new URL("/v1/me/servers", apiUrl), {
+        headers: { Authorization: `Bearer ${owner.token}`, Connection: "close" },
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ servers: [] });
+      expect(await directory.overview()).toEqual([]);
+    } finally {
+      await api.stop();
+    }
+  });
+
   it("hides and restores a server for every account only with a host-signed owner proof", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-self-hosted-server-visibility-"));
     roots.push(root);
@@ -78,24 +254,42 @@ describe("SelfHostedIdentityApiServer", () => {
       expect(response.status).toBe(200);
       return response.json();
     };
-    const setVisible = async (token: string, accountId: string, visible: boolean, key: string = privateKey) => {
+    const setVisible = async (
+      token: string,
+      accountId: string,
+      visible: boolean,
+      key: string = privateKey,
+      registration?: AccountServerRegistration,
+      bodyRegistration?: AccountServerRegistration,
+      targetHostId = hostId,
+    ) => {
       const nonce = randomBytes(24).toString("base64url");
-      const payload = accountServerVisibilityPayload(accountId, { hostId, visible, nonce });
+      const payload = accountServerVisibilityPayload(accountId, { hostId: targetHostId, visible, nonce }, registration);
       const signature = sign(null, Buffer.from(payload), key).toString("base64url");
-      return fetch(new URL(`/v1/me/servers/${hostId}/visibility`, apiUrl), {
+      return fetch(new URL(`/v1/me/servers/${targetHostId}/visibility`, apiUrl), {
         method: "PUT",
         headers: {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
           Connection: "close",
         },
-        body: JSON.stringify({ visible, nonce, signature }),
+        body: JSON.stringify({
+          visible,
+          nonce,
+          signature,
+          ...(bodyRegistration ? { registration: bodyRegistration } : {}),
+        }),
       });
     };
 
     try {
       expect(await readServers(owner.token)).toMatchObject({ servers: [{ hostId }] });
       expect(await readServers(member.token)).toMatchObject({ servers: [{ hostId }] });
+
+      const tamperedRegistration = { ...server, name: "Spoofed host name" };
+      const tampered = await setVisible(owner.token, owner.account.id, true, privateKey, server, tamperedRegistration);
+      expect(tampered.status).toBe(403);
+      expect(await readServers(owner.token)).toMatchObject({ servers: [{ name: "Linux host" }] });
 
       const hidden = await setVisible(owner.token, owner.account.id, false);
       expect(hidden.status, await hidden.clone().text()).toBe(204);
@@ -114,6 +308,25 @@ describe("SelfHostedIdentityApiServer", () => {
       expect(restored.status).toBe(204);
       expect(await readServers(owner.token)).toMatchObject({ servers: [{ hostId }] });
       expect(await readServers(member.token)).toMatchObject({ servers: [{ hostId }] });
+
+      const missingHostId = "windows-client-host";
+      const missingRegistration: AccountServerRegistration = { ...server, hostId: missingHostId, name: "Windows host" };
+      const registeredWhileHiding = await setVisible(
+        owner.token,
+        owner.account.id,
+        false,
+        privateKey,
+        missingRegistration,
+        missingRegistration,
+        missingHostId,
+      );
+      expect(registeredWhileHiding.status, await registeredWhileHiding.clone().text()).toBe(204);
+      expect(await directory.overview()).toContainEqual({
+        accountId: owner.account.id,
+        hostId: missingHostId,
+        name: "Windows host",
+        visible: false,
+      });
     } finally {
       await api.stop();
     }

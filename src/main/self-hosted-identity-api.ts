@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type {
   AccountServerDirectoryEntry,
@@ -13,7 +14,7 @@ import {
   type SelfHostedAccountServerDirectory,
 } from "./self-hosted-account-server-directory";
 import type { SelfHostedAccount, SelfHostedIdentityAuthority } from "./self-hosted-identity-authority";
-import { listenOnTailscale, type TailnetBinding, tailnetUrl } from "./tailscale-network";
+import { listenOnTailscale, type TailnetBinding, tailnetUrl, tailscaleAddresses } from "./tailscale-network";
 
 export const SELF_HOSTED_IDENTITY_API_PORT = 43124;
 const BODY_LIMIT_BYTES = 512 * 1024;
@@ -44,6 +45,7 @@ interface IdentityRequestBody {
   visible?: unknown;
   nonce?: unknown;
   signature?: unknown;
+  registration?: unknown;
 }
 
 export interface SelfHostedIdentityApiOptions {
@@ -51,13 +53,46 @@ export interface SelfHostedIdentityApiOptions {
   readonly serverDirectory: SelfHostedAccountServerDirectory;
   readonly port?: number;
   readonly listen?: TailnetListener;
+  /** When another trusted OpenBot process owns the shared port, discover it before failing startup. */
+  readonly discoverExistingApiUrl?: (port: number, identityFingerprint: string | null) => Promise<string | null>;
   /** Host-local ownership is checked by the trusted process, never by the account client. */
-  readonly isOwnerOfHost?: (accountId: string, hostId: string) => boolean;
+  readonly isOwnerOfHost?: (accountId: string, hostId: string) => boolean | Promise<boolean>;
   /** The running local owner host can restore its own missing server-directory entry. */
   readonly getLocalOwnerServerRegistration?: (
     accountId: string,
   ) => AccountServerRegistration | null | Promise<AccountServerRegistration | null>;
   readonly onProfileChanged?: (user: SelfHostedAccountUser) => Promise<void>;
+}
+
+function localIdentityFingerprint(accountId: string | null): string | null {
+  return accountId ? createHash("sha256").update(accountId).digest("base64url") : null;
+}
+
+export function isSelfHostedIdentityProbeResponse(value: unknown, expectedFingerprint: string | null): boolean {
+  return (
+    expectedFingerprint !== null &&
+    isDynamicRecord(value) &&
+    value.ok === true &&
+    value.service === "openbot-self-hosted-identity" &&
+    value.apiVersion === 1 &&
+    value.identityFingerprint === expectedFingerprint
+  );
+}
+
+async function discoverHealthyIdentityApi(port: number, expectedFingerprint: string | null): Promise<string | null> {
+  if (!expectedFingerprint) return null;
+  for (const binding of tailscaleAddresses()) {
+    const apiUrl = tailnetUrl({ ...binding, port });
+    try {
+      const response = await fetch(new URL("/health/identity", apiUrl), { signal: AbortSignal.timeout(1_500) });
+      if (!response.ok) continue;
+      const body = await response.json();
+      if (isSelfHostedIdentityProbeResponse(body, expectedFingerprint)) return apiUrl;
+    } catch {
+      // A port collision is only reusable when it is the expected live identity API.
+    }
+  }
+  return null;
 }
 
 function asCentralAuthUser(account: SelfHostedAccount): SelfHostedAccountUser {
@@ -148,6 +183,7 @@ async function readJson(request: IncomingMessage): Promise<IdentityRequestBody> 
     visible: value.visible,
     nonce: value.nonce,
     signature: value.signature,
+    registration: value.registration,
   };
 }
 
@@ -206,7 +242,9 @@ export class SelfHostedIdentityApiServer {
   readonly #serverDirectory: SelfHostedAccountServerDirectory;
   readonly #port: number;
   readonly #listen: TailnetListener;
-  readonly #isOwnerOfHost: (accountId: string, hostId: string) => boolean;
+  readonly #discoverExistingApiUrl: (port: number, identityFingerprint: string | null) => Promise<string | null>;
+  readonly #identityFingerprint: string | null;
+  readonly #isOwnerOfHost: (accountId: string, hostId: string) => boolean | Promise<boolean>;
   readonly #getLocalOwnerServerRegistration:
     | ((accountId: string) => AccountServerRegistration | null | Promise<AccountServerRegistration | null>)
     | null;
@@ -223,6 +261,8 @@ export class SelfHostedIdentityApiServer {
     this.#port = options.port ?? SELF_HOSTED_IDENTITY_API_PORT;
     this.#listen =
       options.listen ?? ((server, port) => listenOnTailscale(server, () => new Error("Tailscale bind failed."), port));
+    this.#discoverExistingApiUrl = options.discoverExistingApiUrl ?? discoverHealthyIdentityApi;
+    this.#identityFingerprint = localIdentityFingerprint(options.authority.getLocalAccount()?.id ?? null);
     this.#isOwnerOfHost = options.isOwnerOfHost ?? (() => false);
     this.#getLocalOwnerServerRegistration = options.getLocalOwnerServerRegistration ?? null;
     this.#onProfileChanged = options.onProfileChanged ?? (async () => undefined);
@@ -245,7 +285,16 @@ export class SelfHostedIdentityApiServer {
       })
       .catch((error) => {
         if (this.#server === server) this.#server = null;
-        server.close();
+        if (server.listening) server.close();
+        if (isDynamicRecord(error) && error.code === "EADDRINUSE") {
+          return this.#discoverExistingApiUrl(this.#port, this.#identityFingerprint).then((existingApiUrl) => {
+            if (existingApiUrl) {
+              this.#apiUrl = existingApiUrl;
+              return existingApiUrl;
+            }
+            throw error;
+          });
+        }
         throw error;
       })
       .finally(() => {
@@ -296,11 +345,16 @@ export class SelfHostedIdentityApiServer {
     }
   }
 
-  #withOwnerStatus(accountId: string, servers: AccountServerDirectoryEntry[]): AccountServerDirectoryEntry[] {
-    return servers.map((server) =>
-      this.#isOwnerOfHost(accountId, server.hostId)
-        ? { ...server, role: "owner" satisfies TeamRole, isOwner: true }
-        : server,
+  async #withOwnerStatus(
+    accountId: string,
+    servers: AccountServerDirectoryEntry[],
+  ): Promise<AccountServerDirectoryEntry[]> {
+    return Promise.all(
+      servers.map(async (server) =>
+        (await this.#isOwnerOfHost(accountId, server.hostId))
+          ? { ...server, role: "owner" satisfies TeamRole, isOwner: true }
+          : server,
+      ),
     );
   }
 
@@ -311,6 +365,15 @@ export class SelfHostedIdentityApiServer {
       this.#rateLimit(request);
 
       if (method === "GET" && url.pathname === "/health/live") return json(response, 200, { ok: true });
+
+      if (method === "GET" && url.pathname === "/health/identity") {
+        return json(response, 200, {
+          ok: true,
+          service: "openbot-self-hosted-identity",
+          apiVersion: 1,
+          identityFingerprint: this.#identityFingerprint,
+        });
+      }
 
       if (method === "POST" && url.pathname === "/v1/auth/login") {
         this.#rateLimitAuthentication(request);
@@ -455,13 +518,13 @@ export class SelfHostedIdentityApiServer {
         if (!account) throw new ApiError(401, "unauthorized");
         let servers = await this.#serverDirectory.list(account.id);
         const localOwnerRegistration = await this.#getLocalOwnerServerRegistration?.(account.id);
-        if (localOwnerRegistration && this.#isOwnerOfHost(account.id, localOwnerRegistration.hostId)) {
+        if (localOwnerRegistration && (await this.#isOwnerOfHost(account.id, localOwnerRegistration.hostId))) {
           // The host process provides this metadata only for the signed-in account that owns its
           // live Team host. Syncing refreshes a changed tailnet address without undoing hide/leave.
           await this.#serverDirectory.syncLocalOwnerRegistration(account.id, localOwnerRegistration);
           servers = await this.#serverDirectory.list(account.id);
         }
-        return json(response, 200, { servers: this.#withOwnerStatus(account.id, servers) });
+        return json(response, 200, { servers: await this.#withOwnerStatus(account.id, servers) });
       }
 
       if (url.pathname === "/v1/me/servers/legacy-import-exclusions" && method === "GET") {
@@ -503,7 +566,10 @@ export class SelfHostedIdentityApiServer {
           ...(body.rejoin === true ? { rejoin: true } : {}),
         };
         return json(response, 200, {
-          servers: this.#withOwnerStatus(account.id, await this.#serverDirectory.register(account.id, registration)),
+          servers: await this.#withOwnerStatus(
+            account.id,
+            await this.#serverDirectory.register(account.id, registration),
+          ),
         });
       }
 
@@ -529,7 +595,7 @@ export class SelfHostedIdentityApiServer {
           nonce: stringField(body, "nonce", 128),
           signature: stringField(body, "signature", 128),
         };
-        await this.#serverDirectory.setServerVisibleWithOwnerProof(account.id, proof);
+        await this.#serverDirectory.setServerVisibleWithOwnerProof(account.id, proof, body.registration);
         return noContent(response);
       }
 

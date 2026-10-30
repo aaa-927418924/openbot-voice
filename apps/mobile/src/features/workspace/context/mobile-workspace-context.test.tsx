@@ -738,6 +738,24 @@ it("does not import a legacy pairing excluded by the account server", async () =
   expect(current.servers).toEqual([]);
 });
 
+it("keeps an authoritative empty server list when optional cache-exclusion lookup fails", async () => {
+  session.localOnly = true;
+  const { localHost, directoryEntry } = addLegacyLocalTailnetServer(session.user.id);
+  accountDirectory.list.mockResolvedValueOnce([directoryEntry]).mockResolvedValue([]);
+  accountDirectory.getExclusions.mockResolvedValueOnce([]).mockRejectedValueOnce(new Error("Directory unavailable."));
+
+  await mountWorkspace();
+  await vi.waitFor(() => expect(current.serverDirectoryState).toBe("ready"));
+  expect(current.servers.map((server) => server.id)).toContain(localHost.hostId);
+
+  await act(async () => current.refreshServers());
+
+  expect(accountDirectory.list).toHaveBeenCalledTimes(2);
+  expect(accountDirectory.getExclusions).toHaveBeenCalledTimes(2);
+  expect(current.servers).toEqual([]);
+  expect(native.storage.get("openbot.mobile.local-tailnet.v1")).toContain(localHost.hostId);
+});
+
 it("keeps an unclaimed device pairing out of another account's directory", async () => {
   session.localOnly = true;
   const { localHost } = addLegacyLocalTailnetServer(null);

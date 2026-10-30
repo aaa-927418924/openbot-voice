@@ -11,7 +11,10 @@ import { constants } from "node:fs";
 import { copyFile, mkdir, readFile, rm } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { promisify } from "node:util";
-import type { AccountServerVisibilityProof } from "@openbot/contracts/account-server-directory";
+import type {
+  AccountServerRegistration,
+  AccountServerVisibilityProof,
+} from "@openbot/contracts/account-server-directory";
 import { accountServerVisibilityPayload } from "@openbot/contracts/account-server-directory";
 import { avatarFileExtension, isAvatarMimeType, isValidAvatarImage } from "@openbot/contracts/avatar-images";
 import { DEFAULT_TEAM_MEMBER_LIMIT, INPUT_LIMITS } from "@openbot/contracts/input-limits";
@@ -478,6 +481,10 @@ export class TeamStore {
     hostId: string;
     visible: boolean;
     nonce: string;
+    registration?: Pick<
+      AccountServerRegistration,
+      "hostId" | "name" | "apiUrl" | "fingerprint" | "publicKey" | "logoKey" | "membershipId"
+    >;
   }): AccountServerVisibilityProof | null {
     const state = this.#state;
     if (
@@ -486,13 +493,14 @@ export class TeamStore {
       ownerAccountId(state) !== input.accountId ||
       !/^[A-Za-z0-9_-]{1,128}$/u.test(input.accountId) ||
       !/^[A-Za-z0-9_-]{1,128}$/u.test(input.hostId) ||
-      !/^[A-Za-z0-9_-]{16,128}$/u.test(input.nonce)
+      !/^[A-Za-z0-9_-]{16,128}$/u.test(input.nonce) ||
+      (input.registration !== undefined && input.registration.hostId !== input.hostId)
     ) {
       return null;
     }
     const signature = sign(
       null,
-      Buffer.from(accountServerVisibilityPayload(input.accountId, input), "utf8"),
+      Buffer.from(accountServerVisibilityPayload(input.accountId, input, input.registration), "utf8"),
       state.privateKey,
     ).toString("base64url");
     return { hostId: input.hostId, visible: input.visible, nonce: input.nonce, signature };

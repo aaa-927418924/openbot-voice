@@ -942,6 +942,10 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
           // cache belongs to another account (or an older build did not tag it), authenticate the
           // current account with a fresh host-bound ticket before replacing it.
           if (existing.accountId === accountId && existing.membershipId === entry.membershipId) {
+            if (existing.pendingAccountAuthentication) {
+              yield* this.#adoptAccountServer(entry).pipe(Effect.catch(() => Effect.void));
+              continue;
+            }
             const patch = {
               ...(existing.name !== entry.name ? { name: entry.name } : {}),
               ...(existing.logoVersion !== entry.logoKey ? { logoVersion: entry.logoKey } : {}),
@@ -950,7 +954,11 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
             continue;
           }
         }
-        yield* this.#adoptAccountServer(entry).pipe(Effect.catch(() => Effect.void));
+        const adopted = yield* this.#adoptAccountServer(entry).pipe(Effect.result);
+        if (Result.isFailure(adopted) && accountId && !existing) {
+          yield* this.#store.stageAccountServer(entry, accountId, account.getEmail().trim().toLowerCase());
+          this.#connections.setState(entry.hostId, "offline");
+        }
       }
       const active =
         previousActive !== LOCAL_SERVER_ID && this.#servers.has(previousActive)
@@ -1654,6 +1662,11 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     decoder: ResponseDecoder<T>,
     init: RemoteRequestInit = {},
   ): Effect.Effect<T, RemoteWorkflowError> {
+    if (this.#servers.find(serverId)?.pendingAccountAuthentication) {
+      return Effect.fail(
+        new RemoteWorkflowError({ cause: new Error(sourceText("error.remote.selectedServerOffline")) }),
+      );
+    }
     return this.#owned(RemoteRequest.use((service) => service.request(serverId, path, decoder, init))).pipe(
       Effect.withSpan("RemoteManager.request"),
     );

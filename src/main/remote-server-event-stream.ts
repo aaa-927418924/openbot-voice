@@ -190,6 +190,7 @@ export class RemoteEventStream {
     this: RemoteEventStream,
   ) {
     for (const server of this.#servers.servers) {
+      if (server.pendingAccountAuthentication) continue;
       if (server.transport === "webrtc-v2") {
         const transport = this.#transport;
         if (transport)
@@ -350,6 +351,7 @@ export class RemoteEventStream {
 
   readonly ensure = Effect.fn("RemoteEventStream.ensure")(function* (this: RemoteEventStream, serverId: string) {
     const server = this.#servers.find(serverId);
+    if (server?.pendingAccountAuthentication) return;
     if (server?.transport === "webrtc-v2") {
       if (
         !this.#enabled ||

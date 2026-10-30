@@ -11,8 +11,22 @@ export interface AccountServerVisibilityProof {
 export function accountServerVisibilityPayload(
   accountId: string,
   proof: Pick<AccountServerVisibilityProof, "hostId" | "visible" | "nonce">,
+  registration?: Pick<
+    AccountServerRegistration,
+    "hostId" | "name" | "apiUrl" | "fingerprint" | "publicKey" | "logoKey" | "membershipId"
+  >,
 ): string {
-  return `OpenBot account server visibility v1\n${accountId}\n${proof.hostId}\n${proof.visible ? "visible" : "hidden"}\n${proof.nonce}`;
+  const visibility = `OpenBot account server visibility v1\n${accountId}\n${proof.hostId}\n${proof.visible ? "visible" : "hidden"}\n${proof.nonce}`;
+  if (!registration) return visibility;
+  return `${visibility}\nregistration-v1\n${JSON.stringify([
+    registration.hostId,
+    registration.name,
+    registration.apiUrl,
+    registration.fingerprint,
+    registration.publicKey,
+    registration.logoKey,
+    registration.membershipId,
+  ])}`;
 }
 
 /** Public self-hosted Team host metadata shared through the account identity service. */
