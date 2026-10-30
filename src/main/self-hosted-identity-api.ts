@@ -49,6 +49,10 @@ export interface SelfHostedIdentityApiOptions {
   readonly listen?: TailnetListener;
   /** Host-local ownership is checked by the trusted process, never by the account client. */
   readonly isOwnerOfHost?: (accountId: string, hostId: string) => boolean;
+  /** The running local owner host can restore its own missing server-directory entry. */
+  readonly getLocalOwnerServerRegistration?: (
+    accountId: string,
+  ) => AccountServerRegistration | null | Promise<AccountServerRegistration | null>;
   readonly onProfileChanged?: (user: SelfHostedAccountUser) => Promise<void>;
 }
 
@@ -196,6 +200,9 @@ export class SelfHostedIdentityApiServer {
   readonly #port: number;
   readonly #listen: TailnetListener;
   readonly #isOwnerOfHost: (accountId: string, hostId: string) => boolean;
+  readonly #getLocalOwnerServerRegistration:
+    | ((accountId: string) => AccountServerRegistration | null | Promise<AccountServerRegistration | null>)
+    | null;
   readonly #onProfileChanged: (user: SelfHostedAccountUser) => Promise<void>;
   readonly #requests = new Map<string, number[]>();
   readonly #authenticationRequests = new Map<string, number[]>();
@@ -210,6 +217,7 @@ export class SelfHostedIdentityApiServer {
     this.#listen =
       options.listen ?? ((server, port) => listenOnTailscale(server, () => new Error("Tailscale bind failed."), port));
     this.#isOwnerOfHost = options.isOwnerOfHost ?? (() => false);
+    this.#getLocalOwnerServerRegistration = options.getLocalOwnerServerRegistration ?? null;
     this.#onProfileChanged = options.onProfileChanged ?? (async () => undefined);
   }
 
@@ -421,9 +429,15 @@ export class SelfHostedIdentityApiServer {
         if (!token) throw new ApiError(401, "unauthorized");
         const account = await Effect.runPromise(this.#authority.authenticateSession(token));
         if (!account) throw new ApiError(401, "unauthorized");
-        return json(response, 200, {
-          servers: this.#withOwnerStatus(account.id, await this.#serverDirectory.list(account.id)),
-        });
+        let servers = await this.#serverDirectory.list(account.id);
+        const localOwnerRegistration = await this.#getLocalOwnerServerRegistration?.(account.id);
+        if (localOwnerRegistration && this.#isOwnerOfHost(account.id, localOwnerRegistration.hostId)) {
+          // The host process provides this metadata only for the signed-in account that owns its
+          // live Team host. Syncing refreshes a changed tailnet address without undoing hide/leave.
+          await this.#serverDirectory.syncLocalOwnerRegistration(account.id, localOwnerRegistration);
+          servers = await this.#serverDirectory.list(account.id);
+        }
+        return json(response, 200, { servers: this.#withOwnerStatus(account.id, servers) });
       }
 
       if (url.pathname === "/v1/me/servers/legacy-import-exclusions" && method === "GET") {

@@ -314,6 +314,74 @@ export class SelfHostedAccountServerDirectory {
   }
 
   /**
+   * Refreshes the signed-in owner's own live host metadata. Unlike invite registration, the host
+   * identity key stays fixed while a Tailscale address may change. This method is only called by
+   * the trusted local identity API after it verifies host ownership. It never clears hide/leave
+   * tombstones.
+   */
+  async syncLocalOwnerRegistration(accountId: string, input: unknown): Promise<AccountServerDirectoryEntry[]> {
+    const registration = decodeRegistration(input);
+    return this.#exclusive(async () => {
+      await this.#requireReady();
+      const removed = this.#state.removedMemberships.some(
+        (membership) => membership.accountId === accountId && membership.hostId === registration.hostId,
+      );
+      if (removed || this.#state.hiddenHostIds.includes(registration.hostId)) return this.list(accountId);
+
+      const existing = this.#state.servers.find((server) => server.hostId === registration.hostId);
+      if (
+        existing &&
+        (existing.fingerprint !== registration.fingerprint || existing.publicKey !== registration.publicKey)
+      ) {
+        throw new AccountServerDirectoryError(409, "host_identity_conflict");
+      }
+      const server: StoredServer = {
+        hostId: registration.hostId,
+        name: registration.name,
+        apiUrl: registration.apiUrl,
+        fingerprint: registration.fingerprint,
+        publicKey: registration.publicKey,
+        logoKey: registration.logoKey,
+      };
+      const membership: StoredMembership = {
+        accountId,
+        hostId: registration.hostId,
+        membershipId: registration.membershipId,
+        // The Team host remains the permission authority. Account-directory sync never grants
+        // elevated privileges, even when this account owns the local host process.
+        role: "member",
+      };
+      const existingMembership = this.#state.memberships.find(
+        (candidate) => candidate.accountId === accountId && candidate.hostId === registration.hostId,
+      );
+      if (
+        existing?.name === server.name &&
+        existing.apiUrl === server.apiUrl &&
+        existing.logoKey === server.logoKey &&
+        existingMembership?.membershipId === membership.membershipId &&
+        existingMembership.role === membership.role
+      ) {
+        return this.list(accountId);
+      }
+      const next: DirectoryFile = {
+        ...this.#state,
+        version: 4,
+        servers: existing
+          ? this.#state.servers.map((candidate) => (candidate.hostId === server.hostId ? server : candidate))
+          : [...this.#state.servers, server],
+        memberships: existingMembership
+          ? this.#state.memberships.map((candidate) =>
+              candidate.accountId === accountId && candidate.hostId === server.hostId ? membership : candidate,
+            )
+          : [...this.#state.memberships, membership],
+      };
+      await this.#persist(next);
+      this.#state = next;
+      return this.list(accountId);
+    });
+  }
+
+  /**
    * Hides a host from every account served by this identity directory without deleting memberships,
    * Team conversations, attachments, or workspaces. The owning host process calls this operation;
    * re-enabling it simply removes the host from this set.

@@ -375,6 +375,84 @@ describe("SelfHostedIdentityApiServer", () => {
     }
   });
 
+  it("lists the online local owner host across devices without undoing a hide or leave", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-self-hosted-local-owner-directory-"));
+    roots.push(root);
+    const authority = new SelfHostedIdentityAuthority({ path: join(root, "identity.json") });
+    await Effect.runPromise(authority.initialize());
+    const owner = await Effect.runPromise(
+      authority.registerAccount({ email: "owner@openbot.test", password: "owner-password-123", name: "Linux owner" }),
+    );
+    const other = await Effect.runPromise(
+      authority.registerAccount({
+        email: "other@openbot.test",
+        password: "other-password-123",
+        name: "Other account",
+      }),
+    );
+    const directory = new SelfHostedAccountServerDirectory(join(root, "server-directory.json"));
+    const publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockKeyForLocalOwnerDirectoryTest";
+    const hostId = "linux-team-host";
+    let registration = {
+      hostId,
+      name: "Linux host",
+      apiUrl: "http://100.100.10.2:43123",
+      fingerprint: remoteHostFingerprint(publicKey),
+      publicKey,
+      logoKey: null,
+      membershipId: "owner-membership",
+      role: "member" as const,
+    };
+    let hostOnline = false;
+    const api = new SelfHostedIdentityApiServer({
+      authority,
+      serverDirectory: directory,
+      isOwnerOfHost: (accountId, candidateHostId) => accountId === owner.account.id && candidateHostId === hostId,
+      getLocalOwnerServerRegistration: () => (hostOnline ? registration : null),
+      port: 0,
+      listen: (server: Server) =>
+        new Promise((resolve, reject) => {
+          server.once("error", reject);
+          server.listen(0, "127.0.0.1", () => {
+            const address = server.address();
+            if (!address || typeof address === "string") return reject(new Error("No listener address."));
+            resolve({ address: "127.0.0.1", family: 4, port: address.port });
+          });
+        }),
+    });
+    const apiUrl = await api.start();
+    const readServers = async (token: string) => {
+      const response = await fetch(new URL("/v1/me/servers", apiUrl), {
+        headers: { Authorization: `Bearer ${token}`, Connection: "close" },
+      });
+      expect(response.status).toBe(200);
+      return response.json();
+    };
+
+    try {
+      expect(await readServers(owner.token)).toEqual({ servers: [] });
+      hostOnline = true;
+      expect(await readServers(owner.token)).toMatchObject({
+        servers: [{ hostId, apiUrl: registration.apiUrl, isOwner: true, role: "owner" }],
+      });
+      expect(await readServers(other.token)).toEqual({ servers: [] });
+
+      registration = { ...registration, name: "Linux host after network change", apiUrl: "http://100.100.10.3:43123" };
+      expect(await readServers(owner.token)).toMatchObject({
+        servers: [{ hostId, name: registration.name, apiUrl: registration.apiUrl, isOwner: true, role: "owner" }],
+      });
+
+      await directory.setServerVisible(hostId, false);
+      expect(await readServers(owner.token)).toEqual({ servers: [] });
+      await directory.setServerVisible(hostId, true);
+      await directory.removeMembership(owner.account.id, hostId);
+      expect(await readServers(owner.token)).toEqual({ servers: [] });
+      expect(await directory.legacyImportExclusions(owner.account.id)).toContain(hostId);
+    } finally {
+      await api.stop();
+    }
+  });
+
   it("keeps an orphaned hidden-host tombstone when an unrelated membership is removed", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-self-hosted-hidden-host-tombstone-"));
     roots.push(root);

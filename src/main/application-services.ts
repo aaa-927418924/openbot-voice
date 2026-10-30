@@ -1350,6 +1350,7 @@ export async function createApplicationServices({
   service.channels.store.setMemberIdentityResolver((memberId) => teamStore.getChannelIdentity(memberId));
   let selfHostedIdentityApi: SelfHostedIdentityApiServer | null = null;
   let selfHostedAccountServerDirectory: SelfHostedAccountServerDirectory | null = null;
+  let getHostStatusForAccountDirectory: (() => ReturnType<HostService["getStatus"]>) | null = null;
   const signedInSelfHostedUser = () => {
     const state = selfHostedDesktopAccount.getState();
     if (state.status !== "signed_in") throw new Error("サインインしてからローカルサーバーを開始してください。");
@@ -1423,6 +1424,33 @@ export async function createApplicationServices({
         serverDirectory,
         isOwnerOfHost: (accountId, hostId) =>
           hostId === teamStore.getIdentity()?.serverId && accountId === teamStore.getOwnerAccountId(),
+        getLocalOwnerServerRegistration: (accountId) => {
+          if (!localHostPreference.enabled || accountId !== teamStore.getOwnerAccountId()) return null;
+          const identity = teamStore.getIdentity();
+          const status = getHostStatusForAccountDirectory?.();
+          const membershipId = teamStore.getOwnerMemberId();
+          if (
+            !identity ||
+            !membershipId ||
+            !status ||
+            status.serverId !== identity.serverId ||
+            status.phase !== "online" ||
+            !status.apiOnline ||
+            !status.apiUrl
+          ) {
+            return null;
+          }
+          return {
+            hostId: identity.serverId,
+            name: identity.serverName,
+            apiUrl: status.apiUrl,
+            fingerprint: identity.fingerprint,
+            publicKey: identity.publicKey,
+            logoKey: identity.logoVersion,
+            membershipId,
+            role: "member" as const,
+          };
+        },
         onProfileChanged: async (user) => {
           try {
             const profile = selfHostedTeamProfile(user, selfHostedIdentityApi?.apiUrl ?? null);
@@ -1659,6 +1687,7 @@ export async function createApplicationServices({
         catch: (cause) => new RemoteWorkflowError({ cause }),
       }),
   });
+  getHostStatusForAccountDirectory = () => host.getStatus();
   teardown.push(TEARDOWN_ORDER.host, "the local host", () => runCauseEffect(host.shutdown()));
   const signedInState = localOnlyNetworking ? selfHostedDesktopAccount.getState() : centralAuth.getState();
   if (!localOnlyNetworking && signedInState.status === "signed_in") {
