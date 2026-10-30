@@ -2254,19 +2254,33 @@ export async function createApplicationServices({
         if (!enabled) await localHostPreference.setEnabled(false);
         return { supported: true, enabled };
       }
+      const updateAccountServerVisibility = async (hostId: string | undefined, visible: boolean) => {
+        const account = selfHostedDesktopAccount.signedInAccount;
+        if (!account || !hostId) return;
+        const proof = teamStore.getAccountServerVisibilityProof({
+          accountId: account.id,
+          hostId,
+          visible,
+          nonce: randomBytes(24).toString("base64url"),
+        });
+        if (!proof) throw new Error(sourceText("error.team.visibilityOwnerRequired"));
+        await Effect.runPromise(selfHostedDesktopAccount.setAccountServerVisibility(proof));
+      };
       if (!enabled) {
         const hostId = teamStore.getIdentity()?.serverId;
         try {
           await localHostRetry?.stop();
           if (hostId && selfHostedIdentityApi && !selfHostedAccountServerDirectory) {
-            throw new Error("The account server directory is unavailable.");
+            throw new Error(sourceText("error.team.serverDirectoryUnavailable"));
           }
           if (hostId) await selfHostedAccountServerDirectory?.setServerVisible(hostId, false);
+          await updateAccountServerVisibility(hostId, false);
           await runCauseEffect(host.stop(false));
           await localHostPreference.setEnabled(false);
           await runCauseEffect(remoteServers.localHostVisibilityChanged());
         } catch (error) {
           if (hostId) await selfHostedAccountServerDirectory?.setServerVisible(hostId, true).catch(() => undefined);
+          await updateAccountServerVisibility(hostId, true).catch(() => undefined);
           await localHostPreference.setEnabled(true).catch(() => undefined);
           localHostRetry?.start();
           throw error;
@@ -2277,8 +2291,9 @@ export async function createApplicationServices({
       const hostId = teamStore.getIdentity()?.serverId;
       try {
         if (hostId && selfHostedIdentityApi && !selfHostedAccountServerDirectory) {
-          throw new Error("The account server directory is unavailable.");
+          throw new Error(sourceText("error.team.serverDirectoryUnavailable"));
         }
+        await updateAccountServerVisibility(hostId, true);
         if (hostId) await selfHostedAccountServerDirectory?.setServerVisible(hostId, true);
         await localHostPreference.setEnabled(true);
         await runCauseEffect(remoteServers.localHostVisibilityChanged());
@@ -2287,6 +2302,7 @@ export async function createApplicationServices({
       } catch (error) {
         await localHostPreference.setEnabled(false).catch(() => undefined);
         if (hostId) await selfHostedAccountServerDirectory?.setServerVisible(hostId, false).catch(() => undefined);
+        await updateAccountServerVisibility(hostId, false).catch(() => undefined);
         throw error;
       }
       return { supported: true, enabled: true };

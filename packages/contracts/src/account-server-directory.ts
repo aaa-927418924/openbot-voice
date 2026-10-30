@@ -1,5 +1,20 @@
 import type { TeamRole } from "./ipc-team-host";
 
+export interface AccountServerVisibilityProof {
+  readonly hostId: string;
+  readonly visible: boolean;
+  readonly nonce: string;
+  readonly signature: string;
+}
+
+/** The host signs this exact message only after confirming the account is its owner. */
+export function accountServerVisibilityPayload(
+  accountId: string,
+  proof: Pick<AccountServerVisibilityProof, "hostId" | "visible" | "nonce">,
+): string {
+  return `OpenBot account server visibility v1\n${accountId}\n${proof.hostId}\n${proof.visible ? "visible" : "hidden"}\n${proof.nonce}`;
+}
+
 /** Public self-hosted Team host metadata shared through the account identity service. */
 export interface AccountServerDirectoryEntry {
   readonly hostId: string;

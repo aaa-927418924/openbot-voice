@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type {
   AccountServerDirectoryEntry,
   AccountServerRegistration,
+  AccountServerVisibilityProof,
 } from "@openbot/contracts/account-server-directory";
 import { isTailscaleApiUrl } from "@openbot/contracts/invite-links";
 import type { CentralAuthUser, TeamRole } from "@openbot/contracts/ipc";
@@ -40,6 +41,9 @@ interface IdentityRequestBody {
   role?: unknown;
   legacyImport?: unknown;
   rejoin?: unknown;
+  visible?: unknown;
+  nonce?: unknown;
+  signature?: unknown;
 }
 
 export interface SelfHostedIdentityApiOptions {
@@ -141,6 +145,9 @@ async function readJson(request: IncomingMessage): Promise<IdentityRequestBody> 
     role: value.role,
     legacyImport: value.legacyImport,
     rejoin: value.rejoin,
+    visible: value.visible,
+    nonce: value.nonce,
+    signature: value.signature,
   };
 }
 
@@ -498,6 +505,32 @@ export class SelfHostedIdentityApiServer {
         return json(response, 200, {
           servers: this.#withOwnerStatus(account.id, await this.#serverDirectory.register(account.id, registration)),
         });
+      }
+
+      const visibilityMatch = /^\/v1\/me\/servers\/([^/]+)\/visibility$/u.exec(url.pathname);
+      if (method === "PUT" && visibilityMatch) {
+        const token = bearer(request);
+        if (!token) throw new ApiError(401, "unauthorized");
+        const account = await Effect.runPromise(this.#authority.authenticateSession(token));
+        if (!account) throw new ApiError(401, "unauthorized");
+        let hostId: string;
+        try {
+          const encodedHostId = visibilityMatch[1];
+          if (!encodedHostId) throw new Error("Missing server id.");
+          hostId = decodeURIComponent(encodedHostId);
+        } catch {
+          throw new ApiError(400, "invalid_request");
+        }
+        const body = await readJson(request);
+        if (typeof body.visible !== "boolean") throw new ApiError(400, "invalid_request");
+        const proof: AccountServerVisibilityProof = {
+          hostId,
+          visible: body.visible,
+          nonce: stringField(body, "nonce", 128),
+          signature: stringField(body, "signature", 128),
+        };
+        await this.#serverDirectory.setServerVisibleWithOwnerProof(account.id, proof);
+        return noContent(response);
       }
 
       const accountServerMatch = /^\/v1\/me\/servers\/([^/]+)$/u.exec(url.pathname);

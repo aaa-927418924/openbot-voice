@@ -28,6 +28,9 @@ export const messages = {
   "error.team.currentPasswordIncorrect": "現在のパスワードが正しくありません。",
   "error.team.memberNotFound": "チームメンバーが見つかりません。",
   "error.team.ownerRequired": "端末の本人設定を変更できるのはサーバーのオーナーだけです。",
+  "error.team.visibilityOwnerRequired":
+    "アカウントのサーバー一覧に表示するか変更できるのは、ローカルホストのオーナーだけです。",
+  "error.team.serverDirectoryUnavailable": "アカウントのサーバー一覧に接続できません。",
   "error.team.channelIdentityUnsupported": "この接続では端末の本人設定を利用できません。",
   "error.team.channelIdentityInvalid": "端末の本人設定が無効です。",
   "error.team.ownerCannotChange": "オーナーアカウントは変更できません。",

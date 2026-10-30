@@ -1,9 +1,12 @@
+import { verify } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type {
   AccountServerDirectoryEntry,
   AccountServerRegistration,
+  AccountServerVisibilityProof,
 } from "@openbot/contracts/account-server-directory";
+import { accountServerVisibilityPayload } from "@openbot/contracts/account-server-directory";
 import { isTailscaleApiUrl } from "@openbot/contracts/invite-links";
 import type { TeamRole } from "@openbot/contracts/ipc";
 import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
@@ -413,6 +416,47 @@ export class SelfHostedAccountServerDirectory {
       if (visible) hiddenHostIds.delete(hostId);
       else hiddenHostIds.add(hostId);
       if (wasHidden === !visible) return;
+      const next: DirectoryFile = { ...this.#state, version: 4, hiddenHostIds: [...hiddenHostIds] };
+      await this.#persist(next);
+      this.#state = next;
+    });
+  }
+
+  async setServerVisibleWithOwnerProof(accountId: string, proof: AccountServerVisibilityProof): Promise<void> {
+    if (
+      !validId(accountId) ||
+      !validId(proof.hostId) ||
+      typeof proof.visible !== "boolean" ||
+      !/^[A-Za-z0-9_-]{16,128}$/u.test(proof.nonce) ||
+      !/^[A-Za-z0-9_-]{86}$/u.test(proof.signature)
+    ) {
+      throw new AccountServerDirectoryError(400, "invalid_request");
+    }
+    await this.#mutate(async () => {
+      const server = this.#state.servers.find((candidate) => candidate.hostId === proof.hostId);
+      if (!server) return;
+      const membership = this.#state.memberships.find(
+        (candidate) => candidate.accountId === accountId && candidate.hostId === proof.hostId,
+      );
+      if (!membership) throw new AccountServerDirectoryError(404, "not_found");
+      let validProof = false;
+      try {
+        validProof = verify(
+          null,
+          Buffer.from(accountServerVisibilityPayload(accountId, proof), "utf8"),
+          server.publicKey,
+          Buffer.from(proof.signature, "base64url"),
+        );
+      } catch {
+        validProof = false;
+      }
+      if (!validProof) throw new AccountServerDirectoryError(403, "forbidden");
+
+      const hiddenHostIds = new Set(this.#state.hiddenHostIds);
+      const wasHidden = hiddenHostIds.has(proof.hostId);
+      if (proof.visible) hiddenHostIds.delete(proof.hostId);
+      else hiddenHostIds.add(proof.hostId);
+      if (wasHidden === !proof.visible) return;
       const next: DirectoryFile = { ...this.#state, version: 4, hiddenHostIds: [...hiddenHostIds] };
       await this.#persist(next);
       this.#state = next;

@@ -27,6 +27,9 @@ export const messages = defineMessages("error.team", {
   "error.team.currentPasswordIncorrect": "The current password is incorrect.",
   "error.team.memberNotFound": "Team member not found.",
   "error.team.ownerRequired": "Only the server owner can link device identities.",
+  "error.team.visibilityOwnerRequired":
+    "Only the local host owner can change whether this server appears in account lists.",
+  "error.team.serverDirectoryUnavailable": "The account server directory is unavailable.",
   "error.team.channelIdentityUnsupported": "Device identity linking is not supported by this connection.",
   "error.team.channelIdentityInvalid": "The device identity update is invalid.",
   "error.team.ownerCannotChange": "The owner account cannot be changed.",

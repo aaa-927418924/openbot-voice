@@ -2,6 +2,7 @@ import { isIP } from "node:net";
 import type {
   AccountServerDirectoryEntry,
   AccountServerRegistration,
+  AccountServerVisibilityProof,
 } from "@openbot/contracts/account-server-directory";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { isTailscaleApiUrl } from "@openbot/contracts/invite-links";
@@ -178,6 +179,7 @@ type IdentityRequestBody =
   | { readonly name: string }
   | { readonly serverId: string }
   | { readonly ticket: string; readonly serverId: string }
+  | AccountServerVisibilityProof
   | AccountServerRegistration;
 
 function accountError(error: unknown): Error {
@@ -494,6 +496,18 @@ export class SelfHostedDesktopAccountManager {
       yield* this.#requestJson(this.#record.apiUrl, `/v1/me/servers/${encodeURIComponent(hostId)}`, {
         token: this.#token,
         method: "DELETE",
+      });
+    });
+
+  readonly setAccountServerVisibility = (proof: AccountServerVisibilityProof): Effect.Effect<void, Error> =>
+    Effect.gen({ self: this }, function* () {
+      if (this.#record.mode !== "account" || !this.#record.apiUrl || !this.#token) {
+        return yield* Effect.fail(new Error("アカウントにサインインしてください。"));
+      }
+      yield* this.#requestJson(this.#record.apiUrl, `/v1/me/servers/${encodeURIComponent(proof.hostId)}/visibility`, {
+        token: this.#token,
+        method: "PUT",
+        body: proof,
       });
     });
 
