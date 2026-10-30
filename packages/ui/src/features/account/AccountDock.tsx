@@ -550,6 +550,7 @@ export function AccountDock(props: AccountDockProps) {
         <Popover.Portal>
           <Popover.Content
             class="ui-popover-menu-surface account-popover"
+            onInteractOutside={() => setMenuOpen(false)}
             aria-hidden={menuOpen() ? undefined : "true"}
           >
             <Popover.Title class="sr-only">{t("account.dock.actions")}</Popover.Title>
@@ -603,6 +604,7 @@ export function AccountDock(props: AccountDockProps) {
           <Popover.Portal>
             <Popover.Content
               class="ui-popover-menu-surface account-popover"
+              onInteractOutside={() => setMenuOpen(false)}
               aria-hidden={menuOpen() ? undefined : "true"}
             >
               <Popover.Title class="sr-only">{t("account.dock.actions")}</Popover.Title>
