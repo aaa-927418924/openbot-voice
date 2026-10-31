@@ -44,6 +44,10 @@ export function WorkspaceSidebar(props: { peopleEnabled: boolean } & ServerMigra
   const platform = usePlatform();
   const channels = useChannels();
   const { activeServer, activeServerSupportsCapability } = useServers();
+  const canCreateFirstAgent = createMemo(() => {
+    const server = activeServer();
+    return server !== undefined && (server.kind !== "remote" || (server.state === "online" && server.issue == null));
+  });
   const { openServerSettings } = useServerSettings();
   const serverActions = useServerActions(props);
   const { setSkillsMarketplaceOpen } = useSettings();
@@ -234,7 +238,7 @@ export function WorkspaceSidebar(props: { peopleEnabled: boolean } & ServerMigra
       }
       onOpenMarketplace={() => setSkillsMarketplaceOpen(true)}
       emptyAction={
-        activeServer() && agentList().length === 0
+        canCreateFirstAgent() && agentList().length === 0
           ? {
               label: t("sidebar.empty.firstAgent"),
               avatarSeed: agentSetupDraft().avatarSeed,

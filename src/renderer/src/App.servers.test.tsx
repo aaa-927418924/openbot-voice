@@ -287,6 +287,7 @@ describe("OpenBot connected desktop shell", () => {
     expect(await screen.findByRole("heading", { name: "Cannot connect to Studio Mac" })).toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent("The host is not reachable.");
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create your first agent" })).not.toBeInTheDocument();
     expect(window.openbot.agent.listAgents).not.toHaveBeenCalled();
   });
 
