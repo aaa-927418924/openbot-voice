@@ -111,6 +111,10 @@ function isPairingCurrent(
   },
 ): boolean {
   if (!isPairingAuthorizedForSession(server, context.session)) return false;
+  // The account directory is authoritative for the signed-in account. A device-local pairing can
+  // be stale while a fresh host-bound ticket is being redeemed; it must not override that current
+  // membership and send the connection through the hosted WebRTC bootstrap path.
+  if (context.accountServer?.hostId === server.hostId) return matchesAccountServer(server, context.accountServer);
   if (context.localTailnetServer?.hostId === server.hostId) {
     return (
       context.localTailnetServer.accountId === server.accountId &&
@@ -173,29 +177,7 @@ export const RemoteTeamTransport = forwardRef<RemoteTeamTransportRef, RemoteTeam
       const connected = connectedPairing.current;
       if (!connected || !directClient.current) return;
 
-      const matches = (server: {
-        hostId: string;
-        apiUrl: string;
-        publicKey: string;
-        fingerprint: string;
-        membershipId: string;
-      }) =>
-        server.hostId === connected.hostId &&
-        server.apiUrl === connected.apiUrl &&
-        server.publicKey === connected.publicKey &&
-        server.fingerprint === connected.fingerprint &&
-        server.membershipId === connected.membershipId;
-      const stillTrusted = localTailnetServer
-        ? isPairingAuthorizedForSession(localTailnetServer, session) &&
-          matches(localTailnetServer) &&
-          localTailnetServer.accountId === connected.accountId
-        : Boolean(
-            accountServer &&
-              session?.localOnly &&
-              session.sessionToken &&
-              session.user.id === connected.accountId &&
-              matches(accountServer),
-          );
+      const stillTrusted = isPairingCurrent(connected, { session, localTailnetServer, accountServer });
       if (stillTrusted) return;
 
       directGeneration.current += 1;

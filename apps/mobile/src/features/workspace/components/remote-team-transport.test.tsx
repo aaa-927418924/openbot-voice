@@ -99,7 +99,10 @@ let root = createRoot(container);
 const transportRef = createRef<RemoteTeamTransportRef>();
 const onConnectionUpdate = vi.fn();
 
-function render(pairing: LocalTailnetServer | null = localPairing("membership-a")) {
+function render(
+  pairing: LocalTailnetServer | null = localPairing("membership-a"),
+  currentAccountServer: AccountServerDirectoryEntry = accountServer,
+) {
   vi.mocked(loginTailnetAccountServer).mockResolvedValue({
     ...localPairing("membership-a"),
     sessionToken: "fresh-device-token",
@@ -109,7 +112,7 @@ function render(pairing: LocalTailnetServer | null = localPairing("membership-a"
       ref={transportRef}
       active
       localTailnetServer={pairing ?? undefined}
-      accountServer={accountServer}
+      accountServer={currentAccountServer}
       directory={null}
       onConnectionUpdate={onConnectionUpdate}
       onTeamEvent={vi.fn()}
@@ -144,7 +147,7 @@ it("disconnects the old direct socket when the host membership changes", async (
   await act(async () => transportRef.current?.connect("host", "host-key"));
   expect(harness.instances).toHaveLength(1);
 
-  await act(async () => render(localPairing("membership-b")));
+  await act(async () => render(localPairing("membership-b"), { ...accountServer, membershipId: "membership-b" }));
 
   expect(harness.instances[0]?.disconnect).toHaveBeenCalledOnce();
   expect(onConnectionUpdate).toHaveBeenLastCalledWith({
@@ -170,6 +173,32 @@ it("renews a cached account pairing before connecting so a stale Team token is n
   expect(saveLocalTailnetServer).toHaveBeenCalledWith(freshPairing);
   expect(harness.instances[0]?.server).toMatchObject({ sessionToken: "rotated-device-token" });
   expect(harness.instances[0]?.openEvents).toHaveBeenCalledOnce();
+});
+
+it("uses the current account membership while a device-local pairing is stale", async () => {
+  harness.session = {
+    apiUrl: "https://account.example.com",
+    sessionToken: "account-token",
+    user: { id: "account-a" },
+    localOnly: true,
+  };
+  const stalePairing = localPairing("previous-membership");
+  const freshPairing = { ...localPairing("membership-a"), sessionToken: "fresh-device-token" };
+  await act(async () => render(stalePairing));
+  vi.mocked(loginTailnetAccountServer).mockResolvedValueOnce(freshPairing);
+
+  await act(async () => transportRef.current?.connect("host", "host-key"));
+
+  expect(harness.instances).toHaveLength(1);
+  expect(harness.instances[0]?.server).toMatchObject({
+    membershipId: "membership-a",
+    sessionToken: "fresh-device-token",
+  });
+  expect(harness.instances[0]?.openEvents).toHaveBeenCalledOnce();
+
+  // A render with the still-cached device pairing must not tear down the fresh connection.
+  await act(async () => render(stalePairing));
+  expect(harness.instances[0]?.disconnect).not.toHaveBeenCalled();
 });
 
 it("does not fall back to a cached Team token when fresh account-ticket login fails", async () => {
@@ -198,7 +227,9 @@ it("disconnects the old account socket when the account pairing changes", async 
   await act(async () => render());
   await act(async () => transportRef.current?.connect("host", "host-key"));
 
-  await act(async () => render(localPairing("membership-a", "account-b")));
+  await act(async () =>
+    render(localPairing("membership-a", "account-b"), { ...accountServer, membershipId: "membership-b" }),
+  );
 
   expect(harness.instances[0]?.disconnect).toHaveBeenCalledOnce();
 });
