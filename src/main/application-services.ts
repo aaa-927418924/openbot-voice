@@ -38,7 +38,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readdir, rm } from "node:fs/promises";
 import { homedir, hostname, tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { isTailscaleApiUrl, selfHostedApiOrigin } from "@openbot/contracts/invite-links";
 import type {
   AgentStatus,
@@ -50,6 +50,7 @@ import type {
   HostStatus,
   LocalHostSettings,
   ProviderRuntimeSnapshot,
+  ServerMigrationJobSnapshot,
   VoiceModelStatus,
 } from "@openbot/contracts/ipc";
 import { IPC_ENDPOINTS, isManagedToolRuntime, isUpdateBusyPhase } from "@openbot/contracts/ipc";
@@ -174,6 +175,8 @@ import { SelfHostedAccountServerDirectory } from "./self-hosted-account-server-d
 import { SelfHostedDesktopAccountManager } from "./self-hosted-desktop-account";
 import { SelfHostedIdentityApiServer, selfHostedTeamProfile } from "./self-hosted-identity-api";
 import { SelfHostedIdentityAuthority } from "./self-hosted-identity-authority";
+import { ServerMigrationDestination } from "./server-migration-destination";
+import { ServerMigrationSourceService } from "./server-migration-source";
 import { ServerMode, type ServerModeEnvironment } from "./server-mode";
 import {
   configureApplicationProtocol,
@@ -322,6 +325,8 @@ export interface ApplicationServiceContext {
   forwardBrowserDisplayState: (state: BrowserDisplayState) => void;
   forwardProviderRuntimeStatus: (snapshot: ProviderRuntimeSnapshot) => void;
   forwardVoiceModelStatus: (status: VoiceModelStatus) => void;
+  /** Progress of the one local-to-server migration this computer runs as its source. */
+  forwardServerMigration: (snapshot: ServerMigrationJobSnapshot) => void;
   prepareForUpdateInstall: () => Promise<void>;
 }
 
@@ -363,6 +368,8 @@ export interface ApplicationServices {
   host: HostService;
   remoteDesktop: RemoteDesktopManager;
   remoteServers: RemoteServerManager;
+  /** The source side of a local-to-server migration. Null on a server-mode destination host. */
+  serverMigration: ServerMigrationSourceService | null;
   centralAuth: CentralAuthManager;
   selfHostedDesktopAccount: SelfHostedDesktopAccountManager;
   selfHostedIdentityAuthority: SelfHostedIdentityAuthority | null;
@@ -565,6 +572,7 @@ export async function createApplicationServices({
   forwardBrowserDisplayState,
   forwardProviderRuntimeStatus,
   forwardVoiceModelStatus,
+  forwardServerMigration,
   prepareForUpdateInstall,
 }: ApplicationServiceContext): Promise<ApplicationServices> {
   // First, so the provider lines of the whole startup reach the file.
@@ -1587,6 +1595,32 @@ export async function createApplicationServices({
     undefined,
     join(app.getPath("userData"), "agent-import-uploads"),
   );
+  // A Linux server-mode install can receive one local server's portable data. The received snapshot
+  // is staged beside the active roots, because activation renames the two root pairs; the transfer
+  // directory is private to this host and outside both roots.
+  const migrationUserDataRoot = app.getPath("userData");
+  const migrationOpenBotRoot = join(homedir(), "OpenBot");
+  const serverMigrationDestination =
+    process.platform === "linux" && serverModeEnvironment
+      ? new ServerMigrationDestination({
+          userDataRoot: migrationUserDataRoot,
+          openBotRoot: migrationOpenBotRoot,
+          stagingRoot: join(
+            dirname(migrationUserDataRoot),
+            `.${basename(migrationUserDataRoot)}-server-migration-staging`,
+          ),
+          assertOwner: async (memberId) => {
+            if (teamStore.getOwnerMemberId() !== memberId) {
+              throw new Error(sourceText("error.host.migrationUnsupported"));
+            }
+          },
+          // The supervisor restarts this process. A short delay lets the finalize response reach the
+          // source before this process exits.
+          onActivated: () => {
+            setTimeout(() => app.exit(0), 750);
+          },
+        })
+      : null;
   const host = new HostService({
     appVersion: app.getVersion(),
     store: teamStore,
@@ -1605,6 +1639,8 @@ export async function createApplicationServices({
     hostedSites,
     // Present, so the host advertises `agent-import-v1`. Any member can import.
     agentImport,
+    // Present only on a Linux server-mode host. It advertises `server-migration-v1`.
+    serverMigration: serverMigrationDestination?.migration,
     // Each member present advertises its admin capability. Every admin route requires an owner or admin.
     admin: {
       agents: agentAdminSettings,
@@ -1972,6 +2008,33 @@ export async function createApplicationServices({
   teardown.push(TEARDOWN_ORDER.remoteServers, "the remote servers", () => runCauseEffect(remoteServers.stop()));
   await runCauseEffect(remoteServers.initialize());
   criticalActionTargets = { agents: service, remoteServers };
+  // The source of a local-to-server migration. A server-mode host is only a destination, and a
+  // macOS desktop cannot run the local server that a snapshot comes from.
+  const serverMigration =
+    !serverModeEnvironment && (process.platform === "win32" || process.platform === "linux")
+      ? new ServerMigrationSourceService({
+          userDataRoot: migrationUserDataRoot,
+          openBotRoot: migrationOpenBotRoot,
+          // This process's own copy only. The local server data stays where it is.
+          stagingRoot: join(migrationUserDataRoot, "server-migration-staging"),
+          localMembers: () => teamStore.listMembers(),
+          localOwnerMemberId: () => teamStore.getOwnerMemberId(),
+          destinations: () => remoteServers.migrationDestinations(),
+          peerFor: (serverId) => {
+            const destination = remoteServers.migrationDestinations().find((item) => item.serverId === serverId);
+            if (!destination) return null;
+            return {
+              serverId,
+              serverName: destination.serverName,
+              members: () => runCauseEffect(remoteServers.listMembers(serverId)),
+              request: (path, decoder, init) =>
+                runCauseEffect(remoteServers.migrationRequest(serverId, path, decoder, init)),
+              writeChunk: (input) => runCauseEffect(remoteServers.migrationWriteChunk({ serverId, ...input })),
+            };
+          },
+          onChange: forwardServerMigration,
+        })
+      : null;
   // After `remoteServers.initialize()`. The client half polls for the host's connection file and
   // throws when it never appears, before any window is shown - see the module it lives in.
   if (developmentRemoteRole) {
@@ -2434,6 +2497,7 @@ export async function createApplicationServices({
     hostedServers,
     routineFeed,
     serverMode,
+    serverMigration,
     customProviders,
     customProviderChanges,
     customAgentChanges,

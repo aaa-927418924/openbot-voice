@@ -28,4 +28,9 @@ export const messages = {
     "テナントの停止がタイムアウトしました。アプリケーションの置き換えは開始されていません。",
   "error.host.tenantHealthMissing":
     "再起動後のテナントの正常性レポートがないか、異常です。次の更新の前に、テナントのセッションを確認してください。",
+  "error.host.migrationUnsupported": "このコンピューターはそのサーバーを移行できません。",
+  "error.host.migrationBusy": "移行はすでに実行中です。",
+  "error.host.migrationSnapshotFailed": "このコンピューターは移行スナップショットを準備できませんでした。",
+  "error.host.migrationTransferFailed": "移行の転送に失敗しました。",
+  "error.host.migrationCancelled": "移行はキャンセルされました。",
 } as const satisfies PartialTranslation<typeof source>;

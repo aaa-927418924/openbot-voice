@@ -12,6 +12,7 @@ import { LiveVoiceLauncher } from "./features/live-voice/LiveVoiceLauncher";
 import { WorkspaceServerOnboarding } from "./features/onboarding/WorkspaceServerOnboarding";
 import { useRemoteDesktop } from "./features/remote-desktop/remote-desktop-context";
 import { SchedulePanel } from "./features/schedule/SchedulePanel";
+import { useServerMigration } from "./features/servers/server-migration-context";
 import { useServers } from "./features/servers/servers-context";
 import { WorkspaceServerRail } from "./features/servers/WorkspaceServerRail";
 import { WorkspaceSidebar } from "./features/sidebar/WorkspaceSidebar";
@@ -47,6 +48,8 @@ export function WorkspaceShell(props: { account: () => CentralAuthUser }) {
   const usage = useUsage();
   const layout = useLayout();
   const { activeServer, activeServerSupportsCapability, retryServerConnection, servers } = useServers();
+  const migration = useServerMigration();
+  const openMigration = () => void migration.openDialog();
   const { remoteDesktopWorkspaceVisible } = useRemoteDesktop();
   const { agentSetupOpen, serverOnboardingOpen } = useAgents();
   const { activeDirectMember } = useDirectMessages();
@@ -73,8 +76,8 @@ export function WorkspaceShell(props: { account: () => CentralAuthUser }) {
       usageOpen={!!usageServerId()}
       left={
         <>
-          <WorkspaceServerRail />
-          <WorkspaceSidebar peopleEnabled={activePeopleEnabled()} />
+          <WorkspaceServerRail onMigrateToCloud={openMigration} />
+          <WorkspaceSidebar peopleEnabled={activePeopleEnabled()} onMigrateToCloud={openMigration} />
           <WorkspaceAccountDock account={props.account} />
         </>
       }

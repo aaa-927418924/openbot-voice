@@ -1709,6 +1709,15 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
       exportRemoteDesktopSupportLog: async () => ({ saved: true }),
     },
     servers: mockTeam.servers,
+    serverMigration: {
+      // The preview has no server-mode destination to send to.
+      destinations: async () => [],
+      state: async () => null,
+      start: async () => undefined,
+      cancel: async () => undefined,
+      retry: async () => undefined,
+      onProgress: () => () => undefined,
+    },
     plugins: {
       // The preview is never opened by a link, so there is nothing pending and nothing to push.
       takePendingListing: async () => null,

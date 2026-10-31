@@ -41,6 +41,11 @@ export interface ServerMigrationSnapshotOptions {
   openBotRoot: string;
   /** New, non-existing path on the destination volume. The source is never moved or changed. */
   destinationPath: string;
+  /**
+   * Rewrites the staged `openbot.db` before the snapshot hashes it. The callback gets a private path
+   * to the staged copy; the source database is only ever opened read-only.
+   */
+  rewriteUserDatabase?: (stagedDatabasePath: string) => Promise<void> | void;
 }
 
 export interface CreatedServerMigrationSnapshot {
@@ -187,7 +192,14 @@ export async function createServerMigrationSnapshot(
       const outputPath = `user-data/${relativePath}`;
       if (relativePath === "openbot.db") {
         await rejectUnexpectedSqliteSidecars(join(roots.userDataRoot, relativePath));
-        await snapshotOptionalSqlite(roots.userDataRoot, relativePath, builder, outputPath, roots.openBotRoot);
+        await snapshotOptionalSqlite(
+          roots.userDataRoot,
+          relativePath,
+          builder,
+          outputPath,
+          roots.openBotRoot,
+          options.rewriteUserDatabase ? (databasePath) => options.rewriteUserDatabase?.(databasePath) : undefined,
+        );
       } else if (relativePath === "mailbox.json") {
         await snapshotMailboxState(roots.userDataRoot, relativePath, builder, roots.openBotRoot);
       } else {
@@ -942,6 +954,7 @@ async function snapshotOptionalSqlite(
   builder: SnapshotBuilder,
   outputRelativePath: string,
   attachmentSourceRoot?: string,
+  rewrite?: (databasePath: string) => Promise<void> | void,
 ): Promise<void> {
   const sourcePath = await safeSourcePath(root, relativePath);
   const info = await lstatOptional(sourcePath);
@@ -967,6 +980,13 @@ async function snapshotOptionalSqlite(
   }
   if (attachmentSourceRoot)
     portableizeDatabaseAttachmentPaths(targetPath, attachmentSourceRoot, builder.attachmentPaths);
+  if (rewrite) {
+    try {
+      await rewrite(targetPath);
+    } catch (cause) {
+      throw new ServerMigrationSnapshotError(`The staged copy of ${relativePath} could not be rewritten.`, { cause });
+    }
+  }
   const sourceAfter = await lstat(sourcePath, { bigint: true });
   if (!sameFileVersion(sourceBefore, sourceAfter)) {
     throw new ServerMigrationSnapshotError(`SQLite source changed while snapshotting ${relativePath}.`);

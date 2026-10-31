@@ -457,4 +457,23 @@ export const messages = defineMessages("server", {
   "server.localAdmin.trayQuit": "Quit tray",
   "server.localAdmin.trayEntryMissing":
     "The server will start at sign-in, but no installed OpenBot launcher was found for the tray.",
+  "server.migration.title": "Migrate to cloud",
+  "server.migration.description":
+    "Send this OpenBot's agents, chats and files to a cloud server. This computer keeps all of its data.",
+  "server.migration.destination": "Destination server",
+  "server.migration.empty":
+    "No server can receive this migration. Join a server that this account owns, then let it come online.",
+  "server.migration.start": "Start migration",
+  "server.migration.keepData": "Your data stays on this computer.",
+  "server.migration.completedDetail":
+    "This computer keeps its data. Open the destination server to use the migrated copy.",
+  "server.migration.retryNote": "The destination keeps the bytes that arrived, so a retry sends only the rest.",
+  "server.migration.startFailed": "Could not start the migration.",
+  "server.migration.phase.preparing": "Preparing the data",
+  "server.migration.phase.sending": "Sending the data",
+  "server.migration.phase.finalizing": "Starting the new server",
+  "server.migration.phase.completed": "Migration complete",
+  "server.migration.phase.cancelled": "Migration cancelled",
+  "server.migration.phase.failed": "Migration failed",
+  "server.migration.progress": "{sent} of {total}",
 });

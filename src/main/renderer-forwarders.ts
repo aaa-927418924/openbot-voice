@@ -20,6 +20,7 @@ import {
   IPC_ENDPOINTS,
   type LiveVoiceEvent,
   LOCAL_SERVER_ID,
+  type ServerMigrationJobSnapshot,
   type VoiceModelStatus,
 } from "@openbot/contracts/ipc";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
@@ -184,6 +185,12 @@ export function createRendererForwarders({
     sendToRenderer(window, IPC_ENDPOINTS.voice.modelStatus, status);
   }
 
+  function forwardServerMigration(snapshot: ServerMigrationJobSnapshot): void {
+    const window = getMainWindow();
+    if (!window || window.isDestroyed()) return;
+    sendToRenderer(window, IPC_ENDPOINTS.serverMigration.progress, snapshot);
+  }
+
   function forwardProviderRuntimeStatus(snapshot: import("@openbot/contracts/ipc").ProviderRuntimeSnapshot): void {
     const window = getMainWindow();
     if (!window || window.isDestroyed()) return;
@@ -269,6 +276,7 @@ export function createRendererForwarders({
     forwardUpdateStatus,
     forwardUpdatePreference,
     forwardVoiceModelStatus,
+    forwardServerMigration,
     forwardProviderRuntimeStatus,
     forwardGitHubConnectorStatus,
     forwardOnePasswordConnectorStatus,

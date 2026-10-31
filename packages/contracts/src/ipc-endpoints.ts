@@ -317,6 +317,8 @@ import type {
   ScopedDirectTypingEvent,
   ScopedTeamPresenceSnapshot,
   SendDirectMessageInput,
+  ServerMigrationDestination,
+  ServerMigrationJobSnapshot,
   ServerSummary,
   SetServerMutedInput,
   SetServerNotificationLevelInput,
@@ -921,6 +923,16 @@ export const IPC_ENDPOINTS = {
   browserInput: {
     sendLiveViewInput: untypedRequest("browser:send-live-view-input"),
   },
+  // Local-to-server migration of one server's data. Owner-only on both ends: the source names the
+  // destination, and the destination refuses every member except its own owner.
+  serverMigration: {
+    destinations: request<undefined, ServerMigrationDestination[]>()("server-migration:destinations"),
+    state: request<undefined, ServerMigrationJobSnapshot | null>()("server-migration:state"),
+    start: request<string, void>()("server-migration:start"),
+    cancel: request<string, void>()("server-migration:cancel"),
+    retry: request<string, void>()("server-migration:retry"),
+    progress: event<ServerMigrationJobSnapshot>()("server-migration:progress"),
+  },
   servers: {
     list: request<undefined, ServerSummary[]>()("servers:list"),
     select: request<string, ServerSummary[]>()("servers:select"),
@@ -1110,6 +1122,7 @@ export const IPC_GROUP_PATHS = {
   browser: "browser",
   browserInput: "browser",
   servers: "servers",
+  serverMigration: "serverMigration",
   agentAdmin: "agent",
   mcpServers: "agent",
   storage: "storage",

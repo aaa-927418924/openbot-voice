@@ -25,6 +25,7 @@ import { useSetupProviderProps } from "./features/onboarding/setup-provider-prop
 import { useRemoteDesktop } from "./features/remote-desktop/remote-desktop-context";
 import { AddServerOverlay } from "./features/servers/AddServerOverlay";
 import { mcpToolRuntimeNote } from "./features/servers/mcp-servers";
+import { ServerMigrationOverlay } from "./features/servers/ServerMigrationOverlay";
 import { useServerActions } from "./features/servers/server-actions";
 import { serverCanAdminister, serverSupportsCapability } from "./features/servers/server-capabilities";
 import { useServerSelection } from "./features/servers/server-selection";
@@ -480,87 +481,90 @@ function ServerSettings(props: {
   });
 
   return (
-    <Show when={serverSettingsTarget()}>
-      {(server) => (
-        <ServerSettingsOverlay
-          open={serverSettingsOpen()}
-          onOpenChange={setServerSettingsOpen}
-          restoreFocusTarget={serverSettingsRestoreTarget()}
-          platform={platform.appInfo()?.platform ?? "darwin"}
-          server={server()}
-          hostStatus={server().kind === "local" ? hostStatus() : null}
-          members={serverSettingsMembers()}
-          invites={serverSettingsInvites()}
-          loading={serverSettingsLoading()}
-          loadError={serverSettingsError()}
-          onRetry={() => refreshServerSettings(server().id)}
-          onSaveIdentity={saveServerIdentity}
-          onSetPublished={setServerPublished}
-          onSetMuted={(muted) => setServerMuted(server().id, muted)}
-          onSetNotificationLevel={(level) => setServerNotificationLevel(server().id, level)}
-          onCreateInvite={createServerInvite}
-          onCreateMemberDeviceLink={createServerMemberDeviceLink}
-          onUpdateMember={updateServerMember}
-          onRemoveMember={removeServerMember}
-          onRevokeInvite={revokeServerInvite}
-          onLeaveServer={leaveServer}
-          onOpenScreenRecordingSettings={() => appPort().openExternal("mac-screen-recording")}
-          onRecheckScreenRecording={recheckScreenRecording}
-          mcpServers={serverSettingsMcp()}
-          // Only for the computer whose runtimes this window holds: another host starts its servers
-          // with its own runtime, which this window has not read.
-          mcpToolRuntimeNote={holdsToolRuntimes(server()) ? mcpToolRuntimeNote(toolRuntimeStatuses().bun) : null}
-          mcpLoadError={serverSettingsMcpError()}
-          onMcpSectionShown={() => void refreshMcpServers()}
-          onRetryMcpServers={() => void refreshMcpServers()}
-          onSaveMcpServer={saveMcpServer}
-          onRemoveMcpServer={removeMcpServer}
-          onSetMcpServerEnabled={setMcpServerEnabled}
-          onTestMcpServer={testMcpServer}
-          storage={storageOptions(server())}
-          providers={providerSettings(server())}
-          onSwitchToManageProviders={
-            !server().active && serverCanAdminister(server(), "providers-v1")
-              ? () => switchToManageProviders(server())
-              : undefined
-          }
-          // This computer, or a remote host with `hosted-sites-v1`. Every member lists; the host deletes
-          // only for an owner or admin.
-          hostedSites={
-            serverSupportsCapability(server(), "hosted-sites-v1")
-              ? {
-                  api: appPort().hostedSites,
-                  onOpenSite: (url) => void appPort().openUrl(url),
-                  trackDelete: trackHostedSiteDelete,
-                }
-              : undefined
-          }
-          hostUpdate={{}}
-          initialSection={serverSettingsSection()}
-          // Any member imports into this computer or a remote host with `agent-import-v1`.
-          agentImport={
-            serverSupportsCapability(server(), "agent-import-v1")
-              ? {
-                  onOpenAgent: (agentId) => openOnServer(server(), agentId, () => selectAgent(agentId)),
-                  onClose: () => setServerSettingsOpen(false),
-                }
-              : undefined
-          }
-          githubConnector={props.githubConnector}
-          onePasswordConnector={props.onePasswordConnector}
-          // Slack is connected on the computer that runs the agents: Slack opens this computer's browser
-          // and returns to its `openbot://` link.
-          slackConnector={server().kind === "local" ? slack : undefined}
-          connectorAgents={agentList()}
-          // The feed listens on this computer, so a calendar app on another one cannot read it.
-          routineFeed={
-            server().kind === "local"
-              ? { api: appPort().routineFeed, listAgents: () => appPort().agent.listAgents(server().id) }
-              : undefined
-          }
-        />
-      )}
-    </Show>
+    <>
+      <Show when={serverSettingsTarget()}>
+        {(server) => (
+          <ServerSettingsOverlay
+            open={serverSettingsOpen()}
+            onOpenChange={setServerSettingsOpen}
+            restoreFocusTarget={serverSettingsRestoreTarget()}
+            platform={platform.appInfo()?.platform ?? "darwin"}
+            server={server()}
+            hostStatus={server().kind === "local" ? hostStatus() : null}
+            members={serverSettingsMembers()}
+            invites={serverSettingsInvites()}
+            loading={serverSettingsLoading()}
+            loadError={serverSettingsError()}
+            onRetry={() => refreshServerSettings(server().id)}
+            onSaveIdentity={saveServerIdentity}
+            onSetPublished={setServerPublished}
+            onSetMuted={(muted) => setServerMuted(server().id, muted)}
+            onSetNotificationLevel={(level) => setServerNotificationLevel(server().id, level)}
+            onCreateInvite={createServerInvite}
+            onCreateMemberDeviceLink={createServerMemberDeviceLink}
+            onUpdateMember={updateServerMember}
+            onRemoveMember={removeServerMember}
+            onRevokeInvite={revokeServerInvite}
+            onLeaveServer={leaveServer}
+            onOpenScreenRecordingSettings={() => appPort().openExternal("mac-screen-recording")}
+            onRecheckScreenRecording={recheckScreenRecording}
+            mcpServers={serverSettingsMcp()}
+            // Only for the computer whose runtimes this window holds: another host starts its servers
+            // with its own runtime, which this window has not read.
+            mcpToolRuntimeNote={holdsToolRuntimes(server()) ? mcpToolRuntimeNote(toolRuntimeStatuses().bun) : null}
+            mcpLoadError={serverSettingsMcpError()}
+            onMcpSectionShown={() => void refreshMcpServers()}
+            onRetryMcpServers={() => void refreshMcpServers()}
+            onSaveMcpServer={saveMcpServer}
+            onRemoveMcpServer={removeMcpServer}
+            onSetMcpServerEnabled={setMcpServerEnabled}
+            onTestMcpServer={testMcpServer}
+            storage={storageOptions(server())}
+            providers={providerSettings(server())}
+            onSwitchToManageProviders={
+              !server().active && serverCanAdminister(server(), "providers-v1")
+                ? () => switchToManageProviders(server())
+                : undefined
+            }
+            // This computer, or a remote host with `hosted-sites-v1`. Every member lists; the host deletes
+            // only for an owner or admin.
+            hostedSites={
+              serverSupportsCapability(server(), "hosted-sites-v1")
+                ? {
+                    api: appPort().hostedSites,
+                    onOpenSite: (url) => void appPort().openUrl(url),
+                    trackDelete: trackHostedSiteDelete,
+                  }
+                : undefined
+            }
+            hostUpdate={{}}
+            initialSection={serverSettingsSection()}
+            // Any member imports into this computer or a remote host with `agent-import-v1`.
+            agentImport={
+              serverSupportsCapability(server(), "agent-import-v1")
+                ? {
+                    onOpenAgent: (agentId) => openOnServer(server(), agentId, () => selectAgent(agentId)),
+                    onClose: () => setServerSettingsOpen(false),
+                  }
+                : undefined
+            }
+            githubConnector={props.githubConnector}
+            onePasswordConnector={props.onePasswordConnector}
+            // Slack is connected on the computer that runs the agents: Slack opens this computer's browser
+            // and returns to its `openbot://` link.
+            slackConnector={server().kind === "local" ? slack : undefined}
+            connectorAgents={agentList()}
+            // The feed listens on this computer, so a calendar app on another one cannot read it.
+            routineFeed={
+              server().kind === "local"
+                ? { api: appPort().routineFeed, listAgents: () => appPort().agent.listAgents(server().id) }
+                : undefined
+            }
+          />
+        )}
+      </Show>
+      <ServerMigrationOverlay />
+    </>
   );
 }
 

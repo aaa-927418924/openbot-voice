@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { basename } from "node:path";
 import type {
@@ -63,6 +63,7 @@ import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import { AGENT_IMPORT_ROUTES } from "@openbot/contracts/team-protocol/agent-import-v1";
 import { decodeBrowserViewSessionResponse } from "@openbot/contracts/team-protocol/browser-view-v1";
 import {
+  SERVER_MIGRATION_CAPABILITY,
   TEAM_CHANNEL_IDENTITY_ADMIN_CAPABILITY,
   TEAM_MEMBER_LEAVE_CAPABILITY,
   type TeamCurrentCapability,
@@ -74,6 +75,10 @@ import {
   TEAM_MEMBER_DEVICE_LINK_CAPABILITY,
   TEAM_MEMBER_DEVICE_LINK_ROUTES,
 } from "@openbot/contracts/team-protocol/member-device-link-v1";
+import {
+  SERVER_MIGRATION_CHUNK_SHA256_HEADER,
+  SERVER_MIGRATION_ROUTES,
+} from "@openbot/contracts/team-protocol/server-migration-v1";
 import { decodeTeamProtocolV1CurrentHttpResponse } from "@openbot/contracts/team-protocol/v1-adapter";
 import { sourceText } from "@openbot/i18n/source";
 import { createOpenBotLogger } from "@openbot/logging";
@@ -106,7 +111,7 @@ import { RemoteProtocolError, RemoteRequestError } from "./remote-server-errors"
 import { RemoteEventRefresh } from "./remote-server-event-refresh";
 import { RemoteEventStream } from "./remote-server-event-stream";
 import { reconcileWebRtcHosts } from "./remote-server-host-directory";
-import { requestJson } from "./remote-server-http";
+import { requestJson, throwRemoteResponseError } from "./remote-server-http";
 import { RemotePresenceCache } from "./remote-server-presence";
 import {
   type RemoteServerDirectory,
@@ -133,6 +138,8 @@ import {
 } from "./remote-team-decoding";
 import { RemoteTeamDirectory } from "./remote-team-directory";
 import { RemoteViewerProxy } from "./remote-viewer-proxy";
+import type { ServerMigrationTransferStatus } from "./server-migration-transfer";
+import { decodeServerMigrationTransferStatus } from "./server-migration-wire";
 import { fingerprint } from "./team-store";
 import {
   TEAM_WEBRTC_REMOTE_REQUEST_TIMEOUT_MILLISECONDS,
@@ -291,6 +298,8 @@ const ACCOUNT_SERVER_RATE_LIMIT_RETRY_MS = 15 * 60_000;
 // A rejected account ticket should not be retried on every poll or immediately after a restart.
 // Briefly pause 401s so a broken ticket path cannot escalate into the host's longer 429 window.
 const ACCOUNT_SERVER_AUTH_RETRY_MS = 60_000;
+/** One 4 MiB snapshot chunk over a slow tailnet link can take a while, but not four minutes. */
+const MIGRATION_CHUNK_TIMEOUT_MS = 4 * 60_000;
 const logger = createOpenBotLogger("remote-account-adoption");
 
 type AccountAdoptionStage = "host_identity" | "account_ticket" | "host_account_login";
@@ -2303,6 +2312,82 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       }),
     );
   }
+
+  /**
+   * The servers this local host can migrate into: an online destination where the signed-in account
+   * is the owner, that advertises `server-migration-v1`, and that answers raw HTTP so a snapshot can
+   * be uploaded in bytes.
+   */
+  migrationDestinations(): Array<{ serverId: string; serverName: string }> {
+    return this.list()
+      .filter((server) => server.kind === "remote" && server.role === "owner" && server.state === "online")
+      .filter((server) => this.supportsCapability(server.id, SERVER_MIGRATION_CAPABILITY))
+      .filter((server) => {
+        try {
+          return this.#servers.require(server.id).transport === undefined;
+        } catch {
+          return false;
+        }
+      })
+      .map((server) => ({ serverId: server.id, serverName: server.name }));
+  }
+
+  /** One migration request over the destination's Team API, with its released route codec. */
+  migrationRequest<T>(
+    serverId: string,
+    path: string,
+    decoder: ResponseDecoder<T>,
+    init?: RemoteRequestInit,
+  ): Effect.Effect<T, RemoteWorkflowError> {
+    return this.request(serverId, path, decoder, init);
+  }
+
+  /** One raw snapshot chunk. The hash is of the bytes, and the host checks it before it writes. */
+  readonly migrationWriteChunk = Effect.fn("RemoteManager.migrationWriteChunk")(
+    function* (
+      this: RemoteServerManager,
+      input: { serverId: string; transferId: string; path: string; offset: number; bytes: Uint8Array<ArrayBuffer> },
+    ): Effect.fn.Return<ServerMigrationTransferStatus, RemoteWorkflowError> {
+      const server = yield* remoteDecode(() => this.#servers.require(input.serverId));
+      if (server.transport === "webrtc-v2") {
+        return yield* remoteDecode(() => {
+          throw new Error(sourceText("error.host.migrationUnsupported"));
+        });
+      }
+      const url = new URL(SERVER_MIGRATION_ROUTES.chunk, server.apiUrl);
+      url.searchParams.set("transferId", input.transferId);
+      url.searchParams.set("path", input.path);
+      url.searchParams.set("offset", String(input.offset));
+      const response = yield* this.#client.fetch(
+        server,
+        url,
+        {
+          method: "PUT",
+          headers: {
+            "content-type": "application/octet-stream",
+            [SERVER_MIGRATION_CHUNK_SHA256_HEADER]: createHash("sha256").update(input.bytes).digest("hex"),
+          },
+          body: input.bytes,
+        },
+        true,
+        MIGRATION_CHUNK_TIMEOUT_MS,
+      );
+      if (!response.ok) {
+        return yield* throwRemoteResponseError(response, "PUT", SERVER_MIGRATION_ROUTES.chunk).pipe(
+          Effect.mapError((cause) => new RemoteWorkflowError({ cause })),
+        );
+      }
+      const value = yield* Effect.tryPromise({
+        try: () => response.json(),
+        catch: (cause) =>
+          new RemoteWorkflowError({
+            cause: new RemoteProtocolError("protocol_error", sourceText("error.remote.invalidData"), null, { cause }),
+          }),
+      });
+      return yield* remoteDecode(() => decodeServerMigrationTransferStatus(value));
+    },
+    (operation) => this.#owned(operation),
+  ).bind(this);
 
   updateMember(serverId: string, input: UpdateTeamMemberInput): Effect.Effect<TeamMemberSummary, RemoteWorkflowError> {
     if (input.channelIdentityId !== undefined) {

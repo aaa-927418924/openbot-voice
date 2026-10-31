@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { selfHostedApiOrigin } from "@openbot/contracts/invite-links";
 import { type AppLogoColor, type CentralAuthState, IPC_ENDPOINTS, LOCAL_SERVER_ID } from "@openbot/contracts/ipc";
@@ -71,6 +72,7 @@ import { providerDetectionIpcHandlers } from "./ipc/provider-detection-handlers"
 import { providerIpcHandlers } from "./ipc/provider-handlers";
 import { routineFeedIpcHandlers } from "./ipc/routine-feed-handlers";
 import { routineIpcHandlers } from "./ipc/routine-handlers";
+import { serverMigrationIpcHandlers } from "./ipc/server-migration-handlers";
 import { sharedTableIpcHandlers } from "./ipc/shared-table-handlers";
 import { skillIpcHandlers } from "./ipc/skill-handlers";
 import { storageIpcHandlers } from "./ipc/storage-handlers";
@@ -91,6 +93,7 @@ import { watchRemoteHostDirectory } from "./remote-server-host-directory";
 import { createRendererForwarders } from "./renderer-forwarders";
 import { sendToRenderer } from "./renderer-ipc";
 import { RoutineWake } from "./routine-wake";
+import { recoverServerMigrationAtStartup } from "./server-migration-destination";
 import { takeServerModeEnvironment } from "./server-mode";
 import { configureContentSecurityPolicy, configureRendererPermissions } from "./session-configuration";
 import { trustSystemCertificates } from "./system-certificates";
@@ -289,6 +292,7 @@ const {
   forwardUpdateStatus,
   forwardUpdatePreference,
   forwardVoiceModelStatus,
+  forwardServerMigration,
   forwardProviderRuntimeStatus,
   forwardGitHubConnectorStatus,
   forwardOnePasswordConnectorStatus,
@@ -452,6 +456,7 @@ function registerIpcHandlers({
   host,
   remoteDesktop,
   remoteServers,
+  serverMigration,
   centralAuth,
   selfHostedDesktopAccount,
   selfHostedIdentityAuthority,
@@ -621,6 +626,7 @@ function registerIpcHandlers({
       openPath: (path) => shell.openPath(path),
     }),
     ...agentIpcHandlers({ service, sidebarLayout, host, remoteServers, skills }),
+    ...serverMigrationIpcHandlers({ serverMigration }),
     ...browserIpcHandlers({ browserPictureInPicture, browser, remoteServers, browserView }),
   });
 }
@@ -885,6 +891,23 @@ if (!hasSingleInstanceLock) {
       if (process.platform === "darwin") app.dock?.setIcon(appIconPath);
       configureContentSecurityPolicy(() => services?.remoteServers.remoteDesktopViewerOrigins() ?? []);
       configureRendererPermissions();
+      // A server-mode host may have stopped between the two renames of a received snapshot. The
+      // active root pair is restored or finalized before any service opens either one. A journal
+      // that cannot be resolved must stop startup: running on a half-published pair would show or
+      // write the wrong data.
+      try {
+        const recovery = await recoverServerMigrationAtStartup({
+          userDataRoot: app.getPath("userData"),
+          openBotRoot: join(homedir(), "OpenBot"),
+        });
+        if (recovery.status !== "none") {
+          logger.info(`Recovered a server migration activation: ${recovery.status}.`);
+        }
+      } catch (error) {
+        logger.error("Unable to recover an interrupted server migration:", toLogValue(error));
+        app.exit(1);
+        return;
+      }
       await Effect.runPromise(windows.restoreMainWindowBounds());
       if (process.platform === "win32") {
         const trayIcon = nativeImage.createFromPath(appIconPath);
@@ -921,6 +944,7 @@ if (!hasSingleInstanceLock) {
         forwardBrowserDisplayState,
         forwardProviderRuntimeStatus,
         forwardVoiceModelStatus,
+        forwardServerMigration,
         prepareForUpdateInstall,
       });
       services = built;

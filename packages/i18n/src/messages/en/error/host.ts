@@ -26,4 +26,9 @@ export const messages = defineMessages("error.host", {
   "error.host.tenantShutdownTimeout": "Tenant shutdown timed out. No application replacement was started.",
   "error.host.tenantHealthMissing":
     "Tenant health reports are missing or unhealthy after restart. Inspect tenant sessions before another update.",
+  "error.host.migrationUnsupported": "This computer cannot migrate that server.",
+  "error.host.migrationBusy": "A migration is already running.",
+  "error.host.migrationSnapshotFailed": "This computer could not prepare the migration snapshot.",
+  "error.host.migrationTransferFailed": "The migration transfer failed.",
+  "error.host.migrationCancelled": "The migration was cancelled.",
 });

@@ -24,6 +24,8 @@ import {
   SERVER_NOTIFICATION_LEVELS,
   type ServerCompatibility,
   type ServerConnectionIssue,
+  type ServerMigrationDestination,
+  type ServerMigrationJobSnapshot,
   type ServerSummary,
   type TeamInviteSummary,
   type TeamMemberSummary,
@@ -58,9 +60,40 @@ const SERVER_ISSUE_CODES = [
   "authentication_required",
   "network_unavailable",
 ] as const;
+const SERVER_MIGRATION_PHASES = ["preparing", "sending", "finalizing", "completed", "cancelled", "failed"] as const;
 
 export function decodeServer(value: unknown): ServerSummary {
   return server(decodeRecord(value, "server"));
+}
+
+export function decodeServerMigrationDestinations(value: unknown): ServerMigrationDestination[] {
+  return decodeList(value, "migration destination list", (item) => {
+    const destination = decodeRecord(item, "migration destination");
+    return {
+      serverId: requiredString(destination, "serverId"),
+      serverName: requiredString(destination, "serverName"),
+    };
+  });
+}
+
+export function decodeServerMigrationJob(value: unknown): ServerMigrationJobSnapshot | null {
+  if (value === null) return null;
+  return decodeServerMigrationProgress(value);
+}
+
+export function decodeServerMigrationProgress(value: unknown): ServerMigrationJobSnapshot {
+  const job = decodeRecord(value, "migration job");
+  if (!isOneOf(SERVER_MIGRATION_PHASES, job.phase)) throw new Error("Invalid migration phase.");
+  return {
+    jobId: requiredString(job, "jobId"),
+    destinationServerId: requiredString(job, "destinationServerId"),
+    destinationName: requiredString(job, "destinationName"),
+    phase: job.phase,
+    transferredBytes: requiredNumber(job, "transferredBytes"),
+    totalBytes: requiredNumber(job, "totalBytes"),
+    message: nullableString(job, "message"),
+    retryable: requiredBoolean(job, "retryable"),
+  };
 }
 
 export function decodeServers(value: unknown): ServerSummary[] {

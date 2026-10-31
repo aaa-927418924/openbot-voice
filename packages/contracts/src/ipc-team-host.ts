@@ -88,6 +88,27 @@ export interface ServerSummary {
 
 export type HostedServerSleep = "sleeping" | "waking";
 
+/** Where this local server can move its data. The destination is another OpenBot server of the account. */
+export interface ServerMigrationDestination {
+  serverId: string;
+  serverName: string;
+}
+
+export type ServerMigrationPhase = "preparing" | "sending" | "finalizing" | "completed" | "cancelled" | "failed";
+
+/** One local-to-server migration. The source computer keeps its data after it finishes. */
+export interface ServerMigrationJobSnapshot {
+  jobId: string;
+  destinationServerId: string;
+  destinationName: string;
+  phase: ServerMigrationPhase;
+  transferredBytes: number;
+  totalBytes: number;
+  /** Text from this process or the destination host. It is safe to show. */
+  message: string | null;
+  retryable: boolean;
+}
+
 export interface JoinServerInput {
   inviteUrl: string;
 }

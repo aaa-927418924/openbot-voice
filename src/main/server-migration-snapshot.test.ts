@@ -452,6 +452,42 @@ describe("server migration snapshots", () => {
     await expect(verifyServerMigrationSnapshot(snapshotPath)).resolves.toBeDefined();
   });
 
+  it("hashes the user database after the member rewrite", async () => {
+    const userDatabase = new DatabaseSync(join(userDataRoot, "openbot.db"));
+    userDatabase.exec("CREATE TABLE messages (value TEXT NOT NULL)");
+    userDatabase.prepare("INSERT INTO messages (value) VALUES ('source owner')").run();
+    userDatabase.close();
+    await mkdir(join(openBotRoot, "Shared", "Data"), { recursive: true });
+    new DatabaseSync(join(openBotRoot, "Shared", "Data", "agent-data.db")).close();
+
+    const destination = join(destinationParent, "rewritten-snapshot");
+    const created = await createServerMigrationSnapshot({
+      userDataRoot,
+      openBotRoot,
+      destinationPath: destination,
+      rewriteUserDatabase: (databasePath) => {
+        const staged = new DatabaseSync(databasePath);
+        try {
+          staged.prepare("UPDATE messages SET value = 'destination owner'").run();
+        } finally {
+          staged.close();
+        }
+      },
+    });
+
+    const copied = join(destination, "user-data/openbot.db");
+    const copiedBytes = await readFile(copied);
+    const listed = created.manifest.files.find((file) => file.path === "user-data/openbot.db");
+    expect(listed?.sha256).toBe(createHash("sha256").update(copiedBytes).digest("hex"));
+    const readBack = new DatabaseSync(copied, { readOnly: true });
+    try {
+      expect(readBack.prepare("SELECT value FROM messages").get()).toMatchObject({ value: "destination owner" });
+    } finally {
+      readBack.close();
+    }
+    await expect(verifyServerMigrationSnapshot(destination)).resolves.toBeDefined();
+  });
+
   it("refuses attachment references outside the portable data roots", async () => {
     const outsidePath = join(root, "private.txt");
     await writeFile(outsidePath, "private");

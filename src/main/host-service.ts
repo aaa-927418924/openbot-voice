@@ -94,6 +94,8 @@ interface HostServiceOptions {
   localDevelopmentHost?: boolean;
   /** Serve direct clients only over Tailscale; never expose the Team API on a wildcard interface. */
   localOnlyNetworking?: boolean;
+  /** Present only on a Linux server-mode host. It advertises `server-migration-v1`. */
+  serverMigration?: ForwardedApiOptions["serverMigration"];
   logDirectory?: string;
   removeLegacyRemoteDesktopCredential?: () => Effect.Effect<void, RemoteWorkflowError>;
   getSignedInUser: () => CentralAuthUser;
@@ -307,6 +309,7 @@ export class HostService extends EventEmitter<HostEvents> {
       browser: options.browser,
       browserView: this.#browserView,
       remoteScreen: this.#remoteScreen,
+      serverMigration: options.serverMigration,
       redeemCentralTicket: options.redeemCentralTicket,
       chat: options.chat,
       onPresence: (snapshot) => this.emit("presence", snapshot),

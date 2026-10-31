@@ -1,0 +1,111 @@
+/* The local-to-server migration dialog. It reuses the join-server dialog shell, and adds only the
+   destination list, the transfer bar, and the footer. */
+
+.server-migration-dialog {
+  display: flex;
+  width: min(460px, 100%);
+  flex-direction: column;
+  gap: var(--openbot-space-4);
+  padding: 32px;
+}
+
+.server-migration-title {
+  margin: 0;
+  padding-right: var(--openbot-space-8);
+  color: var(--openbot-text-primary);
+  font-size: var(--openbot-text-lg);
+  font-weight: var(--openbot-weight-semibold);
+}
+
+.server-migration-description {
+  margin: 0;
+  color: var(--openbot-text-secondary);
+  font-size: var(--openbot-text-sm);
+  line-height: 1.5;
+}
+
+.server-migration-legend {
+  margin: 0 0 var(--openbot-space-2);
+  padding: 0;
+  color: var(--openbot-text-muted);
+  font-size: var(--openbot-text-sm);
+  font-weight: var(--openbot-weight-semibold);
+  letter-spacing: var(--openbot-tracking-wide);
+  text-transform: uppercase;
+}
+
+.server-migration-destinations {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--openbot-space-2);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.server-migration-destination {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--openbot-space-3);
+  padding: var(--openbot-space-2) var(--openbot-space-3);
+  border: 1px solid var(--openbot-border-strong);
+  border-radius: var(--openbot-radius-md);
+  color: var(--openbot-text-primary);
+  font-size: var(--openbot-text-sm);
+  cursor: pointer;
+}
+
+.server-migration-destination:has(input:checked) {
+  border-color: var(--openbot-accent);
+  background: var(--openbot-bg-control-hover);
+}
+
+.server-migration-progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--openbot-space-2);
+}
+
+.server-migration-phase {
+  margin: 0;
+  color: var(--openbot-text-primary);
+  font-size: var(--openbot-text-sm);
+  font-weight: var(--openbot-weight-semibold);
+}
+
+.server-migration-track {
+  overflow: hidden;
+  height: 6px;
+  border-radius: var(--openbot-radius-pill);
+  background: var(--openbot-bg-control-hover);
+}
+
+.server-migration-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--openbot-accent);
+  transition: width var(--openbot-duration-normal) var(--openbot-ease-out);
+}
+
+.server-migration-bytes,
+.server-migration-note {
+  margin: 0;
+  color: var(--openbot-text-muted);
+  font-size: var(--openbot-text-sm);
+  line-height: 1.5;
+}
+
+.server-migration-error {
+  margin: 0;
+  color: var(--openbot-danger-text);
+  font-size: var(--openbot-text-sm);
+}
+
+.server-migration-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--openbot-space-2);
+}

@@ -314,4 +314,23 @@ export const messages = {
   "server.localAdmin.trayQuit": "トレイを終了",
   "server.localAdmin.trayEntryMissing":
     "サインイン時にサーバーは起動しますが、トレイ用のOpenBotランチャーが見つかりませんでした。",
+  "server.migration.title": "クラウドに移行する",
+  "server.migration.description":
+    "このOpenBotのエージェント、チャット、ファイルをクラウドサーバーに送信します。このコンピューターのデータはすべて残ります。",
+  "server.migration.destination": "移行先サーバー",
+  "server.migration.empty":
+    "この移行を受け入れられるサーバーがありません。このアカウントが所有するサーバーに参加し、オンラインにしてください。",
+  "server.migration.start": "移行を開始",
+  "server.migration.keepData": "データはこのコンピューターに残ります。",
+  "server.migration.completedDetail":
+    "このコンピューターのデータは残ります。移行したコピーを使うには、移行先サーバーを開いてください。",
+  "server.migration.retryNote": "到達済みのバイトは移行先に残るため、再試行では残りのみを送信します。",
+  "server.migration.startFailed": "移行を開始できませんでした。",
+  "server.migration.phase.preparing": "データを準備しています",
+  "server.migration.phase.sending": "データを送信しています",
+  "server.migration.phase.finalizing": "新しいサーバーを起動しています",
+  "server.migration.phase.completed": "移行が完了しました",
+  "server.migration.phase.cancelled": "移行はキャンセルされました",
+  "server.migration.phase.failed": "移行に失敗しました",
+  "server.migration.progress": "{sent} / {total}",
 } as const satisfies PartialTranslation<typeof source>;
