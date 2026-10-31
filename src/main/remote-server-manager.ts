@@ -287,7 +287,7 @@ const ACCOUNT_SERVER_ADOPTION_RETRY_MS = 2 * 60_000;
 const ACCOUNT_SERVER_ADOPTION_MAX_RETRY_MS = 5 * 60_000;
 // Team's password/sign-in limiter is five attempts per fifteen-minute window. Once the host says
 // 429, don't let repeated manual retries mint more tickets before that window has had time to reset.
-const ACCOUNT_SERVER_ADOPTION_RATE_LIMIT_RETRY_MS = 15 * 60_000;
+const ACCOUNT_SERVER_RATE_LIMIT_RETRY_MS = 15 * 60_000;
 const logger = createOpenBotLogger("remote-account-adoption");
 
 type AccountAdoptionStage = "host_identity" | "account_ticket" | "host_account_login";
@@ -370,6 +370,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   readonly #accountServerAdoptionInFlight = new Set<string>();
   readonly #accountServerAdoptionRetryAt = new Map<string, number>();
   readonly #accountServerAdoptionFailures = new Map<string, number>();
+  /** A host-side 429 blocks fresh account tickets across automatic and explicit retry paths. */
+  readonly #accountServerRateLimitRetryAt = new Map<string, number>();
   /** Invalidates an in-flight login when a newer session is adopted for the same host. */
   readonly #serverSessionRevision = new Map<string, number>();
   #appFocused = true;
@@ -697,6 +699,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         body: { accountTicket },
         ...this.#client.requestProtocol(identity.compatibility),
       }).pipe(
+        Effect.tapError((error) => Effect.sync(() => this.#recordAccountServerRateLimit(entry.hostId, error))),
         Effect.tapError((error) =>
           Effect.sync(() => logAccountAdoptionFailure(entry.hostId, "host_account_login", error)),
         ),
@@ -745,12 +748,14 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   ): Effect.Effect<void, RemoteWorkflowError, RemoteRequest> {
     const hostId = entry.hostId;
     if (this.#accountServerAdoptionInFlight.has(hostId)) return Effect.void;
+    if (this.#isAccountServerRateLimited(hostId)) return Effect.void;
     if (options.automatic && (this.#accountServerAdoptionRetryAt.get(hostId) ?? 0) > Date.now()) return Effect.void;
 
     this.#accountServerAdoptionInFlight.add(hostId);
     return Effect.gen({ self: this }, function* () {
       const adopted = yield* this.#adoptAccountServer(entry).pipe(Effect.result);
       if (Result.isSuccess(adopted)) {
+        this.#accountServerRateLimitRetryAt.delete(hostId);
         this.#accountServerAdoptionRetryAt.delete(hostId);
         this.#accountServerAdoptionFailures.delete(hostId);
         return;
@@ -771,13 +776,10 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
       const failures = (this.#accountServerAdoptionFailures.get(hostId) ?? 0) + 1;
       this.#accountServerAdoptionFailures.set(hostId, failures);
-      const retryDelay =
-        accountAdoptionFailureDetails(cause).status === 429
-          ? ACCOUNT_SERVER_ADOPTION_RATE_LIMIT_RETRY_MS
-          : Math.min(
-              ACCOUNT_SERVER_ADOPTION_RETRY_MS * 2 ** Math.min(failures - 1, 8),
-              ACCOUNT_SERVER_ADOPTION_MAX_RETRY_MS,
-            );
+      const retryDelay = Math.min(
+        ACCOUNT_SERVER_ADOPTION_RETRY_MS * 2 ** Math.min(failures - 1, 8),
+        ACCOUNT_SERVER_ADOPTION_MAX_RETRY_MS,
+      );
       this.#accountServerAdoptionRetryAt.set(hostId, Date.now() + retryDelay);
       this.#emitChanged();
 
@@ -1094,6 +1096,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
               // account repairs the host connection without making the user click Retry. A host
               // that keeps rejecting fresh tickets is rate-limited, and overlapping directory
               // polls coalesce to one renewal attempt.
+              if (this.#isAccountServerRateLimited(entry.hostId)) continue;
               const retryAt = this.#accountDirectoryReauthRetryAt.get(entry.hostId) ?? 0;
               if (retryAt <= Date.now() && !this.#accountDirectoryReauthInFlight.has(entry.hostId)) {
                 this.#accountDirectoryReauthInFlight.add(entry.hostId);
@@ -1596,6 +1599,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       input: LoginServerInput,
     ): Effect.fn.Return<ServerSummary, RemoteWorkflowError, RemoteRequest> {
       const server = yield* remoteDecode(() => this.#servers.require(input.serverId));
+      if (this.#isAccountServerRateLimited(server.id))
+        return yield* remoteDecode(() => requiredServerSummary(this.list(), server.id));
       const startingSessionRevision = this.#serverSessionRevision.get(server.id) ?? 0;
       let storedSessionRevision: number | null = null;
       let superseded = false;
@@ -1612,6 +1617,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
           body: { accountTicket },
           ...this.#client.requestProtocol(identity.compatibility),
         }).pipe(
+          Effect.tapError((failure) => Effect.sync(() => this.#recordAccountServerRateLimit(server.id, failure))),
           Effect.mapError(
             (failure) =>
               new RemoteWorkflowError({
@@ -1746,6 +1752,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
               cause: new Error(sourceText("error.remote.selectedServerOffline")),
             });
           }
+          if (this.#isAccountServerRateLimited(serverId))
+            return yield* remoteDecode(() => requiredServerSummary(this.list(), serverId));
           if (this.#accountServerAdoptionInFlight.has(serverId)) {
             // Do not let a manual click race an automatic adoption and issue a second ticket.
             this.#connections.setState(serverId, "offline");
@@ -1909,6 +1917,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     this.#clearAccountDirectoryReauthState(serverId);
     this.#accountServerAdoptionRetryAt.delete(serverId);
     this.#accountServerAdoptionFailures.delete(serverId);
+    this.#accountServerRateLimitRetryAt.delete(serverId);
     this.#events.forget(serverId);
     this.#refresh.forget(serverId);
     this.#connections.forget(serverId);
@@ -1923,9 +1932,23 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     this.#accountDirectoryReauthBlocked.delete(serverId);
   }
 
+  #isAccountServerRateLimited(serverId: string): boolean {
+    const retryAt = this.#accountServerRateLimitRetryAt.get(serverId);
+    if (retryAt === undefined) return false;
+    if (retryAt > Date.now()) return true;
+    this.#accountServerRateLimitRetryAt.delete(serverId);
+    return false;
+  }
+
+  #recordAccountServerRateLimit(serverId: string, error: unknown): void {
+    if (accountAdoptionFailureDetails(error).status !== 429) return;
+    this.#accountServerRateLimitRetryAt.set(serverId, Date.now() + ACCOUNT_SERVER_RATE_LIMIT_RETRY_MS);
+  }
+
   #recordFreshServerSession(serverId: string): number {
     const revision = (this.#serverSessionRevision.get(serverId) ?? 0) + 1;
     this.#serverSessionRevision.set(serverId, revision);
+    this.#accountServerRateLimitRetryAt.delete(serverId);
     this.#clearAccountDirectoryReauthState(serverId);
     return revision;
   }

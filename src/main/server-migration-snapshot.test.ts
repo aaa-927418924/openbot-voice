@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -47,6 +47,7 @@ describe("server migration snapshots", () => {
     await put(userDataRoot, "bots.json", "legacy agent roster");
     await put(userDataRoot, "openbot-sidebar-layout-v1.json", "section order");
     await put(userDataRoot, "avatars/agents/agent-a/avatar.png", "agent avatar");
+    await put(userDataRoot, "avatars/agents/agent-a/private.txt", "not an image asset");
     await put(userDataRoot, "openbot-team-server-v2.json.assets/logo/7.png", "server logo");
     await put(openBotRoot, "Agents/agent-a/workspace.md", "agent workspace");
     await put(openBotRoot, "Bots/legacy-bot/legacy.md", "legacy workspace");
@@ -76,6 +77,7 @@ describe("server migration snapshots", () => {
     expect(await readFile(join(destination, "user-data/avatars/agents/agent-a/avatar.png"), "utf8")).toBe(
       "agent avatar",
     );
+    expect(await fileExists(join(destination, "user-data/avatars/agents/agent-a/private.txt"))).toBe(false);
     expect(await readFile(join(destination, "user-data/openbot-sidebar-layout-v1.json"), "utf8")).toBe("section order");
     expect(await readFile(join(destination, "user-data/openbot-team-server-v2.json.assets/logo/7.png"), "utf8")).toBe(
       "server logo",
@@ -173,9 +175,10 @@ describe("server migration snapshots", () => {
       createServerMigrationSnapshot({
         userDataRoot,
         openBotRoot,
-        destinationPath: join(openBotRoot, "migration"),
+        destinationPath: join(openBotRoot, "missing-parent", "nested", "migration"),
       }),
     ).rejects.toThrow("cannot overlap a source data root");
+    expect(await fileExists(join(openBotRoot, "missing-parent"))).toBe(false);
 
     await put(userDataRoot, "mailbox.json", JSON.stringify({ version: 3, messages: [], drafts: [] }));
     const destination = join(destinationParent, "snapshot");
@@ -372,6 +375,39 @@ describe("server migration snapshots", () => {
     ).rejects.toThrow("must not already exist");
     expect(await readdir(existingUserRoot)).toEqual([]);
     expect(await fileExists(openBotDestination)).toBe(false);
+  });
+
+  it("recovers a user root left by a crash between import root publications", async () => {
+    const userDatabase = openWalDatabase(join(userDataRoot, "openbot.db"), "messages", "hello");
+    const agentPath = join(openBotRoot, "Shared", "Data", "agent-data.db");
+    await mkdir(join(openBotRoot, "Shared", "Data"), { recursive: true });
+    const agentDatabase = openWalDatabase(agentPath, "notes", "saved");
+    sourceDatabases.push(userDatabase, agentDatabase);
+    const snapshotPath = join(destinationParent, "recovery-snapshot");
+    await createServerMigrationSnapshot({ userDataRoot, openBotRoot, destinationPath: snapshotPath });
+
+    const userDestination = join(root, "recovery-profile", "OpenBot");
+    const openBotDestination = join(root, "recovery-workspace", "OpenBot");
+    const userStage = join(dirname(userDestination), ".OpenBot.migration-stage-recovery-user");
+    const openBotStage = join(dirname(openBotDestination), ".OpenBot.migration-stage-recovery-workspace");
+    await mkdir(dirname(userDestination), { recursive: true });
+    await mkdir(dirname(openBotDestination), { recursive: true });
+    await mkdir(userDestination);
+    await put(userDestination, "partial-import.txt", "interrupted publication");
+    await writeFile(
+      join(userDestination, ".openbot-migration-incomplete.json"),
+      JSON.stringify({ userDataRoot: userDestination, openBotRoot: openBotDestination, userStage, openBotStage }),
+    );
+
+    await importServerMigrationSnapshot({
+      snapshotPath,
+      userDataRoot: userDestination,
+      openBotRoot: openBotDestination,
+    });
+
+    expect(await fileExists(join(userDestination, "partial-import.txt"))).toBe(false);
+    expect(await fileExists(join(userDestination, "openbot.db"))).toBe(true);
+    expect(await fileExists(join(openBotDestination, "Shared", "Data", "agent-data.db"))).toBe(true);
   });
 
   it("checks both imported SQLite databases before publishing either destination", async () => {

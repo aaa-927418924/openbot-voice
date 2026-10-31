@@ -1863,7 +1863,7 @@ describe("self-hosted account server directory", () => {
     }
   });
 
-  it("lets an explicit Retry re-authenticate after a host rate-limits a prior ticket", async () => {
+  it("blocks explicit staged Retry after a host rate-limits a ticket until the cooldown expires", async () => {
     const hostId = "linux-account-server";
     const apiUrl = "http://100.100.100.107:43123/";
     const { publicKey, privateKey } = generateKeyPairSync("ed25519");
@@ -1932,7 +1932,7 @@ describe("self-hosted account server directory", () => {
       },
       managerOptions: { localOnlyNetworking: true, allowTailscaleApiUrl: true },
     });
-    const now = 1_000_000;
+    let now = 1_000_000;
     const dateNow = vi.spyOn(Date, "now").mockImplementation(() => now);
 
     try {
@@ -1944,6 +1944,14 @@ describe("self-hosted account server directory", () => {
         issue: { retryable: true },
       });
 
+      const blockedRetry = await runCauseEffect(fixture.manager.retryConnection(hostId));
+      expect(blockedRetry).toMatchObject({ state: "offline" });
+      await runCauseEffect(fixture.manager.syncAccountDirectory());
+      expect(createTeamAuthTicket).toHaveBeenCalledOnce();
+      expect(host.requests("/v1/identity")).toHaveLength(1);
+      expect(host.requests(TEAM_API_ROUTES.auth.account)).toHaveLength(1);
+
+      now += 15 * 60_000;
       const retriedSummary = await runCauseEffect(fixture.manager.retryConnection(hostId));
       expect(retriedSummary).toMatchObject({ state: "connecting", issue: null });
       expect(fixture.server(hostId)).toMatchObject({ state: "connecting", issue: null });
@@ -2032,12 +2040,7 @@ describe("self-hosted account server directory", () => {
     expect(fixture.server(hostId)).toMatchObject({ state: "offline", issue: { retryable: true } });
     expect(host.requests(TEAM_API_ROUTES.auth.account)).toHaveLength(0);
 
-    const dateNow = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 2 * 60_000);
-    try {
-      await runCauseEffect(fixture.manager.retryConnection(hostId));
-    } finally {
-      dateNow.mockRestore();
-    }
+    await runCauseEffect(fixture.manager.retryConnection(hostId));
 
     expect(createTeamAuthTicket).toHaveBeenCalledOnce();
     expect(host.requests(TEAM_API_ROUTES.auth.account)).toHaveLength(1);
@@ -2193,6 +2196,115 @@ describe("self-hosted account server directory", () => {
         encryptedToken: Buffer.from("refreshed-device-session").toString("base64"),
       }),
     );
+  });
+
+  it("blocks explicit and directory session renewal while a host 429 cooldown is active", async () => {
+    const hostId = "directory-auth-refresh-rate-limit-host";
+    const apiUrl = "http://100.100.100.107:43123/";
+    const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+    const publicKeyPem = publicKey.export({ type: "spki", format: "pem" }).toString();
+    const hostFingerprint = fingerprint(publicKeyPem);
+    let accountLoginAttempts = 0;
+    const host = stubTeamFetch({
+      compatibility: { capabilities: [] },
+      routes: {
+        "/v1/identity": ({ url }) => {
+          const challenge = url.searchParams.get("challenge") ?? "";
+          return Response.json({
+            serverId: hostId,
+            publicKey: publicKeyPem,
+            serverName: "Account host",
+            fingerprint: hostFingerprint,
+            challenge,
+            signature: sign(null, Buffer.from(challenge), privateKey).toString("base64url"),
+            enabledOnLaunch: true,
+            logoVersion: null,
+          });
+        },
+        [TEAM_API_ROUTES.auth.account]: () => {
+          accountLoginAttempts += 1;
+          if (accountLoginAttempts === 1) return Response.json({ error: "Expired session." }, { status: 401 });
+          if (accountLoginAttempts === 2)
+            return Response.json({ error: "Too many sign-in attempts." }, { status: 429 });
+          return Response.json({
+            member: {
+              id: "member-1",
+              username: "member",
+              email: "person@example.com",
+              name: null,
+              avatarUrl: null,
+              role: "member",
+              createdAt: new Date().toISOString(),
+              disabled: false,
+            },
+            sessionToken: "renewed-after-cooldown",
+            sessionExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+          });
+        },
+      },
+    });
+    const createTeamAuthTicket = vi.fn(() => authCall(async () => "account-ticket"));
+    const entry: AccountServerDirectoryEntry = {
+      hostId,
+      name: "Account host",
+      apiUrl,
+      fingerprint: hostFingerprint,
+      publicKey: publicKeyPem,
+      logoKey: null,
+      membershipId: "member-1",
+      role: "member",
+      isOwner: false,
+    };
+    const fixture = await createRemoteManager({
+      servers: [
+        storedHttpsServer(hostId, {
+          apiUrl,
+          fingerprint: hostFingerprint,
+          publicKey: publicKeyPem,
+          membershipId: "member-1",
+          accountId: "account-a",
+          encryptedToken: Buffer.from("expired-device-session").toString("base64"),
+        }),
+      ],
+      account: {
+        createTeamAuthTicket,
+        getAccountId: () => "account-a",
+        getEmail: () => "person@example.com",
+        isSelfHostedSignedIn: () => true,
+        getLegacyAccountServerImportExclusions: () => authCall(async () => []),
+        listAccountServers: () => authCall(async () => [entry]),
+        registerAccountServer: () => authCall(async () => undefined),
+      },
+      managerOptions: { localOnlyNetworking: true, allowTailscaleApiUrl: true },
+    });
+    let now = 1_000_000;
+    const dateNow = vi.spyOn(Date, "now").mockImplementation(() => now);
+
+    try {
+      await expect(runCauseEffect(fixture.manager.login({ serverId: hostId }))).rejects.toThrow();
+      await runCauseEffect(fixture.manager.syncAccountDirectory());
+      expect(createTeamAuthTicket).toHaveBeenCalledTimes(2);
+      expect(host.requests(TEAM_API_ROUTES.auth.account)).toHaveLength(2);
+      const server = fixture.server(hostId);
+      expect(server).toBeDefined();
+      expect(server?.state).not.toBe("online");
+
+      const retried = await runCauseEffect(fixture.manager.retryConnection(hostId));
+      expect(retried.state).not.toBe("online");
+      await runCauseEffect(fixture.manager.syncAccountDirectory());
+      now += 60_000;
+      await runCauseEffect(fixture.manager.syncAccountDirectory());
+      expect(createTeamAuthTicket).toHaveBeenCalledTimes(2);
+      expect(host.requests(TEAM_API_ROUTES.auth.account)).toHaveLength(2);
+
+      now += 14 * 60_000;
+      await runCauseEffect(fixture.manager.syncAccountDirectory());
+      expect(createTeamAuthTicket).toHaveBeenCalledTimes(3);
+      expect(host.requests(TEAM_API_ROUTES.auth.account)).toHaveLength(3);
+      expect(fixture.server(hostId)).toMatchObject({ state: "online", issue: null });
+    } finally {
+      dateNow.mockRestore();
+    }
   });
 
   it("rate-limits repeated rejected renewal and resumes it after a transient host outage", async () => {

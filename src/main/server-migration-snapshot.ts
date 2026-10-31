@@ -73,6 +73,7 @@ export class ServerMigrationSnapshotError extends Error {
 }
 
 const SNAPSHOT_MANIFEST_FILE = "manifest.json";
+const IMPORT_RECOVERY_FILE = ".openbot-migration-incomplete.json";
 const PORTABLE_OPENBOT_PATH_PREFIX = "openbot-migration-path://";
 const SQLITE_BUSY_TIMEOUT_MS = 5_000;
 const MANIFEST_PATH_PREFIXES = ["user-data/", "home/OpenBot/"] as const;
@@ -82,6 +83,15 @@ const snapshotFileSchema = z.object({
   bytes: z.number().int().nonnegative(),
   sha256: z.string().regex(/^[a-f0-9]{64}$/u),
 });
+const importRecoverySchema = z
+  .object({
+    userDataRoot: z.string(),
+    openBotRoot: z.string(),
+    userStage: z.string(),
+    openBotStage: z.string(),
+    phase: z.enum(["publishing", "complete"]).default("publishing"),
+  })
+  .strict();
 const snapshotManifestSchema = z
   .object({
     version: z.literal(SERVER_MIGRATION_SNAPSHOT_VERSION),
@@ -145,7 +155,7 @@ interface WalkOptions {
 
 /**
  * Create a portable, integrity-checked snapshot in a sibling staging directory and publish it
- * with one directory rename. SQLite databases are read-only sources and are copied with SQLite's
+ * into a destination claimed with an exclusive directory creation. SQLite databases are read-only sources and are copied with SQLite's
  * `VACUUM INTO`, which reads the committed WAL state as one consistent database snapshot.
  */
 export async function createServerMigrationSnapshot(
@@ -227,9 +237,7 @@ export async function createServerMigrationSnapshot(
     await chmod(manifestPath, 0o600);
     await verifyServerMigrationSnapshot(stagePath);
 
-    const existing = await lstatOptional(destination);
-    if (existing) throw new ServerMigrationSnapshotError("The snapshot destination already exists.");
-    await rename(stagePath, destination);
+    await publishDirectoryExclusive(stagePath, destination);
     return { path: destination, manifest };
   } catch (cause) {
     await rm(stagePath, { recursive: true, force: true }).catch(() => undefined);
@@ -240,8 +248,8 @@ export async function createServerMigrationSnapshot(
 
 /**
  * Restore a verified portable snapshot into two new roots. The snapshot is copied, never consumed.
- * Both roots are built and checked beside their destinations first; publication uses two directory
- * renames with rollback because two unrelated filesystem roots cannot be renamed in one operation.
+ * Both roots are built and checked beside their destinations first. Exclusive directory creation
+ * prevents publication from replacing a late target; a recovery journal rolls back interrupted publication.
  */
 export async function importServerMigrationSnapshot(
   options: ImportServerMigrationSnapshotOptions,
@@ -251,11 +259,13 @@ export async function importServerMigrationSnapshot(
   const manifest = await verifyServerMigrationSnapshot(options.snapshotPath);
   const snapshotRoot = await realpath(resolve(options.snapshotPath));
   assertImportManifestAllowlist(manifest);
+  await recoverInterruptedImport(options);
   const roots = await resolveFreshDestinationRoots(options, snapshotRoot);
   const userStage = await createSiblingStage(roots.userDataRoot);
   let openBotStage: string | null = null;
   let userPublished = false;
   let openBotPublished = false;
+  let publicationStarted = false;
 
   try {
     openBotStage = await createSiblingStage(roots.openBotRoot);
@@ -273,14 +283,24 @@ export async function importServerMigrationSnapshot(
     await validateSqliteIntegrity(agentDatabasePath, AGENT_DATABASE_RELATIVE_PATH);
     await validateImportedAttachmentReferences(attachmentReferences, openBotStage, roots.openBotRoot);
 
-    // Check both names again immediately before the first rename. Destinations are required to be
-    // fresh, and neither rename uses an existing destination as a replacement.
+    const recoveryData = { userDataRoot: roots.userDataRoot, openBotRoot: roots.openBotRoot, userStage, openBotStage };
+    const recoveryRecord = `${JSON.stringify(recoveryData)}\n`;
+    const recoveryJournal = recoveryJournalPath(roots.userDataRoot);
+    await Promise.all([
+      writeFile(join(userStage, IMPORT_RECOVERY_FILE), recoveryRecord, { flag: "wx", mode: 0o600 }),
+      writeFile(join(openBotStage, IMPORT_RECOVERY_FILE), recoveryRecord, { flag: "wx", mode: 0o600 }),
+      writeFile(recoveryJournal, recoveryRecord, { flag: "wx", mode: 0o600 }),
+    ]);
+
+    // Check both names again immediately before publication. Exclusive mkdir calls below also
+    // reject a destination that appears after these checks.
     await assertPathMissing(roots.userDataRoot, "userDataRoot");
     await assertPathMissing(roots.openBotRoot, "openBotRoot");
-    await rename(userStage, roots.userDataRoot);
+    publicationStarted = true;
+    await publishDirectoryExclusive(userStage, roots.userDataRoot);
     userPublished = true;
     try {
-      await rename(openBotStage, roots.openBotRoot);
+      await publishDirectoryExclusive(openBotStage, roots.openBotRoot);
       openBotPublished = true;
     } catch (cause) {
       try {
@@ -294,6 +314,12 @@ export async function importServerMigrationSnapshot(
       }
       throw cause;
     }
+    await writeRecoveryJournal(recoveryJournal, { ...recoveryData, phase: "complete" });
+    await rm(join(roots.openBotRoot, IMPORT_RECOVERY_FILE), { force: true });
+    await rm(join(roots.userDataRoot, IMPORT_RECOVERY_FILE), { force: true });
+    await rm(userStage, { recursive: true, force: true });
+    await rm(openBotStage, { recursive: true, force: true });
+    await rm(recoveryJournal, { force: true });
     return {
       userDataRoot: roots.userDataRoot,
       openBotRoot: roots.openBotRoot,
@@ -302,9 +328,15 @@ export async function importServerMigrationSnapshot(
     };
   } catch (cause) {
     // If rollback itself failed, preserve the remaining stage for recovery instead of deleting it.
-    if (!userPublished && !openBotPublished) {
+    if (!publicationStarted && !userPublished && !openBotPublished) {
       await rm(userStage, { recursive: true, force: true }).catch(() => undefined);
       if (openBotStage) await rm(openBotStage, { recursive: true, force: true }).catch(() => undefined);
+    }
+    if (publicationStarted && !userPublished && !openBotPublished) {
+      throw new ServerMigrationSnapshotError(
+        `Import publication failed. Recovery data remains at ${userStage}${openBotStage ? ` and ${openBotStage}` : ""}.`,
+        { cause },
+      );
     }
     if (cause instanceof ServerMigrationSnapshotError) throw cause;
     throw new ServerMigrationSnapshotError("The verified server snapshot could not be imported.", { cause });
@@ -405,6 +437,118 @@ async function resolveFreshDestinationRoots(
     throw new ServerMigrationSnapshotError("The snapshot cannot overlap an import destination.");
   }
   return { userDataRoot, openBotRoot };
+}
+
+/** Roll back a user root left published by a process crash between the two root publications. */
+async function recoverInterruptedImport(options: ImportServerMigrationSnapshotOptions): Promise<void> {
+  if (!isAbsolute(options.userDataRoot) || !isAbsolute(options.openBotRoot)) return;
+  const userDataRoot = await canonicalizePotentialPath(resolve(options.userDataRoot));
+  const openBotRoot = await canonicalizePotentialPath(resolve(options.openBotRoot));
+  const journalPath = recoveryJournalPath(userDataRoot);
+  const userMarkerPath = join(userDataRoot, IMPORT_RECOVERY_FILE);
+  const openBotMarkerPath = join(openBotRoot, IMPORT_RECOVERY_FILE);
+  const markerPath = (await lstatOptional(journalPath))
+    ? journalPath
+    : (await lstatOptional(userMarkerPath))
+      ? userMarkerPath
+      : openBotMarkerPath;
+  const markerInfo = await lstatOptional(markerPath);
+  if (!markerInfo) return;
+  if (!markerInfo.isFile() || markerInfo.isSymbolicLink()) {
+    throw new ServerMigrationSnapshotError("An interrupted import recovery marker is invalid.");
+  }
+  let record: unknown;
+  try {
+    record = JSON.parse(await readFile(markerPath, "utf8"));
+  } catch (cause) {
+    throw new ServerMigrationSnapshotError("An interrupted import recovery marker is unreadable.", { cause });
+  }
+  const decoded = importRecoverySchema.safeParse(record);
+  if (!decoded.success) {
+    throw new ServerMigrationSnapshotError("An interrupted import recovery marker is invalid.");
+  }
+  const candidate = decoded.data;
+  const userStage = candidate.userStage;
+  const openBotStage = candidate.openBotStage;
+  if (
+    candidate.userDataRoot !== userDataRoot ||
+    candidate.openBotRoot !== openBotRoot ||
+    typeof userStage !== "string" ||
+    typeof openBotStage !== "string" ||
+    dirname(userStage) !== dirname(userDataRoot) ||
+    dirname(openBotStage) !== dirname(openBotRoot) ||
+    !basename(userStage).startsWith(`.${basename(userDataRoot)}.migration-stage-`) ||
+    !basename(openBotStage).startsWith(`.${basename(openBotRoot)}.migration-stage-`)
+  ) {
+    throw new ServerMigrationSnapshotError("An interrupted import recovery marker does not match these destinations.");
+  }
+  if (candidate.phase === "complete") {
+    await rm(userMarkerPath, { force: true });
+    await rm(openBotMarkerPath, { force: true });
+    await rm(userStage, { recursive: true, force: true });
+    await rm(openBotStage, { recursive: true, force: true });
+    await rm(journalPath, { force: true });
+    return;
+  }
+  if (await lstatOptional(userDataRoot)) {
+    if (!(await hasMatchingRecoveryMarker(userDataRoot, candidate))) {
+      throw new ServerMigrationSnapshotError("An interrupted import destination cannot be proven safe to roll back.");
+    }
+    await restorePublishedDirectory(userDataRoot, userStage);
+  }
+  if (await lstatOptional(openBotRoot)) {
+    if (!(await hasMatchingRecoveryMarker(openBotRoot, candidate))) {
+      throw new ServerMigrationSnapshotError("An interrupted import destination cannot be proven safe to roll back.");
+    }
+    await restorePublishedDirectory(openBotRoot, openBotStage);
+  }
+  await rm(userStage, { recursive: true, force: true });
+  await rm(openBotStage, { recursive: true, force: true });
+  await rm(journalPath, { force: true });
+}
+
+function recoveryJournalPath(userDataRoot: string): string {
+  return join(dirname(userDataRoot), `.${basename(userDataRoot)}.openbot-migration-recovery.json`);
+}
+
+async function writeRecoveryJournal(path: string, data: z.infer<typeof importRecoverySchema>): Promise<void> {
+  const temporary = `${path}.tmp-${randomUUID()}`;
+  try {
+    await writeFile(temporary, `${JSON.stringify(data)}\n`, { flag: "wx", mode: 0o600 });
+    await rename(temporary, path);
+  } catch (cause) {
+    await rm(temporary, { force: true }).catch(() => undefined);
+    throw cause;
+  }
+}
+
+async function restorePublishedDirectory(publishedPath: string, stagePath: string): Promise<void> {
+  await mkdir(stagePath, { recursive: true, mode: 0o700 });
+  for (const entry of await readdir(publishedPath)) {
+    await rename(join(publishedPath, entry), join(stagePath, entry));
+  }
+  await rm(publishedPath, { recursive: true, force: true });
+}
+
+async function hasMatchingRecoveryMarker(
+  root: string,
+  expected: z.infer<typeof importRecoverySchema>,
+): Promise<boolean> {
+  const path = join(root, IMPORT_RECOVERY_FILE);
+  const info = await lstatOptional(path);
+  if (!info?.isFile() || info.isSymbolicLink()) return false;
+  try {
+    const parsed = importRecoverySchema.safeParse(JSON.parse(await readFile(path, "utf8")));
+    return (
+      parsed.success &&
+      parsed.data.userDataRoot === expected.userDataRoot &&
+      parsed.data.openBotRoot === expected.openBotRoot &&
+      parsed.data.userStage === expected.userStage &&
+      parsed.data.openBotStage === expected.openBotStage
+    );
+  } catch {
+    return false;
+  }
 }
 
 async function resolveFreshDestination(path: string, label: string): Promise<string> {
@@ -606,16 +750,69 @@ async function resolveDestination(path: string, roots: SourceRoots): Promise<str
     throw new ServerMigrationSnapshotError("The snapshot destination path is invalid.");
   }
   const parent = dirname(resolved);
+  const anticipatedDestination = await canonicalizePotentialPath(resolved);
+  if (
+    pathsOverlap(anticipatedDestination, roots.userDataRoot) ||
+    pathsOverlap(anticipatedDestination, roots.openBotRoot)
+  ) {
+    throw new ServerMigrationSnapshotError("The snapshot destination cannot overlap a source data root.");
+  }
   await mkdir(parent, { recursive: true, mode: 0o700 });
   const canonicalParent = await realpath(parent);
   const destination = join(canonicalParent, name);
-  if (pathsOverlap(destination, roots.userDataRoot) || pathsOverlap(destination, roots.openBotRoot)) {
-    throw new ServerMigrationSnapshotError("The snapshot destination cannot overlap a source data root.");
+  if (destination !== anticipatedDestination) {
+    throw new ServerMigrationSnapshotError("The snapshot destination parent changed while it was being prepared.");
   }
   if (await lstatOptional(destination)) {
     throw new ServerMigrationSnapshotError("The snapshot destination already exists.");
   }
   return destination;
+}
+
+/** Resolve a path through its nearest existing ancestor without creating missing directories. */
+async function canonicalizePotentialPath(path: string): Promise<string> {
+  let ancestor = resolve(path);
+  const missing: string[] = [];
+  while (true) {
+    try {
+      const info = await lstat(ancestor);
+      if (!info.isDirectory() || info.isSymbolicLink()) {
+        throw new ServerMigrationSnapshotError("The snapshot destination parent must be a real directory.");
+      }
+      return join(await realpath(ancestor), ...missing.reverse());
+    } catch (cause) {
+      if (cause instanceof ServerMigrationSnapshotError) throw cause;
+      if (!(cause instanceof Error) || !("code" in cause) || cause.code !== "ENOENT") {
+        throw new ServerMigrationSnapshotError("The snapshot destination parent could not be resolved.", { cause });
+      }
+      const parent = dirname(ancestor);
+      if (parent === ancestor) {
+        throw new ServerMigrationSnapshotError("The snapshot destination parent could not be resolved.", { cause });
+      }
+      missing.push(basename(ancestor));
+      ancestor = parent;
+    }
+  }
+}
+
+/** Claim the target with mkdir (which fails if it appeared after validation), then move staged entries in. */
+async function publishDirectoryExclusive(stagePath: string, destinationPath: string): Promise<void> {
+  await mkdir(destinationPath, { mode: 0o700 });
+  const moved: string[] = [];
+  try {
+    const entries = await readdir(stagePath);
+    entries.sort((left, right) => Number(right === IMPORT_RECOVERY_FILE) - Number(left === IMPORT_RECOVERY_FILE));
+    for (const entry of entries) {
+      await rename(join(stagePath, entry), join(destinationPath, entry));
+      moved.push(entry);
+    }
+  } catch (cause) {
+    for (const entry of moved.reverse()) {
+      await rename(join(destinationPath, entry), join(stagePath, entry)).catch(() => undefined);
+    }
+    await rm(destinationPath, { recursive: true, force: true }).catch(() => undefined);
+    throw cause;
+  }
 }
 
 async function copyOptionalFile(
@@ -724,6 +921,13 @@ async function copyDirectoryTree(
       throw new ServerMigrationSnapshotError(
         `Special files are not allowed in migration data: ${childSourceRelative}.`,
       );
+    }
+    if (
+      outputRelativePath.startsWith("user-data/") &&
+      isAllowedAssetDirectory(dirname(childOutputRelative).split(sep).join("/")) &&
+      !isAllowedAssetPath(childOutputRelative)
+    ) {
+      continue;
     }
     await makeOutputParent(builder, childOutputRelative);
     const targetPath = snapshotPathFromRelative(builder.stagePath, childOutputRelative);
