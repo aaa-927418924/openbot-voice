@@ -12,7 +12,9 @@ import { useServers } from "./servers-context";
  * What the server rail and the server menu on the sidebar title both do with a server. The two
  * views show the same servers in the same order and must not disagree on an action.
  */
-export function useServerActions() {
+export type ServerMigrationAction = Pick<ServerActionCallbacks, "onMigrateToCloud">;
+
+export function useServerActions(migration: ServerMigrationAction = {}) {
   const platform = usePlatform();
   const { t, errorMessage } = useText();
   const { openUsage, openSchedule } = useUsage();
@@ -62,7 +64,11 @@ export function useServerActions() {
     void refreshHostedServersAvailable();
   }
 
-  const callbacks: Required<ServerActionCallbacks> = {
+  const callbacks: Required<Omit<ServerActionCallbacks, "onMigrateToCloud">> & ServerMigrationAction = {
+    get onMigrateToCloud() {
+      const os = platform.appInfo()?.platform;
+      return os === "win32" || os === "linux" ? migration.onMigrateToCloud : undefined;
+    },
     onSetMuted: (serverId, muted, durationMs) => void setServerMuted(serverId, muted, durationMs),
     onSetNotificationLevel: (serverId, level) => void setServerNotificationLevel(serverId, level),
     onOpenUsage: openUsage,

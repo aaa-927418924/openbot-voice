@@ -134,6 +134,7 @@ export const messages = defineMessages("server", {
   "server.rail.usage": "Usage",
   "server.rail.schedule": "Routines",
   "server.rail.settings": "Server settings",
+  "server.rail.migrateToCloud": "Migrate to cloud",
   "server.rail.hide": "Hide server",
   "server.select.failedTitle": "Could not select the server",
   "server.select.failedDescription": "Could not switch servers. Try again.",

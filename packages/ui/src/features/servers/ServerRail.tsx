@@ -265,6 +265,7 @@ export function ServerRail(props: ServerRailProps) {
               onOpenUsage={props.onOpenUsage}
               onOpenSchedule={props.onOpenSchedule}
               onHideServer={props.onHideServer}
+              onMigrateToCloud={props.onMigrateToCloud}
             />
           )}
         </For>
@@ -313,6 +314,7 @@ export function ServerRail(props: ServerRailProps) {
                     onOpenUsage={props.onOpenUsage}
                     onOpenSchedule={props.onOpenSchedule}
                     onHideServer={props.onHideServer}
+                    onMigrateToCloud={props.onMigrateToCloud}
                     onMove={(direction) => moveServer(server().id, direction)}
                   />
                 </li>
@@ -451,6 +453,7 @@ function ServerRailButton(
                 onOpenSchedule={props.onOpenSchedule}
                 onOpenSettings={props.onOpenSettings}
                 onHideServer={props.onHideServer}
+                onMigrateToCloud={props.onMigrateToCloud}
               />
             </ContextMenu.Content>
           </ContextMenu.Portal>

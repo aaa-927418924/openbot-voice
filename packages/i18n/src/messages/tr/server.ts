@@ -137,6 +137,7 @@ export const messages = {
   "server.rail.usage": "Kullanım",
   "server.rail.schedule": "Zamanlama",
   "server.rail.settings": "Sunucu ayarları",
+  "server.rail.migrateToCloud": "Buluta taşı",
   "server.select.failedTitle": "Sunucu seçilemedi",
   "server.select.failedDescription": "Sunucular arasında geçiş yapılamadı. Tekrar deneyin.",
   "server.select.openAgentFailed": "{name} açılamadı. Onu kenar çubuğunda bulun.",

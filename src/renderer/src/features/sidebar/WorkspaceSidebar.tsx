@@ -18,7 +18,7 @@ import { useAgents } from "../agents/agents-context";
 import { useChannels } from "../channels/channels-context";
 import { useConversation } from "../conversation/conversation-context";
 import { useDirectMessages } from "../conversation/direct-messages-context";
-import { useServerActions } from "../servers/server-actions";
+import { type ServerMigrationAction, useServerActions } from "../servers/server-actions";
 import { useServerSettings } from "../servers/server-settings";
 import { useServers } from "../servers/servers-context";
 import { useSettings } from "../settings/settings-context";
@@ -38,14 +38,14 @@ const MOBILE_APP_DISMISSED_STORAGE_KEY = "openbot:ios-beta-card-dismissed";
  * decide which pane renders. Deriving it a second time here would let the two
  * answers disagree for a frame.
  */
-export function WorkspaceSidebar(props: { peopleEnabled: boolean }) {
+export function WorkspaceSidebar(props: { peopleEnabled: boolean } & ServerMigrationAction) {
   const { t, sourceText } = useText();
   const layout = useLayout();
   const platform = usePlatform();
   const channels = useChannels();
   const { activeServer, activeServerSupportsCapability } = useServers();
   const { openServerSettings } = useServerSettings();
-  const serverActions = useServerActions();
+  const serverActions = useServerActions(props);
   const { setSkillsMarketplaceOpen } = useSettings();
   const { agentList, activeAgent, agentSetupDraft, duplicatingAgentIds, openBotSetup } = useAgents();
   const { editAgent, duplicateAgent, deleteAgent } = useAgentActions();

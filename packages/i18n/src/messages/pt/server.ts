@@ -124,6 +124,7 @@ export const messages = {
   "server.rail.notificationSettings": "Configurações de notificações",
   "server.rail.usage": "Uso",
   "server.rail.settings": "Configurações do servidor",
+  "server.rail.migrateToCloud": "Migrar para a nuvem",
   "server.select.failedTitle": "Não foi possível selecionar o servidor",
   "server.select.failedDescription": "Não foi possível trocar de servidor. Tente novamente.",
   "server.select.openAgentFailed": "Não foi possível abrir {name}. Encontre-o na barra lateral.",

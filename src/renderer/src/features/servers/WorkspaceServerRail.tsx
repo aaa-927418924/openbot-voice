@@ -3,7 +3,7 @@ import { onSettled, Show } from "solid-js";
 import { playActionSound } from "../../action-sounds";
 import { useLayout } from "../../layout";
 import { usePlatform } from "../../platform";
-import { useServerActions } from "./server-actions";
+import { type ServerMigrationAction, useServerActions } from "./server-actions";
 import { useServers } from "./servers-context";
 
 /**
@@ -13,11 +13,11 @@ import { useServers } from "./servers-context";
  * decide whether the frame has to leave room for it. The server shortcuts
  * work in both views.
  */
-export function WorkspaceServerRail() {
+export function WorkspaceServerRail(props: ServerMigrationAction = {}) {
   const platform = usePlatform();
   const layout = useLayout();
   const { reorderServers } = useServers();
-  const { orderedServers, select, add, addCreatesServer, callbacks } = useServerActions();
+  const { orderedServers, select, add, addCreatesServer, callbacks } = useServerActions(props);
 
   onSettled(() => {
     const handleServerShortcut = (event: KeyboardEvent) => {

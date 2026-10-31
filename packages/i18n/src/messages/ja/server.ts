@@ -73,6 +73,7 @@ export const messages = {
   "server.rail.notificationSettings": "通知の設定",
   "server.rail.usage": "使用量",
   "server.rail.settings": "サーバーの設定",
+  "server.rail.migrateToCloud": "クラウドに移行する",
   "server.rail.hide": "サーバーを非表示",
   "server.select.failedTitle": "サーバーを選択できませんでした",
   "server.select.failedDescription": "サーバーを切り替えられませんでした。もう一度お試しください。",

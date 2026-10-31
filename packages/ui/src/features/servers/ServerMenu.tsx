@@ -239,6 +239,7 @@ export function ServerMenu(props: ServerMenuProps) {
                           onOpenSchedule={props.onOpenSchedule}
                           onOpenSettings={props.onOpenSettings}
                           onHideServer={props.onHideServer}
+                          onMigrateToCloud={props.onMigrateToCloud}
                         />
                       </DropdownMenu.SubContent>
                     </DropdownMenu.Portal>
@@ -266,6 +267,7 @@ export function ServerMenu(props: ServerMenuProps) {
                       onOpenSchedule={props.onOpenSchedule}
                       onOpenSettings={props.onOpenSettings}
                       onHideServer={props.onHideServer}
+                      onMigrateToCloud={props.onMigrateToCloud}
                     />
                   </>
                 )}
@@ -340,6 +342,7 @@ export function ServerMenu(props: ServerMenuProps) {
                   onOpenSchedule={props.onOpenSchedule}
                   onOpenSettings={props.onOpenSettings}
                   onHideServer={props.onHideServer}
+                  onMigrateToCloud={props.onMigrateToCloud}
                 />
               )}
             </Show>
