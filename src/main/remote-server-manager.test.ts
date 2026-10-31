@@ -1358,7 +1358,7 @@ describe("remote control capability discovery", () => {
         legacyImport: true,
       }),
     );
-    expect(fixture.server(hostId)).toMatchObject({ id: hostId, role: "member", state: "online" });
+    expect(fixture.server(hostId)).toMatchObject({ id: hostId, role: "member", state: "connecting" });
     expect(fixture.manager.activeServerId).toBe(LOCAL_SERVER_ID);
     expect(JSON.parse(await readFile(fixture.statePath, "utf8"))).toMatchObject({
       servers: expect.arrayContaining([
@@ -1945,8 +1945,8 @@ describe("self-hosted account server directory", () => {
       });
 
       const retriedSummary = await runCauseEffect(fixture.manager.retryConnection(hostId));
-      expect(retriedSummary).toMatchObject({ state: "online", issue: null });
-      expect(fixture.server(hostId)).toMatchObject({ state: "online", issue: null });
+      expect(retriedSummary).toMatchObject({ state: "connecting", issue: null });
+      expect(fixture.server(hostId)).toMatchObject({ state: "connecting", issue: null });
       expect(JSON.parse(await readFile(fixture.statePath, "utf8")).servers).toContainEqual(
         expect.objectContaining({ id: hostId, encryptedToken: expect.any(String) }),
       );
@@ -2041,7 +2041,7 @@ describe("self-hosted account server directory", () => {
 
     expect(createTeamAuthTicket).toHaveBeenCalledOnce();
     expect(host.requests(TEAM_API_ROUTES.auth.account)).toHaveLength(1);
-    expect(fixture.server(hostId)).toMatchObject({ state: "online", issue: null });
+    expect(fixture.server(hostId)).toMatchObject({ state: "connecting", issue: null });
     expect(JSON.parse(await readFile(fixture.statePath, "utf8")).servers).toContainEqual(
       expect.objectContaining({ id: hostId, encryptedToken: expect.any(String) }),
     );
@@ -2445,7 +2445,7 @@ describe("self-hosted account server directory", () => {
 
     expect(host.requests(TEAM_API_ROUTES.auth.account)).toHaveLength(2);
     expect(fixture.manager.activeServerId).toBe(hostId);
-    expect(fixture.server(hostId)).toMatchObject({ state: "online", issue: null });
+    expect(fixture.server(hostId)).toMatchObject({ state: "connecting", issue: null });
     expect(JSON.parse(await readFile(fixture.statePath, "utf8")).servers).toContainEqual(
       expect.objectContaining({
         id: hostId,

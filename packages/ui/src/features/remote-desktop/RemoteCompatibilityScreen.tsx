@@ -27,6 +27,7 @@ export function RemoteCompatibilityScreen(props: { server: ServerSummary; onRetr
     }
   }
   const title = () => {
+    if (props.server.state === "connecting") return t("common.connecting");
     if (props.server.issue?.code === "client_update_required") return t("server.compatibility.updateClientTitle");
     if (props.server.issue?.code === "host_update_required") {
       return t("server.compatibility.updateHostTitle", { name: props.server.name });
@@ -59,12 +60,18 @@ export function RemoteCompatibilityScreen(props: { server: ServerSummary; onRetr
 
   return (
     <main class="remote-compatibility-screen" aria-labelledby="remote-compatibility-title">
-      <Alert class="remote-compatibility-alert" tone="danger" role="alert">
+      <Alert
+        class="remote-compatibility-alert"
+        tone={props.server.state === "connecting" ? "neutral" : "danger"}
+        role={props.server.state === "connecting" ? "status" : "alert"}
+      >
         <AlertContent>
           <h1 class="ui-alert-title" id="remote-compatibility-title">
             {title()}
           </h1>
-          <AlertDescription>{description()}</AlertDescription>
+          <Show when={props.server.state !== "connecting"}>
+            <AlertDescription>{description()}</AlertDescription>
+          </Show>
         </AlertContent>
       </Alert>
       <Show when={props.server.state === "incompatible" || props.server.issue?.code === "protocol_error"}>
@@ -79,8 +86,8 @@ export function RemoteCompatibilityScreen(props: { server: ServerSummary; onRetr
           </For>
         </dl>
       </Show>
-      <Button type="button" disabled={retrying()} onClick={() => void retry()}>
-        {retrying() ? t("common.connecting") : t("common.retry")}
+      <Button type="button" disabled={retrying() || props.server.state === "connecting"} onClick={() => void retry()}>
+        {retrying() || props.server.state === "connecting" ? t("common.connecting") : t("common.retry")}
       </Button>
       <Show when={retryError()}>
         {(message) => (

@@ -56,9 +56,7 @@ export function WorkspaceShell(props: { account: () => CentralAuthUser }) {
     const server = activeServer();
     // A hosted server that sleeps or wakes keeps the workspace on screen. The next input wakes it.
     if (server?.kind !== "remote" || server.hostedSleep) return null;
-    return server.state === "incompatible" ||
-      server.issue != null ||
-      (server.state === "offline" && !server.hostedSleep)
+    return server.state === "incompatible" || server.issue != null || (server.state !== "online" && !server.hostedSleep)
       ? server
       : null;
   });

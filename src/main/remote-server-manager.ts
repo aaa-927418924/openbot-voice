@@ -631,7 +631,10 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       };
       this.#connections.setCompatibility(stored.id, identity.compatibility);
       this.#connections.clearIssue(stored.id);
-      this.#connections.setState(stored.id, "online");
+      // Redeeming the link proves authorization, not that the Team API event data plane is ready.
+      // Stay in `connecting` until the event socket opens; otherwise clients can mount an empty
+      // local-looking workspace while the real host is still unreachable.
+      this.#connections.setState(stored.id, "connecting");
       this.#recordUserSelectionIntent(stored.id);
       this.#recordFreshServerSession(stored.id);
       yield* this.#store.adopt(stored);
@@ -719,7 +722,10 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       };
       this.#connections.setCompatibility(stored.id, identity.compatibility);
       this.#connections.clearIssue(stored.id);
-      this.#connections.setState(stored.id, "online");
+      // A valid account ticket proves authorization, not that the Team API event data plane is
+      // ready. Stay in `connecting` until the event socket opens; otherwise clients can mount an
+      // empty local-looking workspace while the real host is still unreachable.
+      this.#connections.setState(stored.id, "connecting");
       this.#recordFreshServerSession(stored.id);
       yield* this.#store.adopt(stored);
       const remoteDesktopAvailable = yield* this.#client

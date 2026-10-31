@@ -87,11 +87,11 @@ const ServerScope = createSimpleContext({
       }
       if (
         server?.kind === "remote" &&
-        (server.state === "incompatible" || server.issue != null || (server.state === "offline" && !server.hostedSleep))
+        (server.state === "incompatible" || server.issue != null || (server.state !== "online" && !server.hostedSleep))
       ) {
-        // The shell blocks its chat controls for an offline host. Mark the scope settled so global
-        // surfaces, such as Dynamic Island attention, can still clear or show work completed there.
-        if (server.state === "offline" && !server.hostedSleep) setLoaded(true);
+        // The shell blocks workspace controls until the remote data plane is online. Mark the
+        // scope settled so global surfaces can still clear or show work completed there.
+        if (server.state !== "online" && !server.hostedSleep) setLoaded(true);
         return;
       }
       void Promise.all([
