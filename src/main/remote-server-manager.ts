@@ -285,6 +285,9 @@ const ACCOUNT_DIRECTORY_REAUTH_RETRY_MS = 60_000;
 // refresh can trip the host's sign-in abuse limit. Start at two minutes and back off to five.
 const ACCOUNT_SERVER_ADOPTION_RETRY_MS = 2 * 60_000;
 const ACCOUNT_SERVER_ADOPTION_MAX_RETRY_MS = 5 * 60_000;
+// Team's password/sign-in limiter is five attempts per fifteen-minute window. Once the host says
+// 429, don't let repeated manual retries mint more tickets before that window has had time to reset.
+const ACCOUNT_SERVER_ADOPTION_RATE_LIMIT_RETRY_MS = 15 * 60_000;
 const logger = createOpenBotLogger("remote-account-adoption");
 
 type AccountAdoptionStage = "host_identity" | "account_ticket" | "host_account_login";
@@ -694,7 +697,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         Effect.tapError((error) =>
           Effect.sync(() => logAccountAdoptionFailure(entry.hostId, "host_account_login", error)),
         ),
-        Effect.mapError((failure) => new RemoteWorkflowError({ cause: failure.cause })),
+        // A RemoteRequestError is already the expected failure value; its optional `cause` is
+        // usually empty. Preserve the error itself so 401/429 and diagnostics remain classifiable.
+        Effect.mapError((failure) => new RemoteWorkflowError({ cause: failure })),
       );
       const stored: StoredRemoteServer = {
         id: entry.hostId,
@@ -734,7 +739,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   ): Effect.Effect<void, RemoteWorkflowError, RemoteRequest> {
     const hostId = entry.hostId;
     if (this.#accountServerAdoptionInFlight.has(hostId)) return Effect.void;
-    if (options.automatic && (this.#accountServerAdoptionRetryAt.get(hostId) ?? 0) > Date.now()) return Effect.void;
+    if ((this.#accountServerAdoptionRetryAt.get(hostId) ?? 0) > Date.now()) return Effect.void;
 
     this.#accountServerAdoptionInFlight.add(hostId);
     return Effect.gen({ self: this }, function* () {
@@ -760,10 +765,13 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
       const failures = (this.#accountServerAdoptionFailures.get(hostId) ?? 0) + 1;
       this.#accountServerAdoptionFailures.set(hostId, failures);
-      const retryDelay = Math.min(
-        ACCOUNT_SERVER_ADOPTION_RETRY_MS * 2 ** Math.min(failures - 1, 8),
-        ACCOUNT_SERVER_ADOPTION_MAX_RETRY_MS,
-      );
+      const retryDelay =
+        accountAdoptionFailureDetails(cause).status === 429
+          ? ACCOUNT_SERVER_ADOPTION_RATE_LIMIT_RETRY_MS
+          : Math.min(
+              ACCOUNT_SERVER_ADOPTION_RETRY_MS * 2 ** Math.min(failures - 1, 8),
+              ACCOUNT_SERVER_ADOPTION_MAX_RETRY_MS,
+            );
       this.#accountServerAdoptionRetryAt.set(hostId, Date.now() + retryDelay);
       this.#emitChanged();
 
@@ -1731,6 +1739,15 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
             return yield* new RemoteWorkflowError({
               cause: new Error(sourceText("error.remote.selectedServerOffline")),
             });
+          }
+          const retryAt = this.#accountServerAdoptionRetryAt.get(serverId) ?? 0;
+          if (this.#accountServerAdoptionInFlight.has(serverId) || retryAt > Date.now()) {
+            // A manual click cannot bypass the automatic-adoption cooldown, especially after 429.
+            // Keep the staged host visibly offline and retryable without requesting another ticket.
+            this.#connections.setState(serverId, "offline");
+            if (!this.#connections.hasIssue(serverId)) this.#connections.reportUnreachable(serverId);
+            this.#emitChanged();
+            return yield* remoteDecode(() => requiredServerSummary(this.list(), serverId));
           }
           this.#connections.setState(serverId, "connecting");
           this.#emitChanged();

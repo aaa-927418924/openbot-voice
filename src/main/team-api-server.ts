@@ -659,9 +659,34 @@ export class TeamApiServer {
                 )
               : undefined)
           : null;
-        if (!user) return this.#json(response, 401, { error: sourceText("error.team.signInRequired") });
-        this.#checkRate(request, user.email);
-        return this.#json(response, 200, await runCauseEffect(this.#options.store.loginWithAccount(user)));
+        if (!user) {
+          // An invalid/expired ticket is an authentication failure. It has no trusted account name
+          // to key the limiter with, so limit these attempts by peer address using one fixed bucket.
+          this.#checkRate(request, "account-ticket");
+          return this.#json(response, 401, { error: sourceText("error.team.signInRequired") });
+        }
+        try {
+          // A central ticket is already a signed, single-use proof. Do not count valid ticket
+          // renewals as password guesses: background reconnects on a device share the same peer
+          // address and could otherwise lock every client out after five successful refreshes.
+          return this.#json(response, 200, await runCauseEffect(this.#options.store.loginWithAccount(user)));
+        } catch (error) {
+          // A valid central identity that is not a member (or was disabled) is still an auth
+          // failure. Avoid counting storage/runtime failures as guesses.
+          const teamStoreFailure =
+            error instanceof TeamStoreError
+              ? error
+              : error instanceof RemoteWorkflowError && error.cause instanceof TeamStoreError
+                ? error.cause
+                : null;
+          if (teamStoreFailure) {
+            this.#checkRate(request, user.email.trim() || user.id);
+            // `runCauseEffect` exposes the typed workflow failure. Return the underlying store
+            // error so this API's existing error boundary preserves its expected 400 response.
+            throw teamStoreFailure;
+          }
+          throw error;
+        }
       }
 
       // The auth gate does not look at the path. An unknown route without a token is 401, not 404,

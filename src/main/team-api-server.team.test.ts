@@ -374,6 +374,72 @@ describe("TeamApiServer team", () => {
     }
   });
 
+  it("does not rate-limit successful account-ticket reconnects, but still limits failed tickets", async () => {
+    const account = {
+      id: "owner-account",
+      email: "owner@example.com",
+      name: "Owner",
+      avatarUrl: null,
+    };
+    const nonMember = {
+      id: "non-member-account",
+      email: "outside@example.com",
+      name: "Not a member",
+      avatarUrl: null,
+    };
+    const { store, start } = await createTeamApiFixture("account-ticket-rate-limit");
+    await Effect.runPromise(store.configureWithAccount("Linux host", account));
+    const consumedTickets = new Set<string>();
+    const { base } = await start({
+      redeemCentralTicket: (ticket, serverId) =>
+        Effect.sync(() => {
+          if (
+            serverId !== store.getIdentity()?.serverId ||
+            (!ticket.startsWith("valid-ticket-") && !ticket.startsWith("non-member-ticket-"))
+          )
+            return null;
+          if (consumedTickets.has(ticket)) return null;
+          consumedTickets.add(ticket);
+          return ticket.startsWith("valid-ticket-") ? account : nonMember;
+        }),
+    });
+    const authenticate = (accountTicket: string) =>
+      fetch(`${base}${TEAM_API_ROUTES.auth.account}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountTicket }),
+      });
+
+    // Each reconnect uses a different one-use signed ticket but the same client IP and account.
+    // Successful refreshes must not consume the failure-only sign-in budget.
+    for (let attempt = 0; attempt < 7; attempt += 1) {
+      const response = await authenticate(`valid-ticket-${attempt}`);
+      expect(response.status, await response.clone().text()).toBe(200);
+      const session = await response.json();
+      expect(session).toMatchObject({ member: { email: account.email }, sessionToken: expect.any(String) });
+    }
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const response = await authenticate(`invalid-ticket-${attempt}`);
+      expect(response.status).toBe(401);
+    }
+    const rateLimited = await authenticate("invalid-ticket-6");
+    expect(rateLimited.status).toBe(429);
+
+    // A valid signed ticket remains sufficient proof even after failed guesses from this peer.
+    const recovered = await authenticate("valid-ticket-after-failures");
+    expect(recovered.status, await recovered.clone().text()).toBe(200);
+
+    // A valid account ticket for somebody who is not a Team member must keep the existing 400
+    // response (not become an unexpected 500), and these authorization failures remain limited.
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const response = await authenticate(`non-member-ticket-${attempt}`);
+      expect(response.status, await response.clone().text()).toBe(400);
+    }
+    const blockedNonMember = await authenticate("non-member-ticket-6");
+    expect(blockedNonMember.status).toBe(429);
+  });
+
   it("keeps the invited login name separate from the member's profile name", async () => {
     const { store, start } = await createTeamApiFixture("server", { configure: true });
     const { base } = await start({ agents: createAgents() });
