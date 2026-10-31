@@ -672,9 +672,10 @@ function GlobalMessageSearch() {
 }
 
 /**
- * The remote-desktop takeover. Keyed on the server so that connecting to a
- * different one rebuilds the viewer instead of repainting the previous
- * machine's last frame into it.
+ * The remote-desktop takeover. The viewer iframe must survive every server
+ * summary refresh: its URL carries the session's grant, and rebuilding the
+ * iframe asks the host to authorize that same session again. It survives a
+ * switch too, because switching servers closes the workspace first.
  */
 function RemoteDesktop() {
   const platform = usePlatform();
@@ -692,21 +693,21 @@ function RemoteDesktop() {
   } = useRemoteDesktop();
 
   return (
-    <Show when={!platform.landingPreview && remoteDesktopWorkspaceServer()} keyed>
+    <Show when={!platform.landingPreview && remoteDesktopWorkspaceServer()}>
       {(server) => (
         <Loading>
           <RemoteDesktopWorkspace
             visible={remoteDesktopWorkspaceVisible()}
             platform={platform.appInfo()?.platform ?? "darwin"}
-            server={server}
+            server={server()}
             session={remoteDesktopWorkspaceSession()}
-            connecting={remoteDesktopConnectingServerId() === server.id}
+            connecting={remoteDesktopConnectingServerId() === server().id}
             connectionError={remoteDesktopConnectionError()}
             connectionErrorCode={remoteDesktopConnectionErrorCode()}
             onHide={hideRemoteDesktopWorkspace}
             onRetry={retryRemoteDesktopWorkspace}
             onSelectDisplay={selectRemoteDesktopDisplay}
-            onViewerDiagnostic={(event) => void reportRemoteDesktopViewerDiagnostic({ serverId: server.id, event })}
+            onViewerDiagnostic={(event) => void reportRemoteDesktopViewerDiagnostic({ serverId: server().id, event })}
           />
         </Loading>
       )}

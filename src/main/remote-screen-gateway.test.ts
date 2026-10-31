@@ -216,7 +216,7 @@ describe("RemoteScreenGateway", () => {
     }
   });
 
-  it("issues and consumes a one-time 60 second viewer grant", async () => {
+  it("issues a viewer grant and lets the same live session re-authorize it", async () => {
     const gateway = createGateway();
     const { origin, close } = await serveGateway(gateway);
     const session = await createSession(gateway, origin);
@@ -254,12 +254,53 @@ describe("RemoteScreenGateway", () => {
     });
     expect(state.status).toBe(204);
     expect(gateway.list()[0]).toMatchObject({ phase: "connected", transport: "p2p" });
+    // A reloaded viewer page arrives with the same grant. It is the session's own secret, not a
+    // one-shot ticket, so the reload re-authorizes instead of showing "Remote access expired".
     const second = await fetch(authorize, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ grant: session.viewerGrant }),
     });
-    expect(second.status).toBe(401);
+    expect(second.status).toBe(204);
+    expect(second.headers.get("set-cookie")).toContain("openbotRemoteViewer=");
+    const rejected = await fetch(authorize, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ grant: "not-this-session" }),
+    });
+    expect(rejected.status).toBe(401);
+    await close();
+  });
+
+  it("re-authorizes a consumed grant after its original 60 second window", async () => {
+    let now = Date.parse("2026-08-21T12:00:00.000Z");
+    const gateway = createGateway({ now: () => now });
+    const { origin, close } = await serveGateway(gateway);
+    const session = await createSession(gateway, origin);
+    const authorize = `${origin}/v1/remote-screen/sessions/${session.id}/authorize`;
+    const body = JSON.stringify({ grant: session.viewerGrant });
+    expect(
+      (
+        await fetch(authorize, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body,
+        })
+      ).status,
+    ).toBe(204);
+
+    now += 15 * 60_000;
+
+    expect(
+      (
+        await fetch(authorize, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body,
+        })
+      ).status,
+    ).toBe(204);
+    expect(gateway.list()).toHaveLength(1);
     await close();
   });
 

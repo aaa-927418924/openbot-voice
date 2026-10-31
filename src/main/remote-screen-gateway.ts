@@ -701,7 +701,16 @@ export class RemoteScreenGateway {
           url.pathname,
         ) ?? [];
       const session = sessionId === undefined ? null : this.#sessions.get(sessionId);
-      if (!session || route === undefined) return sendText(response, 404, "Remote session not found.");
+      if (!session || route === undefined) {
+        // A host restart, a session closed after a long viewer disconnect, or a stale client
+        // session reaches the viewer page with an id the host no longer has. Answer with the same
+        // expired page the authorize refusal uses, so the parent shows its retry action instead of
+        // waiting for a stream that will never start.
+        if (request.method === "GET" && route === "viewer" && sessionId !== undefined) {
+          return sendExpiredViewer(response, sessionId);
+        }
+        return sendText(response, 404, "Remote session not found.");
+      }
       if (request.method === "GET" && route === "viewer") {
         if (!this.#runtimeState) return sendText(response, 503, "Moonlight runtime is unavailable.");
         return sendViewer(
@@ -740,9 +749,14 @@ export class RemoteScreenGateway {
       if (request.method === "POST" && route === "authorize") {
         const body = yield* remoteCall(() => readSmallJson(request, viewerGrantSchema));
         const grant = body?.grant ?? "";
+        // The grant is single-use until the viewer proves it can hold a cookie or a socket. After
+        // that it is the session's own secret: a renderer reload, a remount or a browser that drops
+        // third-party cookies loads the viewer page again with the same grant. Refusing that second
+        // authorization turned every reload into "Remote access expired" and left the session
+        // unreachable until the app restarted. Re-authorizing the same live session is not replay:
+        // the grant is still matched against this session's hash, and it dies with the session.
         if (
-          session.viewerGrantUsed ||
-          this.#options.now() >= Date.parse(session.snapshot.grantExpiresAt) ||
+          (!session.viewerGrantUsed && this.#options.now() >= Date.parse(session.snapshot.grantExpiresAt)) ||
           !safeHashEqual(secretHash(grant), session.viewerGrantHash)
         ) {
           return sendText(response, 401, "Remote viewer grant is invalid.");
@@ -751,14 +765,22 @@ export class RemoteScreenGateway {
         session.viewerGrantUsed = true;
         session.grantExpirationTimer?.cancel();
         session.grantExpirationTimer = null;
-        session.viewerConnectExpirationTimer = scheduleDeadline(
-          this.#options.now() + VIEWER_CONNECT_TTL_MS,
-          this.#options.now,
-          () => {
-            if (this.#sessions.get(session.snapshot.id) === session && !session.clientSocket && !session.upstreamSocket)
-              Effect.runFork(this.closeSession(session.snapshot.id, "session_expired"));
-          },
-        );
+        session.viewerConnectExpirationTimer?.cancel();
+        session.viewerConnectExpirationTimer = null;
+        if (!session.clientSocket && !session.upstreamSocket) {
+          session.viewerConnectExpirationTimer = scheduleDeadline(
+            this.#options.now() + VIEWER_CONNECT_TTL_MS,
+            this.#options.now,
+            () => {
+              if (
+                this.#sessions.get(session.snapshot.id) === session &&
+                !session.clientSocket &&
+                !session.upstreamSocket
+              )
+                Effect.runFork(this.closeSession(session.snapshot.id, "session_expired"));
+            },
+          );
+        }
         session.viewerCookieHash = secretHash(cookie);
         const cookiePolicy =
           this.#localTestServers.has(session.snapshot.id) || request.headers["x-forwarded-proto"] === "https"
@@ -1386,6 +1408,16 @@ function hasSupportedLinuxDesktopSession(environment: Readonly<Record<string, st
 
 function linuxCaptureMethod(environment: Readonly<Record<string, string | undefined>>): "portal" | "x11" {
   return isWaylandSession(environment) ? "portal" : "x11";
+}
+
+function sendExpiredViewer(response: ServerResponse, sessionId: string): void {
+  const html = `<!doctype html><meta charset="utf-8"><title>OpenBot Moonlight Remote</title><meta name="color-scheme" content="dark"><style>html,body{margin:0;width:100%;height:100%;background:#090b0c;color:#fff;font:14px system-ui}main{display:grid;place-items:center;height:100%}</style><main>Remote access expired</main><script>const refused=()=>parent.postMessage(${JSON.stringify({ source: "openbot-moonlight", type: "viewer-state", sessionId, state: "error" })},"*");document.readyState==="complete"?refused():addEventListener("load",refused);</script>`;
+  response.writeHead(410, {
+    "Content-Type": "text/html; charset=utf-8",
+    "Content-Security-Policy": "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'",
+    "Cache-Control": "no-store",
+  });
+  response.end(html);
 }
 
 function sendViewer(
