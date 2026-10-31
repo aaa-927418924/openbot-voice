@@ -988,6 +988,13 @@ describe("SelfHostedIdentityApiServer", () => {
       expect(selfHostedTeamProfile(avatarUser, "http://100.100.10.2:43124").avatarUrl).toBe(
         `http://100.100.10.2:43124/v1/profile/avatar?account=${created.user.id}`,
       );
+      const oversizedInlineAvatar = `data:image/png;base64,${"A".repeat(4_096)}`;
+      const projectedAvatar = selfHostedTeamProfile(
+        { ...avatarUser, avatarUrl: oversizedInlineAvatar },
+        "http://100.100.10.2:43124",
+      ).avatarUrl;
+      expect(projectedAvatar).toBe(`http://100.100.10.2:43124/v1/profile/avatar?account=${created.user.id}`);
+      expect(projectedAvatar?.length).toBeLessThan(2_048);
       const avatar = await fetch(new URL(`/v1/profile/avatar?account=${created.user.id}`, apiUrl));
       expect(avatar.status).toBe(200);
       expect(Buffer.from(await avatar.arrayBuffer())).toEqual(secondAvatar);
