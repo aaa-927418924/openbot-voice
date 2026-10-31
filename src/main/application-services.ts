@@ -53,7 +53,7 @@ import type {
   ServerMigrationJobSnapshot,
   VoiceModelStatus,
 } from "@openbot/contracts/ipc";
-import { IPC_ENDPOINTS, isManagedToolRuntime, isUpdateBusyPhase } from "@openbot/contracts/ipc";
+import { IPC_ENDPOINTS, isManagedToolRuntime, isUpdateBusyPhase, LOCAL_SERVER_ID } from "@openbot/contracts/ipc";
 import { decodeRecord, requiredString } from "@openbot/contracts/ipc-decoding";
 import { sourceText } from "@openbot/i18n/source";
 import { createOpenBotLogger, toLogValue } from "@openbot/logging";
@@ -176,6 +176,7 @@ import { SelfHostedDesktopAccountManager } from "./self-hosted-desktop-account";
 import { SelfHostedIdentityApiServer, selfHostedTeamProfile } from "./self-hosted-identity-api";
 import { SelfHostedIdentityAuthority } from "./self-hosted-identity-authority";
 import { ServerMigrationDestination } from "./server-migration-destination";
+import { createLocalServerMigrationPeer } from "./server-migration-local-peer";
 import { ServerMigrationSourceService } from "./server-migration-source";
 import { ServerMode, type ServerModeEnvironment } from "./server-mode";
 import {
@@ -1595,13 +1596,14 @@ export async function createApplicationServices({
     undefined,
     join(app.getPath("userData"), "agent-import-uploads"),
   );
-  // A Linux server-mode install can receive one local server's portable data. The received snapshot
-  // is staged beside the active roots, because activation renames the two root pairs; the transfer
-  // directory is private to this host and outside both roots.
+  // A Linux host can receive one local server's portable data: a server-mode install as the copy
+  // another computer migrates into, and a desktop install as this computer's own local server. The
+  // received snapshot is staged beside the active roots, because activation renames the two root
+  // pairs; the transfer directory is private to this host and outside both roots.
   const migrationUserDataRoot = app.getPath("userData");
   const migrationOpenBotRoot = join(homedir(), "OpenBot");
   const serverMigrationDestination =
-    process.platform === "linux" && serverModeEnvironment
+    process.platform === "linux"
       ? new ServerMigrationDestination({
           userDataRoot: migrationUserDataRoot,
           openBotRoot: migrationOpenBotRoot,
@@ -1614,10 +1616,20 @@ export async function createApplicationServices({
               throw new Error(sourceText("error.host.migrationUnsupported"));
             }
           },
-          // The supervisor restarts this process. A short delay lets the finalize response reach the
-          // source before this process exits.
+          // A short delay lets the finalize response reach the source before this process ends. A
+          // server-mode host exits and lets its supervisor (systemd, Restart=always) start it
+          // again; a desktop host has no supervisor, so it relaunches itself while packaged.
           onActivated: () => {
-            setTimeout(() => app.exit(0), 750);
+            setTimeout(() => {
+              if (app.isPackaged && !serverModeEnvironment) {
+                // Electron relaunches `process.execPath`, which for an AppImage is the temporary
+                // mount point that vanishes on exit; the AppImage file itself must be relaunched.
+                const appImage = process.env.APPIMAGE?.trim();
+                if (appImage) app.relaunch({ execPath: appImage, args: process.argv.slice(1) });
+                else app.relaunch();
+              }
+              app.exit(0);
+            }, 750);
           },
         })
       : null;
@@ -1639,7 +1651,7 @@ export async function createApplicationServices({
     hostedSites,
     // Present, so the host advertises `agent-import-v1`. Any member can import.
     agentImport,
-    // Present only on a Linux server-mode host. It advertises `server-migration-v1`.
+    // Present on a Linux host. It advertises `server-migration-v1`.
     serverMigration: serverMigrationDestination?.migration,
     // Each member present advertises its admin capability. Every admin route requires an owner or admin.
     admin: {
@@ -2010,6 +2022,13 @@ export async function createApplicationServices({
   criticalActionTargets = { agents: service, remoteServers };
   // The source of a local-to-server migration. A server-mode host is only a destination, and a
   // macOS desktop cannot run the local server that a snapshot comes from.
+  // This computer's own local server is a destination whenever this process can receive into it,
+  // so the local row in the server list offers the same migration as a remote host.
+  const localMigrationDestination = (): { serverId: string; serverName: string } | null => {
+    if (!serverMigrationDestination || teamStore.getOwnerMemberId() === null) return null;
+    const local = remoteServers.list().find((server) => server.id === LOCAL_SERVER_ID);
+    return local ? { serverId: LOCAL_SERVER_ID, serverName: local.name } : null;
+  };
   const serverMigration =
     !serverModeEnvironment && (process.platform === "win32" || process.platform === "linux")
       ? new ServerMigrationSourceService({
@@ -2019,8 +2038,25 @@ export async function createApplicationServices({
           stagingRoot: join(migrationUserDataRoot, "server-migration-staging"),
           localMembers: () => teamStore.listMembers(),
           localOwnerMemberId: () => teamStore.getOwnerMemberId(),
-          destinations: () => remoteServers.migrationDestinations(),
+          destinations: () => {
+            const local = localMigrationDestination();
+            return [...remoteServers.migrationDestinations(), ...(local ? [local] : [])];
+          },
           peerFor: (serverId) => {
+            if (serverId === LOCAL_SERVER_ID) {
+              // The local destination lives in this process, so the snapshot goes straight into its
+              // transfer service rather than through a socket or a session token.
+              const local = localMigrationDestination();
+              const owner = teamStore.getOwnerMemberId();
+              if (!local || !owner || !serverMigrationDestination) return null;
+              return createLocalServerMigrationPeer({
+                serverId,
+                serverName: local.serverName,
+                migration: serverMigrationDestination.migration,
+                memberId: owner,
+                members: () => teamStore.listMembers(),
+              });
+            }
             const destination = remoteServers.migrationDestinations().find((item) => item.serverId === serverId);
             if (!destination) return null;
             return {
