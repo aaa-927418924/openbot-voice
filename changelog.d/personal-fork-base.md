@@ -9,3 +9,4 @@
 - Persist short account-ticket 401 retry cooldowns across restarts, while keeping the longer host 429 cooldown and preventing stale concurrent failures from undoing a newer session.
 - Scope account-ticket failures to the account and sign-in attempt that created them, and ignore stale legacy-adoption responses after a newer session is installed.
 - Project self-hosted account avatars to the identity server's short-lived profile URL before redeeming Team API account tickets, avoiding sign-in rejection for oversized inline image data.
+- Reactivate the authenticated local-host owner when syncing its self-hosted account, so a stale disabled owner does not block remote account-ticket sign-in.

@@ -234,6 +234,28 @@ describe("TeamStore", () => {
     expect((await readStoredHost(path)).members?.[0]?.accountId).toBe(profile.id);
   });
 
+  it("reactivates a persisted owner before account-ticket sign-in", async () => {
+    const { store, path } = await createStore();
+    await runCauseEffect(store.configure("Windows host", "owner", "correct horse battery", "shared-profile-id"));
+    const saved: {
+      hosts: Array<{ members: Array<{ role: string; disabled: boolean }> }>;
+    } = JSON.parse(await readFile(path, "utf8"));
+    const owner = saved.hosts[0]?.members.find((member) => member.role === "owner");
+    if (!owner) throw new Error("The local owner was not created.");
+    owner.disabled = true;
+    await writeFile(path, JSON.stringify(saved));
+
+    const restarted = new TeamStore(path);
+    await runCauseEffect(restarted.initialize());
+    const profile = { id: "shared-profile-id", email: "", name: "Shared profile", avatarUrl: null };
+
+    await runCauseEffect(restarted.syncSelfHostedOwner(profile));
+    const session = await runCauseEffect(restarted.loginWithAccount(profile));
+
+    expect(restarted.listMembers()).toMatchObject([{ role: "owner", disabled: false }]);
+    expect(restarted.authenticate(session.sessionToken)?.id).toBe(session.member.id);
+  });
+
   it("reuses the canonical owner membership when a paired device accepts a Team invitation", async () => {
     const { store, path } = await createStore();
     await runCauseEffect(store.configure("Linux host", "owner", "correct horse battery"));

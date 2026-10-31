@@ -1592,7 +1592,8 @@ export class TeamStore {
         owner.email === null &&
         owner.username === username &&
         owner.name === name &&
-        (owner.avatarUrl ?? null) === avatarUrl
+        (owner.avatarUrl ?? null) === avatarUrl &&
+        !owner.disabled
       )
         return;
       owner.accountId = user.id;
@@ -1600,6 +1601,10 @@ export class TeamStore {
       owner.username = username;
       owner.name = name;
       owner.avatarUrl = avatarUrl;
+      // The signed-in account is the host owner. Older or remotely synchronized state can leave
+      // that owner disabled; account-ticket sign-in rejects disabled members even though the
+      // owner can still use an existing local session. Restore the owner before remote logins.
+      owner.disabled = false;
       yield* this.#persistEffect();
     },
     Effect.provide(TeamStoreFiles.layer),
