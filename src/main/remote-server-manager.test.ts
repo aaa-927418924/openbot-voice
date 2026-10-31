@@ -12,7 +12,7 @@ import type {
   AccountServerRegistration,
 } from "@openbot/contracts/account-server-directory";
 import { createMemberDeviceLinkUrl, parseMemberDeviceLinkUrl } from "@openbot/contracts/invite-links";
-import type { RemoteDesktopSession } from "@openbot/contracts/ipc";
+import { LOCAL_SERVER_ID, type RemoteDesktopSession } from "@openbot/contracts/ipc";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import { TEAM_CURRENT_CAPABILITIES } from "@openbot/contracts/team-protocol/current";
 import {
@@ -1285,7 +1285,7 @@ describe("remote control capability discovery", () => {
     const publicKeyPem = publicKey.export({ type: "spki", format: "pem" }).toString();
     const hostFingerprint = fingerprint(publicKeyPem);
     const { requests } = stubTeamFetch({
-      compatibility: { capabilities: [] },
+      compatibility: { capabilities: [TEAM_MEMBER_DEVICE_LINK_CAPABILITY] },
       routes: {
         "/v1/identity": ({ url }) => {
           const challenge = url.searchParams.get("challenge") ?? "";
@@ -1335,6 +1335,7 @@ describe("remote control capability discovery", () => {
           membershipId: "legacy-member",
         }),
       ],
+      activeServerId: LOCAL_SERVER_ID,
       account: {
         createTeamAuthTicket: () => authCall(async () => "current-account-ticket"),
         getAccountId: () => "account-b",
@@ -1358,6 +1359,7 @@ describe("remote control capability discovery", () => {
       }),
     );
     expect(fixture.server(hostId)).toMatchObject({ id: hostId, role: "member", state: "online" });
+    expect(fixture.manager.activeServerId).toBe(LOCAL_SERVER_ID);
     expect(JSON.parse(await readFile(fixture.statePath, "utf8"))).toMatchObject({
       servers: expect.arrayContaining([
         expect.objectContaining({
@@ -1773,6 +1775,448 @@ describe("self-hosted account server directory", () => {
 
     expect(createTeamAuthTicket).not.toHaveBeenCalled();
     expect(fixture.server(hostId)).toMatchObject({ name: "New name", role: "admin" });
+  });
+
+  it("renews an existing device session on account sync after the host rejects its token", async () => {
+    const hostId = "directory-auth-refresh-host";
+    const apiUrl = "http://100.100.100.107:43123/";
+    const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+    const publicKeyPem = publicKey.export({ type: "spki", format: "pem" }).toString();
+    const hostFingerprint = fingerprint(publicKeyPem);
+    let accountLoginAttempts = 0;
+    const host = stubTeamFetch({
+      compatibility: { capabilities: [] },
+      routes: {
+        "/v1/identity": ({ url }) => {
+          const challenge = url.searchParams.get("challenge") ?? "";
+          return Response.json({
+            serverId: hostId,
+            publicKey: publicKeyPem,
+            serverName: "Account host",
+            fingerprint: hostFingerprint,
+            challenge,
+            signature: sign(null, Buffer.from(challenge), privateKey).toString("base64url"),
+            enabledOnLaunch: true,
+            logoVersion: null,
+          });
+        },
+        [TEAM_API_ROUTES.auth.account]: () => {
+          accountLoginAttempts += 1;
+          if (accountLoginAttempts === 1) return Response.json({ error: "Expired session." }, { status: 401 });
+          return Response.json({
+            member: {
+              id: "member-1",
+              username: "member",
+              email: "person@example.com",
+              name: null,
+              avatarUrl: null,
+              role: "member",
+              createdAt: new Date().toISOString(),
+              disabled: false,
+            },
+            sessionToken: "refreshed-device-session",
+            sessionExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+          });
+        },
+        "/v1/remote-screen/capabilities": () =>
+          Response.json({ error: "Remote control is unavailable.", code: "host_unavailable" }, { status: 503 }),
+      },
+    });
+    const createTeamAuthTicket = vi.fn(() => authCall(async () => "fresh-account-ticket"));
+    const entry: AccountServerDirectoryEntry = {
+      hostId,
+      name: "Account host",
+      apiUrl,
+      fingerprint: hostFingerprint,
+      publicKey: publicKeyPem,
+      logoKey: null,
+      membershipId: "member-1",
+      role: "member",
+      isOwner: false,
+    };
+    const fixture = await createRemoteManager({
+      servers: [
+        storedHttpsServer(hostId, {
+          apiUrl,
+          fingerprint: hostFingerprint,
+          publicKey: publicKeyPem,
+          membershipId: "member-1",
+          accountId: "account-a",
+          encryptedToken: Buffer.from("expired-device-session").toString("base64"),
+        }),
+      ],
+      account: {
+        createTeamAuthTicket,
+        getAccountId: () => "account-a",
+        getEmail: () => "person@example.com",
+        isSelfHostedSignedIn: () => true,
+        getLegacyAccountServerImportExclusions: () => authCall(async () => []),
+        listAccountServers: () => authCall(async () => [entry]),
+        registerAccountServer: () => authCall(async () => undefined),
+      },
+      managerOptions: { localOnlyNetworking: true, allowTailscaleApiUrl: true },
+    });
+
+    await expect(runCauseEffect(fixture.manager.login({ serverId: hostId }))).rejects.toThrow();
+    expect(fixture.server(hostId)).toMatchObject({ issue: { code: "authentication_required" } });
+
+    await runCauseEffect(fixture.manager.syncAccountDirectory());
+
+    expect(createTeamAuthTicket).toHaveBeenCalledTimes(2);
+    expect(host.requests(TEAM_API_ROUTES.auth.account)).toHaveLength(2);
+    expect(fixture.server(hostId)).toMatchObject({ state: "online", issue: null });
+    expect(JSON.parse(await readFile(fixture.statePath, "utf8")).servers).toContainEqual(
+      expect.objectContaining({
+        id: hostId,
+        accountId: "account-a",
+        membershipId: "member-1",
+        encryptedToken: Buffer.from("refreshed-device-session").toString("base64"),
+      }),
+    );
+  });
+
+  it("rate-limits repeated rejected renewal and resumes it after a transient host outage", async () => {
+    const hostId = "directory-auth-refresh-backoff-host";
+    const apiUrl = "http://100.100.100.107:43123/";
+    const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+    const publicKeyPem = publicKey.export({ type: "spki", format: "pem" }).toString();
+    const hostFingerprint = fingerprint(publicKeyPem);
+    let accountLoginAttempts = 0;
+    const host = stubTeamFetch({
+      compatibility: { capabilities: [] },
+      routes: {
+        "/v1/identity": ({ url }) => {
+          const challenge = url.searchParams.get("challenge") ?? "";
+          return Response.json({
+            serverId: hostId,
+            publicKey: publicKeyPem,
+            serverName: "Account host",
+            fingerprint: hostFingerprint,
+            challenge,
+            signature: sign(null, Buffer.from(challenge), privateKey).toString("base64url"),
+            enabledOnLaunch: true,
+            logoVersion: null,
+          });
+        },
+        [TEAM_API_ROUTES.auth.account]: () => {
+          accountLoginAttempts += 1;
+          if (accountLoginAttempts <= 2) return Response.json({ error: "Expired session." }, { status: 401 });
+          if (accountLoginAttempts === 3) throw new TypeError("Host is temporarily unreachable.");
+          if (accountLoginAttempts === 5) return Response.json({ error: "Expired session." }, { status: 401 });
+          if (accountLoginAttempts >= 6)
+            return Response.json({ error: "Account ticket is not allowed." }, { status: 403 });
+          return Response.json({
+            member: {
+              id: "member-1",
+              username: "member",
+              email: "person@example.com",
+              name: null,
+              avatarUrl: null,
+              role: "member",
+              createdAt: new Date().toISOString(),
+              disabled: false,
+            },
+            sessionToken: "recovered-device-session",
+            sessionExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+          });
+        },
+      },
+    });
+    const createTeamAuthTicket = vi.fn(() => authCall(async () => "account-ticket"));
+    const entry: AccountServerDirectoryEntry = {
+      hostId,
+      name: "Account host",
+      apiUrl,
+      fingerprint: hostFingerprint,
+      publicKey: publicKeyPem,
+      logoKey: null,
+      membershipId: "member-1",
+      role: "member",
+      isOwner: false,
+    };
+    const fixture = await createRemoteManager({
+      servers: [
+        storedHttpsServer(hostId, {
+          apiUrl,
+          fingerprint: hostFingerprint,
+          publicKey: publicKeyPem,
+          membershipId: "member-1",
+          accountId: "account-a",
+          encryptedToken: Buffer.from("expired-device-session").toString("base64"),
+        }),
+      ],
+      account: {
+        createTeamAuthTicket,
+        getAccountId: () => "account-a",
+        getEmail: () => "person@example.com",
+        isSelfHostedSignedIn: () => true,
+        getLegacyAccountServerImportExclusions: () => authCall(async () => []),
+        listAccountServers: () => authCall(async () => [entry]),
+        registerAccountServer: () => authCall(async () => undefined),
+      },
+      managerOptions: { localOnlyNetworking: true, allowTailscaleApiUrl: true },
+    });
+
+    vi.useFakeTimers();
+    await expect(runCauseEffect(fixture.manager.login({ serverId: hostId }))).rejects.toThrow();
+    await runCauseEffect(fixture.manager.syncAccountDirectory());
+    expect(fixture.server(hostId)).toMatchObject({ issue: { code: "authentication_required" } });
+    await runCauseEffect(fixture.manager.syncAccountDirectory());
+    expect(createTeamAuthTicket).toHaveBeenCalledTimes(2);
+    expect(host.requests(TEAM_API_ROUTES.auth.account)).toHaveLength(2);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    await runCauseEffect(fixture.manager.syncAccountDirectory());
+    expect(fixture.server(hostId)).toMatchObject({ issue: { code: "network_unavailable" } });
+    await runCauseEffect(fixture.manager.syncAccountDirectory());
+
+    expect(createTeamAuthTicket).toHaveBeenCalledTimes(3);
+    expect(host.requests(TEAM_API_ROUTES.auth.account)).toHaveLength(3);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    await runCauseEffect(fixture.manager.syncAccountDirectory());
+
+    expect(createTeamAuthTicket).toHaveBeenCalledTimes(4);
+    expect(host.requests(TEAM_API_ROUTES.auth.account)).toHaveLength(4);
+    expect(fixture.server(hostId)).toMatchObject({ state: "online", issue: null });
+
+    // A later cached-token rejection starts another renewal. If a fresh account ticket then gets a
+    // permanent 403, do not let the stale 401 issue put it back into the retry queue.
+    await expect(runCauseEffect(fixture.manager.login({ serverId: hostId }))).rejects.toThrow();
+    expect(fixture.server(hostId)).toMatchObject({ issue: { code: "authentication_required" } });
+    await runCauseEffect(fixture.manager.syncAccountDirectory());
+    expect(createTeamAuthTicket).toHaveBeenCalledTimes(6);
+    expect(host.requests(TEAM_API_ROUTES.auth.account)).toHaveLength(6);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    await runCauseEffect(fixture.manager.syncAccountDirectory());
+    expect(createTeamAuthTicket).toHaveBeenCalledTimes(6);
+    expect(host.requests(TEAM_API_ROUTES.auth.account)).toHaveLength(6);
+  });
+
+  it("preserves a server selection made while directory reauthentication is in flight", async () => {
+    const hostId = "60000000-0000-4000-8000-000000000001";
+    const apiUrl = "http://100.100.100.107:43123/";
+    const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+    const publicKeyPem = publicKey.export({ type: "spki", format: "pem" }).toString();
+    const hostFingerprint = fingerprint(publicKeyPem);
+    let authAttempts = 0;
+    const host = stubTeamFetch({
+      compatibility: { capabilities: [TEAM_MEMBER_DEVICE_LINK_CAPABILITY] },
+      routes: {
+        "/v1/identity": ({ url }) => {
+          const challenge = url.searchParams.get("challenge") ?? "";
+          return Response.json({
+            serverId: hostId,
+            publicKey: publicKeyPem,
+            serverName: "Account host",
+            fingerprint: hostFingerprint,
+            challenge,
+            signature: sign(null, Buffer.from(challenge), privateKey).toString("base64url"),
+            enabledOnLaunch: true,
+            logoVersion: null,
+          });
+        },
+        [TEAM_API_ROUTES.auth.account]: () => {
+          authAttempts += 1;
+          if (authAttempts <= 2) return Response.json({ error: "Expired session." }, { status: 401 });
+          return Response.json({
+            member: {
+              id: "member-1",
+              username: "member",
+              email: "person@example.com",
+              name: null,
+              avatarUrl: null,
+              role: "member",
+              createdAt: new Date().toISOString(),
+              disabled: false,
+            },
+            sessionToken: "refreshed-device-session",
+            sessionExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+          });
+        },
+        [TEAM_MEMBER_DEVICE_LINK_ROUTES.redeem]: () =>
+          Response.json({
+            member: {
+              id: "member-1",
+              username: "member",
+              email: "person@example.com",
+              name: null,
+              avatarUrl: null,
+              role: "member",
+              createdAt: new Date().toISOString(),
+              disabled: false,
+            },
+            sessionToken: "joined-device-session",
+            sessionExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+          }),
+        "/v1/remote-screen/capabilities": () =>
+          Response.json({ error: "Remote control is unavailable.", code: "host_unavailable" }, { status: 503 }),
+      },
+    });
+    let releaseTicket!: () => void;
+    let signalTicketRequested!: () => void;
+    const ticketGate = new Promise<void>((resolve) => {
+      releaseTicket = resolve;
+    });
+    const ticketRequested = new Promise<void>((resolve) => {
+      signalTicketRequested = resolve;
+    });
+    let ticketCalls = 0;
+    const entry: AccountServerDirectoryEntry = {
+      hostId,
+      name: "Account host",
+      apiUrl,
+      fingerprint: hostFingerprint,
+      publicKey: publicKeyPem,
+      logoKey: null,
+      membershipId: "member-1",
+      role: "member",
+      isOwner: false,
+    };
+    const fixture = await createRemoteManager({
+      servers: [
+        storedHttpsServer(hostId, {
+          apiUrl,
+          fingerprint: hostFingerprint,
+          publicKey: publicKeyPem,
+          membershipId: "member-1",
+          accountId: "account-a",
+          encryptedToken: Buffer.from("expired-device-session").toString("base64"),
+        }),
+      ],
+      activeServerId: LOCAL_SERVER_ID,
+      appVersion: "1.1.0",
+      account: {
+        createTeamAuthTicket: vi.fn(() =>
+          authCall(async () => {
+            ticketCalls += 1;
+            if (ticketCalls > 1) {
+              signalTicketRequested();
+              await ticketGate;
+            }
+            return "account-ticket";
+          }),
+        ),
+        getAccountId: () => "account-a",
+        getEmail: () => "person@example.com",
+        isSelfHostedSignedIn: () => true,
+        getLegacyAccountServerImportExclusions: () => authCall(async () => []),
+        listAccountServers: () => authCall(async () => [entry]),
+        registerAccountServer: () => authCall(async () => undefined),
+      },
+      managerOptions: { localOnlyNetworking: true, allowTailscaleApiUrl: true },
+    });
+
+    await expect(runCauseEffect(fixture.manager.login({ serverId: hostId }))).rejects.toThrow();
+    const syncing = runCauseEffect(fixture.manager.syncAccountDirectory());
+    await ticketRequested;
+    await runCauseEffect(fixture.manager.select(LOCAL_SERVER_ID));
+    const inviteUrl = createMemberDeviceLinkUrl(
+      { apiUrl, serverId: hostId, fingerprint: hostFingerprint, token: "d".repeat(43) },
+      { allowTailscaleApiUrl: true },
+    );
+    try {
+      await runCauseEffect(fixture.manager.join({ inviteUrl }));
+    } finally {
+      releaseTicket();
+    }
+    await syncing;
+
+    expect(host.requests(TEAM_API_ROUTES.auth.account)).toHaveLength(2);
+    expect(fixture.manager.activeServerId).toBe(hostId);
+    expect(fixture.server(hostId)).toMatchObject({ state: "online", issue: null });
+    expect(JSON.parse(await readFile(fixture.statePath, "utf8")).servers).toContainEqual(
+      expect.objectContaining({
+        id: hostId,
+        encryptedToken: Buffer.from("joined-device-session").toString("base64"),
+      }),
+    );
+  });
+
+  it("does not requeue an older 401 after a concurrent ticket is permanently refused", async () => {
+    const hostId = "60000000-0000-4000-8000-000000000002";
+    const apiUrl = "http://100.100.100.107:43123/";
+    const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+    const publicKeyPem = publicKey.export({ type: "spki", format: "pem" }).toString();
+    const hostFingerprint = fingerprint(publicKeyPem);
+    const pendingRenewal = deferredRoute();
+    let accountAttempts = 0;
+    const host = stubTeamFetch({
+      compatibility: { capabilities: [] },
+      routes: {
+        "/v1/identity": ({ url }) => {
+          const challenge = url.searchParams.get("challenge") ?? "";
+          return Response.json({
+            serverId: hostId,
+            publicKey: publicKeyPem,
+            serverName: "Account host",
+            fingerprint: hostFingerprint,
+            challenge,
+            signature: sign(null, Buffer.from(challenge), privateKey).toString("base64url"),
+            enabledOnLaunch: true,
+            logoVersion: null,
+          });
+        },
+        [TEAM_API_ROUTES.auth.account]: (call) => {
+          accountAttempts += 1;
+          if (accountAttempts === 1) return Response.json({ error: "Expired session." }, { status: 401 });
+          if (accountAttempts === 2) return pendingRenewal.handler(call);
+          if (accountAttempts === 3) return Response.json({ error: "Ticket refused." }, { status: 403 });
+          throw new Error("Unexpected account authentication request.");
+        },
+      },
+    });
+    const entry: AccountServerDirectoryEntry = {
+      hostId,
+      name: "Account host",
+      apiUrl,
+      fingerprint: hostFingerprint,
+      publicKey: publicKeyPem,
+      logoKey: null,
+      membershipId: "member-1",
+      role: "member",
+      isOwner: false,
+    };
+    const createTeamAuthTicket = vi.fn(() => authCall(async () => "account-ticket"));
+    const fixture = await createRemoteManager({
+      servers: [
+        storedHttpsServer(hostId, {
+          apiUrl,
+          fingerprint: hostFingerprint,
+          publicKey: publicKeyPem,
+          membershipId: "member-1",
+          accountId: "account-a",
+          encryptedToken: Buffer.from("expired-device-session").toString("base64"),
+        }),
+      ],
+      account: {
+        createTeamAuthTicket,
+        getAccountId: () => "account-a",
+        getEmail: () => "person@example.com",
+        isSelfHostedSignedIn: () => true,
+        getLegacyAccountServerImportExclusions: () => authCall(async () => []),
+        listAccountServers: () => authCall(async () => [entry]),
+        registerAccountServer: () => authCall(async () => undefined),
+      },
+      managerOptions: { localOnlyNetworking: true, allowTailscaleApiUrl: true },
+    });
+
+    await expect(runCauseEffect(fixture.manager.login({ serverId: hostId }))).rejects.toThrow();
+    const syncing = runCauseEffect(fixture.manager.syncAccountDirectory());
+    await pendingRenewal.arrived;
+    await expect(runCauseEffect(fixture.manager.login({ serverId: hostId }))).rejects.toThrow();
+
+    pendingRenewal.resolve(Response.json({ error: "Expired session." }, { status: 401 }));
+    await syncing;
+    expect(fixture.server(hostId)?.issue).toMatchObject({ code: "authentication_required" });
+
+    vi.useFakeTimers();
+    await vi.advanceTimersByTimeAsync(60_000);
+    await runCauseEffect(fixture.manager.syncAccountDirectory());
+
+    expect(createTeamAuthTicket).toHaveBeenCalledTimes(3);
+    expect(host.requests(TEAM_API_ROUTES.auth.account)).toHaveLength(3);
   });
 
   it("does not restore a server removed from the authoritative directory from an old device cache", async () => {

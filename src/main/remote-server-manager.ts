@@ -275,6 +275,18 @@ const HOST_RESTART_RETRY_MS = 10 * 60_000;
 // How long a hosted server keeps the short retry after a wake request. It boots in about a minute; a
 // server that is not back by then is asked about again.
 const HOSTED_SERVER_START_MS = 5 * 60_000;
+// A rejected account-backed device session should not trigger a ticket request on every
+// five-second directory poll while the host is still rejecting credentials.
+const ACCOUNT_DIRECTORY_REAUTH_RETRY_MS = 60_000;
+
+function isRetryableAccountAuthRenewalFailure(error: unknown): boolean {
+  return (
+    error instanceof TypeError ||
+    (error instanceof RemoteRequestError &&
+      (error.status === 401 || error.status === 408 || error.status === 429 || error.status >= 500))
+  );
+}
+
 export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   readonly #scope = Scope.makeUnsafe();
   readonly #platform: Layer.Layer<RemoteRequest>;
@@ -309,10 +321,21 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   readonly #hostedStartAt = new Map<string, number>();
   /** Hosted servers that did not come online in the start time. Only the user's next wake starts them again. */
   readonly #hostedStartExpired = new Set<string>();
+  /** Limits background ticket renewal to one attempt per host at a time and per retry interval. */
+  readonly #accountDirectoryReauthInFlight = new Set<string>();
+  readonly #accountDirectoryReauthRetryAt = new Map<string, number>();
+  /** Hosts that need a fresh account ticket after this device's session was rejected. */
+  readonly #accountDirectoryReauthPending = new Set<string>();
+  /** A fresh ticket was permanently refused; wait for an explicit retry or a new join. */
+  readonly #accountDirectoryReauthBlocked = new Set<string>();
+  /** Invalidates an in-flight login when a newer session is adopted for the same host. */
+  readonly #serverSessionRevision = new Map<string, number>();
   #appFocused = true;
   readonly #remoteViewerProxy: RemoteViewerProxy | null;
   readonly #onRemoteViewerDiagnostic: ((event: RemoteViewerDiagnosticEvent) => void) | undefined;
   #selections = Semaphore.makeUnsafe(1);
+  #userSelectionRevision = 0;
+  #userSelectionIntent: string | null = null;
   #muteExpiryTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
@@ -567,6 +590,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       this.#connections.setCompatibility(stored.id, identity.compatibility);
       this.#connections.clearIssue(stored.id);
       this.#connections.setState(stored.id, "online");
+      this.#recordUserSelectionIntent(stored.id);
+      this.#recordFreshServerSession(stored.id);
       yield* this.#store.adopt(stored);
       if (accountRejoinId && stored.membershipId && this.#centralAccount.registerAccountServer) {
         const registration = yield* this.#centralAccount
@@ -637,6 +662,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       this.#connections.setCompatibility(stored.id, identity.compatibility);
       this.#connections.clearIssue(stored.id);
       this.#connections.setState(stored.id, "online");
+      this.#recordFreshServerSession(stored.id);
       yield* this.#store.adopt(stored);
       const remoteDesktopAvailable = yield* this.#client
         .probeRemoteDesktop(stored)
@@ -778,6 +804,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       )
         return this.list();
 
+      const previousActive = this.#store.activeServerId;
+      const previousUserSelectionRevision = this.#userSelectionRevision;
       let entries = yield* account.listAccountServers().pipe(toRemoteWorkflowError);
       const localRegistration = this.#getLocalAccountServerRegistration();
       if (localRegistration) {
@@ -929,7 +957,6 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
           yield* this.#store.remove(server.id);
         }
       }
-      const previousActive = this.#store.activeServerId;
       for (const entry of entries) {
         if (entry.hostId === localHostId) continue;
         if (this.#store.isHiddenHost(entry.hostId)) continue;
@@ -946,6 +973,39 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
               yield* this.#adoptAccountServer(entry).pipe(Effect.catch(() => Effect.void));
               continue;
             }
+            if (
+              this.#connections.issueFor(entry.hostId)?.code === "authentication_required" &&
+              !this.#accountDirectoryReauthBlocked.has(entry.hostId)
+            )
+              this.#accountDirectoryReauthPending.add(entry.hostId);
+            if (this.#accountDirectoryReauthPending.has(entry.hostId)) {
+              // The event stream already proved this device's cached Team token was rejected.
+              // Re-authenticate on the next account-directory refresh so signing back into the
+              // account repairs the host connection without making the user click Retry. A host
+              // that keeps rejecting fresh tickets is rate-limited, and overlapping directory
+              // polls coalesce to one renewal attempt.
+              const retryAt = this.#accountDirectoryReauthRetryAt.get(entry.hostId) ?? 0;
+              if (retryAt <= Date.now() && !this.#accountDirectoryReauthInFlight.has(entry.hostId)) {
+                this.#accountDirectoryReauthInFlight.add(entry.hostId);
+                this.#accountDirectoryReauthRetryAt.set(entry.hostId, Date.now() + ACCOUNT_DIRECTORY_REAUTH_RETRY_MS);
+                const renewal = yield* this.login({ serverId: entry.hostId }).pipe(
+                  Effect.result,
+                  Effect.ensuring(Effect.sync(() => this.#accountDirectoryReauthInFlight.delete(entry.hostId))),
+                );
+                if (Result.isFailure(renewal)) {
+                  const wrappedCause = renewal.failure.cause;
+                  const cause = wrappedCause instanceof RemoteWorkflowError ? wrappedCause.cause : wrappedCause;
+                  // Keep retrying only when the host rejected the ticket as unauthenticated or
+                  // could not be reached temporarily. Other refusals (for example 403) do not
+                  // become retryable just because an older 401 is still shown in the UI status.
+                  if (!isRetryableAccountAuthRenewalFailure(cause)) {
+                    this.#clearAccountDirectoryReauthState(entry.hostId);
+                    this.#accountDirectoryReauthBlocked.add(entry.hostId);
+                  }
+                }
+              }
+              continue;
+            }
             const patch = {
               ...(existing.name !== entry.name ? { name: entry.name } : {}),
               ...(existing.logoVersion !== entry.logoKey ? { logoVersion: entry.logoKey } : {}),
@@ -960,10 +1020,14 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
           this.#connections.setState(entry.hostId, "offline");
         }
       }
+      const preferredActive =
+        this.#userSelectionRevision !== previousUserSelectionRevision ? this.#userSelectionIntent : previousActive;
       const active =
-        previousActive !== LOCAL_SERVER_ID && this.#servers.has(previousActive)
-          ? previousActive
-          : this.#servers.activeServerId;
+        preferredActive === LOCAL_SERVER_ID && this.#isLocalServerEnabled()
+          ? LOCAL_SERVER_ID
+          : preferredActive !== null && preferredActive !== LOCAL_SERVER_ID && this.#servers.has(preferredActive)
+            ? preferredActive
+            : this.#servers.activeServerId;
       if (this.#store.activeServerId !== active) {
         this.#store.setActiveServerId(active);
         yield* this.#store.persist();
@@ -1025,6 +1089,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     if (serverId !== LOCAL_SERVER_ID && !this.#servers.has(serverId))
       return yield* new RemoteWorkflowError({ cause: new Error(sourceText("error.remote.serverNotFound")) });
     const previousSelection = this.#store.selection;
+    const previousUserSelectionIntent = this.#userSelectionIntent ?? previousSelection.activeServerId;
+    const userSelectionRevision = this.#recordUserSelectionIntent(serverId);
     const selectionRevision = this.#store.setActiveServerId(serverId);
     this.#events.syncScopes();
     yield* this.#store.persist().pipe(
@@ -1034,6 +1100,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
             this.#store.restoreSelection(previousSelection);
             this.#events.syncScopes();
           }
+          if (this.#userSelectionRevision === userSelectionRevision)
+            this.#userSelectionIntent = previousUserSelectionIntent;
         }),
       ),
     );
@@ -1157,6 +1225,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         // The identity checked out, so an entry for this host that this build could not read is now
         // superseded. `#syncWebRtcHosts` above deliberately kept it -- reconciliation is not a join.
         yield* this.#store.retireUnreadable(accepted.hostId);
+        this.#recordUserSelectionIntent(accepted.hostId);
         this.#store.setActiveServerId(accepted.hostId);
         this.#connections.setState(accepted.hostId, "connecting");
         yield* this.#store.persist();
@@ -1237,6 +1306,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       this.#connections.setCompatibility(stored.id, verifiedIdentity.compatibility);
       this.#connections.clearIssue(stored.id);
       this.#connections.setState(stored.id, "online");
+      this.#recordUserSelectionIntent(stored.id);
+      this.#recordFreshServerSession(stored.id);
       yield* this.#store.adopt(stored);
       if (
         this.#localOnlyNetworking &&
@@ -1315,6 +1386,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       this.#connections.setCompatibility(stored.id, verifiedIdentity.compatibility);
       this.#connections.clearIssue(stored.id);
       this.#connections.setState(stored.id, "online");
+      this.#recordUserSelectionIntent(stored.id);
+      this.#recordFreshServerSession(stored.id);
       yield* this.#store.adopt(stored);
       // This credential exists only after the join/bootstrap succeeds, and the probe obtains it from
       // the server store. Keep capability discovery best-effort so it cannot undo that connection.
@@ -1414,6 +1487,12 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       input: LoginServerInput,
     ): Effect.fn.Return<ServerSummary, RemoteWorkflowError, RemoteRequest> {
       const server = yield* remoteDecode(() => this.#servers.require(input.serverId));
+      const startingSessionRevision = this.#serverSessionRevision.get(server.id) ?? 0;
+      let storedSessionRevision: number | null = null;
+      let superseded = false;
+      this.#accountDirectoryReauthBlocked.delete(server.id);
+      if (this.#connections.issueFor(server.id)?.code === "authentication_required")
+        this.#accountDirectoryReauthPending.add(server.id);
       this.#connections.setState(server.id, "connecting");
       this.#emitChanged();
       const attempt0 = yield* Effect.gen({ self: this }, function* () {
@@ -1434,6 +1513,13 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
               }),
           ),
         );
+        // A join or another sign-in may have installed a newer device session while this request
+        // was waiting on the host. Do not let this older response overwrite that session.
+        if ((this.#serverSessionRevision.get(server.id) ?? 0) !== startingSessionRevision) {
+          superseded = true;
+          return;
+        }
+        storedSessionRevision = this.#recordFreshServerSession(server.id);
         this.#connections.setCompatibility(server.id, identity.compatibility);
         this.#connections.clearIssue(server.id);
         const signedIn = yield* this.#store.update(server.id, {
@@ -1474,10 +1560,28 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         }
       }).pipe(Effect.result);
       if (Result.isFailure(attempt0)) {
-        const error = attempt0.failure.cause;
+        const currentSessionRevision = this.#serverSessionRevision.get(server.id) ?? 0;
+        if (superseded || currentSessionRevision !== (storedSessionRevision ?? startingSessionRevision)) {
+          return yield* remoteDecode(() => requiredServerSummary(this.list(), server.id));
+        }
+        const wrappedCause = attempt0.failure.cause;
+        const error = wrappedCause instanceof RemoteWorkflowError ? wrappedCause.cause : wrappedCause;
         this.#connections.reportError(server.id, error, "error");
+        if (isRetryableAccountAuthRenewalFailure(error)) {
+          if (
+            this.#connections.issueFor(server.id)?.code === "authentication_required" &&
+            !this.#accountDirectoryReauthBlocked.has(server.id)
+          )
+            this.#accountDirectoryReauthPending.add(server.id);
+        } else if (this.#accountDirectoryReauthPending.has(server.id)) {
+          this.#clearAccountDirectoryReauthState(server.id);
+          this.#accountDirectoryReauthBlocked.add(server.id);
+        }
         return yield* new RemoteWorkflowError({ cause: error });
       }
+      if (superseded) return yield* remoteDecode(() => requiredServerSummary(this.list(), server.id));
+      // This login minted and stored a fresh host-bound session. Clear any directory recovery
+      // request, whether login came from an automatic poll or an explicit Retry action.
       this.#emitChanged();
       return yield* remoteDecode(() => requiredServerSummary(this.list(), server.id));
     },
@@ -1651,14 +1755,36 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   #clearServerConnectionState(serverId: string): void {
+    // Make any response from a request started before removal stale.
+    this.#serverSessionRevision.set(serverId, (this.#serverSessionRevision.get(serverId) ?? 0) + 1);
     this.#hostedStartAt.delete(serverId);
     this.#hostedStartExpired.delete(serverId);
+    this.#clearAccountDirectoryReauthState(serverId);
     this.#events.forget(serverId);
     this.#refresh.forget(serverId);
     this.#connections.forget(serverId);
     this.#client.forget(serverId);
     this.#presence.forget(serverId);
     this.#attachments.forget(serverId);
+  }
+
+  #clearAccountDirectoryReauthState(serverId: string): void {
+    this.#accountDirectoryReauthPending.delete(serverId);
+    this.#accountDirectoryReauthRetryAt.delete(serverId);
+    this.#accountDirectoryReauthBlocked.delete(serverId);
+  }
+
+  #recordFreshServerSession(serverId: string): number {
+    const revision = (this.#serverSessionRevision.get(serverId) ?? 0) + 1;
+    this.#serverSessionRevision.set(serverId, revision);
+    this.#clearAccountDirectoryReauthState(serverId);
+    return revision;
+  }
+
+  #recordUserSelectionIntent(serverId: string): number {
+    this.#userSelectionRevision += 1;
+    this.#userSelectionIntent = serverId;
+    return this.#userSelectionRevision;
   }
 
   // The server comes first because every caller knows which one it means, and the decoder sits next
