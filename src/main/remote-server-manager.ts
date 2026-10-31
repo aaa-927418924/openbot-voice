@@ -739,7 +739,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   ): Effect.Effect<void, RemoteWorkflowError, RemoteRequest> {
     const hostId = entry.hostId;
     if (this.#accountServerAdoptionInFlight.has(hostId)) return Effect.void;
-    if ((this.#accountServerAdoptionRetryAt.get(hostId) ?? 0) > Date.now()) return Effect.void;
+    if (options.automatic && (this.#accountServerAdoptionRetryAt.get(hostId) ?? 0) > Date.now()) return Effect.void;
 
     this.#accountServerAdoptionInFlight.add(hostId);
     return Effect.gen({ self: this }, function* () {
@@ -1740,10 +1740,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
               cause: new Error(sourceText("error.remote.selectedServerOffline")),
             });
           }
-          const retryAt = this.#accountServerAdoptionRetryAt.get(serverId) ?? 0;
-          if (this.#accountServerAdoptionInFlight.has(serverId) || retryAt > Date.now()) {
-            // A manual click cannot bypass the automatic-adoption cooldown, especially after 429.
-            // Keep the staged host visibly offline and retryable without requesting another ticket.
+          if (this.#accountServerAdoptionInFlight.has(serverId)) {
+            // Do not let a manual click race an automatic adoption and issue a second ticket.
             this.#connections.setState(serverId, "offline");
             if (!this.#connections.hasIssue(serverId)) this.#connections.reportUnreachable(serverId);
             this.#emitChanged();

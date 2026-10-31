@@ -1863,12 +1863,13 @@ describe("self-hosted account server directory", () => {
     }
   });
 
-  it("does not let Retry bypass a fifteen-minute host sign-in cooldown after 429", async () => {
+  it("lets an explicit Retry re-authenticate after a host rate-limits a prior ticket", async () => {
     const hostId = "linux-account-server";
     const apiUrl = "http://100.100.100.107:43123/";
     const { publicKey, privateKey } = generateKeyPairSync("ed25519");
     const publicKeyPem = publicKey.export({ type: "spki", format: "pem" }).toString();
     const hostFingerprint = fingerprint(publicKeyPem);
+    let accountAttempts = 0;
     const host = stubTeamFetch({
       routes: {
         "/v1/identity": ({ url }) => {
@@ -1884,7 +1885,26 @@ describe("self-hosted account server directory", () => {
             logoVersion: null,
           });
         },
-        [TEAM_API_ROUTES.auth.account]: () => Response.json({ error: "Too many sign-in attempts." }, { status: 429 }),
+        [TEAM_API_ROUTES.auth.account]: () => {
+          accountAttempts += 1;
+          if (accountAttempts === 1) {
+            return Response.json({ error: "Too many sign-in attempts." }, { status: 429 });
+          }
+          return Response.json({
+            member: {
+              id: "account-member",
+              username: "member",
+              email: "person@example.com",
+              name: null,
+              avatarUrl: null,
+              role: "member",
+              createdAt: new Date().toISOString(),
+              disabled: false,
+            },
+            sessionToken: "device-session-token",
+            sessionExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+          });
+        },
       },
     });
     const entry: AccountServerDirectoryEntry = {
@@ -1912,7 +1932,7 @@ describe("self-hosted account server directory", () => {
       },
       managerOptions: { localOnlyNetworking: true, allowTailscaleApiUrl: true },
     });
-    let now = 1_000_000;
+    const now = 1_000_000;
     const dateNow = vi.spyOn(Date, "now").mockImplementation(() => now);
 
     try {
@@ -1924,26 +1944,18 @@ describe("self-hosted account server directory", () => {
         issue: { retryable: true },
       });
 
-      const blockedSummary = await runCauseEffect(fixture.manager.retryConnection(hostId));
-      expect(blockedSummary).toMatchObject({ state: "offline" });
-      expect(fixture.server(hostId)).toMatchObject({ state: "offline", issue: { retryable: true } });
+      const retriedSummary = await runCauseEffect(fixture.manager.retryConnection(hostId));
+      expect(retriedSummary).toMatchObject({ state: "online", issue: null });
+      expect(fixture.server(hostId)).toMatchObject({ state: "online", issue: null });
       expect(JSON.parse(await readFile(fixture.statePath, "utf8")).servers).toContainEqual(
-        expect.objectContaining({ id: hostId, pendingAccountAuthentication: true }),
+        expect.objectContaining({ id: hostId, encryptedToken: expect.any(String) }),
       );
-      expect(createTeamAuthTicket).toHaveBeenCalledOnce();
-      expect(host.requests("/v1/identity")).toHaveLength(1);
-
-      now += 15 * 60_000 - 1;
-      await runCauseEffect(fixture.manager.retryConnection(hostId));
-      expect(createTeamAuthTicket).toHaveBeenCalledOnce();
-      expect(host.requests("/v1/identity")).toHaveLength(1);
-
-      now += 1;
-      await runCauseEffect(fixture.manager.retryConnection(hostId)).catch(() => undefined);
       expect(createTeamAuthTicket).toHaveBeenCalledTimes(2);
       expect(host.requests("/v1/identity")).toHaveLength(2);
       expect(host.requests(TEAM_API_ROUTES.auth.account)).toHaveLength(2);
-      expect(fixture.server(hostId)).toMatchObject({ state: "offline", issue: { retryable: true } });
+      expect(JSON.parse(await readFile(fixture.statePath, "utf8")).servers).not.toContainEqual(
+        expect.objectContaining({ id: hostId, pendingAccountAuthentication: true }),
+      );
     } finally {
       dateNow.mockRestore();
     }
