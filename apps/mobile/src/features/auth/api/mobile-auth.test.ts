@@ -432,6 +432,107 @@ describe("Mobile Connect redemption", () => {
     expect(native.saveLocalTailnetServer).toHaveBeenCalledWith(pairedHost);
   });
 
+  it("keeps a failed paired-host registration account-scoped and retries it for the matching account", async () => {
+    native.storage.clear();
+    native.storage.set("openbot.mobile.device-id.v1", "stable-mobile-device-id");
+    const publicKey = "public-key";
+    const localHost = {
+      hostId: "11111111-1111-4111-8111-111111111111",
+      fingerprint: remoteHostFingerprint(publicKey),
+    };
+    const localApiUrl = "http://100.100.10.2:43124";
+    const memberDeviceLink = createMemberDeviceLinkUrl({
+      apiUrl: "http://100.100.10.2:43123",
+      serverId: localHost.hostId,
+      fingerprint: localHost.fingerprint,
+      token: "m".repeat(43),
+    });
+    const code = createMobileConnectUrl({
+      apiUrl: localApiUrl,
+      ticket: "p".repeat(43),
+      host: localHost,
+      memberDeviceLink,
+    });
+    const pairedHost = {
+      hostId: localHost.hostId,
+      name: "host-device-name",
+      apiUrl: "http://100.100.10.2:43123",
+      fingerprint: localHost.fingerprint,
+      publicKey,
+      logoKey: null,
+      membershipId: "owner-member-id",
+      role: "owner" as const,
+      sessionToken: "team-device-secret",
+    };
+    const directoryEntry = {
+      hostId: pairedHost.hostId,
+      name: pairedHost.name,
+      apiUrl: pairedHost.apiUrl,
+      fingerprint: pairedHost.fingerprint,
+      publicKey: pairedHost.publicKey,
+      logoKey: pairedHost.logoKey,
+      membershipId: pairedHost.membershipId,
+      role: "owner" as const,
+      isOwner: true,
+    };
+    const identitySessionToken = "identity-session-secret";
+    native.pairTailnetInvite.mockResolvedValueOnce(pairedHost);
+    native.fetch
+      .mockResolvedValueOnce(
+        Response.json({
+          sessionToken: identitySessionToken,
+          user: { id: "owner-id", email: "owner@example.com", name: "Owner", avatarUrl: null },
+          host: localHost,
+          localOnly: true,
+        }),
+      )
+      .mockRejectedValueOnce(new TypeError("Network request failed"));
+
+    const pairedSession = await redeemMobileConnectUrl(code);
+
+    const pending = [...native.storage.entries()].find(([storedKey]) =>
+      storedKey.startsWith("openbot.account-server.pending-changes.v1."),
+    );
+    expect(JSON.parse(pending?.[1] ?? "[]")).toEqual([
+      expect.objectContaining({
+        kind: "register",
+        server: expect.objectContaining({ hostId: pairedHost.hostId, publicKey: pairedHost.publicKey }),
+      }),
+    ]);
+    expect(pending?.[1]).not.toContain(pairedHost.sessionToken);
+    expect(pending?.[1]).not.toContain(pairedSession.sessionToken);
+
+    const otherAccountSession = {
+      ...pairedSession,
+      sessionToken: "o".repeat(43),
+      user: { ...pairedSession.user, id: "different-account" },
+    };
+    native.fetch.mockResolvedValueOnce(Response.json({ servers: [] }));
+    await expect(listAccountServers(otherAccountSession)).resolves.toEqual([]);
+    expect(native.storage.has(pending?.[0] ?? "")).toBe(true);
+    expect(native.fetch.mock.calls[2]?.[1]?.headers).toMatchObject({
+      Authorization: `Bearer ${otherAccountSession.sessionToken}`,
+    });
+
+    native.fetch
+      .mockResolvedValueOnce(Response.json({ servers: [directoryEntry] }))
+      .mockResolvedValueOnce(Response.json({ servers: [directoryEntry] }));
+    await expect(listAccountServers(pairedSession)).resolves.toEqual([directoryEntry]);
+
+    expect(native.fetch.mock.calls.slice(1).map(([url, init]) => [url, init?.method ?? "GET"])).toEqual([
+      ["http://100.100.10.2:43124/v1/me/servers", "PUT"],
+      ["http://100.100.10.2:43124/v1/me/servers", "GET"],
+      ["http://100.100.10.2:43124/v1/me/servers", "PUT"],
+      ["http://100.100.10.2:43124/v1/me/servers", "GET"],
+    ]);
+    expect(native.storage.has(pending?.[0] ?? "")).toBe(false);
+    const { isOwner: _isOwner, ...registration } = directoryEntry;
+    expect(native.fetch.mock.calls[3]?.[1]?.body).toBe(JSON.stringify({ ...registration, rejoin: true }));
+    expect(native.fetch.mock.calls[3]?.[1]?.headers).toMatchObject({
+      Authorization: `Bearer ${identitySessionToken}`,
+    });
+  });
+
   it("rejects a concurrent redemption from any caller and preserves the first session", async () => {
     native.storage.clear();
     native.storage.set("openbot.mobile.device-id.v1", "existing-device");

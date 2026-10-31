@@ -404,6 +404,9 @@ async function redeemMobileConnectSession(value: string): Promise<MobileSession>
     }
     await saveLocalTailnetServer(host);
     // Sync only verified host metadata. The Team session token remains in this device's secure store.
+    // registerAccountServer first persists a token-free change under this account and API URL. If its
+    // immediate request fails, listAccountServers retries it on the next directory refresh with the
+    // currently signed-in session; a different account cannot consume this queued registration.
     await registerAccountServer(session, accountServerRegistrationForHost(host), { rejoin: true }).catch(
       () => undefined,
     );
