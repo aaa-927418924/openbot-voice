@@ -165,6 +165,7 @@ import { loadOrCreateRemoteDesktopCredentials } from "./remote-desktop-secret-st
 import { appendRemoteDiagnosticLog } from "./remote-diagnostics";
 import { decodeVoid } from "./remote-host-decoding";
 import { RemoteServerManager } from "./remote-server-manager";
+import { createRemoteTeamAuthTicket } from "./remote-team-auth-ticket";
 import { sendToRenderer } from "./renderer-ipc";
 import { RequestedUpdate, RequestedUpdateRefusal } from "./requested-update";
 import { RoutineFeedServer } from "./routine-feed-server";
@@ -1812,11 +1813,18 @@ export async function createApplicationServices({
     safeStorageCipher("error.app.macSecureStorageUnavailable"),
     {
       createTeamAuthTicket: (serverId) =>
-        localOnlyNetworking && selfHostedDesktopAccount.isSignedIn
-          ? selfHostedDesktopAccount
-              .createTeamAuthTicket(serverId)
-              .pipe(Effect.mapError((cause) => new CentralAuthOperationError({ cause })))
-          : centralAuth.createTeamAuthTicket(serverId),
+        createRemoteTeamAuthTicket(
+          {
+            localOnlyNetworking,
+            selfHostedSignedIn: selfHostedDesktopAccount.isSignedIn,
+            createSelfHostedTicket: (hostId) =>
+              selfHostedDesktopAccount
+                .createTeamAuthTicket(hostId)
+                .pipe(Effect.mapError((cause) => new CentralAuthOperationError({ cause }))),
+            createHostedTicket: (hostId) => centralAuth.createTeamAuthTicket(hostId),
+          },
+          serverId,
+        ),
       getEmail: () =>
         localOnlyNetworking
           ? (selfHostedDesktopAccount.signedInAccount?.email ?? "")
