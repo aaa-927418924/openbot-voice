@@ -1498,6 +1498,185 @@ describe("remote control capability discovery", () => {
 });
 
 describe("self-hosted account server directory", () => {
+  it("renews a device-local Team token when the signed-in account retries a host", async () => {
+    const serverId = "33333333-3333-4333-8333-333333333333";
+    const apiUrl = "http://100.100.100.107:43123/";
+    const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+    const publicKeyPem = publicKey.export({ type: "spki", format: "pem" }).toString();
+    const hostFingerprint = fingerprint(publicKeyPem);
+    const authTicket = vi.fn((hostId: string) =>
+      authCall(async () => (hostId === serverId ? "fresh-account-ticket" : "wrong-host-ticket")),
+    );
+    const host = stubTeamFetch({
+      compatibility: { appVersion: "0.30.0", capabilities: [] },
+      routes: {
+        "/v1/identity": ({ url }) => {
+          const challenge = url.searchParams.get("challenge") ?? "";
+          return Response.json({
+            serverId,
+            publicKey: publicKeyPem,
+            serverName: "Linux host",
+            fingerprint: hostFingerprint,
+            challenge,
+            signature: sign(null, Buffer.from(challenge), privateKey).toString("base64url"),
+            enabledOnLaunch: true,
+            logoVersion: null,
+          });
+        },
+        [TEAM_API_ROUTES.auth.account]: () =>
+          Response.json({
+            member: {
+              id: "member-1",
+              username: "member",
+              email: "person@example.com",
+              name: null,
+              avatarUrl: null,
+              role: "member",
+              createdAt: new Date().toISOString(),
+              disabled: false,
+            },
+            sessionToken: "fresh-device-token",
+            sessionExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+          }),
+      },
+    });
+    const fixture = await createRemoteManager({
+      servers: [
+        storedHttpsServer(serverId, {
+          apiUrl,
+          fingerprint: hostFingerprint,
+          publicKey: publicKeyPem,
+          membershipId: "member-1",
+          accountId: "account-a",
+          role: "member",
+          encryptedToken: Buffer.from("expired-device-token").toString("base64"),
+        }),
+      ],
+      appVersion: "0.30.0",
+      account: {
+        createTeamAuthTicket: authTicket,
+        getAccountId: () => "account-a",
+        isSelfHostedSignedIn: () => true,
+      },
+      managerOptions: { localOnlyNetworking: true, allowTailscaleApiUrl: true },
+    });
+
+    await runCauseEffect(fixture.manager.retryConnection(serverId));
+
+    expect(authTicket).toHaveBeenCalledExactlyOnceWith(serverId);
+    expect(host.requests(TEAM_API_ROUTES.auth.account)).toHaveLength(1);
+    expect(host.requests(TEAM_API_ROUTES.auth.account)[0]?.body).toEqual({ accountTicket: "fresh-account-ticket" });
+    const persisted = JSON.parse(await readFile(fixture.statePath, "utf8"));
+    expect(persisted.servers[0]?.encryptedToken).toBe(Buffer.from("fresh-device-token").toString("base64"));
+  });
+
+  it("does not issue an account ticket when the host identity no longer matches the pin", async () => {
+    const serverId = "44444444-4444-4444-8444-444444444444";
+    const apiUrl = "http://100.100.100.108:43123/";
+    const pinned = generateKeyPairSync("ed25519");
+    const changed = generateKeyPairSync("ed25519");
+    const pinnedPublicKey = pinned.publicKey.export({ type: "spki", format: "pem" }).toString();
+    const changedPublicKey = changed.publicKey.export({ type: "spki", format: "pem" }).toString();
+    const pinnedFingerprint = fingerprint(pinnedPublicKey);
+    const changedFingerprint = fingerprint(changedPublicKey);
+    const authTicket = vi.fn(() => authCall(async () => "must-not-be-issued"));
+    stubTeamFetch({
+      compatibility: { capabilities: [] },
+      routes: {
+        "/v1/identity": ({ url }) => {
+          const challenge = url.searchParams.get("challenge") ?? "";
+          return Response.json({
+            serverId,
+            publicKey: changedPublicKey,
+            serverName: "Changed host",
+            fingerprint: changedFingerprint,
+            challenge,
+            signature: sign(null, Buffer.from(challenge), changed.privateKey).toString("base64url"),
+            enabledOnLaunch: true,
+            logoVersion: null,
+          });
+        },
+      },
+    });
+    const fixture = await createRemoteManager({
+      servers: [
+        storedHttpsServer(serverId, {
+          apiUrl,
+          fingerprint: pinnedFingerprint,
+          publicKey: pinnedPublicKey,
+          membershipId: "member-1",
+          accountId: "account-a",
+          encryptedToken: Buffer.from("old-device-token").toString("base64"),
+        }),
+      ],
+      account: {
+        createTeamAuthTicket: authTicket,
+        getAccountId: () => "account-a",
+        isSelfHostedSignedIn: () => true,
+      },
+      managerOptions: { localOnlyNetworking: true, allowTailscaleApiUrl: true },
+    });
+
+    await expect(runCauseEffect(fixture.manager.retryConnection(serverId))).rejects.toThrow();
+
+    expect(authTicket).not.toHaveBeenCalled();
+    const persisted = JSON.parse(await readFile(fixture.statePath, "utf8"));
+    expect(persisted.servers[0]?.encryptedToken).toBe(Buffer.from("old-device-token").toString("base64"));
+  });
+
+  it("keeps the previous device token when the host rejects fresh account-ticket redemption", async () => {
+    const serverId = "55555555-5555-4555-8555-555555555555";
+    const apiUrl = "http://100.100.100.109:43123/";
+    const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+    const publicKeyPem = publicKey.export({ type: "spki", format: "pem" }).toString();
+    const hostFingerprint = fingerprint(publicKeyPem);
+    const authTicket = vi.fn(() => authCall(async () => "fresh-account-ticket"));
+    const host = stubTeamFetch({
+      compatibility: { capabilities: [] },
+      routes: {
+        "/v1/identity": ({ url }) => {
+          const challenge = url.searchParams.get("challenge") ?? "";
+          return Response.json({
+            serverId,
+            publicKey: publicKeyPem,
+            serverName: "Linux host",
+            fingerprint: hostFingerprint,
+            challenge,
+            signature: sign(null, Buffer.from(challenge), privateKey).toString("base64url"),
+            enabledOnLaunch: true,
+            logoVersion: null,
+          });
+        },
+        [TEAM_API_ROUTES.auth.account]: () => Response.json({ error: "Not authorized." }, { status: 401 }),
+      },
+    });
+    const fixture = await createRemoteManager({
+      servers: [
+        storedHttpsServer(serverId, {
+          apiUrl,
+          fingerprint: hostFingerprint,
+          publicKey: publicKeyPem,
+          membershipId: "member-1",
+          accountId: "account-a",
+          encryptedToken: Buffer.from("old-device-token").toString("base64"),
+        }),
+      ],
+      account: {
+        createTeamAuthTicket: authTicket,
+        getAccountId: () => "account-a",
+        isSelfHostedSignedIn: () => true,
+      },
+      managerOptions: { localOnlyNetworking: true, allowTailscaleApiUrl: true },
+    });
+
+    await expect(runCauseEffect(fixture.manager.retryConnection(serverId))).rejects.toThrow();
+
+    expect(authTicket).toHaveBeenCalledOnce();
+    expect(host.requests(TEAM_API_ROUTES.auth.account)).toHaveLength(1);
+    const persisted = JSON.parse(await readFile(fixture.statePath, "utf8"));
+    expect(persisted.servers[0]?.encryptedToken).toBe(Buffer.from("old-device-token").toString("base64"));
+  });
+
   it("keeps an account-listed host visible while its Team API is temporarily unreachable", async () => {
     const hostId = "linux-account-server";
     const apiUrl = "http://100.100.100.107:43123/";

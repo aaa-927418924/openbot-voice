@@ -1520,6 +1520,14 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
           }
           return yield* remoteDecode(() => requiredServerSummary(this.list(), serverId));
         }
+        // Account-backed Tailnet sessions are device-local and can expire independently of the
+        // shared membership. A socket retry with the old Team token only repeats the same 401, so
+        // an explicit user retry must mint a fresh host-bound ticket and replace that device's
+        // token before the event stream is restarted. `login` verifies the pinned host identity
+        // before sending the ticket and leaves the previous token untouched if redemption fails.
+        if (this.#localOnlyNetworking && this.#centralAccount.isSelfHostedSignedIn?.()) {
+          return yield* this.login({ serverId });
+        }
         yield* this.#client.ensureCompatibility(server, true);
         this.#connections.setState(serverId, "connecting");
         this.#emitChanged();
