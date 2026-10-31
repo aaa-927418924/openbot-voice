@@ -42,6 +42,7 @@ import { TeamWebRtcClientTransport, TeamWebRtcRequestError } from "./team-webrtc
 afterEach(async () => {
   await stopRemoteFixtures();
   vi.useRealTimers();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
@@ -2700,12 +2701,12 @@ describe("self-hosted account server directory", () => {
     now += 60_000;
     const syncing = runCauseEffect(fixture.manager.syncAccountDirectory());
     await ticketRequested;
-    await runCauseEffect(fixture.manager.select(LOCAL_SERVER_ID));
     const inviteUrl = createMemberDeviceLinkUrl(
       { apiUrl, serverId: hostId, fingerprint: hostFingerprint, token: "d".repeat(43) },
       { allowTailscaleApiUrl: true },
     );
     try {
+      await runCauseEffect(fixture.manager.select(LOCAL_SERVER_ID));
       await runCauseEffect(fixture.manager.join({ inviteUrl }));
     } finally {
       releaseTicket();
