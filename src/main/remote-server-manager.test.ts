@@ -1940,12 +1940,15 @@ describe("self-hosted account server directory", () => {
       expect(createTeamAuthTicket).toHaveBeenCalledOnce();
       expect(host.requests(TEAM_API_ROUTES.auth.account)).toHaveLength(1);
       expect(fixture.server(hostId)).toMatchObject({
-        state: "offline",
-        issue: { retryable: true },
+        state: "error",
+        issue: { message: "Too many sign-in attempts. Try again later.", retryable: true },
       });
 
       const blockedRetry = await runCauseEffect(fixture.manager.retryConnection(hostId));
-      expect(blockedRetry).toMatchObject({ state: "offline" });
+      expect(blockedRetry).toMatchObject({
+        state: "error",
+        issue: { message: "Too many sign-in attempts. Try again later.", retryable: true },
+      });
       await runCauseEffect(fixture.manager.syncAccountDirectory());
       expect(createTeamAuthTicket).toHaveBeenCalledOnce();
       expect(host.requests("/v1/identity")).toHaveLength(1);
@@ -2287,7 +2290,10 @@ describe("self-hosted account server directory", () => {
       expect(host.requests(TEAM_API_ROUTES.auth.account)).toHaveLength(2);
       const server = fixture.server(hostId);
       expect(server).toBeDefined();
-      expect(server?.state).not.toBe("online");
+      expect(server).toMatchObject({
+        state: "error",
+        issue: { message: "Too many sign-in attempts. Try again later.", retryable: true },
+      });
 
       const retried = await runCauseEffect(fixture.manager.retryConnection(hostId));
       expect(retried.state).not.toBe("online");

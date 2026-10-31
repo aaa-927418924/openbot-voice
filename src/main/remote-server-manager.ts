@@ -699,7 +699,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         body: { accountTicket },
         ...this.#client.requestProtocol(identity.compatibility),
       }).pipe(
-        Effect.tapError((error) => Effect.sync(() => this.#recordAccountServerRateLimit(entry.hostId, error))),
+        Effect.tapError((error) => this.#recordAccountServerRateLimit(entry.hostId, error)),
         Effect.tapError((error) =>
           Effect.sync(() => logAccountAdoptionFailure(entry.hostId, "host_account_login", error)),
         ),
@@ -748,14 +748,17 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   ): Effect.Effect<void, RemoteWorkflowError, RemoteRequest> {
     const hostId = entry.hostId;
     if (this.#accountServerAdoptionInFlight.has(hostId)) return Effect.void;
-    if (this.#isAccountServerRateLimited(hostId)) return Effect.void;
+    if (this.#isAccountServerRateLimited(hostId)) {
+      this.#reportAccountSignInRateLimit(hostId);
+      return Effect.void;
+    }
     if (options.automatic && (this.#accountServerAdoptionRetryAt.get(hostId) ?? 0) > Date.now()) return Effect.void;
 
     this.#accountServerAdoptionInFlight.add(hostId);
     return Effect.gen({ self: this }, function* () {
       const adopted = yield* this.#adoptAccountServer(entry).pipe(Effect.result);
       if (Result.isSuccess(adopted)) {
-        this.#accountServerRateLimitRetryAt.delete(hostId);
+        this.#accountServerRateLimitRetryAt.delete(this.#accountRateLimitKey(hostId));
         this.#accountServerAdoptionRetryAt.delete(hostId);
         this.#accountServerAdoptionFailures.delete(hostId);
         return;
@@ -771,6 +774,12 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         const accountId = this.#centralAccount.getAccountId?.();
         if (accountId) {
           yield* this.#store.stageAccountServer(entry, accountId, this.#centralAccount.getEmail().trim().toLowerCase());
+          const retryAt = this.#accountServerRateLimitRetryAt.get(this.#accountRateLimitKey(hostId));
+          if (retryAt) {
+            yield* this.#store
+              .update(hostId, { accountSignInRetryAt: retryAt, accountSignInRetryAccountId: accountId })
+              .pipe(Effect.catch(() => Effect.succeed(null)));
+          }
         }
       }
 
@@ -1599,8 +1608,10 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       input: LoginServerInput,
     ): Effect.fn.Return<ServerSummary, RemoteWorkflowError, RemoteRequest> {
       const server = yield* remoteDecode(() => this.#servers.require(input.serverId));
-      if (this.#isAccountServerRateLimited(server.id))
+      if (this.#isAccountServerRateLimited(server.id)) {
+        this.#reportAccountSignInRateLimit(server.id);
         return yield* remoteDecode(() => requiredServerSummary(this.list(), server.id));
+      }
       const startingSessionRevision = this.#serverSessionRevision.get(server.id) ?? 0;
       let storedSessionRevision: number | null = null;
       let superseded = false;
@@ -1617,7 +1628,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
           body: { accountTicket },
           ...this.#client.requestProtocol(identity.compatibility),
         }).pipe(
-          Effect.tapError((failure) => Effect.sync(() => this.#recordAccountServerRateLimit(server.id, failure))),
+          Effect.tapError((failure) => this.#recordAccountServerRateLimit(server.id, failure)),
           Effect.mapError(
             (failure) =>
               new RemoteWorkflowError({
@@ -1639,6 +1650,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         this.#connections.clearIssue(server.id);
         const signedIn = yield* this.#store.update(server.id, {
           username: this.#centralAccount.getEmail().trim().toLowerCase(),
+          accountSignInRetryAt: null,
+          accountSignInRetryAccountId: null,
           ...(this.#centralAccount.getAccountId?.()
             ? { accountId: this.#centralAccount.getAccountId?.() ?? undefined }
             : {}),
@@ -1752,8 +1765,10 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
               cause: new Error(sourceText("error.remote.selectedServerOffline")),
             });
           }
-          if (this.#isAccountServerRateLimited(serverId))
+          if (this.#isAccountServerRateLimited(serverId)) {
+            this.#reportAccountSignInRateLimit(serverId);
             return yield* remoteDecode(() => requiredServerSummary(this.list(), serverId));
+          }
           if (this.#accountServerAdoptionInFlight.has(serverId)) {
             // Do not let a manual click race an automatic adoption and issue a second ticket.
             this.#connections.setState(serverId, "offline");
@@ -1917,7 +1932,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     this.#clearAccountDirectoryReauthState(serverId);
     this.#accountServerAdoptionRetryAt.delete(serverId);
     this.#accountServerAdoptionFailures.delete(serverId);
-    this.#accountServerRateLimitRetryAt.delete(serverId);
+    for (const key of this.#accountServerRateLimitRetryAt.keys()) {
+      if (key.endsWith(`:${serverId}`)) this.#accountServerRateLimitRetryAt.delete(key);
+    }
     this.#events.forget(serverId);
     this.#refresh.forget(serverId);
     this.#connections.forget(serverId);
@@ -1933,22 +1950,58 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   #isAccountServerRateLimited(serverId: string): boolean {
-    const retryAt = this.#accountServerRateLimitRetryAt.get(serverId);
+    const accountId = this.#centralAccount.getAccountId?.() ?? null;
+    const key = this.#accountRateLimitKey(serverId, accountId);
+    const stored = this.#servers.find(serverId);
+    const retryAt =
+      this.#accountServerRateLimitRetryAt.get(key) ??
+      (stored?.accountSignInRetryAccountId === accountId ? stored.accountSignInRetryAt : undefined);
     if (retryAt === undefined) return false;
     if (retryAt > Date.now()) return true;
-    this.#accountServerRateLimitRetryAt.delete(serverId);
+    this.#accountServerRateLimitRetryAt.delete(key);
+    if (stored?.accountSignInRetryAccountId === accountId) {
+      this.#background(
+        this.#owned(this.#store.update(serverId, { accountSignInRetryAt: null, accountSignInRetryAccountId: null })),
+      );
+    }
     return false;
   }
 
-  #recordAccountServerRateLimit(serverId: string, error: unknown): void {
-    if (accountAdoptionFailureDetails(error).status !== 429) return;
-    this.#accountServerRateLimitRetryAt.set(serverId, Date.now() + ACCOUNT_SERVER_RATE_LIMIT_RETRY_MS);
+  #recordAccountServerRateLimit(serverId: string, error: unknown): Effect.Effect<void, RemoteWorkflowError> {
+    if (accountAdoptionFailureDetails(error).status !== 429) return Effect.void;
+    const accountId = this.#centralAccount.getAccountId?.() ?? null;
+    const retryAt = Date.now() + ACCOUNT_SERVER_RATE_LIMIT_RETRY_MS;
+    this.#accountServerRateLimitRetryAt.set(this.#accountRateLimitKey(serverId, accountId), retryAt);
+    if (!accountId || !this.#servers.has(serverId)) return Effect.void;
+    return this.#store.update(serverId, { accountSignInRetryAt: retryAt, accountSignInRetryAccountId: accountId }).pipe(
+      Effect.asVoid,
+      Effect.catch((failure) =>
+        Effect.sync(() =>
+          logger.warn("Could not persist account sign-in cooldown.", {
+            hostId: serverId,
+            error: failure._tag,
+          }),
+        ),
+      ),
+    );
+  }
+
+  #accountRateLimitKey(serverId: string, accountId = this.#centralAccount.getAccountId?.() ?? null): string {
+    return `${accountId ?? "anonymous"}:${serverId}`;
+  }
+
+  #reportAccountSignInRateLimit(serverId: string): void {
+    this.#connections.reportError(
+      serverId,
+      new RemoteRequestError(429, sourceText("error.team.tooManySignInAttempts")),
+      "error",
+    );
   }
 
   #recordFreshServerSession(serverId: string): number {
     const revision = (this.#serverSessionRevision.get(serverId) ?? 0) + 1;
     this.#serverSessionRevision.set(serverId, revision);
-    this.#accountServerRateLimitRetryAt.delete(serverId);
+    this.#accountServerRateLimitRetryAt.delete(this.#accountRateLimitKey(serverId));
     this.#clearAccountDirectoryReauthState(serverId);
     return revision;
   }

@@ -68,6 +68,9 @@ export interface RemoteServerPatch {
   pendingAccountRejoinId?: string | null;
   /** Account that confirmed this device-only Team session. */
   accountId?: string;
+  /** Device-local sign-in cooldown. Null clears the saved cooldown. */
+  accountSignInRetryAt?: number | null;
+  accountSignInRetryAccountId?: string | null;
 }
 
 // What a reader needs. Consumers that only look things up take this, not the class, so their tests
@@ -278,11 +281,19 @@ export class RemoteServerStore implements RemoteServerDirectory {
   ): Effect.fn.Return<StoredRemoteServerView | null, RemoteWorkflowError> {
     const current = this.find(serverId);
     if (!current) return null;
-    const { pendingAccountRejoinId, ...fields } = patch;
+    const { pendingAccountRejoinId, accountSignInRetryAt, accountSignInRetryAccountId, ...fields } = patch;
     const updated: StoredRemoteServer = { ...current, ...fields };
     if ("pendingAccountRejoinId" in patch) {
       if (pendingAccountRejoinId) updated.pendingAccountRejoinId = pendingAccountRejoinId;
       else delete updated.pendingAccountRejoinId;
+    }
+    if ("accountSignInRetryAt" in patch) {
+      if (typeof accountSignInRetryAt === "number") updated.accountSignInRetryAt = accountSignInRetryAt;
+      else delete updated.accountSignInRetryAt;
+    }
+    if ("accountSignInRetryAccountId" in patch) {
+      if (accountSignInRetryAccountId) updated.accountSignInRetryAccountId = accountSignInRetryAccountId;
+      else delete updated.accountSignInRetryAccountId;
     }
     this.#state.servers = this.#state.servers.map((candidate) => (candidate.id === serverId ? updated : candidate));
     yield* this.persist();

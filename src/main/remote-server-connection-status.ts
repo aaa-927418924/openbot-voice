@@ -101,6 +101,18 @@ export function classifyRemoteConnectionError(error: unknown): RemoteConnectionO
         hostSupport: null,
       };
     }
+    if (error.status === 429) {
+      return {
+        issue: {
+          code: "authentication_required",
+          message: sourceText("error.team.tooManySignInAttempts"),
+          retryable: true,
+        },
+        state: "error",
+        suspendReconnect: true,
+        hostSupport: null,
+      };
+    }
     // Any other refusal is the host answering normally. It is the caller's to report, not a
     // connection problem.
     return NO_OUTCOME;

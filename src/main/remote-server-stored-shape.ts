@@ -50,6 +50,10 @@ export interface StoredRemoteServer {
   membershipId?: string;
   /** Account that confirmed this device-only Team session. */
   accountId?: string;
+  /** Device-local cooldown after the Team host rate-limits this account's sign-in. */
+  accountSignInRetryAt?: number;
+  /** Account to which accountSignInRetryAt applies. */
+  accountSignInRetryAccountId?: string;
   /** Account id awaiting a successful directory rejoin after an explicit invite. */
   pendingAccountRejoinId?: string;
   /** Directory entry is visible, but this device has not yet authenticated to its host. */
@@ -259,6 +263,18 @@ function readStoredRemoteServer(value: unknown): StoredRemoteServer | null {
       value.accountId === undefined ||
       (isString(value.accountId) && value.accountId.length > 0 && value.accountId.length <= 128)
     ) ||
+    !(
+      value.accountSignInRetryAt === undefined ||
+      (isNumber(value.accountSignInRetryAt) &&
+        Number.isSafeInteger(value.accountSignInRetryAt) &&
+        value.accountSignInRetryAt >= 0)
+    ) ||
+    !(
+      value.accountSignInRetryAccountId === undefined ||
+      (isString(value.accountSignInRetryAccountId) &&
+        value.accountSignInRetryAccountId.length > 0 &&
+        value.accountSignInRetryAccountId.length <= 128)
+    ) ||
     !isOneOf(["owner", "admin", "member"] as const, value.role)
   ) {
     return null;
@@ -281,6 +297,14 @@ function readStoredRemoteServer(value: unknown): StoredRemoteServer | null {
       ? { pendingAccountRejoinId: value.pendingAccountRejoinId }
       : {}),
     ...(isString(value.accountId) && value.accountId.length > 0 ? { accountId: value.accountId } : {}),
+    ...(isNumber(value.accountSignInRetryAt) &&
+    Number.isSafeInteger(value.accountSignInRetryAt) &&
+    value.accountSignInRetryAt >= 0
+      ? { accountSignInRetryAt: value.accountSignInRetryAt }
+      : {}),
+    ...(isString(value.accountSignInRetryAccountId) && value.accountSignInRetryAccountId.length > 0
+      ? { accountSignInRetryAccountId: value.accountSignInRetryAccountId }
+      : {}),
     ...(value.pendingAccountAuthentication === true ? { pendingAccountAuthentication: true } : {}),
     ...(value.transport === undefined ? {} : { transport: value.transport }),
     // A bad limit drops only the limit: the next host list writes it again.

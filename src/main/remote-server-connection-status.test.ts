@@ -34,6 +34,20 @@ describe("classifyRemoteConnectionError", () => {
     expect(outcome.suspendReconnect).toBe(true);
   });
 
+  it("shows a host sign-in rate limit instead of reporting the host as unreachable", () => {
+    const outcome = classifyRemoteConnectionError(new RemoteRequestError(429, "Too many sign-in attempts."));
+
+    expect(outcome).toMatchObject({
+      issue: {
+        code: "authentication_required",
+        message: "Too many sign-in attempts. Try again later.",
+        retryable: true,
+      },
+      state: "error",
+      suspendReconnect: true,
+    });
+  });
+
   it("leaves an ordinary refusal to the caller instead of blaming the connection", () => {
     expect(classifyRemoteConnectionError(new RemoteRequestError(404, "No such agent."))).toEqual({
       issue: null,
