@@ -242,18 +242,13 @@ export const RemoteTeamTransport = forwardRef<RemoteTeamTransportRef, RemoteTeam
           hostIdRef.current = hostId;
           const initialAuth = authContext.current;
           const connectSession = initialAuth.session;
-          let server =
-            initialAuth.localTailnetServer?.hostId === hostId &&
-            isPairingAuthorizedForSession(initialAuth.localTailnetServer, connectSession)
-              ? initialAuth.localTailnetServer
-              : null;
           const initialAccountServer = initialAuth.accountServer;
-          if (
-            !server &&
-            initialAccountServer?.hostId === hostId &&
-            connectSession?.localOnly &&
-            connectSession.sessionToken
-          ) {
+          // A cached pairing proves which account and membership this device used, but its Team
+          // session token is device-local and may have expired while the account directory stayed
+          // current. Prefer a new host-bound ticket whenever this host is present in the signed-in
+          // account directory; never fall back to the stale token if fresh redemption fails.
+          let server: LocalTailnetServer | null = null;
+          if (initialAccountServer?.hostId === hostId && connectSession?.localOnly && connectSession.sessionToken) {
             callbacks.current.onConnectionUpdate({ hostId, state: "connecting", message: null });
             const pairedServer = await loginTailnetAccountServer(initialAccountServer, {
               appVersion: Application.nativeApplicationVersion ?? "",
@@ -301,6 +296,11 @@ export const RemoteTeamTransport = forwardRef<RemoteTeamTransportRef, RemoteTeam
             server = pairedServer;
             directServer.current = server;
             onAccountServerPaired?.(server);
+          } else if (
+            initialAuth.localTailnetServer?.hostId === hostId &&
+            isPairingAuthorizedForSession(initialAuth.localTailnetServer, connectSession)
+          ) {
+            server = initialAuth.localTailnetServer;
           }
           if (generation !== directGeneration.current) return;
           if (server?.hostId === hostId && isPairingCurrent(server, authContext.current)) {

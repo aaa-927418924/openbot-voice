@@ -100,6 +100,10 @@ const transportRef = createRef<RemoteTeamTransportRef>();
 const onConnectionUpdate = vi.fn();
 
 function render(pairing: LocalTailnetServer | null = localPairing("membership-a")) {
+  vi.mocked(loginTailnetAccountServer).mockResolvedValue({
+    ...localPairing("membership-a"),
+    sessionToken: "fresh-device-token",
+  });
   root.render(
     <RemoteTeamTransport
       ref={transportRef}
@@ -148,6 +152,40 @@ it("disconnects the old direct socket when the host membership changes", async (
     state: "offline",
     message: "error.remote.desktopOffline",
   });
+});
+
+it("renews a cached account pairing before connecting so a stale Team token is not reused", async () => {
+  harness.session = {
+    apiUrl: "https://account.example.com",
+    sessionToken: "account-token",
+    user: { id: "account-a" },
+    localOnly: true,
+  };
+  const freshPairing = { ...localPairing("membership-a"), sessionToken: "rotated-device-token" };
+  vi.mocked(loginTailnetAccountServer).mockResolvedValueOnce(freshPairing);
+  await act(async () => render({ ...localPairing("membership-a"), sessionToken: "expired-device-token" }));
+  await act(async () => transportRef.current?.connect("host", "host-key"));
+
+  expect(loginTailnetAccountServer).toHaveBeenCalledOnce();
+  expect(saveLocalTailnetServer).toHaveBeenCalledWith(freshPairing);
+  expect(harness.instances[0]?.server).toMatchObject({ sessionToken: "rotated-device-token" });
+  expect(harness.instances[0]?.openEvents).toHaveBeenCalledOnce();
+});
+
+it("does not fall back to a cached Team token when fresh account-ticket login fails", async () => {
+  harness.session = {
+    apiUrl: "https://account.example.com",
+    sessionToken: "account-token",
+    user: { id: "account-a" },
+    localOnly: true,
+  };
+  vi.mocked(loginTailnetAccountServer).mockRejectedValueOnce(new Error("account ticket rejected"));
+  await act(async () => render({ ...localPairing("membership-a"), sessionToken: "expired-device-token" }));
+
+  await expect(transportRef.current?.connect("host", "host-key")).rejects.toThrow("account ticket rejected");
+
+  expect(harness.instances).toHaveLength(0);
+  expect(saveLocalTailnetServer).not.toHaveBeenCalled();
 });
 
 it("disconnects the old account socket when the account pairing changes", async () => {
