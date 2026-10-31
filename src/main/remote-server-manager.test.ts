@@ -1195,6 +1195,7 @@ describe("remote connection failures", () => {
             sessionToken: "session-token",
             sessionExpiresAt: new Date(Date.now() + 60_000).toISOString(),
           }),
+        [TEAM_API_ROUTES.agents.all]: () => Response.json([]),
         "/v1/remote-screen/capabilities": probe.handler,
       },
     });
@@ -1316,6 +1317,7 @@ describe("remote control capability discovery", () => {
             sessionToken: "fresh-account-session",
             sessionExpiresAt: new Date(Date.now() + 60_000).toISOString(),
           }),
+        [TEAM_API_ROUTES.agents.all]: () => Response.json([]),
         "/v1/remote-screen/capabilities": () =>
           Response.json({ error: "Remote control is unavailable.", code: "host_unavailable" }, { status: 503 }),
       },
@@ -1510,6 +1512,7 @@ describe("self-hosted account server directory", () => {
     const authTicket = vi.fn((hostId: string) =>
       authCall(async () => (hostId === serverId ? "fresh-account-ticket" : "wrong-host-ticket")),
     );
+    const roster = deferredRoute();
     const host = stubTeamFetch({
       compatibility: { appVersion: "0.30.0", capabilities: [] },
       routes: {
@@ -1541,8 +1544,10 @@ describe("self-hosted account server directory", () => {
             sessionToken: "fresh-device-token",
             sessionExpiresAt: new Date(Date.now() + 60_000).toISOString(),
           }),
+        [TEAM_API_ROUTES.agents.all]: roster.handler,
       },
     });
+    stubEventSockets();
     const fixture = await createRemoteManager({
       servers: [
         storedHttpsServer(serverId, {
@@ -1564,13 +1569,108 @@ describe("self-hosted account server directory", () => {
       managerOptions: { localOnlyNetworking: true, allowTailscaleApiUrl: true },
     });
 
-    await runCauseEffect(fixture.manager.retryConnection(serverId));
+    const rosterEvents = vi.fn();
+    fixture.manager.on("agent", rosterEvents);
+    const retry = runCauseEffect(fixture.manager.retryConnection(serverId));
+    await roster.arrived;
+
+    // The host accepted the account ticket, but its roster is still unavailable. Do not expose an
+    // empty first-agent workspace while this required response is pending.
+    expect(fixture.server(serverId)).toMatchObject({ state: "connecting", issue: null });
+    roster.resolve(Response.json([]));
+    await retry;
 
     expect(authTicket).toHaveBeenCalledExactlyOnceWith(serverId);
     expect(host.requests(TEAM_API_ROUTES.auth.account)).toHaveLength(1);
+    expect(rosterEvents).toHaveBeenCalledWith(serverId, { type: "agents-changed", agents: [] });
+    expect(fixture.server(serverId)).toMatchObject({ state: "online", issue: null });
     expect(host.requests(TEAM_API_ROUTES.auth.account)[0]?.body).toEqual({ accountTicket: "fresh-account-ticket" });
     const persisted = JSON.parse(await readFile(fixture.statePath, "utf8"));
     expect(persisted.servers[0]?.encryptedToken).toBe(Buffer.from("fresh-device-token").toString("base64"));
+  });
+
+  it("keeps a failed roster load retryable instead of treating it as an empty online workspace", async () => {
+    const serverId = "55555555-5555-4555-8555-555555555555";
+    const apiUrl = "http://100.100.100.109:43123/";
+    const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+    const publicKeyPem = publicKey.export({ type: "spki", format: "pem" }).toString();
+    const hostFingerprint = fingerprint(publicKeyPem);
+    let rosterAvailable = false;
+    let loginCount = 0;
+    const host = stubTeamFetch({
+      compatibility: { appVersion: "0.30.0", capabilities: [] },
+      routes: {
+        "/v1/identity": ({ url }) => {
+          const challenge = url.searchParams.get("challenge") ?? "";
+          return Response.json({
+            serverId,
+            publicKey: publicKeyPem,
+            serverName: "Linux host",
+            fingerprint: hostFingerprint,
+            challenge,
+            signature: sign(null, Buffer.from(challenge), privateKey).toString("base64url"),
+            enabledOnLaunch: true,
+            logoVersion: null,
+          });
+        },
+        [TEAM_API_ROUTES.auth.account]: () => {
+          loginCount += 1;
+          return Response.json({
+            member: {
+              id: "member-1",
+              username: "member",
+              email: "person@example.com",
+              name: null,
+              avatarUrl: null,
+              role: "member",
+              createdAt: new Date().toISOString(),
+              disabled: false,
+            },
+            sessionToken: `fresh-device-token-${loginCount}`,
+            sessionExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+          });
+        },
+        [TEAM_API_ROUTES.agents.all]: () =>
+          rosterAvailable
+            ? Response.json([])
+            : Response.json({ error: "Roster is unavailable.", code: "host_unavailable" }, { status: 503 }),
+      },
+    });
+    stubEventSockets();
+    const fixture = await createRemoteManager({
+      servers: [
+        storedHttpsServer(serverId, {
+          apiUrl,
+          fingerprint: hostFingerprint,
+          publicKey: publicKeyPem,
+          membershipId: "member-1",
+          accountId: "account-a",
+          encryptedToken: Buffer.from("expired-device-token").toString("base64"),
+        }),
+      ],
+      account: {
+        getAccountId: () => "account-a",
+        getEmail: () => "person@example.com",
+        isSelfHostedSignedIn: () => true,
+      },
+      managerOptions: { localOnlyNetworking: true, allowTailscaleApiUrl: true },
+    });
+    const rosterEvents = vi.fn();
+    fixture.manager.on("agent", rosterEvents);
+
+    await expect(runCauseEffect(fixture.manager.login({ serverId }))).rejects.toThrow();
+
+    expect(fixture.server(serverId)).toMatchObject({ state: "error" });
+    expect(fixture.server(serverId)?.state).not.toBe("online");
+    expect(rosterEvents).not.toHaveBeenCalled();
+
+    rosterAvailable = true;
+    const retry = await runCauseEffect(fixture.manager.retryConnection(serverId));
+
+    expect(retry.state).toBe("online");
+    expect(fixture.server(serverId)).toMatchObject({ state: "online", issue: null });
+    expect(rosterEvents).toHaveBeenCalledWith(serverId, { type: "agents-changed", agents: [] });
+    expect(host.requests(TEAM_API_ROUTES.agents.all)).toHaveLength(2);
   });
 
   it("does not issue an account ticket when the host identity no longer matches the pin", async () => {
@@ -1906,6 +2006,7 @@ describe("self-hosted account server directory", () => {
             sessionExpiresAt: new Date(Date.now() + 60_000).toISOString(),
           });
         },
+        [TEAM_API_ROUTES.agents.all]: () => Response.json([]),
       },
     });
     const entry: AccountServerDirectoryEntry = {
@@ -2408,6 +2509,7 @@ describe("self-hosted account server directory", () => {
             sessionExpiresAt: new Date(Date.now() + 60_000).toISOString(),
           });
         },
+        [TEAM_API_ROUTES.agents.all]: () => Response.json([]),
         "/v1/remote-screen/capabilities": () =>
           Response.json({ error: "Remote control is unavailable.", code: "host_unavailable" }, { status: 503 }),
       },
@@ -2541,6 +2643,7 @@ describe("self-hosted account server directory", () => {
             sessionExpiresAt: new Date(Date.now() + 60_000).toISOString(),
           });
         },
+        [TEAM_API_ROUTES.agents.all]: () => Response.json([]),
       },
     });
     const createTeamAuthTicket = vi.fn(() => authCall(async () => "account-ticket"));
@@ -2662,6 +2765,7 @@ describe("self-hosted account server directory", () => {
             sessionExpiresAt: new Date(Date.now() + 60_000).toISOString(),
           });
         },
+        [TEAM_API_ROUTES.agents.all]: () => Response.json([]),
       },
     });
     const createTeamAuthTicket = vi.fn(() => authCall(async () => "account-ticket"));
@@ -2789,6 +2893,7 @@ describe("self-hosted account server directory", () => {
             sessionExpiresAt: new Date(Date.now() + 60_000).toISOString(),
           });
         },
+        [TEAM_API_ROUTES.agents.all]: () => Response.json([]),
         [TEAM_MEMBER_DEVICE_LINK_ROUTES.redeem]: () =>
           Response.json({
             member: {

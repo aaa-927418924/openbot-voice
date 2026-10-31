@@ -1729,6 +1729,11 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
           name: identity.serverName,
           logoVersion: identity.logoVersion,
         });
+        // A valid account session does not prove that the workspace can be loaded. Keep the server
+        // in `connecting` until its roster has been decoded and emitted; otherwise the renderer can
+        // mistake an unavailable roster for a genuinely empty server and offer first-agent setup.
+        // Let roster errors reach the normal login failure path so the connection remains retryable.
+        yield* this.#refresh.refreshAgentRoster(server.id);
         this.#connections.setState(server.id, "online");
         // The stream restarts before the probe, not after. `restart(id, true)` lifts the suspension a
         // previous failure left, and opening the socket clears the recorded issue -- so with the probe

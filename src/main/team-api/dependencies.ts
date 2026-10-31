@@ -41,6 +41,8 @@ import type { HostedSiteDesktopService } from "../hosted-site-service";
 import type { McpToolRuntimePreparation } from "../ipc/mcp-server-handlers";
 import type { LiveActivityPushService } from "../live-activity-push";
 import type { RemoteScreenGateway } from "../remote-screen-gateway";
+import type { ServerMigrationSnapshotManifest } from "../server-migration-snapshot";
+import type { ServerMigrationTransferService } from "../server-migration-transfer";
 import type { TeamStore } from "../team-store";
 
 type TeamApiAgentMethods = Pick<
@@ -150,6 +152,26 @@ export type TeamApiHostedSites = Pick<HostedSiteDesktopService, "listServerSites
 export type TeamApiAgentImport = Pick<AgentImportService, "stageUpload" | "apply" | "discard">;
 
 /**
+ * The destination side of `server-migration-v1`. Only a Linux server-mode host receives this
+ * dependency. The activation callback owns target promotion and schedules service restart only
+ * after it has safely published the imported data. `snapshotPath` is an internal main-process path;
+ * route code must never place it in a response or log.
+ */
+export interface TeamApiServerMigration {
+  serverMode: boolean;
+  transfer: Pick<
+    ServerMigrationTransferService,
+    "begin" | "status" | "writeChunk" | "cancel" | "resume" | "finalize" | "withVerifiedSnapshot"
+  >;
+  activate: (input: {
+    memberId: string;
+    transferId: string;
+    snapshotPath: string;
+    manifest: ServerMigrationSnapshotManifest;
+  }) => Promise<void>;
+}
+
+/**
  * The admin routes, one member per optional capability. A member's presence is what
  * `#protocolSupport` advertises its capability on; every route behind it requires an owner or admin.
  */
@@ -248,6 +270,7 @@ export interface TeamApiOptions {
   storage?: TeamApiStorage;
   hostedSites?: TeamApiHostedSites;
   agentImport?: TeamApiAgentImport;
+  serverMigration?: TeamApiServerMigration;
   admin?: TeamApiAdmin;
   appVersion?: string;
   store: TeamStore;
