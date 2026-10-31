@@ -5,3 +5,4 @@
 - Re-read the latest sign-in after each delayed local-host selection write, so rapid account changes or a temporary save failure do not leave another account stuck behind a stale selection.
 - Reuse the healthy local identity API when the GUI and Linux server service start together, and let the Linux service verify ownership before it refreshes the shared server directory.
 - Keep account-listed servers visible as offline while their host cannot be authenticated, retry when credentials become available, and let Android apply a successful empty account list even if optional legacy-import checks fail.
+- Redeem a self-hosted account ticket first, then accept a legacy host-local ticket when the account authority does not recognize it; do not hide account-session or transport errors with a fallback.

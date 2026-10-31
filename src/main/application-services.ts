@@ -165,7 +165,7 @@ import { loadOrCreateRemoteDesktopCredentials } from "./remote-desktop-secret-st
 import { appendRemoteDiagnosticLog } from "./remote-diagnostics";
 import { decodeVoid } from "./remote-host-decoding";
 import { RemoteServerManager } from "./remote-server-manager";
-import { createRemoteTeamAuthTicket } from "./remote-team-auth-ticket";
+import { createRemoteTeamAuthTicket, redeemRemoteTeamAuthTicket } from "./remote-team-auth-ticket";
 import { sendToRenderer } from "./renderer-ipc";
 import { RequestedUpdate, RequestedUpdateRefusal } from "./requested-update";
 import { RoutineFeedServer } from "./routine-feed-server";
@@ -1668,23 +1668,40 @@ export async function createApplicationServices({
     // state of the running app, not a startup-ordering artifact.
     getSignedInUser: () => (localOnlyNetworking ? signedInSelfHostedUser() : centralAuth.getSignedInUser()),
     redeemCentralTicket: (ticket, serverId) =>
-      localOnlyNetworking && selfHostedDesktopAccount.isSignedIn
-        ? selfHostedDesktopAccount.redeemTeamAuthTicket(ticket, serverId).pipe(
-            Effect.map((account) =>
-              // Local account email addresses are user-claimed, not verified. Do not use them
-              // to adopt a legacy Team member; the stable account ID remains the identity key.
-              account ? { id: account.id, email: "", name: account.name, avatarUrl: account.avatarUrl } : null,
-            ),
-            Effect.mapError((cause) => new RemoteWorkflowError({ cause })),
-          )
-        : localOnlyNetworking && selfHostedIdentityAuthority
-          ? selfHostedIdentityAuthority.consumeTeamTicket({ ticket, targetTeamServerId: serverId }).pipe(
+      redeemRemoteTeamAuthTicket(
+        {
+          localOnlyNetworking,
+          selfHostedSignedIn: selfHostedDesktopAccount.isSignedIn,
+          redeemSelfHostedTicket: (teamTicket, hostId) =>
+            selfHostedDesktopAccount.redeemTeamAuthTicket(teamTicket, hostId).pipe(
               Effect.map((account) =>
+                // Local account email addresses are user-claimed, not verified. Do not use them
+                // to adopt a legacy Team member; the stable account ID remains the identity key.
                 account ? { id: account.id, email: "", name: account.name, avatarUrl: account.avatarUrl } : null,
               ),
               Effect.mapError((cause) => new RemoteWorkflowError({ cause })),
-            )
-          : centralAuth.redeemTeamAuthTicket(ticket, serverId).pipe(toRemoteWorkflowError),
+            ),
+          ...(selfHostedIdentityAuthority
+            ? {
+                redeemLocalTicket: (teamTicket: string, hostId: string) =>
+                  selfHostedIdentityAuthority
+                    .consumeTeamTicket({ ticket: teamTicket, targetTeamServerId: hostId })
+                    .pipe(
+                      Effect.map((account) =>
+                        account
+                          ? { id: account.id, email: "", name: account.name, avatarUrl: account.avatarUrl }
+                          : null,
+                      ),
+                      Effect.mapError((cause) => new RemoteWorkflowError({ cause })),
+                    ),
+              }
+            : {}),
+          redeemHostedTicket: (teamTicket, hostId) =>
+            centralAuth.redeemTeamAuthTicket(teamTicket, hostId).pipe(toRemoteWorkflowError),
+        },
+        ticket,
+        serverId,
+      ),
     sendTeamInviteEmail: (input) => centralAuth.sendTeamInviteEmail(input).pipe(toRemoteWorkflowError),
     platform: process.platform === "darwin" || process.platform === "win32" ? process.platform : "linux",
     unattended: false,
