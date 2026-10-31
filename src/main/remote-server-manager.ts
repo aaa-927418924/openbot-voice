@@ -804,10 +804,10 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
       const cause =
         adopted.failure.cause instanceof RemoteWorkflowError ? adopted.failure.cause.cause : adopted.failure.cause;
-      this.#connections.reportError(hostId, cause, "offline");
       // HTTP 429 and other unclassified refusals must still leave a visible, retryable state. Do
       // not show an empty agent workspace for a host this device has not authenticated to yet.
-      if (!this.#connections.hasIssue(hostId)) this.#connections.reportUnreachable(hostId);
+      // The account-sign-in path says why the host refused instead of reporting "unreachable".
+      this.#connections.reportAccountSignInFailure(hostId, cause);
       if (options.stageOnFailure) {
         const accountId = this.#centralAccount.getAccountId?.();
         if (accountId) {

@@ -13,6 +13,7 @@
 import type { ServerCompatibility, ServerConnectionIssue, ServerSummary } from "@openbot/contracts/ipc";
 import {
   checkingCompatibility,
+  classifyAccountSignInFailure,
   classifyRemoteConnectionError,
   classifyTransportError,
   hostUnreachable,
@@ -171,6 +172,18 @@ export class RemoteServerConnections {
   // caller can fold it into one emission with whatever else the failure changed.
   reportUnreachable(serverId: string): void {
     this.#apply(serverId, hostUnreachable(), null);
+  }
+
+  // Account adoption is the one caller that cannot treat a host refusal as "no news": the server is
+  // already in the list, and the user needs the reason it stays offline. A refusal shows the host's
+  // own message; anything else keeps the unreachable report.
+  reportAccountSignInFailure(serverId: string, error: unknown): void {
+    const outcome = classifyAccountSignInFailure(error);
+    if (!outcome) {
+      this.reportUnreachable(serverId);
+      return;
+    }
+    if (this.#apply(serverId, outcome, "offline").changed) this.#onChanged();
   }
 
   forget(serverId: string): void {

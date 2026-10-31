@@ -59,6 +59,26 @@ export function hostUnreachable(): RemoteConnectionOutcome {
   };
 }
 
+/**
+ * What an account sign-in failure means. The generic classifier leaves a host refusal without an
+ * issue, because most routes can ignore one. Account adoption cannot: the server stays in the list
+ * waiting for the user, and "The host is not reachable." sends them to the network when the host
+ * answered and named the reason (for example, that this account is not a member).
+ */
+export function classifyAccountSignInFailure(error: unknown): RemoteConnectionOutcome | null {
+  const classified = classifyRemoteConnectionError(error);
+  if (classified.issue) return classified;
+  if (error instanceof RemoteRequestError && error.status >= 400 && error.status < 500) {
+    return {
+      issue: { code: "authentication_required", message: error.message, retryable: true },
+      state: "error",
+      suspendReconnect: true,
+      hostSupport: null,
+    };
+  }
+  return null;
+}
+
 export function classifyRemoteConnectionError(error: unknown): RemoteConnectionOutcome {
   if (error instanceof RemoteProtocolError) {
     return {

@@ -10,3 +10,4 @@
 - Scope account-ticket failures to the account and sign-in attempt that created them, and ignore stale legacy-adoption responses after a newer session is installed.
 - Project self-hosted account avatars to the identity server's short-lived profile URL before redeeming Team API account tickets, avoiding sign-in rejection for oversized inline image data.
 - Reactivate the authenticated local-host owner when syncing its self-hosted account, so a stale disabled owner does not block remote account-ticket sign-in.
+- Show the host's own reason when it refuses an account-ticket sign-in, instead of reporting "The host is not reachable." for a host that answered.

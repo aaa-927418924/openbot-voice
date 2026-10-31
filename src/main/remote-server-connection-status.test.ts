@@ -1,6 +1,10 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import { classifyRemoteConnectionError, classifyTransportError } from "./remote-server-connection-status";
+import {
+  classifyAccountSignInFailure,
+  classifyRemoteConnectionError,
+  classifyTransportError,
+} from "./remote-server-connection-status";
 import { RemoteProtocolError, RemoteRequestError } from "./remote-server-errors";
 
 describe("classifyRemoteConnectionError", () => {
@@ -70,6 +74,30 @@ describe("classifyRemoteConnectionError", () => {
 
   it("says nothing about a failure it does not recognise", () => {
     expect(classifyRemoteConnectionError(new Error("boom")).issue).toBeNull();
+  });
+});
+
+describe("classifyAccountSignInFailure", () => {
+  it("shows the host's reason when it refuses the account instead of calling the host unreachable", () => {
+    const refusal = new RemoteRequestError(400, "This OpenBot account is not a member of the team.");
+    expect(classifyAccountSignInFailure(refusal)).toEqual({
+      issue: {
+        code: "authentication_required",
+        message: "This OpenBot account is not a member of the team.",
+        retryable: true,
+      },
+      state: "error",
+      suspendReconnect: true,
+      hostSupport: null,
+    });
+  });
+
+  it("keeps the generic classification for a rejected ticket and an unreachable host", () => {
+    expect(classifyAccountSignInFailure(new RemoteRequestError(401, "jwt malformed"))?.issue?.code).toBe(
+      "authentication_required",
+    );
+    expect(classifyAccountSignInFailure(new TypeError("fetch failed"))?.issue?.code).toBe("network_unavailable");
+    expect(classifyAccountSignInFailure(new Error("boom"))).toBeNull();
   });
 });
 
