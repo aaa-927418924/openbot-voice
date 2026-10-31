@@ -107,6 +107,7 @@ describe("stored remote servers", () => {
           remoteDesktopAvailable: true,
           accountSignInRetryAt: 1_000_000,
           accountSignInRetryAccountId: "account-1",
+          accountSignInRetryReason: "auth",
         }),
         storedServer({ id: "tunnel", logoVersion: "v7" }),
       ],
@@ -120,6 +121,7 @@ describe("stored remote servers", () => {
       remoteDesktopAvailable: true,
       accountSignInRetryAt: 1_000_000,
       accountSignInRetryAccountId: "account-1",
+      accountSignInRetryReason: "auth",
     });
     expect(stored?.servers[1]).toMatchObject({ logoVersion: "v7", remoteDesktopAvailable: false });
     expect(stored?.servers[1]).not.toHaveProperty("transport");

@@ -1972,6 +1972,102 @@ describe("self-hosted account server directory", () => {
     }
   });
 
+  it("persists a rejected account-ticket cooldown across a client restart", async () => {
+    const hostId = "linux-rejected-account-ticket";
+    const apiUrl = "http://100.100.100.107:43123/";
+    const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+    const publicKeyPem = publicKey.export({ type: "spki", format: "pem" }).toString();
+    const hostFingerprint = fingerprint(publicKeyPem);
+    const host = stubTeamFetch({
+      routes: {
+        "/v1/identity": ({ url }) => {
+          const challenge = url.searchParams.get("challenge") ?? "";
+          return Response.json({
+            serverId: hostId,
+            publicKey: publicKeyPem,
+            serverName: "Linux server",
+            fingerprint: hostFingerprint,
+            challenge,
+            signature: sign(null, Buffer.from(challenge), privateKey).toString("base64url"),
+            enabledOnLaunch: true,
+            logoVersion: null,
+          });
+        },
+        [TEAM_API_ROUTES.auth.account]: () => Response.json({ error: "Ticket refused." }, { status: 401 }),
+      },
+    });
+    const entry: AccountServerDirectoryEntry = {
+      hostId,
+      name: "Linux server",
+      apiUrl,
+      fingerprint: hostFingerprint,
+      publicKey: publicKeyPem,
+      logoKey: null,
+      membershipId: "account-member",
+      role: "member",
+      isOwner: false,
+    };
+    const createTeamAuthTicket = vi.fn(() => authCall(async () => "account-ticket"));
+    const account = {
+      createTeamAuthTicket,
+      getAccountId: () => "account-a",
+      getEmail: () => "person@example.com",
+      isSelfHostedSignedIn: () => true,
+      getLegacyAccountServerImportExclusions: () => authCall(async () => []),
+      listAccountServers: () => authCall(async () => [entry]),
+      registerAccountServer: () => authCall(async () => undefined),
+    };
+    const managerOptions = { localOnlyNetworking: true, allowTailscaleApiUrl: true } as const;
+    const fixture = await createRemoteManager({
+      servers: [],
+      account,
+      managerOptions,
+    });
+    let now = 1_000_000;
+    const dateNow = vi.spyOn(Date, "now").mockImplementation(() => now);
+    let restartedManager: RemoteServerManager | undefined;
+
+    try {
+      await runCauseEffect(fixture.manager.syncAccountDirectory());
+      expect(createTeamAuthTicket).toHaveBeenCalledOnce();
+      expect(host.requests(TEAM_API_ROUTES.auth.account)).toHaveLength(1);
+      expect(JSON.parse(await readFile(fixture.statePath, "utf8")).servers).toContainEqual(
+        expect.objectContaining({
+          id: hostId,
+          pendingAccountAuthentication: true,
+          accountSignInRetryReason: "auth",
+          accountSignInRetryAt: now + 60_000,
+          accountSignInRetryAccountId: "account-a",
+        }),
+      );
+
+      await Effect.runPromise(fixture.manager.stop());
+      restartedManager = new RemoteServerManager(
+        fixture.statePath,
+        { encrypt: (value) => Buffer.from(value), decrypt: (value) => value.toString() },
+        account,
+        managerOptions,
+      );
+      await runCauseEffect(restartedManager.initialize());
+      await runCauseEffect(restartedManager.syncAccountDirectory());
+
+      expect(host.requests("/v1/identity")).toHaveLength(1);
+      expect(host.requests(TEAM_API_ROUTES.auth.account)).toHaveLength(1);
+      expect(restartedManager.list().find((server) => server.id === hostId)).toMatchObject({
+        state: "error",
+        issue: { code: "authentication_required", message: "Sign in to this host again." },
+      });
+
+      now += 60_000;
+      await runCauseEffect(restartedManager.syncAccountDirectory());
+      expect(host.requests("/v1/identity")).toHaveLength(2);
+      expect(host.requests(TEAM_API_ROUTES.auth.account)).toHaveLength(2);
+    } finally {
+      if (restartedManager) await Effect.runPromise(restartedManager.stop());
+      dateNow.mockRestore();
+    }
+  });
+
   it("uses one explicit adoption attempt for Retry and replaces the staged metadata with a device session", async () => {
     const hostId = "linux-account-server";
     const apiUrl = "http://100.100.100.107:43123/";
@@ -2160,6 +2256,16 @@ describe("self-hosted account server directory", () => {
       role: "member",
       isOwner: false,
     };
+    const account = {
+      createTeamAuthTicket,
+      getAccountId: () => "account-a",
+      getEmail: () => "person@example.com",
+      isSelfHostedSignedIn: () => true,
+      getLegacyAccountServerImportExclusions: () => authCall(async () => []),
+      listAccountServers: () => authCall(async () => [entry]),
+      registerAccountServer: () => authCall(async () => undefined),
+    };
+    const managerOptions = { localOnlyNetworking: true, allowTailscaleApiUrl: true } as const;
     const fixture = await createRemoteManager({
       servers: [
         storedHttpsServer(hostId, {
@@ -2171,34 +2277,57 @@ describe("self-hosted account server directory", () => {
           encryptedToken: Buffer.from("expired-device-session").toString("base64"),
         }),
       ],
-      account: {
-        createTeamAuthTicket,
-        getAccountId: () => "account-a",
-        getEmail: () => "person@example.com",
-        isSelfHostedSignedIn: () => true,
-        getLegacyAccountServerImportExclusions: () => authCall(async () => []),
-        listAccountServers: () => authCall(async () => [entry]),
-        registerAccountServer: () => authCall(async () => undefined),
-      },
-      managerOptions: { localOnlyNetworking: true, allowTailscaleApiUrl: true },
+      account,
+      managerOptions,
     });
+    let now = 1_000_000;
+    const dateNow = vi.spyOn(Date, "now").mockImplementation(() => now);
+    let restartedManager: RemoteServerManager | undefined;
 
-    await expect(runCauseEffect(fixture.manager.login({ serverId: hostId }))).rejects.toThrow();
-    expect(fixture.server(hostId)).toMatchObject({ issue: { code: "authentication_required" } });
+    try {
+      await expect(runCauseEffect(fixture.manager.login({ serverId: hostId }))).rejects.toThrow();
+      expect(fixture.server(hostId)).toMatchObject({ issue: { code: "authentication_required" } });
 
-    await runCauseEffect(fixture.manager.syncAccountDirectory());
+      await Effect.runPromise(fixture.manager.stop());
+      restartedManager = new RemoteServerManager(
+        fixture.statePath,
+        { encrypt: (value) => Buffer.from(value), decrypt: (value) => value.toString() },
+        account,
+        managerOptions,
+      );
+      await runCauseEffect(restartedManager.initialize());
+      const cooldownSummary = await runCauseEffect(restartedManager.login({ serverId: hostId }));
+      expect(cooldownSummary).toMatchObject({
+        state: "error",
+        issue: { code: "authentication_required", message: "Sign in to this host again." },
+      });
+      expect(createTeamAuthTicket).toHaveBeenCalledOnce();
+      expect(host.requests(TEAM_API_ROUTES.auth.account)).toHaveLength(1);
+      expect(JSON.parse(await readFile(fixture.statePath, "utf8")).servers).toContainEqual(
+        expect.objectContaining({ accountSignInRetryReason: "auth", accountSignInRetryAt: now + 60_000 }),
+      );
 
-    expect(createTeamAuthTicket).toHaveBeenCalledTimes(2);
-    expect(host.requests(TEAM_API_ROUTES.auth.account)).toHaveLength(2);
-    expect(fixture.server(hostId)).toMatchObject({ state: "online", issue: null });
-    expect(JSON.parse(await readFile(fixture.statePath, "utf8")).servers).toContainEqual(
-      expect.objectContaining({
-        id: hostId,
-        accountId: "account-a",
-        membershipId: "member-1",
-        encryptedToken: Buffer.from("refreshed-device-session").toString("base64"),
-      }),
-    );
+      now += 60_000;
+      await runCauseEffect(restartedManager.syncAccountDirectory());
+
+      expect(createTeamAuthTicket).toHaveBeenCalledTimes(2);
+      expect(host.requests(TEAM_API_ROUTES.auth.account)).toHaveLength(2);
+      expect(restartedManager.list().find((server) => server.id === hostId)).toMatchObject({
+        state: "online",
+        issue: null,
+      });
+      expect(JSON.parse(await readFile(fixture.statePath, "utf8")).servers).toContainEqual(
+        expect.objectContaining({
+          id: hostId,
+          accountId: "account-a",
+          membershipId: "member-1",
+          encryptedToken: Buffer.from("refreshed-device-session").toString("base64"),
+        }),
+      );
+    } finally {
+      if (restartedManager) await Effect.runPromise(restartedManager.stop());
+      dateNow.mockRestore();
+    }
   });
 
   it("blocks explicit and directory session renewal while a host 429 cooldown is active", async () => {
@@ -2286,24 +2415,31 @@ describe("self-hosted account server directory", () => {
     try {
       await expect(runCauseEffect(fixture.manager.login({ serverId: hostId }))).rejects.toThrow();
       await runCauseEffect(fixture.manager.syncAccountDirectory());
-      expect(createTeamAuthTicket).toHaveBeenCalledTimes(2);
-      expect(host.requests(TEAM_API_ROUTES.auth.account)).toHaveLength(2);
+      expect(createTeamAuthTicket).toHaveBeenCalledOnce();
+      expect(host.requests(TEAM_API_ROUTES.auth.account)).toHaveLength(1);
       const server = fixture.server(hostId);
       expect(server).toBeDefined();
       expect(server).toMatchObject({
         state: "error",
-        issue: { message: "Too many sign-in attempts. Try again later.", retryable: true },
+        issue: { message: "Sign in to this host again.", retryable: true },
       });
 
       const retried = await runCauseEffect(fixture.manager.retryConnection(hostId));
       expect(retried.state).not.toBe("online");
       await runCauseEffect(fixture.manager.syncAccountDirectory());
+      expect(createTeamAuthTicket).toHaveBeenCalledOnce();
+      expect(host.requests(TEAM_API_ROUTES.auth.account)).toHaveLength(1);
+
       now += 60_000;
       await runCauseEffect(fixture.manager.syncAccountDirectory());
       expect(createTeamAuthTicket).toHaveBeenCalledTimes(2);
       expect(host.requests(TEAM_API_ROUTES.auth.account)).toHaveLength(2);
+      expect(fixture.server(hostId)).toMatchObject({
+        state: "error",
+        issue: { message: "Too many sign-in attempts. Try again later.", retryable: true },
+      });
 
-      now += 14 * 60_000;
+      now += 15 * 60_000;
       await runCauseEffect(fixture.manager.syncAccountDirectory());
       expect(createTeamAuthTicket).toHaveBeenCalledTimes(3);
       expect(host.requests(TEAM_API_ROUTES.auth.account)).toHaveLength(3);
@@ -2395,15 +2531,23 @@ describe("self-hosted account server directory", () => {
       managerOptions: { localOnlyNetworking: true, allowTailscaleApiUrl: true },
     });
 
-    vi.useFakeTimers();
+    let now = 1_000_000;
+    const dateNow = vi.spyOn(Date, "now").mockImplementation(() => now);
     await expect(runCauseEffect(fixture.manager.login({ serverId: hostId }))).rejects.toThrow();
     await runCauseEffect(fixture.manager.syncAccountDirectory());
     expect(fixture.server(hostId)).toMatchObject({ issue: { code: "authentication_required" } });
     await runCauseEffect(fixture.manager.syncAccountDirectory());
+    expect(createTeamAuthTicket).toHaveBeenCalledOnce();
+    expect(host.requests(TEAM_API_ROUTES.auth.account)).toHaveLength(1);
+
+    now += 60_000;
+    await runCauseEffect(fixture.manager.syncAccountDirectory());
     expect(createTeamAuthTicket).toHaveBeenCalledTimes(2);
     expect(host.requests(TEAM_API_ROUTES.auth.account)).toHaveLength(2);
+    await runCauseEffect(fixture.manager.syncAccountDirectory());
+    expect(createTeamAuthTicket).toHaveBeenCalledTimes(2);
 
-    await vi.advanceTimersByTimeAsync(60_000);
+    now += 60_000;
     await runCauseEffect(fixture.manager.syncAccountDirectory());
     expect(fixture.server(hostId)).toMatchObject({ issue: { code: "network_unavailable" } });
     await runCauseEffect(fixture.manager.syncAccountDirectory());
@@ -2411,7 +2555,7 @@ describe("self-hosted account server directory", () => {
     expect(createTeamAuthTicket).toHaveBeenCalledTimes(3);
     expect(host.requests(TEAM_API_ROUTES.auth.account)).toHaveLength(3);
 
-    await vi.advanceTimersByTimeAsync(60_000);
+    now += 60_000;
     await runCauseEffect(fixture.manager.syncAccountDirectory());
 
     expect(createTeamAuthTicket).toHaveBeenCalledTimes(4);
@@ -2423,13 +2567,17 @@ describe("self-hosted account server directory", () => {
     await expect(runCauseEffect(fixture.manager.login({ serverId: hostId }))).rejects.toThrow();
     expect(fixture.server(hostId)).toMatchObject({ issue: { code: "authentication_required" } });
     await runCauseEffect(fixture.manager.syncAccountDirectory());
-    expect(createTeamAuthTicket).toHaveBeenCalledTimes(6);
-    expect(host.requests(TEAM_API_ROUTES.auth.account)).toHaveLength(6);
+    expect(createTeamAuthTicket).toHaveBeenCalledTimes(5);
+    expect(host.requests(TEAM_API_ROUTES.auth.account)).toHaveLength(5);
 
-    await vi.advanceTimersByTimeAsync(60_000);
+    now += 60_000;
     await runCauseEffect(fixture.manager.syncAccountDirectory());
     expect(createTeamAuthTicket).toHaveBeenCalledTimes(6);
     expect(host.requests(TEAM_API_ROUTES.auth.account)).toHaveLength(6);
+    await runCauseEffect(fixture.manager.syncAccountDirectory());
+    expect(createTeamAuthTicket).toHaveBeenCalledTimes(6);
+    expect(host.requests(TEAM_API_ROUTES.auth.account)).toHaveLength(6);
+    dateNow.mockRestore();
   });
 
   it("preserves a server selection made while directory reauthentication is in flight", async () => {
@@ -2546,7 +2694,10 @@ describe("self-hosted account server directory", () => {
       managerOptions: { localOnlyNetworking: true, allowTailscaleApiUrl: true },
     });
 
+    let now = 1_000_000;
+    const dateNow = vi.spyOn(Date, "now").mockImplementation(() => now);
     await expect(runCauseEffect(fixture.manager.login({ serverId: hostId }))).rejects.toThrow();
+    now += 60_000;
     const syncing = runCauseEffect(fixture.manager.syncAccountDirectory());
     await ticketRequested;
     await runCauseEffect(fixture.manager.select(LOCAL_SERVER_ID));
@@ -2570,6 +2721,7 @@ describe("self-hosted account server directory", () => {
         encryptedToken: Buffer.from("joined-device-session").toString("base64"),
       }),
     );
+    dateNow.mockRestore();
   });
 
   it("does not requeue an older 401 after a concurrent ticket is permanently refused", async () => {
@@ -2640,7 +2792,10 @@ describe("self-hosted account server directory", () => {
       managerOptions: { localOnlyNetworking: true, allowTailscaleApiUrl: true },
     });
 
+    let now = 1_000_000;
+    const dateNow = vi.spyOn(Date, "now").mockImplementation(() => now);
     await expect(runCauseEffect(fixture.manager.login({ serverId: hostId }))).rejects.toThrow();
+    now += 60_000;
     const syncing = runCauseEffect(fixture.manager.syncAccountDirectory());
     await pendingRenewal.arrived;
     await expect(runCauseEffect(fixture.manager.login({ serverId: hostId }))).rejects.toThrow();
@@ -2649,12 +2804,12 @@ describe("self-hosted account server directory", () => {
     await syncing;
     expect(fixture.server(hostId)?.issue).toMatchObject({ code: "authentication_required" });
 
-    vi.useFakeTimers();
-    await vi.advanceTimersByTimeAsync(60_000);
+    now += 60_000;
     await runCauseEffect(fixture.manager.syncAccountDirectory());
 
     expect(createTeamAuthTicket).toHaveBeenCalledTimes(3);
     expect(host.requests(TEAM_API_ROUTES.auth.account)).toHaveLength(3);
+    dateNow.mockRestore();
   });
 
   it("does not restore a server removed from the authoritative directory from an old device cache", async () => {

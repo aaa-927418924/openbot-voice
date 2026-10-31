@@ -54,6 +54,8 @@ export interface StoredRemoteServer {
   accountSignInRetryAt?: number;
   /** Account to which accountSignInRetryAt applies. */
   accountSignInRetryAccountId?: string;
+  /** Why the retry is paused. Missing on older saved entries and interpreted as rate_limit. */
+  accountSignInRetryReason?: "auth" | "rate_limit";
   /** Account id awaiting a successful directory rejoin after an explicit invite. */
   pendingAccountRejoinId?: string;
   /** Directory entry is visible, but this device has not yet authenticated to its host. */
@@ -275,6 +277,11 @@ function readStoredRemoteServer(value: unknown): StoredRemoteServer | null {
         value.accountSignInRetryAccountId.length > 0 &&
         value.accountSignInRetryAccountId.length <= 128)
     ) ||
+    !(
+      value.accountSignInRetryReason === undefined ||
+      value.accountSignInRetryReason === "auth" ||
+      value.accountSignInRetryReason === "rate_limit"
+    ) ||
     !isOneOf(["owner", "admin", "member"] as const, value.role)
   ) {
     return null;
@@ -304,6 +311,9 @@ function readStoredRemoteServer(value: unknown): StoredRemoteServer | null {
       : {}),
     ...(isString(value.accountSignInRetryAccountId) && value.accountSignInRetryAccountId.length > 0
       ? { accountSignInRetryAccountId: value.accountSignInRetryAccountId }
+      : {}),
+    ...(value.accountSignInRetryReason === "auth" || value.accountSignInRetryReason === "rate_limit"
+      ? { accountSignInRetryReason: value.accountSignInRetryReason }
       : {}),
     ...(value.pendingAccountAuthentication === true ? { pendingAccountAuthentication: true } : {}),
     ...(value.transport === undefined ? {} : { transport: value.transport }),

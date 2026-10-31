@@ -288,6 +288,9 @@ const ACCOUNT_SERVER_ADOPTION_MAX_RETRY_MS = 5 * 60_000;
 // Team's password/sign-in limiter is five attempts per fifteen-minute window. Once the host says
 // 429, don't let repeated manual retries mint more tickets before that window has had time to reset.
 const ACCOUNT_SERVER_RATE_LIMIT_RETRY_MS = 15 * 60_000;
+// A rejected account ticket should not be retried on every poll or immediately after a restart.
+// Briefly pause 401s so a broken ticket path cannot escalate into the host's longer 429 window.
+const ACCOUNT_SERVER_AUTH_RETRY_MS = 60_000;
 const logger = createOpenBotLogger("remote-account-adoption");
 
 type AccountAdoptionStage = "host_identity" | "account_ticket" | "host_account_login";
@@ -370,8 +373,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   readonly #accountServerAdoptionInFlight = new Set<string>();
   readonly #accountServerAdoptionRetryAt = new Map<string, number>();
   readonly #accountServerAdoptionFailures = new Map<string, number>();
-  /** A host-side 429 blocks fresh account tickets across automatic and explicit retry paths. */
-  readonly #accountServerRateLimitRetryAt = new Map<string, number>();
+  /** Host-side 401/429 cooldowns block fresh account tickets across automatic and explicit retries. */
+  readonly #accountServerSignInRetry = new Map<string, { retryAt: number; reason: "auth" | "rate_limit" }>();
   /** Invalidates an in-flight login when a newer session is adopted for the same host. */
   readonly #serverSessionRevision = new Map<string, number>();
   #appFocused = true;
@@ -699,7 +702,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         body: { accountTicket },
         ...this.#client.requestProtocol(identity.compatibility),
       }).pipe(
-        Effect.tapError((error) => this.#recordAccountServerRateLimit(entry.hostId, error)),
+        Effect.tapError((error) =>
+          this.#recordAccountServerSignInFailure(entry.hostId, error, { includeUnauthorized: true }),
+        ),
         Effect.tapError((error) =>
           Effect.sync(() => logAccountAdoptionFailure(entry.hostId, "host_account_login", error)),
         ),
@@ -748,8 +753,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   ): Effect.Effect<void, RemoteWorkflowError, RemoteRequest> {
     const hostId = entry.hostId;
     if (this.#accountServerAdoptionInFlight.has(hostId)) return Effect.void;
-    if (this.#isAccountServerRateLimited(hostId)) {
-      this.#reportAccountSignInRateLimit(hostId);
+    const cooldown = this.#accountServerSignInCooldown(hostId);
+    if (cooldown) {
+      this.#reportAccountSignInCooldown(hostId, cooldown);
       return Effect.void;
     }
     if (options.automatic && (this.#accountServerAdoptionRetryAt.get(hostId) ?? 0) > Date.now()) return Effect.void;
@@ -758,7 +764,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     return Effect.gen({ self: this }, function* () {
       const adopted = yield* this.#adoptAccountServer(entry).pipe(Effect.result);
       if (Result.isSuccess(adopted)) {
-        this.#accountServerRateLimitRetryAt.delete(this.#accountRateLimitKey(hostId));
+        this.#accountServerSignInRetry.delete(this.#accountRateLimitKey(hostId));
         this.#accountServerAdoptionRetryAt.delete(hostId);
         this.#accountServerAdoptionFailures.delete(hostId);
         return;
@@ -774,10 +780,15 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         const accountId = this.#centralAccount.getAccountId?.();
         if (accountId) {
           yield* this.#store.stageAccountServer(entry, accountId, this.#centralAccount.getEmail().trim().toLowerCase());
-          const retryAt = this.#accountServerRateLimitRetryAt.get(this.#accountRateLimitKey(hostId));
+          const retry = this.#accountServerSignInRetry.get(this.#accountRateLimitKey(hostId, accountId));
+          const retryAt = retry?.retryAt;
           if (retryAt) {
             yield* this.#store
-              .update(hostId, { accountSignInRetryAt: retryAt, accountSignInRetryAccountId: accountId })
+              .update(hostId, {
+                accountSignInRetryAt: retryAt,
+                accountSignInRetryAccountId: accountId,
+                accountSignInRetryReason: retry.reason,
+              })
               .pipe(Effect.catch(() => Effect.succeed(null)));
           }
         }
@@ -1105,7 +1116,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
               // account repairs the host connection without making the user click Retry. A host
               // that keeps rejecting fresh tickets is rate-limited, and overlapping directory
               // polls coalesce to one renewal attempt.
-              if (this.#isAccountServerRateLimited(entry.hostId)) continue;
+              if (this.#accountServerSignInCooldown(entry.hostId)) continue;
               const retryAt = this.#accountDirectoryReauthRetryAt.get(entry.hostId) ?? 0;
               if (retryAt <= Date.now() && !this.#accountDirectoryReauthInFlight.has(entry.hostId)) {
                 this.#accountDirectoryReauthInFlight.add(entry.hostId);
@@ -1608,8 +1619,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       input: LoginServerInput,
     ): Effect.fn.Return<ServerSummary, RemoteWorkflowError, RemoteRequest> {
       const server = yield* remoteDecode(() => this.#servers.require(input.serverId));
-      if (this.#isAccountServerRateLimited(server.id)) {
-        this.#reportAccountSignInRateLimit(server.id);
+      const cooldown = this.#accountServerSignInCooldown(server.id);
+      if (cooldown) {
+        this.#reportAccountSignInCooldown(server.id, cooldown);
         return yield* remoteDecode(() => requiredServerSummary(this.list(), server.id));
       }
       const startingSessionRevision = this.#serverSessionRevision.get(server.id) ?? 0;
@@ -1628,7 +1640,12 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
           body: { accountTicket },
           ...this.#client.requestProtocol(identity.compatibility),
         }).pipe(
-          Effect.tapError((failure) => this.#recordAccountServerRateLimit(server.id, failure)),
+          Effect.tapError((failure) =>
+            (this.#serverSessionRevision.get(server.id) ?? 0) === startingSessionRevision &&
+            !this.#accountDirectoryReauthBlocked.has(server.id)
+              ? this.#recordAccountServerSignInFailure(server.id, failure, { includeUnauthorized: true })
+              : Effect.void,
+          ),
           Effect.mapError(
             (failure) =>
               new RemoteWorkflowError({
@@ -1652,6 +1669,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
           username: this.#centralAccount.getEmail().trim().toLowerCase(),
           accountSignInRetryAt: null,
           accountSignInRetryAccountId: null,
+          accountSignInRetryReason: null,
           ...(this.#centralAccount.getAccountId?.()
             ? { accountId: this.#centralAccount.getAccountId?.() ?? undefined }
             : {}),
@@ -1765,8 +1783,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
               cause: new Error(sourceText("error.remote.selectedServerOffline")),
             });
           }
-          if (this.#isAccountServerRateLimited(serverId)) {
-            this.#reportAccountSignInRateLimit(serverId);
+          const cooldown = this.#accountServerSignInCooldown(serverId);
+          if (cooldown) {
+            this.#reportAccountSignInCooldown(serverId, cooldown);
             return yield* remoteDecode(() => requiredServerSummary(this.list(), serverId));
           }
           if (this.#accountServerAdoptionInFlight.has(serverId)) {
@@ -1932,8 +1951,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     this.#clearAccountDirectoryReauthState(serverId);
     this.#accountServerAdoptionRetryAt.delete(serverId);
     this.#accountServerAdoptionFailures.delete(serverId);
-    for (const key of this.#accountServerRateLimitRetryAt.keys()) {
-      if (key.endsWith(`:${serverId}`)) this.#accountServerRateLimitRetryAt.delete(key);
+    for (const key of this.#accountServerSignInRetry.keys()) {
+      if (key.endsWith(`:${serverId}`)) this.#accountServerSignInRetry.delete(key);
     }
     this.#events.forget(serverId);
     this.#refresh.forget(serverId);
@@ -1949,51 +1968,74 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     this.#accountDirectoryReauthBlocked.delete(serverId);
   }
 
-  #isAccountServerRateLimited(serverId: string): boolean {
+  #accountServerSignInCooldown(serverId: string): "auth" | "rate_limit" | null {
     const accountId = this.#centralAccount.getAccountId?.() ?? null;
     const key = this.#accountRateLimitKey(serverId, accountId);
     const stored = this.#servers.find(serverId);
+    const memory = this.#accountServerSignInRetry.get(key);
     const retryAt =
-      this.#accountServerRateLimitRetryAt.get(key) ??
-      (stored?.accountSignInRetryAccountId === accountId ? stored.accountSignInRetryAt : undefined);
-    if (retryAt === undefined) return false;
-    if (retryAt > Date.now()) return true;
-    this.#accountServerRateLimitRetryAt.delete(key);
+      memory?.retryAt ?? (stored?.accountSignInRetryAccountId === accountId ? stored.accountSignInRetryAt : undefined);
+    if (retryAt === undefined) return null;
+    // Stored entries from older builds only represented 429 cooldowns.
+    const reason = memory?.reason ?? stored?.accountSignInRetryReason ?? "rate_limit";
+    if (retryAt > Date.now()) return reason;
+    this.#accountServerSignInRetry.delete(key);
     if (stored?.accountSignInRetryAccountId === accountId) {
       this.#background(
-        this.#owned(this.#store.update(serverId, { accountSignInRetryAt: null, accountSignInRetryAccountId: null })),
-      );
-    }
-    return false;
-  }
-
-  #recordAccountServerRateLimit(serverId: string, error: unknown): Effect.Effect<void, RemoteWorkflowError> {
-    if (accountAdoptionFailureDetails(error).status !== 429) return Effect.void;
-    const accountId = this.#centralAccount.getAccountId?.() ?? null;
-    const retryAt = Date.now() + ACCOUNT_SERVER_RATE_LIMIT_RETRY_MS;
-    this.#accountServerRateLimitRetryAt.set(this.#accountRateLimitKey(serverId, accountId), retryAt);
-    if (!accountId || !this.#servers.has(serverId)) return Effect.void;
-    return this.#store.update(serverId, { accountSignInRetryAt: retryAt, accountSignInRetryAccountId: accountId }).pipe(
-      Effect.asVoid,
-      Effect.catch((failure) =>
-        Effect.sync(() =>
-          logger.warn("Could not persist account sign-in cooldown.", {
-            hostId: serverId,
-            error: failure._tag,
+        this.#owned(
+          this.#store.update(serverId, {
+            accountSignInRetryAt: null,
+            accountSignInRetryAccountId: null,
+            accountSignInRetryReason: null,
           }),
         ),
-      ),
-    );
+      );
+    }
+    return null;
+  }
+
+  #recordAccountServerSignInFailure(
+    serverId: string,
+    error: unknown,
+    options: { includeUnauthorized?: boolean } = {},
+  ): Effect.Effect<void, RemoteWorkflowError> {
+    const status = accountAdoptionFailureDetails(error).status;
+    if (status !== 429 && !(status === 401 && options.includeUnauthorized)) return Effect.void;
+    const reason = status === 429 ? "rate_limit" : "auth";
+    const accountId = this.#centralAccount.getAccountId?.() ?? null;
+    const retryAt =
+      Date.now() + (reason === "rate_limit" ? ACCOUNT_SERVER_RATE_LIMIT_RETRY_MS : ACCOUNT_SERVER_AUTH_RETRY_MS);
+    this.#accountServerSignInRetry.set(this.#accountRateLimitKey(serverId, accountId), { retryAt, reason });
+    if (!accountId || !this.#servers.has(serverId)) return Effect.void;
+    return this.#store
+      .update(serverId, {
+        accountSignInRetryAt: retryAt,
+        accountSignInRetryAccountId: accountId,
+        accountSignInRetryReason: reason,
+      })
+      .pipe(
+        Effect.asVoid,
+        Effect.catch((failure) =>
+          Effect.sync(() =>
+            logger.warn("Could not persist account sign-in cooldown.", {
+              hostId: serverId,
+              error: failure._tag,
+            }),
+          ),
+        ),
+      );
   }
 
   #accountRateLimitKey(serverId: string, accountId = this.#centralAccount.getAccountId?.() ?? null): string {
     return `${accountId ?? "anonymous"}:${serverId}`;
   }
 
-  #reportAccountSignInRateLimit(serverId: string): void {
+  #reportAccountSignInCooldown(serverId: string, reason: "auth" | "rate_limit"): void {
     this.#connections.reportError(
       serverId,
-      new RemoteRequestError(429, sourceText("error.team.tooManySignInAttempts")),
+      reason === "rate_limit"
+        ? new RemoteRequestError(429, sourceText("error.team.tooManySignInAttempts"))
+        : new RemoteRequestError(401, sourceText("error.remote.signInToHostAgain")),
       "error",
     );
   }
@@ -2001,7 +2043,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   #recordFreshServerSession(serverId: string): number {
     const revision = (this.#serverSessionRevision.get(serverId) ?? 0) + 1;
     this.#serverSessionRevision.set(serverId, revision);
-    this.#accountServerRateLimitRetryAt.delete(this.#accountRateLimitKey(serverId));
+    this.#accountServerSignInRetry.delete(this.#accountRateLimitKey(serverId));
     this.#clearAccountDirectoryReauthState(serverId);
     return revision;
   }
