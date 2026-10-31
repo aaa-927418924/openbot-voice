@@ -11,7 +11,7 @@ import type {
   AccountServerDirectoryEntry,
   AccountServerRegistration,
 } from "@openbot/contracts/account-server-directory";
-import { createMemberDeviceLinkUrl, parseMemberDeviceLinkUrl } from "@openbot/contracts/invite-links";
+import { createInviteUrl, createMemberDeviceLinkUrl, parseMemberDeviceLinkUrl } from "@openbot/contracts/invite-links";
 import { LOCAL_SERVER_ID, type RemoteDesktopSession } from "@openbot/contracts/ipc";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import { TEAM_CURRENT_CAPABILITIES } from "@openbot/contracts/team-protocol/current";
@@ -2138,13 +2138,12 @@ describe("self-hosted account server directory", () => {
   });
 
   it("does not restore an old legacy-adoption cooldown after a fresh session is installed", async () => {
-    const hostId = "legacy-adoption-superseded-by-login";
+    const hostId = "33333333-3333-4333-8333-333333333333";
     const apiUrl = "http://100.100.100.107:43123/";
     const { publicKey, privateKey } = generateKeyPairSync("ed25519");
     const publicKeyPem = publicKey.export({ type: "spki", format: "pem" }).toString();
     const hostFingerprint = fingerprint(publicKeyPem);
     const legacyAdoption = deferredRoute();
-    let authAttempts = 0;
     const host = stubTeamFetch({
       routes: {
         "/v1/identity": ({ url }) => {
@@ -2161,9 +2160,10 @@ describe("self-hosted account server directory", () => {
           });
         },
         [TEAM_API_ROUTES.auth.account]: (call) => {
-          authAttempts += 1;
-          if (authAttempts === 1) return legacyAdoption.handler(call);
-          return Response.json({
+          return legacyAdoption.handler(call);
+        },
+        [TEAM_API_ROUTES.join.account]: () =>
+          Response.json({
             member: {
               id: "member-1",
               username: "member",
@@ -2176,11 +2176,24 @@ describe("self-hosted account server directory", () => {
             },
             sessionToken: "fresh-device-session",
             sessionExpiresAt: new Date(Date.now() + 60_000).toISOString(),
-          });
-        },
-        "/v1/remote-screen/capabilities": () => Response.json({ error: "Unavailable." }, { status: 503 }),
+          }),
       },
     });
+    const accountEntry: AccountServerDirectoryEntry = {
+      hostId,
+      name: "Linux server",
+      apiUrl,
+      fingerprint: hostFingerprint,
+      publicKey: publicKeyPem,
+      logoKey: null,
+      membershipId: "member-1",
+      role: "member",
+      isOwner: false,
+    };
+    const inviteUrl = createInviteUrl(
+      { apiUrl, serverId: hostId, fingerprint: hostFingerprint, token: "i".repeat(43) },
+      { allowTailscaleApiUrl: true },
+    );
     const fixture = await createRemoteManager({
       servers: [
         storedHttpsServer(hostId, {
@@ -2197,25 +2210,30 @@ describe("self-hosted account server directory", () => {
         getEmail: () => "person@example.com",
         isSelfHostedSignedIn: () => true,
         getLegacyAccountServerImportExclusions: () => authCall(async () => []),
-        listAccountServers: () => authCall(async () => []),
+        listAccountServers: () => authCall(async () => [accountEntry]),
         registerAccountServer: () => authCall(async () => undefined),
       },
       managerOptions: { localOnlyNetworking: true, allowTailscaleApiUrl: true },
     });
 
     const syncing = runCauseEffect(fixture.manager.syncAccountDirectory());
-    await legacyAdoption.arrived;
-    await runCauseEffect(fixture.manager.login({ serverId: hostId }));
-    legacyAdoption.resolve(Response.json({ error: "Expired ticket." }, { status: 401 }));
-    await syncing;
+    try {
+      await legacyAdoption.arrived;
+      await runCauseEffect(fixture.manager.join({ inviteUrl }));
+      legacyAdoption.resolve(Response.json({ error: "Expired ticket." }, { status: 401 }));
+      await syncing;
+    } finally {
+      legacyAdoption.resolve(Response.json({ error: "Expired ticket." }, { status: 401 }));
+      await syncing.catch(() => undefined);
+    }
 
     const savedServer = JSON.parse(await readFile(fixture.statePath, "utf8")).servers.find(
       (server: { id: string }) => server.id === hostId,
     );
     expect(savedServer).toMatchObject({ accountId: "account-a", encryptedToken: expect.any(String) });
     expect(savedServer).not.toMatchObject({ accountSignInRetryReason: "auth" });
-    expect(authAttempts).toBe(2);
-    expect(host.requests(TEAM_API_ROUTES.auth.account)).toHaveLength(2);
+    expect(host.requests(TEAM_API_ROUTES.auth.account)).toHaveLength(1);
+    expect(host.requests(TEAM_API_ROUTES.join.account)).toHaveLength(1);
   });
 
   it("uses one explicit adoption attempt for Retry and replaces the staged metadata with a device session", async () => {
