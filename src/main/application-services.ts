@@ -2259,15 +2259,14 @@ export async function createApplicationServices({
     getLocalHostSettings: () => ({ supported: localOnlyNetworking, enabled: localHostPreference.enabled }),
     setLocalHostSettings: async (enabled) => {
       if (!localOnlyNetworking) return { supported: false, enabled: false };
-      if (enabled === localHostPreference.enabled) {
-        // Persist an explicit skip even when the fresh-install default is already disabled.
-        if (!enabled) await localHostPreference.setEnabled(false);
-        return { supported: true, enabled };
-      }
+      // An enabled preference is a desired state, not proof that HostService is still running.
+      // Re-run the enable path even when the toggle already reads on, so users can recover a host
+      // stopped by a transient startup or account-directory failure.
       const updateAccountServerVisibility = async (
         hostId: string | undefined,
         visible: boolean,
         registration?: AccountServerRegistration | null,
+        onRequestStarted?: () => void,
       ) => {
         const account = selfHostedDesktopAccount.signedInAccount;
         if (!account || !hostId) throw new Error("Sign in to manage the local server.");
@@ -2279,39 +2278,69 @@ export async function createApplicationServices({
           ...(registration ? { registration } : {}),
         });
         if (!proof) throw new Error(sourceText("error.team.visibilityOwnerRequired"));
+        onRequestStarted?.();
         await Effect.runPromise(selfHostedDesktopAccount.setAccountServerVisibility(proof, registration ?? undefined));
       };
       if (!enabled) {
+        const previousPreference = localHostPreference.enabled;
+        let accountVisibilityUpdateStarted = false;
         const hostId = teamStore.getIdentity()?.serverId;
         const account = selfHostedDesktopAccount.signedInAccount;
+        if (!hostId) {
+          // A fresh or explicitly skipped local setup has no directory entry to hide.
+          // Stop after the retry loop drains: an in-flight startup may create the identity later.
+          try {
+            await localHostRetry?.stop();
+            await runCauseEffect(host.stop(false));
+            await localHostPreference.setEnabled(false);
+            await runCauseEffect(remoteServers.localHostVisibilityChanged()).catch((error) =>
+              logger.warn("Could not refresh the local server list while disabling the host:", toLogValue(error)),
+            );
+          } catch (error) {
+            if (previousPreference) void localHostRetry?.start();
+            throw error;
+          }
+          return { supported: true, enabled: false };
+        }
+        if (!account) throw new Error("Sign in to manage the local server.");
+        if (selfHostedIdentityApi && !selfHostedAccountServerDirectory) {
+          throw new Error(sourceText("error.team.serverDirectoryUnavailable"));
+        }
+        // Capture while the host is still online; the registration is needed if the central
+        // directory has not yet recorded this host membership.
+        const registration = getLocalOwnerServerRegistration(account.id, true);
         try {
           await localHostRetry?.stop();
-          const registration = account ? getLocalOwnerServerRegistration(account.id, true) : null;
-          if (hostId && selfHostedIdentityApi && !selfHostedAccountServerDirectory) {
-            throw new Error(sourceText("error.team.serverDirectoryUnavailable"));
-          }
-          await updateAccountServerVisibility(hostId, false, registration);
+          await runCauseEffect(host.stop(false));
+          await localHostPreference.setEnabled(false);
+          await runCauseEffect(remoteServers.localHostVisibilityChanged()).catch((error) =>
+            logger.warn("Could not refresh the local server list while disabling the host:", toLogValue(error)),
+          );
+          await updateAccountServerVisibility(hostId, false, registration, () => {
+            accountVisibilityUpdateStarted = true;
+          });
           await mirrorLocalServerVisibility(selfHostedAccountServerDirectory, hostId, false, (error) =>
             logger.warn("Could not update the local server-directory mirror:", toLogValue(error)),
           );
-          await runCauseEffect(host.stop(false));
-          await localHostPreference.setEnabled(false);
-          await runCauseEffect(remoteServers.localHostVisibilityChanged());
+          await runCauseEffect(remoteServers.localHostVisibilityChanged()).catch((error) =>
+            logger.warn("Could not refresh the local server list after disabling the host:", toLogValue(error)),
+          );
         } catch (error) {
           logger.error("Could not disable the local server:", toLogValue(error));
-          await mirrorLocalServerVisibility(selfHostedAccountServerDirectory, hostId, true, (mirrorError) =>
-            logger.warn("Could not restore the local server-directory mirror:", toLogValue(mirrorError)),
-          );
-          const registration = account ? getLocalOwnerServerRegistration(account.id, true) : null;
-          await updateAccountServerVisibility(hostId, true, registration).catch(() => undefined);
-          await localHostPreference.setEnabled(true).catch(() => undefined);
-          void localHostRetry?.start();
+          // Before account visibility changes, restore a prior enabled desired state if local stop
+          // failed. Once the remote update begins its outcome may be ambiguous, so keep disabled
+          // locally and let another idempotent disable retry the account-wide hide.
+          if (previousPreference && !accountVisibilityUpdateStarted) {
+            await localHostPreference.setEnabled(true).catch(() => undefined);
+            void localHostRetry?.start();
+          }
           throw error;
         }
         return { supported: true, enabled: false };
       }
       let hostId = teamStore.getIdentity()?.serverId;
       const previousPreference = localHostPreference.enabled;
+      let accountVisibilityUpdateStarted = false;
       try {
         await ensureLocalHost();
         hostId = teamStore.getIdentity()?.serverId;
@@ -2325,23 +2354,29 @@ export async function createApplicationServices({
         const account = selfHostedDesktopAccount.signedInAccount;
         const registration = account ? getLocalOwnerServerRegistration(account.id, true) : null;
         if (!registration) throw new Error(sourceText("error.team.visibilityOwnerRequired"));
-        await updateAccountServerVisibility(hostId, true, registration);
+        // Persist the desired state before publishing this host to other devices. If publication
+        // fails ambiguously, the next enable request will retry it instead of rolling back visibility.
+        await localHostPreference.setEnabled(true);
+        await updateAccountServerVisibility(hostId, true, registration, () => {
+          accountVisibilityUpdateStarted = true;
+        });
         await mirrorLocalServerVisibility(selfHostedAccountServerDirectory, hostId, true, (error) =>
           logger.warn("Could not update the local server-directory mirror:", toLogValue(error)),
         );
-        await localHostPreference.setEnabled(true);
-        await runCauseEffect(remoteServers.localHostVisibilityChanged());
+        await runCauseEffect(remoteServers.localHostVisibilityChanged()).catch((error) =>
+          logger.warn("Could not refresh the local server list after enabling the host:", toLogValue(error)),
+        );
       } catch (error) {
         logger.error("Could not enable the local server:", toLogValue(error));
-        if (!previousPreference) await localHostRetry?.stop();
-        if (!previousPreference) await localHostPreference.setEnabled(false).catch(() => undefined);
-        await mirrorLocalServerVisibility(selfHostedAccountServerDirectory, hostId, false, (mirrorError) =>
-          logger.warn("Could not restore the local server-directory mirror:", toLogValue(mirrorError)),
-        );
-        const account = selfHostedDesktopAccount.signedInAccount;
-        const registration = account ? getLocalOwnerServerRegistration(account.id, true) : null;
-        await updateAccountServerVisibility(hostId, false, registration).catch(() => undefined);
-        if (!previousPreference) await runCauseEffect(host.stop(false)).catch(() => undefined);
+        // Before the visibility request starts, a first-enable failure can safely stop the host.
+        // Once it starts, the response may be lost after the directory changed; do not issue an
+        // inverse global visibility update based only on this device's preference.
+        if (!previousPreference && !accountVisibilityUpdateStarted) {
+          await localHostRetry?.stop();
+          await localHostPreference.setEnabled(false).catch(() => undefined);
+          await runCauseEffect(host.stop(false)).catch(() => undefined);
+          await runCauseEffect(remoteServers.localHostVisibilityChanged()).catch(() => undefined);
+        }
         throw error;
       }
       return { supported: true, enabled: true };
