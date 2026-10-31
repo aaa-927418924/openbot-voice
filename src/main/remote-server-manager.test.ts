@@ -2069,6 +2069,155 @@ describe("self-hosted account server directory", () => {
     }
   });
 
+  it("does not attach an in-flight account ticket rejection to a newly signed-in account", async () => {
+    const hostId = "account-switch-during-login";
+    const apiUrl = "http://100.100.100.107:43123/";
+    const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+    const publicKeyPem = publicKey.export({ type: "spki", format: "pem" }).toString();
+    const hostFingerprint = fingerprint(publicKeyPem);
+    const rejectedLogin = deferredRoute();
+    const host = stubTeamFetch({
+      routes: {
+        "/v1/identity": ({ url }) => {
+          const challenge = url.searchParams.get("challenge") ?? "";
+          return Response.json({
+            serverId: hostId,
+            publicKey: publicKeyPem,
+            serverName: "Linux server",
+            fingerprint: hostFingerprint,
+            challenge,
+            signature: sign(null, Buffer.from(challenge), privateKey).toString("base64url"),
+            enabledOnLaunch: true,
+            logoVersion: null,
+          });
+        },
+        [TEAM_API_ROUTES.auth.account]: rejectedLogin.handler,
+      },
+    });
+    let accountId = "account-a";
+    const fixture = await createRemoteManager({
+      servers: [
+        storedHttpsServer(hostId, {
+          apiUrl,
+          fingerprint: hostFingerprint,
+          publicKey: publicKeyPem,
+          membershipId: "member-1",
+          accountId,
+          encryptedToken: Buffer.from("expired-device-session").toString("base64"),
+        }),
+      ],
+      account: {
+        createTeamAuthTicket: vi.fn(() => authCall(async () => "account-ticket-for-a")),
+        getAccountId: () => accountId,
+        getEmail: () => "person@example.com",
+        isSelfHostedSignedIn: () => true,
+        getLegacyAccountServerImportExclusions: () => authCall(async () => []),
+        listAccountServers: () => authCall(async () => []),
+        registerAccountServer: () => authCall(async () => undefined),
+      },
+      managerOptions: { localOnlyNetworking: true, allowTailscaleApiUrl: true },
+    });
+
+    const login = runCauseEffect(fixture.manager.login({ serverId: hostId }));
+    await rejectedLogin.arrived;
+    accountId = "account-b";
+    rejectedLogin.resolve(Response.json({ error: "Ticket refused." }, { status: 401 }));
+    await login;
+
+    const savedServer = JSON.parse(await readFile(fixture.statePath, "utf8")).servers.find(
+      (server: { id: string }) => server.id === hostId,
+    );
+    expect(savedServer).not.toMatchObject({
+      accountSignInRetryAccountId: "account-b",
+      accountSignInRetryReason: "auth",
+    });
+    expect(fixture.manager.list().find((server) => server.id === hostId)).not.toMatchObject({
+      issue: { code: "authentication_required" },
+    });
+    expect(host.requests(TEAM_API_ROUTES.auth.account)).toHaveLength(1);
+  });
+
+  it("does not restore an old legacy-adoption cooldown after a fresh session is installed", async () => {
+    const hostId = "legacy-adoption-superseded-by-login";
+    const apiUrl = "http://100.100.100.107:43123/";
+    const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+    const publicKeyPem = publicKey.export({ type: "spki", format: "pem" }).toString();
+    const hostFingerprint = fingerprint(publicKeyPem);
+    const legacyAdoption = deferredRoute();
+    let authAttempts = 0;
+    const host = stubTeamFetch({
+      routes: {
+        "/v1/identity": ({ url }) => {
+          const challenge = url.searchParams.get("challenge") ?? "";
+          return Response.json({
+            serverId: hostId,
+            publicKey: publicKeyPem,
+            serverName: "Linux server",
+            fingerprint: hostFingerprint,
+            challenge,
+            signature: sign(null, Buffer.from(challenge), privateKey).toString("base64url"),
+            enabledOnLaunch: true,
+            logoVersion: null,
+          });
+        },
+        [TEAM_API_ROUTES.auth.account]: (call) => {
+          authAttempts += 1;
+          if (authAttempts === 1) return legacyAdoption.handler(call);
+          return Response.json({
+            member: {
+              id: "member-1",
+              username: "member",
+              email: "person@example.com",
+              name: null,
+              avatarUrl: null,
+              role: "member",
+              createdAt: new Date().toISOString(),
+              disabled: false,
+            },
+            sessionToken: "fresh-device-session",
+            sessionExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+          });
+        },
+        "/v1/remote-screen/capabilities": () => Response.json({ error: "Unavailable." }, { status: 503 }),
+      },
+    });
+    const fixture = await createRemoteManager({
+      servers: [
+        storedHttpsServer(hostId, {
+          apiUrl,
+          fingerprint: hostFingerprint,
+          publicKey: publicKeyPem,
+          membershipId: "member-1",
+          encryptedToken: Buffer.from("legacy-device-session").toString("base64"),
+        }),
+      ],
+      account: {
+        createTeamAuthTicket: vi.fn(() => authCall(async () => "account-ticket")),
+        getAccountId: () => "account-a",
+        getEmail: () => "person@example.com",
+        isSelfHostedSignedIn: () => true,
+        getLegacyAccountServerImportExclusions: () => authCall(async () => []),
+        listAccountServers: () => authCall(async () => []),
+        registerAccountServer: () => authCall(async () => undefined),
+      },
+      managerOptions: { localOnlyNetworking: true, allowTailscaleApiUrl: true },
+    });
+
+    const syncing = runCauseEffect(fixture.manager.syncAccountDirectory());
+    await legacyAdoption.arrived;
+    await runCauseEffect(fixture.manager.login({ serverId: hostId }));
+    legacyAdoption.resolve(Response.json({ error: "Expired ticket." }, { status: 401 }));
+    await syncing;
+
+    const savedServer = JSON.parse(await readFile(fixture.statePath, "utf8")).servers.find(
+      (server: { id: string }) => server.id === hostId,
+    );
+    expect(savedServer).toMatchObject({ accountId: "account-a", encryptedToken: expect.any(String) });
+    expect(savedServer).not.toMatchObject({ accountSignInRetryReason: "auth" });
+    expect(authAttempts).toBe(2);
+    expect(host.requests(TEAM_API_ROUTES.auth.account)).toHaveLength(2);
+  });
+
   it("uses one explicit adoption attempt for Retry and replaces the staged metadata with a device session", async () => {
     const hostId = "linux-account-server";
     const apiUrl = "http://100.100.100.107:43123/";

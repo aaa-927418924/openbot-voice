@@ -375,6 +375,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   readonly #accountServerAdoptionFailures = new Map<string, number>();
   /** Host-side 401/429 cooldowns block fresh account tickets across automatic and explicit retries. */
   readonly #accountServerSignInRetry = new Map<string, { retryAt: number; reason: "auth" | "rate_limit" }>();
+  readonly #accountSignInAttemptRevision = new Map<string, number>();
   /** Invalidates an in-flight login when a newer session is adopted for the same host. */
   readonly #serverSessionRevision = new Map<string, number>();
   #appFocused = true;
@@ -680,6 +681,11 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       this: RemoteServerManager,
       entry: AccountServerDirectoryEntry,
     ): Effect.fn.Return<void, RemoteWorkflowError, RemoteRequest> {
+      const adoptionAccountId = this.#centralAccount.getAccountId?.() ?? null;
+      const adoptionSessionRevision = this.#serverSessionRevision.get(entry.hostId) ?? 0;
+      const adoptionAttemptKey = this.#accountRateLimitKey(entry.hostId, adoptionAccountId);
+      const adoptionAttemptRevision = (this.#accountSignInAttemptRevision.get(adoptionAttemptKey) ?? 0) + 1;
+      this.#accountSignInAttemptRevision.set(adoptionAttemptKey, adoptionAttemptRevision);
       const identity = yield* this.#client
         .verifyIdentity(entry.apiUrl, entry.hostId, entry.fingerprint)
         .pipe(
@@ -693,17 +699,36 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       ) {
         return yield* new RemoteWorkflowError({ cause: new Error("The account directory host identity changed.") });
       }
+      if (!this.#accountIdStillMatches(adoptionAccountId)) {
+        return yield* new RemoteWorkflowError({
+          cause: new Error("The signed-in account changed during host adoption."),
+        });
+      }
       const accountTicket = yield* this.#centralAccount.createTeamAuthTicket(entry.hostId).pipe(
         Effect.tapError((error) => Effect.sync(() => logAccountAdoptionFailure(entry.hostId, "account_ticket", error))),
         toRemoteWorkflowError,
       );
+      if (
+        !this.#accountIdStillMatches(adoptionAccountId) ||
+        (this.#serverSessionRevision.get(entry.hostId) ?? 0) !== adoptionSessionRevision ||
+        this.#accountSignInAttemptRevision.get(adoptionAttemptKey) !== adoptionAttemptRevision
+      ) {
+        return yield* new RemoteWorkflowError({ cause: new Error("Host adoption was superseded by a newer session.") });
+      }
       const result = yield* requestJson(entry.apiUrl, TEAM_API_ROUTES.auth.account, decodeJoinResult, {
         method: "POST",
         body: { accountTicket },
         ...this.#client.requestProtocol(identity.compatibility),
       }).pipe(
         Effect.tapError((error) =>
-          this.#recordAccountServerSignInFailure(entry.hostId, error, { includeUnauthorized: true }),
+          this.#accountIdStillMatches(adoptionAccountId) &&
+          (this.#serverSessionRevision.get(entry.hostId) ?? 0) === adoptionSessionRevision &&
+          this.#accountSignInAttemptRevision.get(adoptionAttemptKey) === adoptionAttemptRevision
+            ? this.#recordAccountServerSignInFailure(entry.hostId, error, {
+                includeUnauthorized: true,
+                accountId: adoptionAccountId,
+              })
+            : Effect.void,
         ),
         Effect.tapError((error) =>
           Effect.sync(() => logAccountAdoptionFailure(entry.hostId, "host_account_login", error)),
@@ -712,6 +737,13 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         // usually empty. Preserve the error itself so 401/429 and diagnostics remain classifiable.
         Effect.mapError((failure) => new RemoteWorkflowError({ cause: failure })),
       );
+      if (
+        !this.#accountIdStillMatches(adoptionAccountId) ||
+        (this.#serverSessionRevision.get(entry.hostId) ?? 0) !== adoptionSessionRevision ||
+        this.#accountSignInAttemptRevision.get(adoptionAttemptKey) !== adoptionAttemptRevision
+      ) {
+        return yield* new RemoteWorkflowError({ cause: new Error("Host adoption was superseded by a newer session.") });
+      }
       const stored: StoredRemoteServer = {
         id: entry.hostId,
         name: identity.serverName,
@@ -1619,11 +1651,16 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       input: LoginServerInput,
     ): Effect.fn.Return<ServerSummary, RemoteWorkflowError, RemoteRequest> {
       const server = yield* remoteDecode(() => this.#servers.require(input.serverId));
+      const summaryBeforeLogin = yield* remoteDecode(() => requiredServerSummary(this.list(), server.id));
       const cooldown = this.#accountServerSignInCooldown(server.id);
       if (cooldown) {
         this.#reportAccountSignInCooldown(server.id, cooldown);
         return yield* remoteDecode(() => requiredServerSummary(this.list(), server.id));
       }
+      const startingAccountId = this.#centralAccount.getAccountId?.() ?? null;
+      const attemptKey = this.#accountRateLimitKey(server.id, startingAccountId);
+      const attemptRevision = (this.#accountSignInAttemptRevision.get(attemptKey) ?? 0) + 1;
+      this.#accountSignInAttemptRevision.set(attemptKey, attemptRevision);
       const startingSessionRevision = this.#serverSessionRevision.get(server.id) ?? 0;
       let storedSessionRevision: number | null = null;
       let superseded = false;
@@ -1635,6 +1672,10 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       const attempt0 = yield* Effect.gen({ self: this }, function* () {
         const identity = yield* this.#client.verifyIdentity(server.apiUrl, server.id, server.fingerprint);
         const accountTicket = yield* this.#centralAccount.createTeamAuthTicket(server.id).pipe(toRemoteWorkflowError);
+        if (!this.#accountIdStillMatches(startingAccountId)) {
+          superseded = true;
+          return;
+        }
         const result = yield* requestJson(server.apiUrl, TEAM_API_ROUTES.auth.account, decodeJoinResult, {
           method: "POST",
           body: { accountTicket },
@@ -1642,8 +1683,13 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         }).pipe(
           Effect.tapError((failure) =>
             (this.#serverSessionRevision.get(server.id) ?? 0) === startingSessionRevision &&
+            this.#accountIdStillMatches(startingAccountId) &&
+            this.#accountSignInAttemptRevision.get(attemptKey) === attemptRevision &&
             !this.#accountDirectoryReauthBlocked.has(server.id)
-              ? this.#recordAccountServerSignInFailure(server.id, failure, { includeUnauthorized: true })
+              ? this.#recordAccountServerSignInFailure(server.id, failure, {
+                  includeUnauthorized: true,
+                  accountId: startingAccountId,
+                })
               : Effect.void,
           ),
           Effect.mapError(
@@ -1658,7 +1704,11 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         );
         // A join or another sign-in may have installed a newer device session while this request
         // was waiting on the host. Do not let this older response overwrite that session.
-        if ((this.#serverSessionRevision.get(server.id) ?? 0) !== startingSessionRevision) {
+        if (
+          (this.#serverSessionRevision.get(server.id) ?? 0) !== startingSessionRevision ||
+          !this.#accountIdStillMatches(startingAccountId) ||
+          this.#accountSignInAttemptRevision.get(attemptKey) !== attemptRevision
+        ) {
           superseded = true;
           return;
         }
@@ -1707,8 +1757,15 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       }).pipe(Effect.result);
       if (Result.isFailure(attempt0)) {
         const currentSessionRevision = this.#serverSessionRevision.get(server.id) ?? 0;
-        if (superseded || currentSessionRevision !== (storedSessionRevision ?? startingSessionRevision)) {
-          return yield* remoteDecode(() => requiredServerSummary(this.list(), server.id));
+        if (
+          superseded ||
+          currentSessionRevision !== (storedSessionRevision ?? startingSessionRevision) ||
+          !this.#accountIdStillMatches(startingAccountId) ||
+          this.#accountSignInAttemptRevision.get(attemptKey) !== attemptRevision
+        ) {
+          return yield* remoteDecode(
+            () => this.list().find((candidate) => candidate.id === server.id) ?? summaryBeforeLogin,
+          );
         }
         const wrappedCause = attempt0.failure.cause;
         const error = wrappedCause instanceof RemoteWorkflowError ? wrappedCause.cause : wrappedCause;
@@ -1722,10 +1779,19 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         } else if (this.#accountDirectoryReauthPending.has(server.id)) {
           this.#clearAccountDirectoryReauthState(server.id);
           this.#accountDirectoryReauthBlocked.add(server.id);
+          if (
+            this.#accountIdStillMatches(startingAccountId) &&
+            this.#accountSignInAttemptRevision.get(attemptKey) === attemptRevision
+          ) {
+            yield* this.#clearAccountServerSignInCooldown(server.id, startingAccountId);
+          }
         }
         return yield* new RemoteWorkflowError({ cause: error });
       }
-      if (superseded) return yield* remoteDecode(() => requiredServerSummary(this.list(), server.id));
+      if (superseded)
+        return yield* remoteDecode(
+          () => this.list().find((candidate) => candidate.id === server.id) ?? summaryBeforeLogin,
+        );
       // This login minted and stored a fresh host-bound session. Clear any directory recovery
       // request, whether login came from an automatic poll or an explicit Retry action.
       this.#emitChanged();
@@ -1997,33 +2063,60 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   #recordAccountServerSignInFailure(
     serverId: string,
     error: unknown,
-    options: { includeUnauthorized?: boolean } = {},
+    options: { includeUnauthorized?: boolean; accountId?: string | null } = {},
   ): Effect.Effect<void, RemoteWorkflowError> {
     const status = accountAdoptionFailureDetails(error).status;
     if (status !== 429 && !(status === 401 && options.includeUnauthorized)) return Effect.void;
     const reason = status === 429 ? "rate_limit" : "auth";
-    const accountId = this.#centralAccount.getAccountId?.() ?? null;
-    const retryAt =
-      Date.now() + (reason === "rate_limit" ? ACCOUNT_SERVER_RATE_LIMIT_RETRY_MS : ACCOUNT_SERVER_AUTH_RETRY_MS);
-    this.#accountServerSignInRetry.set(this.#accountRateLimitKey(serverId, accountId), { retryAt, reason });
-    if (!accountId || !this.#servers.has(serverId)) return Effect.void;
+    const accountId = Object.hasOwn(options, "accountId")
+      ? (options.accountId ?? null)
+      : (this.#centralAccount.getAccountId?.() ?? null);
+    return Effect.suspend(() => {
+      // A host response belongs to the account that minted its ticket. Do not attach its failure
+      // cooldown to a different account that signed in while the request was in flight.
+      if (!this.#accountIdStillMatches(accountId)) return Effect.void;
+      const retryAt =
+        Date.now() + (reason === "rate_limit" ? ACCOUNT_SERVER_RATE_LIMIT_RETRY_MS : ACCOUNT_SERVER_AUTH_RETRY_MS);
+      this.#accountServerSignInRetry.set(this.#accountRateLimitKey(serverId, accountId), { retryAt, reason });
+      if (!accountId || !this.#servers.has(serverId)) return Effect.void;
+      return this.#store
+        .update(serverId, {
+          accountSignInRetryAt: retryAt,
+          accountSignInRetryAccountId: accountId,
+          accountSignInRetryReason: reason,
+        })
+        .pipe(
+          Effect.asVoid,
+          Effect.catch((failure) =>
+            Effect.sync(() =>
+              logger.warn("Could not persist account sign-in cooldown.", {
+                hostId: serverId,
+                error: failure._tag,
+              }),
+            ),
+          ),
+        );
+    });
+  }
+
+  #clearAccountServerSignInCooldown(
+    serverId: string,
+    accountId: string | null,
+  ): Effect.Effect<void, RemoteWorkflowError> {
+    this.#accountServerSignInRetry.delete(this.#accountRateLimitKey(serverId, accountId));
+    const stored = this.#servers.find(serverId);
+    if (!accountId || stored?.accountSignInRetryAccountId !== accountId) return Effect.void;
     return this.#store
       .update(serverId, {
-        accountSignInRetryAt: retryAt,
-        accountSignInRetryAccountId: accountId,
-        accountSignInRetryReason: reason,
+        accountSignInRetryAt: null,
+        accountSignInRetryAccountId: null,
+        accountSignInRetryReason: null,
       })
-      .pipe(
-        Effect.asVoid,
-        Effect.catch((failure) =>
-          Effect.sync(() =>
-            logger.warn("Could not persist account sign-in cooldown.", {
-              hostId: serverId,
-              error: failure._tag,
-            }),
-          ),
-        ),
-      );
+      .pipe(Effect.asVoid);
+  }
+
+  #accountIdStillMatches(accountId: string | null): boolean {
+    return (this.#centralAccount.getAccountId?.() ?? null) === accountId;
   }
 
   #accountRateLimitKey(serverId: string, accountId = this.#centralAccount.getAccountId?.() ?? null): string {
