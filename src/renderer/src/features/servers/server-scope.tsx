@@ -85,7 +85,13 @@ const ServerScope = createSimpleContext({
         setLoaded(true);
         return;
       }
-      if (server?.kind === "remote" && (server.state === "incompatible" || server.issue != null)) {
+      if (
+        server?.kind === "remote" &&
+        (server.state === "incompatible" || server.issue != null || (server.state === "offline" && !server.hostedSleep))
+      ) {
+        // The shell blocks its chat controls for an offline host. Mark the scope settled so global
+        // surfaces, such as Dynamic Island attention, can still clear or show work completed there.
+        if (server.state === "offline" && !server.hostedSleep) setLoaded(true);
         return;
       }
       void Promise.all([

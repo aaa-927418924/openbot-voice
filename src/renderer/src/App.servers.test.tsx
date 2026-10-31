@@ -278,6 +278,18 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(window.openbot.servers.retryConnection).toHaveBeenCalledTimes(2));
   });
 
+  it("blocks an offline remote workspace before a connection issue has been classified", async () => {
+    const offline: ServerSummary = { ...testServer("remote-1", true), state: "offline", issue: null };
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([testServer("local", false), offline]);
+
+    render(() => <App />);
+
+    expect(await screen.findByRole("heading", { name: "Cannot connect to Studio Mac" })).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("The host is not reachable.");
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(window.openbot.agent.listAgents).not.toHaveBeenCalled();
+  });
+
   it("keeps a busy-host error visible during retry and loads agents after recovery", async () => {
     const local = testServer("local", false);
     const busy: ServerSummary = {

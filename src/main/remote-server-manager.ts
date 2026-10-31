@@ -76,8 +76,10 @@ import {
 } from "@openbot/contracts/team-protocol/member-device-link-v1";
 import { decodeTeamProtocolV1CurrentHttpResponse } from "@openbot/contracts/team-protocol/v1-adapter";
 import { sourceText } from "@openbot/i18n/source";
+import { createOpenBotLogger } from "@openbot/logging";
 import { Deferred, Effect, Exit, Layer, Result, Scope, Semaphore } from "effect";
 import type { CentralAuthOperationError } from "./central-auth-effects";
+import { CentralAuthOperationError as CentralAuthOperationErrorClass } from "./central-auth-effects";
 import { contentDispositionFileName } from "./content-disposition";
 import type { HostedServerDesktopService } from "./hosted-server-service";
 import { decodeAgentSummary, decodeDraftAttachment, decodeDuplicateAgentResultFromHost } from "./remote-agent-decoding";
@@ -278,6 +280,39 @@ const HOSTED_SERVER_START_MS = 5 * 60_000;
 // A rejected account-backed device session should not trigger a ticket request on every
 // five-second directory poll while the host is still rejecting credentials.
 const ACCOUNT_DIRECTORY_REAUTH_RETRY_MS = 60_000;
+// The self-hosted account directory refreshes every five seconds while the desktop is focused.
+// A host-issued account ticket is a sign-in attempt, so retrying an unreachable/stale host on each
+// refresh can trip the host's sign-in abuse limit. Start at two minutes and back off to five.
+const ACCOUNT_SERVER_ADOPTION_RETRY_MS = 2 * 60_000;
+const ACCOUNT_SERVER_ADOPTION_MAX_RETRY_MS = 5 * 60_000;
+const logger = createOpenBotLogger("remote-account-adoption");
+
+type AccountAdoptionStage = "host_identity" | "account_ticket" | "host_account_login";
+
+function accountAdoptionFailureDetails(error: unknown): { kind: string; status?: number; protocolCode?: string } {
+  let cause = error;
+  for (let depth = 0; depth < 3; depth += 1) {
+    if (cause instanceof RemoteWorkflowError || cause instanceof CentralAuthOperationErrorClass) {
+      cause = cause.cause;
+      continue;
+    }
+    break;
+  }
+  if (cause instanceof RemoteRequestError) return { kind: "host_http", status: cause.status };
+  if (cause instanceof RemoteProtocolError) return { kind: "protocol", protocolCode: cause.code };
+  if (cause instanceof TypeError) return { kind: "network" };
+  return { kind: "unexpected" };
+}
+
+function logAccountAdoptionFailure(hostId: string, stage: AccountAdoptionStage, error: unknown): void {
+  // Keep this deliberately metadata-only: neither exception text nor URLs, account identifiers,
+  // tickets or session tokens are needed to distinguish which handshake step failed.
+  logger.warn("Account server sign-in stage failed.", {
+    hostId,
+    stage,
+    ...accountAdoptionFailureDetails(error),
+  });
+}
 
 function isRetryableAccountAuthRenewalFailure(error: unknown): boolean {
   return (
@@ -328,6 +363,10 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   readonly #accountDirectoryReauthPending = new Set<string>();
   /** A fresh ticket was permanently refused; wait for an explicit retry or a new join. */
   readonly #accountDirectoryReauthBlocked = new Set<string>();
+  /** Coalesces and backs off fresh account-ticket adoption for directory-only host entries. */
+  readonly #accountServerAdoptionInFlight = new Set<string>();
+  readonly #accountServerAdoptionRetryAt = new Map<string, number>();
+  readonly #accountServerAdoptionFailures = new Map<string, number>();
   /** Invalidates an in-flight login when a newer session is adopted for the same host. */
   readonly #serverSessionRevision = new Map<string, number>();
   #appFocused = true;
@@ -630,19 +669,33 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       this: RemoteServerManager,
       entry: AccountServerDirectoryEntry,
     ): Effect.fn.Return<void, RemoteWorkflowError, RemoteRequest> {
-      const identity = yield* this.#client.verifyIdentity(entry.apiUrl, entry.hostId, entry.fingerprint);
+      const identity = yield* this.#client
+        .verifyIdentity(entry.apiUrl, entry.hostId, entry.fingerprint)
+        .pipe(
+          Effect.tapError((error) =>
+            Effect.sync(() => logAccountAdoptionFailure(entry.hostId, "host_identity", error)),
+          ),
+        );
       if (
         identity.publicKey !== entry.publicKey ||
         (yield* remoteDecode(() => fingerprint(identity.publicKey))) !== entry.fingerprint
       ) {
         return yield* new RemoteWorkflowError({ cause: new Error("The account directory host identity changed.") });
       }
-      const accountTicket = yield* this.#centralAccount.createTeamAuthTicket(entry.hostId).pipe(toRemoteWorkflowError);
+      const accountTicket = yield* this.#centralAccount.createTeamAuthTicket(entry.hostId).pipe(
+        Effect.tapError((error) => Effect.sync(() => logAccountAdoptionFailure(entry.hostId, "account_ticket", error))),
+        toRemoteWorkflowError,
+      );
       const result = yield* requestJson(entry.apiUrl, TEAM_API_ROUTES.auth.account, decodeJoinResult, {
         method: "POST",
         body: { accountTicket },
         ...this.#client.requestProtocol(identity.compatibility),
-      }).pipe(Effect.mapError((failure) => new RemoteWorkflowError({ cause: failure.cause })));
+      }).pipe(
+        Effect.tapError((error) =>
+          Effect.sync(() => logAccountAdoptionFailure(entry.hostId, "host_account_login", error)),
+        ),
+        Effect.mapError((failure) => new RemoteWorkflowError({ cause: failure.cause })),
+      );
       const stored: StoredRemoteServer = {
         id: entry.hostId,
         name: identity.serverName,
@@ -674,6 +727,49 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     },
     (operation) => this.#owned(operation),
   ).bind(this);
+
+  #attemptAccountServerAdoption(
+    entry: AccountServerDirectoryEntry,
+    options: { automatic: boolean; stageOnFailure: boolean },
+  ): Effect.Effect<void, RemoteWorkflowError, RemoteRequest> {
+    const hostId = entry.hostId;
+    if (this.#accountServerAdoptionInFlight.has(hostId)) return Effect.void;
+    if (options.automatic && (this.#accountServerAdoptionRetryAt.get(hostId) ?? 0) > Date.now()) return Effect.void;
+
+    this.#accountServerAdoptionInFlight.add(hostId);
+    return Effect.gen({ self: this }, function* () {
+      const adopted = yield* this.#adoptAccountServer(entry).pipe(Effect.result);
+      if (Result.isSuccess(adopted)) {
+        this.#accountServerAdoptionRetryAt.delete(hostId);
+        this.#accountServerAdoptionFailures.delete(hostId);
+        return;
+      }
+
+      const cause =
+        adopted.failure.cause instanceof RemoteWorkflowError ? adopted.failure.cause.cause : adopted.failure.cause;
+      this.#connections.reportError(hostId, cause, "offline");
+      // HTTP 429 and other unclassified refusals must still leave a visible, retryable state. Do
+      // not show an empty agent workspace for a host this device has not authenticated to yet.
+      if (!this.#connections.hasIssue(hostId)) this.#connections.reportUnreachable(hostId);
+      if (options.stageOnFailure) {
+        const accountId = this.#centralAccount.getAccountId?.();
+        if (accountId) {
+          yield* this.#store.stageAccountServer(entry, accountId, this.#centralAccount.getEmail().trim().toLowerCase());
+        }
+      }
+
+      const failures = (this.#accountServerAdoptionFailures.get(hostId) ?? 0) + 1;
+      this.#accountServerAdoptionFailures.set(hostId, failures);
+      const retryDelay = Math.min(
+        ACCOUNT_SERVER_ADOPTION_RETRY_MS * 2 ** Math.min(failures - 1, 8),
+        ACCOUNT_SERVER_ADOPTION_MAX_RETRY_MS,
+      );
+      this.#accountServerAdoptionRetryAt.set(hostId, Date.now() + retryDelay);
+      this.#emitChanged();
+
+      if (!options.automatic) return yield* adopted.failure;
+    }).pipe(Effect.ensuring(Effect.sync(() => this.#accountServerAdoptionInFlight.delete(hostId))));
+  }
 
   #suspendServer(serverId: string): void {
     this.#events.suspendReconnect(serverId);
@@ -970,7 +1066,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
           // current account with a fresh host-bound ticket before replacing it.
           if (existing.accountId === accountId && existing.membershipId === entry.membershipId) {
             if (existing.pendingAccountAuthentication) {
-              yield* this.#adoptAccountServer(entry).pipe(Effect.catch(() => Effect.void));
+              yield* this.#attemptAccountServerAdoption(entry, { automatic: true, stageOnFailure: false });
               continue;
             }
             if (
@@ -1014,11 +1110,10 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
             continue;
           }
         }
-        const adopted = yield* this.#adoptAccountServer(entry).pipe(Effect.result);
-        if (Result.isFailure(adopted) && accountId && !existing) {
-          yield* this.#store.stageAccountServer(entry, accountId, account.getEmail().trim().toLowerCase());
-          this.#connections.setState(entry.hostId, "offline");
-        }
+        yield* this.#attemptAccountServerAdoption(entry, {
+          automatic: true,
+          stageOnFailure: !!accountId && !existing,
+        });
       }
       const preferredActive =
         this.#userSelectionRevision !== previousUserSelectionRevision ? this.#userSelectionIntent : previousActive;
@@ -1624,6 +1719,37 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
           }
           return yield* remoteDecode(() => requiredServerSummary(this.list(), serverId));
         }
+        if (
+          server.pendingAccountAuthentication &&
+          this.#localOnlyNetworking &&
+          this.#centralAccount.isSelfHostedSignedIn?.()
+        ) {
+          // A staged directory row has no device-local token yet. It must be adopted from its
+          // pinned directory identity; `login()` updates an existing stored session and is not a
+          // valid way to turn this metadata-only row into a session.
+          if (!server.publicKey || !server.membershipId) {
+            return yield* new RemoteWorkflowError({
+              cause: new Error(sourceText("error.remote.selectedServerOffline")),
+            });
+          }
+          this.#connections.setState(serverId, "connecting");
+          this.#emitChanged();
+          yield* this.#attemptAccountServerAdoption(
+            {
+              hostId: server.id,
+              name: server.name,
+              apiUrl: server.apiUrl,
+              fingerprint: server.fingerprint,
+              publicKey: server.publicKey,
+              logoKey: server.logoVersion ?? null,
+              membershipId: server.membershipId,
+              role: server.role,
+              isOwner: server.role === "owner",
+            },
+            { automatic: false, stageOnFailure: false },
+          );
+          return yield* remoteDecode(() => requiredServerSummary(this.list(), serverId));
+        }
         // Account-backed Tailnet sessions are device-local and can expire independently of the
         // shared membership. A socket retry with the old Team token only repeats the same 401, so
         // an explicit user retry must mint a fresh host-bound ticket and replace that device's
@@ -1760,6 +1886,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     this.#hostedStartAt.delete(serverId);
     this.#hostedStartExpired.delete(serverId);
     this.#clearAccountDirectoryReauthState(serverId);
+    this.#accountServerAdoptionRetryAt.delete(serverId);
+    this.#accountServerAdoptionFailures.delete(serverId);
     this.#events.forget(serverId);
     this.#refresh.forget(serverId);
     this.#connections.forget(serverId);
