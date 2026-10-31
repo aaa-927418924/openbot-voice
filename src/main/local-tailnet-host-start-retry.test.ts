@@ -16,7 +16,7 @@ describe("LocalTailnetHostStartRetry", () => {
       .mockResolvedValueOnce(online)
       .mockResolvedValueOnce(online);
     const onError = vi.fn();
-    const retry = new LocalTailnetHostStartRetry({ startHost, onError });
+    const retry = new LocalTailnetHostStartRetry({ beforeStart: async () => {}, startHost, onError });
 
     const initial = retry.start();
     await expect(initial).resolves.toMatchObject(offline);
@@ -36,12 +36,31 @@ describe("LocalTailnetHostStartRetry", () => {
   it("cancels a scheduled retry when the application stops", async () => {
     vi.useFakeTimers();
     const startHost = vi.fn().mockResolvedValue(offline);
-    const retry = new LocalTailnetHostStartRetry({ startHost, onError: vi.fn() });
+    const retry = new LocalTailnetHostStartRetry({ beforeStart: async () => {}, startHost, onError: vi.fn() });
 
     await expect(retry.start()).resolves.toMatchObject(offline);
     await vi.waitFor(() => expect(startHost).toHaveBeenCalledTimes(1));
     await retry.stop();
     await vi.advanceTimersByTimeAsync(60_000);
     expect(startHost).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits for agent initialization before starting the local Team API host", async () => {
+    let finishInitialization!: () => void;
+    const initialization = new Promise<void>((resolve) => {
+      finishInitialization = resolve;
+    });
+    const beforeStart = vi.fn(() => initialization);
+    const startHost = vi.fn().mockResolvedValue(online);
+    const retry = new LocalTailnetHostStartRetry({ beforeStart, startHost, onError: vi.fn() });
+
+    const pendingStart = retry.start();
+    expect(beforeStart).toHaveBeenCalledOnce();
+    expect(startHost).not.toHaveBeenCalled();
+
+    finishInitialization();
+    await expect(pendingStart).resolves.toMatchObject(online);
+    expect(startHost).toHaveBeenCalledOnce();
+    await retry.stop();
   });
 });

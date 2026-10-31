@@ -489,6 +489,11 @@ function registerIpcHandlers({
   // code. `registerIpcGroups` takes one entry per group in `IPC_ENDPOINTS`, so a group no registrar
   // covers - or a registrar that stops covering one - fails to compile here, naming the group.
   const getMainWindow = () => windowHolder.current;
+  const startLocalHostAfterSignInWhenReady = () => {
+    void runCauseEffect(agentInitialization.start())
+      .then(() => startLocalHostAfterSignIn())
+      .catch((error) => logger.error("Unable to initialize agents before starting the local host:", toLogValue(error)));
+  };
 
   registerIpcGroups({
     ...appIpcHandlers({
@@ -509,7 +514,10 @@ function registerIpcHandlers({
       setAnalyticsTrackingEnabled: (enabled) => analytics.setTrackingEnabled(enabled),
       windowsStartup,
       getLocalHostSettings,
-      setLocalHostSettings,
+      setLocalHostSettings: async (enabled) => {
+        if (enabled && localOnlyNetworking) await runCauseEffect(agentInitialization.start());
+        return setLocalHostSettings(enabled);
+      },
       trace,
     }),
     ...dynamicIslandIpcHandlers({ dynamicIsland }),
@@ -525,7 +533,7 @@ function registerIpcHandlers({
       centralAuth,
       host,
       selfHostedDesktopAccount: localOnlyNetworking ? selfHostedDesktopAccount : undefined,
-      onSelfHostedSignIn: localOnlyNetworking ? startLocalHostAfterSignIn : undefined,
+      onSelfHostedSignIn: localOnlyNetworking ? startLocalHostAfterSignInWhenReady : undefined,
       prepareSelfHostedHost: localOnlyNetworking ? ensureLocalHost : undefined,
       remoteServers,
       selfHostedIdentity:
@@ -716,9 +724,13 @@ function forwardCentralAuth(state: CentralAuthState): void {
               ),
             );
         // A self-hosted server exists to be a host, so its first sign-in names and starts it too.
-        if (host && services?.serverMode) yield* services.serverMode.publish();
-        else if (host && shouldAutoStartHost({ ...host.getStatus(), remoteRole: developmentRemoteRole }))
+        if (host && services?.serverMode) {
+          yield* services.agentInitialization.start();
+          yield* services.serverMode.publish();
+        } else if (host && shouldAutoStartHost({ ...host.getStatus(), remoteRole: developmentRemoteRole })) {
+          if (services) yield* services.agentInitialization.start();
           yield* host.start();
+        }
       }),
     ),
   ).catch((error) => {
@@ -1060,6 +1072,7 @@ if (!hasSingleInstanceLock) {
       const teamIdentity = teamStore.getIdentity();
       if (built.localOnlyNetworking) {
         const localHostRetry = new LocalTailnetHostStartRetry({
+          beforeStart: () => runCauseEffect(built.agentInitialization.start()),
           startHost: async () => {
             await built.ensureLocalHost();
             const status = await runCauseEffect(host.start());
@@ -1075,13 +1088,16 @@ if (!hasSingleInstanceLock) {
         });
         built.setLocalHostRetry(localHostRetry);
         if (built.getLocalHostSettings().enabled && built.selfHostedDesktopAccount.isSignedIn) {
-          localHostRetry.start();
+          void localHostRetry.start();
         }
         teardown.push(0, "Tailscale host start retry", () => localHostRetry.stop());
       } else if (built.serverMode) {
         const serverModeControl = built.serverMode;
         void runCauseEffect(
-          built.centralAuthInitialization.pipe(Effect.flatMap(() => serverModeControl.publish())),
+          built.agentInitialization.start().pipe(
+            Effect.flatMap(() => built.centralAuthInitialization),
+            Effect.flatMap(() => serverModeControl.publish()),
+          ),
         ).catch((error) => logger.error("Unable to publish this server:", toLogValue(error)));
       } else if (
         shouldAutoStartHost({
@@ -1090,9 +1106,12 @@ if (!hasSingleInstanceLock) {
           remoteRole: developmentRemoteRole,
         })
       ) {
-        void runCauseEffect(built.centralAuthInitialization.pipe(Effect.flatMap(() => host.start()))).catch((error) =>
-          logger.error("Unable to republish this OpenBot:", toLogValue(error)),
-        );
+        void runCauseEffect(
+          built.agentInitialization.start().pipe(
+            Effect.flatMap(() => built.centralAuthInitialization),
+            Effect.flatMap(() => host.start()),
+          ),
+        ).catch((error) => logger.error("Unable to republish this OpenBot:", toLogValue(error)));
       }
       void runCauseEffect(built.agentInitialization.start()).catch((error) => {
         logger.error("Unable to initialize the local agent backend:", toLogValue(error));

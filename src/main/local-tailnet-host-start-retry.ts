@@ -3,6 +3,7 @@ import type { HostStatus } from "@openbot/contracts/ipc";
 const RETRY_DELAYS_MS = [1_000, 3_000, 10_000, 30_000] as const;
 
 export interface LocalTailnetHostStartRetryOptions {
+  beforeStart: () => Promise<void>;
   startHost: () => Promise<HostStatus>;
   onError: (error: unknown) => void;
 }
@@ -43,6 +44,7 @@ export class LocalTailnetHostStartRetry {
     if (this.#pending) return this.#pending;
     const pending = (async () => {
       try {
+        await this.#options.beforeStart();
         const status = await this.#options.startHost();
         if (status.phase === "online" && status.apiOnline) {
           this.#retryIndex = 0;
