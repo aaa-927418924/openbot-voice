@@ -1044,6 +1044,12 @@ export class TeamStore {
     return member ? publicMember(member) : null;
   }
 
+  /** The signed-in account's exact membership, without exposing the account id in public member data. */
+  getMemberIdForAccount(accountId: string): string | null {
+    const member = this.#state?.members.find((candidate) => candidate.accountId === accountId && !candidate.disabled);
+    return member?.id ?? null;
+  }
+
   /** Returns the display identity shared by a member and any linked device memberships. */
   getChannelIdentity(memberId: string): ChannelMemberIdentity | null {
     const members = this.#state?.members;
@@ -1066,11 +1072,43 @@ export class TeamStore {
         ? members.find((candidate) => candidate.role === "owner")
         : members.find((candidate) => candidate.id === memberId);
     if (!selected) return null;
-    const canonical = resolve(selected);
+    const accountId = selected.accountId;
+    const identityMembers = new Set<StoredMember>([selected]);
+    const identityRoots = new Set<string>([resolve(selected).id]);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const candidate of members) {
+        const sameAccount = accountId !== undefined && candidate.accountId === accountId;
+        const sameLinkedIdentity = identityRoots.has(resolve(candidate).id);
+        if (!sameAccount && !sameLinkedIdentity) continue;
+        if (!identityMembers.has(candidate)) {
+          identityMembers.add(candidate);
+          changed = true;
+        }
+        const root = resolve(candidate);
+        if (!identityRoots.has(root.id)) {
+          identityRoots.add(root.id);
+          changed = true;
+        }
+      }
+    }
+    const membersInIdentity = members.filter((candidate) => identityMembers.has(candidate));
+    const explicitlyLinkedRoots = new Set(
+      membersInIdentity.filter((member) => member.channelIdentityId).map((member) => resolve(member).id),
+    );
+    const roots = membersInIdentity
+      .map(resolve)
+      .filter((member, index, all) => all.findIndex((candidate) => candidate.id === member.id) === index);
+    const canonical =
+      roots.find((member) => member.role === "owner") ??
+      roots.find((member) => explicitlyLinkedRoots.has(member.id)) ??
+      roots[0] ??
+      resolve(selected);
     return {
       id: canonical.id,
       name: canonical.name?.trim() || "Team member",
-      memberIds: members.filter((candidate) => resolve(candidate).id === canonical.id).map((candidate) => candidate.id),
+      memberIds: membersInIdentity.map((candidate) => candidate.id),
     };
   }
 

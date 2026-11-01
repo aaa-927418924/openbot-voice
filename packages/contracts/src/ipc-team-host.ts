@@ -184,6 +184,8 @@ export interface TeamPresenceSnapshot {
   serverId: string | null;
   members: TeamPresenceMember[];
   updatedAt: string;
+  /** The authenticated reader's membership. Present only on desktop IPC responses, never Team API events. */
+  readerMemberId?: string | null;
 }
 
 export interface SetTeamTypingInput {

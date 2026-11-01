@@ -350,6 +350,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   readonly #refresh: RemoteEventRefresh;
   readonly #events: RemoteEventStream;
   readonly #presence: RemotePresenceCache;
+  readonly #readerMemberIds = new Map<string, string>();
   readonly #attachments = new RemoteAttachmentCache();
   readonly #team: RemoteTeamDirectory;
   readonly #centralAccount: CentralAccountSession;
@@ -2267,11 +2268,18 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   getPresence(serverId = this.#servers.activeServerId): TeamPresenceSnapshot {
-    return this.#presence.get(serverId);
+    return { ...this.#presence.get(serverId), readerMemberId: this.#readerMemberIds.get(serverId) ?? null };
   }
 
   getPresenceFor(serverId: string): Effect.Effect<TeamPresenceSnapshot, RemoteWorkflowError> {
-    return this.#owned(this.#presence.refresh(serverId));
+    return this.#owned(
+      Effect.gen({ self: this }, function* () {
+        const snapshot = yield* this.#presence.refresh(serverId);
+        const member = yield* this.request(serverId, TEAM_API_ROUTES.me, decodeTeamMember);
+        this.#readerMemberIds.set(serverId, member.id);
+        return { ...snapshot, readerMemberId: member.id };
+      }),
+    );
   }
 
   readonly refreshIdentity = Effect.fn("RemoteManager.refreshIdentity")(

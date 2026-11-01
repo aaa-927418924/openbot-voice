@@ -79,6 +79,39 @@ describe("remote browser responses", () => {
   });
 });
 
+describe("remote channel reader identity", () => {
+  it("returns the membership authenticated by the selected host with its presence snapshot", async () => {
+    const fixture = await createRemoteManager();
+    const presence = {
+      serverId: "server-1",
+      members: [],
+      updatedAt: "2026-10-31T00:00:00.000Z",
+    };
+    const member = {
+      id: "authenticated-membership",
+      username: "person@example.test",
+      email: "person@example.test",
+      name: "Person",
+      avatarUrl: null,
+      role: "member",
+      createdAt: "2026-10-31T00:00:00.000Z",
+      disabled: false,
+    };
+    const request = vi
+      .spyOn(fixture.manager, "request")
+      .mockImplementation((_serverId, path, decoder) =>
+        Effect.sync(() => decoder(path === TEAM_API_ROUTES.team.presence ? presence : member)),
+      );
+
+    await expect(runCauseEffect(fixture.manager.getPresenceFor("server-1"))).resolves.toMatchObject({
+      readerMemberId: "authenticated-membership",
+      members: [],
+    });
+    expect(fixture.manager.getPresence("server-1").readerMemberId).toBe("authenticated-membership");
+    expect(request.mock.calls.map((call) => call[1])).toEqual([TEAM_API_ROUTES.team.presence, TEAM_API_ROUTES.me]);
+  });
+});
+
 describe("remote desktop session startup", () => {
   it("allows a cold host time to start its screen-capture runtime", async () => {
     const fixture = await createRemoteManager({ servers: [storedHttpsServer("viewer-host")] });

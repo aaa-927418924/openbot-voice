@@ -1088,7 +1088,7 @@ export class HostService extends EventEmitter<HostEvents> {
   ).bind(this);
 
   getPresence(): TeamPresenceSnapshot {
-    return this.#api.getPresence();
+    return { ...this.#api.getPresence(), readerMemberId: this.#findCurrentMemberId() };
   }
 
   connectedClientCount(): number {
@@ -1624,7 +1624,10 @@ export class HostService extends EventEmitter<HostEvents> {
         const owner = ownerId ? this.#options.store.listMembers().find((member) => member.id === ownerId) : null;
         return owner && !owner.disabled ? owner.id : null;
       }
-      const email = this.#options.getSignedInUser().email.trim().toLowerCase();
+      const user = this.#options.getSignedInUser();
+      const accountMemberId = this.#options.store.getMemberIdForAccount(user.id);
+      if (accountMemberId) return accountMemberId;
+      const email = user.email.trim().toLowerCase();
       const member = this.#options.store
         .listMembers()
         .find(

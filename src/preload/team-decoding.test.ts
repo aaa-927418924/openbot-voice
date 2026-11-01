@@ -209,6 +209,11 @@ describe("team decoders", () => {
     ["team member with an avatar", decodeTeamMember, memberWithAvatar],
     ["team member list", decodeTeamMembers, [member, memberWithAvatar]],
     ["team presence", decodeTeamPresenceSnapshot, presence],
+    [
+      "team presence with the authenticated reader",
+      decodeTeamPresenceSnapshot,
+      { ...presence, readerMemberId: "member-1" },
+    ],
     ["team session list", decodeTeamSessions, [session]],
     ["team invite list", decodeTeamInvites, [teamInvite]],
     ["created invite", decodeInviteSummary, invite],
@@ -269,6 +274,11 @@ describe("team decoders", () => {
     ["team member with a numeric avatar", decodeTeamMember, { ...member, avatarUrl: 1 }],
     ["team member list that is not an array", decodeTeamMembers, member],
     ["team presence without typing state", decodeTeamPresenceSnapshot, { ...presence, members: [member] }],
+    [
+      "team presence with an invalid authenticated reader",
+      decodeTeamPresenceSnapshot,
+      { ...presence, readerMemberId: 42 },
+    ],
     ["team session without a member", decodeTeamSessions, [{ ...session, memberId: null }]],
     ["team invite for an owner", decodeTeamInvites, [{ ...teamInvite, role: "owner" }]],
     ["created invite without a link", decodeInviteSummary, teamInvite],

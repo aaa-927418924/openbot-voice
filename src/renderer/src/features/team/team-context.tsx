@@ -28,11 +28,26 @@ const Presence = createSimpleContext({
   name: "Presence",
   init: () => {
     const { centralAuth } = useAuth();
-    const [teamPresence, setTeamPresence] = createSignal<TeamPresenceSnapshot>(EMPTY_TEAM_PRESENCE);
+    const [teamPresence, setTeamPresenceState] = createSignal<TeamPresenceSnapshot>(EMPTY_TEAM_PRESENCE);
+
+    function setTeamPresence(snapshot: TeamPresenceSnapshot): void {
+      const previous = teamPresence();
+      setTeamPresenceState({
+        ...snapshot,
+        ...(snapshot.readerMemberId === undefined
+          ? { readerMemberId: previous.readerMemberId ?? null }
+          : { readerMemberId: snapshot.readerMemberId }),
+      });
+    }
 
     const currentTeamMember = createMemo(() => {
       const state = centralAuth();
       if (state.status !== "signed_in") return undefined;
+      const readerMemberId = teamPresence().readerMemberId;
+      if (readerMemberId) {
+        const exactMember = teamPresence().members.find((member) => member.id === readerMemberId);
+        if (exactMember) return exactMember;
+      }
       const email = state.user.email.trim().toLowerCase();
       return teamPresence().members.find(
         (member) => member.email?.trim().toLowerCase() === email || member.username.trim().toLowerCase() === email,

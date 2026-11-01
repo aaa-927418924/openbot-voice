@@ -78,7 +78,7 @@ export function teamIpcHandlers({
       getPresence: handler(() =>
         routeToServer(remoteServers.activeServerId, {
           local: () => host.getPresence(),
-          remote: () => remoteServers.getPresence(),
+          remote: (target) => runCauseEffect(remoteServers.getPresenceFor(target)),
         }),
       ),
       getPresenceFor: payloadHandler(stringPayload("serverId"), (serverId) =>

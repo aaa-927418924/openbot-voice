@@ -423,6 +423,14 @@ describe("HostService account binding", () => {
     expect(service.channelActor()).toEqual({ id: "local-user:account-b", name: "B" });
   });
 
+  it("reports the membership bound to the signed-in account as the local reader", async () => {
+    const { service, store, announce } = await createHostService();
+    await runCauseEffect(store.configureWithAccount("Studio Mac", first));
+    announce(first);
+
+    expect(service.getPresence().readerMemberId).toBe(store.getOwnerMemberId());
+  });
+
   it("stops reporting the previous account's server when the account changes", async () => {
     const { service, signIn } = await createHostService();
     await signIn(first);

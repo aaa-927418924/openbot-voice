@@ -158,6 +158,7 @@ export function decodeTeamPresenceSnapshot(value: unknown): TeamPresenceSnapshot
     serverId: nullableString(snapshot, "serverId"),
     members: decodeList(snapshot.members, "team presence member list", presenceMember),
     updatedAt: requiredString(snapshot, "updatedAt"),
+    ...(snapshot.readerMemberId === undefined ? {} : { readerMemberId: nullableString(snapshot, "readerMemberId") }),
   };
 }
 

@@ -437,6 +437,54 @@ describe("TeamStore", () => {
     ).rejects.toThrow("device identity update is invalid");
   });
 
+  it("resolves historical memberships with the same account id to one channel identity", async () => {
+    const { store, path } = await createStore();
+    await runCauseEffect(
+      store.configureWithAccount("Studio Mac", {
+        id: "owner-account",
+        email: "owner@example.com",
+        name: "Owner profile",
+        avatarUrl: null,
+      }),
+    );
+    const firstInvite = await runCauseEffect(store.createInvite("admin"));
+    const first = await runCauseEffect(store.acceptInvite(firstInvite.token, "first-device", "a secure password"));
+    const secondInvite = await runCauseEffect(store.createInvite("admin"));
+    const second = await runCauseEffect(store.acceptInvite(secondInvite.token, "second-device", "another password"));
+
+    const saved: {
+      hosts: Array<{ members: Array<{ id: string; accountId?: string; name?: string | null }> }>;
+    } = JSON.parse(await readFile(path, "utf8"));
+    const members = saved.hosts[0]?.members ?? [];
+    for (const [id, name] of [
+      [first.member.id, "First device"],
+      [second.member.id, "Second device"],
+    ] as const) {
+      const member = members.find((candidate) => candidate.id === id);
+      if (member) {
+        member.accountId = "shared-account";
+        member.name = name;
+      }
+    }
+    await writeFile(path, JSON.stringify(saved));
+
+    const restored = new TeamStore(path);
+    await runCauseEffect(restored.initialize());
+    const ownerId = restored.getOwnerMemberId();
+    expect(restored.getChannelIdentity(first.member.id)).toEqual({
+      id: first.member.id,
+      name: "First device",
+      memberIds: [first.member.id, second.member.id],
+    });
+    expect(restored.getChannelIdentity(second.member.id)).toEqual({
+      id: first.member.id,
+      name: "First device",
+      memberIds: [first.member.id, second.member.id],
+    });
+    expect(restored.getMemberIdForAccount("shared-account")).toBe(first.member.id);
+    expect(restored.getChannelIdentity(ownerId ?? "")?.id).not.toBe(first.member.id);
+  });
+
   it("can reactivate an unowned host after an account id was left in the profile file", async () => {
     const { store, path } = await createStore();
     const identity = await runCauseEffect(store.configure("Studio Mac", "owner", "correct horse battery"));

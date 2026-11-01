@@ -54,7 +54,8 @@ export function decodeTeamPresenceSnapshot(value: unknown): TeamPresenceSnapshot
   if (!isTeamRealtimeEvent(event) || event.type !== "team-presence") {
     throw new Error("Invalid team presence response.");
   }
-  return event.snapshot;
+  const { readerMemberId: _readerMemberId, ...snapshot } = event.snapshot;
+  return snapshot;
 }
 
 export function decodeTeamMember(value: unknown): TeamMemberSummary {
