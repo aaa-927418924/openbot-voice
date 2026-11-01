@@ -1,7 +1,7 @@
 import type { HostedServerSleep, ServerConnectionState, ServerSummary } from "@openbot/contracts/ipc";
 import type { AppTextKey, AppTranslate } from "@openbot/i18n";
 import { BellOff, buttonVariants, ContextMenu, ServerGradientLogo, Tooltip } from "@openbot/ui";
-import { createEffect, createSignal, createStore, For, onCleanup, Show } from "solid-js";
+import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
 import { createScrollFades } from "../../components/createScrollFades";
 import { createVerticalDragPreview } from "../../components/createVerticalDragPreview";
 import { useText } from "../../text";
@@ -361,7 +361,6 @@ function ServerRailButton(
   },
 ) {
   const { t, format } = useText();
-  const [overlay, setOverlay] = createStore({ tooltipOpen: false, menuOpen: false });
   let trigger: HTMLElement | null = null;
   const buttonLabel = () =>
     [t("server.rail.buttonLabel", { name: props.server.name }), ...serverStatusLabels(props.server, t)].join(", ");
@@ -370,103 +369,70 @@ function ServerRailButton(
     const sleep = serverHostedSleep(props.server);
     return sleep ? t(HOSTED_SLEEP_LABELS[sleep]) : null;
   };
+  const tooltipLabel = () =>
+    [props.server.name, sleepLabel(), props.server.notificationsMuted ? muteDescription() : null]
+      .filter((value): value is string => Boolean(value))
+      .join(" · ");
   return (
-    <Tooltip.Root
-      open={overlay.tooltipOpen && !overlay.menuOpen}
-      onOpenChange={(open) =>
-        setOverlay((state) => {
-          state.tooltipOpen = open;
-        })
-      }
-      placement="right"
-      gutter={10}
-      openDelay={SERVER_RAIL_TOOLTIP_OPEN_DELAY}
-      closeDelay={0}
-      skipDelayDuration={300}
-    >
-      <Tooltip.Trigger as="div" class="server-rail-tooltip-trigger">
-        <ContextMenu.Root
-          modal={false}
-          onOpenChange={(open) =>
-            setOverlay((state) => {
-              state.menuOpen = open;
-            })
+    <ContextMenu.Root modal={false}>
+      <ContextMenu.Trigger
+        as="button"
+        type="button"
+        class={buttonVariants({ variant: "ghost", class: "server-rail-button" })}
+        aria-label={buttonLabel()}
+        title={tooltipLabel()}
+        aria-pressed={props.server.active ? "true" : "false"}
+        aria-keyshortcuts={props.onMove ? "Shift+F10 Alt+ArrowUp Alt+ArrowDown" : "Shift+F10"}
+        data-cuelume-navigate=""
+        onClick={() => props.onSelect(props.server.id)}
+        onContextMenu={(event: MouseEvent & { currentTarget: HTMLButtonElement }) => {
+          trigger = event.currentTarget;
+        }}
+        onFocus={(event) => {
+          trigger = event.currentTarget;
+        }}
+        onKeyDown={(event: KeyboardEvent & { currentTarget: HTMLButtonElement }) => {
+          if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
+            event.preventDefault();
+            const bounds = event.currentTarget.getBoundingClientRect();
+            event.currentTarget.dispatchEvent(
+              new MouseEvent("contextmenu", {
+                bubbles: true,
+                cancelable: true,
+                clientX: bounds.right,
+                clientY: bounds.top,
+              }),
+            );
+            return;
           }
-        >
-          <ContextMenu.Trigger
-            as="button"
-            type="button"
-            class={buttonVariants({ variant: "ghost", class: "server-rail-button" })}
-            aria-label={buttonLabel()}
-            aria-pressed={props.server.active ? "true" : "false"}
-            aria-keyshortcuts={props.onMove ? "Shift+F10 Alt+ArrowUp Alt+ArrowDown" : "Shift+F10"}
-            data-cuelume-navigate=""
-            onClick={() => props.onSelect(props.server.id)}
-            onContextMenu={(event: MouseEvent & { currentTarget: HTMLButtonElement }) => {
-              trigger = event.currentTarget;
-            }}
-            onFocus={(event) => {
-              trigger = event.currentTarget;
-              setOverlay((state) => {
-                state.tooltipOpen = true;
-              });
-            }}
-            onBlur={() =>
-              setOverlay((state) => {
-                state.tooltipOpen = false;
-              })
-            }
-            onKeyDown={(event: KeyboardEvent & { currentTarget: HTMLButtonElement }) => {
-              if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
-                event.preventDefault();
-                const bounds = event.currentTarget.getBoundingClientRect();
-                event.currentTarget.dispatchEvent(
-                  new MouseEvent("contextmenu", {
-                    bubbles: true,
-                    cancelable: true,
-                    clientX: bounds.right,
-                    clientY: bounds.top,
-                  }),
-                );
-                return;
-              }
-              if (!event.altKey || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
-              event.preventDefault();
-              props.onMove?.(event.key === "ArrowUp" ? -1 : 1);
-            }}
-          >
-            <span class="server-rail-mark" aria-hidden="true" />
-            <ServerMark server={props.server} />
-            <Show when={props.server.notificationsMuted}>
-              <BellOff class="server-rail-muted size-3" aria-hidden="true" />
-            </Show>
-          </ContextMenu.Trigger>
-          <ContextMenu.Portal>
-            <ContextMenu.Content class="agent-context-menu" aria-label={t("server.rail.actions")}>
-              <ServerActionItems
-                menu={ContextMenu}
-                server={props.server}
-                trigger={() => trigger}
-                onSetMuted={props.onSetMuted}
-                onSetNotificationLevel={props.onSetNotificationLevel}
-                onOpenUsage={props.onOpenUsage}
-                onOpenSchedule={props.onOpenSchedule}
-                onOpenSettings={props.onOpenSettings}
-                onHideServer={props.onHideServer}
-                onMigrateToCloud={props.onMigrateToCloud}
-              />
-            </ContextMenu.Content>
-          </ContextMenu.Portal>
-        </ContextMenu.Root>
-      </Tooltip.Trigger>
-      <Tooltip.Portal>
-        <Tooltip.Content class="server-rail-tooltip">
-          {props.server.name}
-          {sleepLabel() ? ` · ${sleepLabel()}` : ""}
-          {props.server.notificationsMuted ? ` · ${muteDescription()}` : ""}
-        </Tooltip.Content>
-      </Tooltip.Portal>
-    </Tooltip.Root>
+          if (!event.altKey || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
+          event.preventDefault();
+          props.onMove?.(event.key === "ArrowUp" ? -1 : 1);
+        }}
+      >
+        <span class="server-rail-mark" aria-hidden="true" />
+        <ServerMark server={props.server} />
+        <Show when={props.server.notificationsMuted}>
+          <BellOff class="server-rail-muted size-3" aria-hidden="true" />
+        </Show>
+      </ContextMenu.Trigger>
+      <ContextMenu.Portal>
+        <ContextMenu.Content class="agent-context-menu" aria-label={t("server.rail.actions")}>
+          <ServerActionItems
+            menu={ContextMenu}
+            server={props.server}
+            trigger={() => trigger}
+            onSetMuted={props.onSetMuted}
+            onSetNotificationLevel={props.onSetNotificationLevel}
+            onOpenUsage={props.onOpenUsage}
+            onOpenSchedule={props.onOpenSchedule}
+            onOpenSettings={props.onOpenSettings}
+            onHideServer={props.onHideServer}
+            onMigrateToCloud={props.onMigrateToCloud}
+          />
+        </ContextMenu.Content>
+      </ContextMenu.Portal>
+    </ContextMenu.Root>
   );
 }
 

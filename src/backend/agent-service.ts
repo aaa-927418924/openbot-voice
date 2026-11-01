@@ -1303,9 +1303,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (channel.archived || channel.members.length !== 1 || channel.members[0]?.agentId !== agent.id)
         throw new LiveVoiceRefusedError(sourceText("error.liveVoice.unavailable"));
     }
-    // Do not start or activate Codex for an account that is not on the supported subscription path.
-    if (!this.#providers.hasCodexChatGptAccount())
-      throw new LiveVoiceRefusedError(sourceText("error.liveVoice.accountRequired"));
     if (
       this.#liveVoiceSessions.size > 0 ||
       this.#pendingLiveVoiceStart ||
@@ -1364,10 +1361,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (reservation.cancelled) throw new LiveVoiceRefusedError(sourceText("error.liveVoice.unavailable"));
       if (client.provider !== "codex" || !client.running)
         throw new LiveVoiceRefusedError(sourceText("error.liveVoice.unavailable"));
-      if (!this.#providers.hasCodexChatGptAccount())
-        throw new LiveVoiceRefusedError(sourceText("error.liveVoice.accountRequired"));
-      // Re-read the official account mode without refreshing credentials. API-key auth is not a
-      // supported subscription path for Codex Live.
+      // Read the official account mode from the running host client. The provider-runtime cache can
+      // be stale when the Cloud host and visible OpenBot GUI use separate app profiles.
       const account = yield* client.request("account/read", { refreshToken: false }, decodeAccountReadResult, 5_000);
       if (account.account?.type !== "chatgpt")
         throw new LiveVoiceRefusedError(sourceText("error.liveVoice.accountRequired"));
@@ -1525,8 +1520,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       !agent ||
       agent.threadId !== input.threadId ||
       agent.provider !== "codex" ||
-      !session.client.running ||
-      !this.#providers.hasCodexChatGptAccount()
+      !session.client.running
     )
       throw new LiveVoiceRefusedError(sourceText("error.liveVoice.unavailable"));
     const completion = Deferred.makeUnsafe<void>();

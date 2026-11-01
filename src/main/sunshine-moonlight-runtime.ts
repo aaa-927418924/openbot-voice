@@ -1,7 +1,7 @@
 import { type ChildProcess, spawn as nodeSpawn, type SpawnOptions } from "node:child_process";
 import { createHash, randomBytes, timingSafeEqual, X509Certificate } from "node:crypto";
 import { createSocket } from "node:dgram";
-import { chmod, mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { createServer, request as httpRequest, type IncomingMessage, type Server } from "node:http";
 import https from "node:https";
 import { createServer as createTcpServer } from "node:net";
@@ -383,6 +383,8 @@ export type RemoteRuntimeSpawn = (executable: string, args: string[], options: S
 interface SunshineMoonlightRuntimeOptions {
   paths: RemoteDesktopRuntimePaths;
   stateDirectory: string;
+  /** Optional OpenBot-owned portal restore-token source, copied into this runtime's private state. */
+  portalRestoreTokenSourceDirectory?: string;
   platform: "darwin" | "win32" | "linux";
   linuxCaptureMethod?: "portal" | "x11";
   credentials: { username: string; password: string };
@@ -410,6 +412,7 @@ export class SunshineMoonlightRuntime {
   #portalRestoreTokenLoaded = false;
   #portalRestoreTokenLoadedAt: number | null = null;
   #portalCaptureStreamStarted = false;
+  #portalRestoreTokensSeeded = false;
   readonly #moonlightHeader = `X-OpenBot-Remote-${randomBytes(32).toString("hex")}`;
   #selectedDisplayId: string | null = null;
   readonly #lifecycle = new LifecycleGate<SunshineMoonlightRuntimeState, RemoteDesktopOperationError>();
@@ -591,6 +594,7 @@ export class SunshineMoonlightRuntime {
     this: SunshineMoonlightRuntime,
   ): Effect.fn.Return<SunshineMoonlightRuntimeState, RemoteDesktopOperationError> {
     this.#stopRequested = false;
+    this.#portalRestoreTokensSeeded = false;
     yield* desktopCall(() => mkdir(this.#options.stateDirectory, { recursive: true, mode: 0o700 }));
     let completed = false;
     return yield* Effect.gen({ self: this }, function* () {
@@ -866,7 +870,10 @@ export class SunshineMoonlightRuntime {
     this.#portalCaptureStreamStarted = false;
     const usesPortal = this.#options.platform === "linux" && this.#options.linuxCaptureMethod === "portal";
     const xdgConfigHome = join(this.#options.stateDirectory, "xdg-config");
-    if (usesPortal) yield* desktopCall(() => mkdir(xdgConfigHome, { recursive: true, mode: 0o700 }));
+    if (usesPortal) {
+      yield* desktopCall(() => mkdir(xdgConfigHome, { recursive: true, mode: 0o700 }));
+      yield* this.#seedPortalRestoreTokensEffect(xdgConfigHome);
+    }
     this.#sunshine = yield* desktopSync(() =>
       this.#spawn(this.#options.paths.sunshine, [join(this.#options.stateDirectory, "sunshine.conf")], {
         cwd: dirname(this.#options.paths.sunshine),
@@ -1226,6 +1233,46 @@ export class SunshineMoonlightRuntime {
       concurrency: "unbounded",
       discard: true,
     });
+  }).bind(this);
+
+  readonly #seedPortalRestoreTokensEffect = Effect.fn("SunshineMoonlightRuntime.seedPortalRestoreTokens")(function* (
+    this: SunshineMoonlightRuntime,
+    targetConfigHome: string,
+  ) {
+    if (this.#portalRestoreTokensSeeded) return;
+    this.#portalRestoreTokensSeeded = true;
+    const sourceConfigHome = this.#options.portalRestoreTokenSourceDirectory;
+    if (!sourceConfigHome || sourceConfigHome === targetConfigHome) return;
+    const sourceDirectory = join(sourceConfigHome, "sunshine");
+    const targetDirectory = join(targetConfigHome, "sunshine");
+    const sourceNames = yield* desktopCall(() =>
+      readdir(sourceDirectory).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return [];
+        throw error;
+      }),
+    );
+    const tokens = sourceNames.filter((name) => name === "portal_token" || name.startsWith("portal_token."));
+    if (tokens.length === 0) return;
+    yield* desktopCall(() => mkdir(targetDirectory, { recursive: true, mode: 0o700 }));
+    const targetNames = new Set(
+      yield* desktopCall(() =>
+        readdir(targetDirectory).catch((error: NodeJS.ErrnoException) => {
+          if (error.code === "ENOENT") return [];
+          throw error;
+        }),
+      ),
+    );
+    yield* Effect.forEach(
+      tokens.filter((name) => !targetNames.has(name)),
+      (name) =>
+        desktopCall(async () => {
+          const targetPath = join(targetDirectory, name);
+          await copyFile(join(sourceDirectory, name), targetPath);
+          await chmod(targetPath, 0o600);
+        }),
+      { concurrency: "unbounded", discard: true },
+    );
+    yield* desktopCall(() => chmod(targetDirectory, 0o700));
   }).bind(this);
 
   #pipeDiagnostics(process: ChildProcess, source: "sunshine" | "moonlight"): void {

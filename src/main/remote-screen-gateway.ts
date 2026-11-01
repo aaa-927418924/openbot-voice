@@ -73,6 +73,7 @@ interface RemoteScreenGatewayOptions {
   unattended: boolean;
   runtimePaths: RemoteDesktopRuntimePaths | null;
   runtimeStateDirectory: string;
+  portalRestoreTokenSourceDirectory?: string;
   getRuntimeCredentials: () => Effect.Effect<{ username: string; password: string }, RemoteWorkflowError>;
   getDisplays?: () => RemoteDesktopDisplay[];
   getIceServers: () => Effect.Effect<RemoteDesktopIceServer[], RemoteWorkflowError>;
@@ -1131,6 +1132,9 @@ export class RemoteScreenGateway {
       const runtime: RemoteScreenRuntime = this.#options.createRuntime({
         paths,
         stateDirectory: this.#options.runtimeStateDirectory,
+        ...(this.#options.portalRestoreTokenSourceDirectory
+          ? { portalRestoreTokenSourceDirectory: this.#options.portalRestoreTokenSourceDirectory }
+          : {}),
         platform: this.#options.platform,
         ...(this.#options.platform === "linux"
           ? { linuxCaptureMethod: linuxCaptureMethod(this.#options.sessionEnvironment ?? process.env) }

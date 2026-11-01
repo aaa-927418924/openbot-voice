@@ -18,9 +18,34 @@ import { createSidebarLayoutActions } from "./stores/layout-actions";
 import { createSidebarPendingStore } from "./stores/pending-store";
 import { createSidebarSearchStore } from "./stores/search-store";
 
+const SIDEBAR_SCROLL_POSITIONS = new Map<string, number>();
+const MAX_SAVED_SIDEBAR_POSITIONS = 64;
+
 export function createSidebarScope(props: SidebarProps) {
   const layoutMutable = () => props.layoutMutable !== false;
   const scrollFades = createScrollFades();
+  let agentList: HTMLElement | undefined;
+  let restoreObserver: ResizeObserver | undefined;
+  let userScrollUntil = 0;
+  let restoreFrame: number | undefined;
+
+  const restoreScrollPosition = () => {
+    const key = props.scrollRestorationKey;
+    if (!key || !agentList) return;
+    const saved = SIDEBAR_SCROLL_POSITIONS.get(key);
+    if (saved === undefined || saved <= 0) return;
+    const maxScrollTop = Math.max(0, agentList.scrollHeight - agentList.clientHeight);
+    if (maxScrollTop + 2 >= saved && Math.abs(agentList.scrollTop - saved) > 2) agentList.scrollTop = saved;
+  };
+
+  const scheduleScrollRestore = () => {
+    if (restoreFrame !== undefined) cancelAnimationFrame(restoreFrame);
+    restoreFrame = requestAnimationFrame(() => {
+      restoreFrame = undefined;
+      restoreScrollPosition();
+      scrollFades.remeasure();
+    });
+  };
 
   const { announce, announceError, reorderAnnouncement } = createSidebarAnnouncementStore();
   const { expandToSearch, normalizedQuery, query, setQuery, setSearchInputElement } = createSidebarSearchStore({
@@ -76,8 +101,6 @@ export function createSidebarScope(props: SidebarProps) {
     startRenameSection,
     updateSectionEditorName,
   } = createSidebarPendingStore({ customSectionById, props });
-  let agentList: HTMLElement | undefined;
-
   const dragState = createSidebarDragStateStore({ chatKind, sectionAcceptsChat });
   dragActive = () => dragState.draggingKind() !== undefined;
   const { assignChatSection, commitSidebarDrop, movePersonByKeyboard, movePinnedItem, moveSection } =
@@ -130,19 +153,61 @@ export function createSidebarScope(props: SidebarProps) {
   onCleanup(() => {
     stopSidebarDragging();
     scrollFades.stop();
+    restoreObserver?.disconnect();
+    if (restoreFrame !== undefined) cancelAnimationFrame(restoreFrame);
   });
 
   createEffect(
     () => [resolvedPinnedItems(), waitingAgents(), filteredChats(), filteredPeople()],
     () => {
       scrollFades.remeasure();
+      scheduleScrollRestore();
     },
   );
+
+  createEffect(
+    () => props.scrollRestorationKey,
+    (key) => {
+      if (key) scheduleScrollRestore();
+    },
+  );
+
+  const noteAgentListScrollInput = () => {
+    userScrollUntil = performance.now() + 1_500;
+  };
+
+  const onAgentListScroll = () => {
+    scrollFades.measure();
+    const key = props.scrollRestorationKey;
+    if (!key || !agentList) return;
+    const previous = SIDEBAR_SCROLL_POSITIONS.get(key) ?? 0;
+    const maxScrollTop = Math.max(0, agentList.scrollHeight - agentList.clientHeight);
+    // A list refresh can temporarily make the old offset unreachable and the browser clamps it to
+    // zero. Keep the saved offset until content returns. Explicit scrolling always replaces it.
+    if (performance.now() <= userScrollUntil || maxScrollTop + 2 >= previous) {
+      const positions: Map<string, number> = SIDEBAR_SCROLL_POSITIONS;
+      positions.delete(key);
+      positions.set(key, agentList.scrollTop);
+      while (positions.size > MAX_SAVED_SIDEBAR_POSITIONS) {
+        const oldestKey = positions.keys().next().value;
+        if (oldestKey === undefined) break;
+        positions.delete(oldestKey);
+      }
+    }
+  };
+
+  const setAgentListContentElement = (element: HTMLElement) => {
+    restoreObserver?.disconnect();
+    restoreObserver = new ResizeObserver(scheduleScrollRestore);
+    restoreObserver.observe(element);
+    scheduleScrollRestore();
+  };
 
   /** The two statements the list's `ref` used to run inline, in the same order. */
   const setAgentListElement = (element: HTMLElement) => {
     agentList = element;
     scrollFades.bind(element);
+    scheduleScrollRestore();
   };
 
   /**
@@ -197,11 +262,14 @@ export function createSidebarScope(props: SidebarProps) {
     resolvedPinnedItems,
     saveSectionEditor,
     scrollFades,
+    noteAgentListScrollInput,
+    onAgentListScroll,
     sectionDeleteTarget,
     sectionDragClasses: dragState.sectionDragClasses,
     sectionIsCollapsed,
     sectionPosition,
     setAgentListElement,
+    setAgentListContentElement,
     setQuery,
     setSearchInputElement,
     setSectionNameInput,

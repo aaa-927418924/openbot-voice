@@ -616,10 +616,6 @@
   display: none;
 }
 
-.server-rail-tooltip-trigger {
-  display: flex;
-}
-
 .server-rail-remote-list {
   display: flex;
   width: 100%;

@@ -114,6 +114,7 @@ interface HostServiceOptions {
   ) => Effect.Effect<void, RemoteWorkflowError>;
   remoteDesktopRuntimePaths?: RemoteDesktopRuntimePaths | null;
   remoteDesktopStateDirectory?: string;
+  remoteDesktopPortalRestoreTokenSourceDirectory?: string;
   /** Only a test supplies this. The gateway builds the real Sunshine and Moonlight runtime itself. */
   createRemoteDesktopRuntime?: RemoteScreenGatewayCreateRuntime;
   getRemoteDesktopRuntimeCredentials?: () => Effect.Effect<{ username: string; password: string }, RemoteWorkflowError>;
@@ -216,6 +217,9 @@ export class HostService extends EventEmitter<HostEvents> {
       unattended: options.unattended ?? false,
       runtimePaths: options.remoteDesktopRuntimePaths ?? null,
       runtimeStateDirectory: options.remoteDesktopStateDirectory ?? ".openbot-remote-desktop",
+      ...(options.remoteDesktopPortalRestoreTokenSourceDirectory
+        ? { portalRestoreTokenSourceDirectory: options.remoteDesktopPortalRestoreTokenSourceDirectory }
+        : {}),
       getRuntimeCredentials:
         options.getRemoteDesktopRuntimeCredentials ??
         (() => Effect.succeed({ username: "openbot", password: "development-runtime-not-for-release" })),

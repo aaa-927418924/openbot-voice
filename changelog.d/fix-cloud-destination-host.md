@@ -5,3 +5,6 @@
 ### Fixed
 
 - The Cloud host now stays in the background when its GUI client closes, and migration leaves the source server data intact.
+- Keep the Windows/Linux Bot list at its current scroll position during periodic account-directory updates.
+- Keep the verified Cloud server name and icon from being replaced by stale directory data, and stop server context menus from closing during tooltip focus changes.
+- Let the Cloud host reuse OpenBot's Codex sign-in and Wayland portal consent state while keeping Cloud-specific runtime data isolated.

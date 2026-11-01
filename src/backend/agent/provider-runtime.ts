@@ -399,7 +399,12 @@ export class ProviderRuntime implements ProviderPort {
       createClient: (cli) => {
         const client = this.#clientFactory
           ? this.#clientFactory("codex", cli)
-          : new CodexAppServerClient(cli.executable, this.#requestTimeoutMs, this.#credentials.codexHome);
+          : new CodexAppServerClient(
+              cli.executable,
+              this.#requestTimeoutMs,
+              this.#credentials.codexHome,
+              this.#credentials.codexSqliteHome,
+            );
         this.#bindClient(client);
         return client;
       },

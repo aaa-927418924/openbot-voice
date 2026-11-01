@@ -1130,6 +1130,10 @@ export async function createApplicationServices({
   teardown.push(TEARDOWN_ORDER.computerUsePermissionHelp, "the Computer Use permission help", () => {
     computerUsePermissionHelp.close();
   });
+  const codexHome = new CodexHome({
+    userDataPath: app.getPath("userData"),
+    ...(cloudHostMode ? { codexHomeUserDataPath: join(app.getPath("appData"), app.getName()) } : {}),
+  });
   const service: AgentService = new AgentService({
     store,
     mailbox,
@@ -1173,8 +1177,9 @@ export async function createApplicationServices({
       // service asks for one at each hand-off; only a test the user pressed may open a browser.
       mcpOAuth,
       providerStateDirectory: join(app.getPath("userData"), "provider-state"),
-      // The dedicated Codex state every Codex process uses, so the fork never touches ~/.codex.
-      codexHome: new CodexHome({ userDataPath: app.getPath("userData") }).path,
+      // The dedicated OpenBot Codex sign-in home; Cloud keeps its SQLite state in its own profile.
+      codexHome: codexHome.path,
+      codexSqliteHome: codexHome.sqlitePath,
       // Paths only: `gh` and `git` read the token from the files the connection keeps current.
       agentEnvironment: (inherited) => githubConnector.agentEnvironment(inherited),
     },
@@ -1767,6 +1772,13 @@ export async function createApplicationServices({
     platform: process.platform === "darwin" || process.platform === "win32" ? process.platform : "linux",
     unattended: false,
     remoteDesktopRuntimePaths: remoteDesktopRuntime,
+    ...(cloudHostMode
+      ? {
+          remoteDesktopPortalRestoreTokenSourceDirectory: join(
+            process.env.XDG_CONFIG_HOME ?? join(app.getPath("home"), ".config"),
+          ),
+        }
+      : {}),
     openRemoteDesktopSetup: (action, appPath) =>
       Effect.tryPromise({
         try: async () => {

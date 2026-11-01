@@ -379,6 +379,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   readonly #accountDirectoryReauthPending = new Set<string>();
   /** A fresh ticket was permanently refused; wait for an explicit retry or a new join. */
   readonly #accountDirectoryReauthBlocked = new Set<string>();
+  #lastEmittedSummary: string | null = null;
   /** Coalesces and backs off fresh account-ticket adoption for directory-only host entries. */
   readonly #accountServerAdoptionInFlight = new Set<string>();
   readonly #accountServerAdoptionRetryAt = new Map<string, number>();
@@ -1181,11 +1182,10 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
               }
               continue;
             }
-            const patch = {
-              ...(existing.name !== entry.name ? { name: entry.name } : {}),
-              ...(existing.logoVersion !== entry.logoKey ? { logoVersion: entry.logoKey } : {}),
-            };
-            if (Object.keys(patch).length > 0) yield* this.#store.update(existing.id, patch);
+            // The directory is a membership index, not the source of a host's current display
+            // identity. Its cached name/logo may lag a rename and revert values verified from the
+            // active host connection. New adoptions verify identity; existing rows are updated by
+            // that host's identity event.
             continue;
           }
         }
@@ -3029,7 +3029,11 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   #emitChanged(): void {
-    this.emit("changed", this.list());
+    const summaries = this.list();
+    const fingerprint = JSON.stringify(summaries);
+    if (fingerprint === this.#lastEmittedSummary) return;
+    this.#lastEmittedSummary = fingerprint;
+    this.emit("changed", summaries);
   }
 }
 

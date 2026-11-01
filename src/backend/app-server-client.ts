@@ -47,17 +47,19 @@ export class CodexAppServerClient extends EventEmitter<ClientEvents> {
   readonly #executable: string;
   readonly #requestTimeoutMs: number;
   readonly #codexHome: string | undefined;
+  readonly #codexSqliteHome: string | undefined;
   #decoder = new JsonLineDecoder();
   readonly #pending = new Map<RequestId, PendingRequest>();
   #process: ChildProcessWithoutNullStreams | null = null;
   #nextId = 1;
   #stopping = false;
 
-  constructor(executable: string, requestTimeoutMs = 30_000, codexHome?: string) {
+  constructor(executable: string, requestTimeoutMs = 30_000, codexHome?: string, codexSqliteHome?: string) {
     super();
     this.#executable = executable;
     this.#requestTimeoutMs = requestTimeoutMs;
     this.#codexHome = codexHome;
+    this.#codexSqliteHome = codexSqliteHome;
   }
 
   get running(): boolean {
@@ -72,7 +74,7 @@ export class CodexAppServerClient extends EventEmitter<ClientEvents> {
     const target = cliSpawnTarget(this.#executable, ["app-server", "--listen", "stdio://"]);
     const child = spawn(target.command, target.args, {
       stdio: ["pipe", "pipe", "pipe"],
-      env: codexProcessEnv(this.#codexHome),
+      env: codexProcessEnv(this.#codexHome, process.env, this.#codexSqliteHome),
       windowsVerbatimArguments: target.windowsVerbatimArguments,
       windowsHide: true,
     });

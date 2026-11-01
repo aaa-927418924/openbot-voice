@@ -135,6 +135,7 @@ export function WorkspaceSidebar(props: { peopleEnabled: boolean } & ServerMigra
 
   return (
     <Sidebar
+      scrollRestorationKey={activeServer()?.id}
       channels={visibleChannels()}
       deletedChannels={
         activeServer() && channels.supported() ? channels.state.channels.filter((channel) => channel.archived) : []

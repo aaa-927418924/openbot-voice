@@ -20,6 +20,8 @@ import type { SidebarPinnedItem } from "./sidebar-pins";
  * view to borrow a name.
  */
 export interface SidebarProps {
+  /** Keeps the Bot/channel list's scroll position when this server's data temporarily reloads. */
+  scrollRestorationKey?: string;
   deleteSupported?: boolean;
   marketplaceSupported?: boolean;
   channels?: ChannelSummary[];

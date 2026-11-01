@@ -27,7 +27,10 @@ export function SidebarNav() {
     reorderAnnouncement,
     resolvedPinnedItems,
     scrollFades,
+    setAgentListContentElement,
     setAgentListElement,
+    onAgentListScroll,
+    noteAgentListScrollInput,
     startCreateSection,
     updateSidebarNativeDrag,
     waitingAgents,
@@ -42,9 +45,13 @@ export function SidebarNav() {
       onDragOver={updateSidebarNativeDrag}
       onDragLeave={handleListDragLeave}
       onDrop={dropSidebarNativeDrag}
-      onScroll={scrollFades.measure}
+      onWheel={noteAgentListScrollInput}
+      onTouchMove={noteAgentListScrollInput}
+      onPointerDown={noteAgentListScrollInput}
+      onKeyDown={noteAgentListScrollInput}
+      onScroll={onAgentListScroll}
     >
-      <div class="agent-list-content">
+      <div ref={setAgentListContentElement} class="agent-list-content">
         <Show
           when={
             resolvedPinnedItems().length === 0 &&
