@@ -173,7 +173,7 @@ The published runtime uses a new recipe/input digest; no existing release assets
 The Linux GUI capability advisory GHSA-fp6g-27w5-489j does not apply: the Linux runtime is built
 with the tray off, and OpenBot gives Sunshine no file capabilities.
 
-### Linux runtime (recipe 17)
+### Linux runtime (recipe 18)
 
 The `linux-x64` target builds on Ubuntu 24.04 with GCC 14, X11 and XDG Portal/PipeWire capture, and
 software encoding. CUDA, DRM, KWin, VAAPI, Vulkan, and the tray stay off. Wayland support is compiled
@@ -184,12 +184,11 @@ links libcap when DRM is off and adds a `vaMapBuffer2` shim, because the prebuil
 2.21 and Ubuntu 24.04 has 2.20. The runtime uses system libraries; the hosted server package list
 includes PipeWire for the Portal-enabled binary. Linux arm64 builds only for local development and
 has no release artifact. Recipe 17 includes the pinned Wayland protocol sources and compiles the Wayland
-helpers required by Portal capture. Recipe 16 also updated the pinned Sunshine Web UI dependencies:
-Vue is patched, vulnerable transitive dependencies are refreshed, and `compression`/`zod` are
-constrained to audited releases. The fixed lockfile passes `npm ci`, the full high-severity audit, and
-the Vite production build. Recipe 17 changes the shared runtime input digest and clears the old release
-pin. Publish and pin a complete runtime prerelease for all supported targets before normal desktop
-release builds; local Linux builds can source-build the runtime with
+helpers required by Portal capture. Recipe 18 updates Sunshine's pinned Vue I18n dependency to 11.4.16
+and refreshes its lockfile to clear the high-severity advisory; its fixed lockfile passes `npm ci`, the
+high-severity audit, and the Vite production build. Recipe 18 changes the shared runtime input digest
+and clears the old release pin. Publish and pin a complete runtime prerelease for all supported targets
+before normal desktop release builds; local Linux builds can source-build the runtime with
 `OPENBOT_ALLOW_RUNTIME_SOURCE_BUILD=1`.
 
 ## Pin the Gemini server
