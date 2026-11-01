@@ -28,6 +28,7 @@ import { SidebarSectionHeader } from "@/features/agents/components/sidebar-secti
 import { ChannelListRow } from "@/features/channels/components/channel-list";
 import { useChannels } from "@/features/channels/components/use-channels";
 import { useAppDrawer } from "@/features/servers/components/app-drawer-shell";
+import { useCustomTheme } from "@/features/settings/model/custom-theme";
 import { ConnectionHeaderStatus } from "@/features/workspace/components/connection-header-status";
 import { useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
 import { mobileSidebarItems } from "@/features/workspace/model/sidebar-layout";
@@ -189,6 +190,8 @@ export function ConnectedScreen() {
     [agents, activeServer.id],
   );
   const [foreground, muted, background] = useThemeColor(["foreground", "muted", "background"]);
+  const customTheme = useCustomTheme();
+  const hasCustomBackground = customTheme.mode === "custom" && customTheme.imageUri !== null;
   const iconColor = String(foreground);
   const mutedColor = String(muted);
   const hasSelectedServer = servers.some((server) => server.id === activeServer.id);
@@ -264,7 +267,11 @@ export function ConnectedScreen() {
   };
 
   return (
-    <View className="flex-1 bg-background" onLayout={() => reportContentReady()}>
+    <View
+      className={hasCustomBackground ? "flex-1" : "flex-1 bg-background"}
+      style={hasCustomBackground ? { backgroundColor: "rgba(16,17,20,0.62)" } : undefined}
+      onLayout={() => reportContentReady()}
+    >
       {listReady ? (
         <Animated.FlatList
           key={activeServer.id}
@@ -272,7 +279,7 @@ export function ConnectedScreen() {
           itemLayoutAnimation={listReveal.finished && sidebar?.layout !== collapseLayout ? LIST_REFLOW : undefined}
           skipEnteringExitingAnimations
           removeClippedSubviews={false}
-          className="flex-1 bg-background"
+          className={hasCustomBackground ? "flex-1 bg-transparent" : "flex-1 bg-background"}
           alwaysBounceVertical={false}
           contentContainerClassName={items.length > 0 ? "pb-safe-offset-4" : "grow pb-safe-offset-4"}
           // Keep the native header inset even when short content cannot scroll or bounce.

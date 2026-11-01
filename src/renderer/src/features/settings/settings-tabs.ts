@@ -2,6 +2,7 @@ import type { AppTextKey } from "@openbot/i18n";
 import {
   CircleArrowDown,
   CreditCard,
+  Image,
   MousePointer2,
   PanelTop,
   Server,
@@ -12,6 +13,7 @@ import {
 
 export type SettingsTab =
   | "general"
+  | "theme"
   | "dynamic-island"
   | "computer-use"
   | "profile"
@@ -40,16 +42,22 @@ export const navItems: ReadonlyArray<SettingsNavItem> = [
     icon: Settings,
   },
   {
-    value: "dynamic-island",
-    titleKey: "settings.tab.dynamicIsland.title",
-    descriptionKey: "settings.tab.dynamicIsland.description",
-    icon: PanelTop,
+    value: "theme",
+    titleKey: "settings.tab.theme.title",
+    descriptionKey: "settings.tab.theme.description",
+    icon: Image,
   },
   {
     value: "computer-use",
     titleKey: "settings.tab.computerUse.title",
     descriptionKey: "settings.tab.computerUse.description",
     icon: MousePointer2,
+  },
+  {
+    value: "dynamic-island",
+    titleKey: "settings.tab.dynamicIsland.title",
+    descriptionKey: "settings.tab.dynamicIsland.description",
+    icon: PanelTop,
   },
   {
     value: "profile",

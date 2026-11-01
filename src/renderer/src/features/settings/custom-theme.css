@@ -1,0 +1,99 @@
+.settings-theme-tab {
+  display: grid;
+  gap: var(--openbot-space-6);
+}
+
+.settings-theme-segments {
+  display: flex;
+  min-width: 0;
+  gap: var(--openbot-space-0-5);
+  border: 1px solid var(--openbot-border);
+  border-radius: var(--openbot-radius-md);
+  background: var(--openbot-bg-control);
+  padding: var(--openbot-space-0-5);
+}
+
+.settings-theme-segment {
+  display: flex;
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.settings-theme-segment-control {
+  display: flex;
+  min-height: var(--openbot-control-md);
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--openbot-radius-sm);
+  padding-inline: var(--openbot-space-3);
+  color: var(--openbot-text-muted);
+  font-size: var(--openbot-text-sm);
+  font-weight: var(--openbot-weight-medium);
+  cursor: pointer;
+  transition: color var(--openbot-duration-fast) var(--openbot-ease-out);
+}
+
+.settings-theme-segment-control:hover:not([data-disabled]),
+.settings-theme-segment-control[data-checked] {
+  background: var(--openbot-bg-control-hover);
+  color: var(--openbot-text-primary);
+}
+
+.settings-theme-segment:has(:focus-visible) .settings-theme-segment-control {
+  box-shadow: var(--openbot-focus-ring);
+}
+
+.settings-theme-file-input {
+  display: none;
+}
+
+.settings-theme-preview {
+  min-height: 132px;
+  margin: 0 var(--openbot-space-4) var(--openbot-space-3);
+  border: 1px solid var(--openbot-border);
+  border-radius: var(--openbot-radius-md);
+  background-color: var(--openbot-bg-canvas);
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
+}
+
+.settings-theme-slider-row {
+  min-width: 0;
+}
+
+.app-frame-custom-theme {
+  --openbot-bg-canvas: var(--openbot-bg-overlay);
+  --openbot-bg-native-sidebar: var(--openbot-bg-glass);
+  --openbot-bg-sidebar: var(--openbot-bg-glass);
+  --openbot-bg-surface: var(--openbot-bg-glass);
+  --openbot-bg-surface-raised: var(--openbot-bg-glass);
+  --openbot-bg-control: var(--openbot-bg-glass);
+  isolation: isolate;
+  background: transparent;
+}
+
+.app-frame-custom-theme::before {
+  position: absolute;
+  z-index: 0;
+  inset: -24px;
+  background-image: var(--workspace-theme-image);
+  background-position: center;
+  background-size: cover;
+  content: "";
+  filter: blur(var(--workspace-theme-blur, 8px));
+  opacity: var(--workspace-theme-opacity, 0.72);
+  pointer-events: none;
+  transform: scale(1.04);
+}
+
+.app-frame-custom-theme > * {
+  z-index: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-theme-segment-control {
+    transition: none;
+  }
+}

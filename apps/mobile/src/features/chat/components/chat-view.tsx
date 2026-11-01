@@ -31,6 +31,7 @@ import {
 import { LiveVoiceSessionCard } from "@/features/live-voice/components/live-voice-session-card";
 import { useMobileLiveVoice } from "@/features/live-voice/context/mobile-live-voice-context";
 import type { MobileLiveVoiceTarget } from "@/features/live-voice/model/live-voice";
+import { useCustomTheme } from "@/features/settings/model/custom-theme";
 import { ConnectionStatus } from "@/features/workspace/components/connection-status";
 import { useBrowserRequests } from "@/features/workspace/components/use-live-workspace";
 import type { MobileAgent } from "@/features/workspace/context/mobile-workspace-context";
@@ -134,6 +135,8 @@ export function ChatView({
   const { t, errorMessage } = useText();
   const { respondToBrowserSecret, respondToBrowserTakeover, attachmentSupport } = useMobileWorkspace();
   const liveVoice = useMobileLiveVoice();
+  const customTheme = useCustomTheme();
+  const hasCustomBackground = customTheme.mode === "custom" && customTheme.imageUri !== null;
   const browserRequests = useBrowserRequests(target.serverId);
   const isFocused = useIsFocused();
   const foregroundVisit = useAppForeground();
@@ -522,7 +525,7 @@ export function ChatView({
 
   return (
     <GestureDetector gesture={edgeBackGesture}>
-      <View className="flex-1" style={{ backgroundColor: background }}>
+      <View className="flex-1" style={{ backgroundColor: hasCustomBackground ? "rgba(16,17,20,0.62)" : background }}>
         <View
           className="flex-1"
           // Nothing here may switch on the card: this view is an ancestor of

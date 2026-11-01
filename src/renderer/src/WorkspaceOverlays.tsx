@@ -595,6 +595,8 @@ function AppSettings(props: AccountProps) {
     setAppSettingsOpen,
     appSettingsTab,
     generalSettings,
+    themeSettings,
+    updateThemeSettings,
     windowsStartupSettings,
     builtInDisplayGeometry,
     updateGeneralSettings,
@@ -610,6 +612,8 @@ function AppSettings(props: AccountProps) {
         onOpenChange={setAppSettingsOpen}
         value={generalSettings()}
         onValueChange={updateGeneralSettings}
+        themeSettings={themeSettings()}
+        onThemeSettingsChange={updateThemeSettings}
         appInfo={platform.appInfo()}
         windowsStartupSettings={windowsStartupSettings()}
         builtInDisplayGeometry={builtInDisplayGeometry()}

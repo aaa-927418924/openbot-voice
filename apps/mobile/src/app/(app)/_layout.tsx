@@ -1,8 +1,9 @@
+import { Image } from "expo-image";
 import { router, useGlobalSearchParams, useSegments } from "expo-router";
 import { Stack } from "expo-router/stack";
 import { useThemeColor } from "heroui-native/hooks";
 import { useEffect, useRef, useState } from "react";
-import { TextInput } from "react-native";
+import { StyleSheet, TextInput, View } from "react-native";
 import { useCSSVariable } from "uniwind";
 import { AgentPinTransitionProvider } from "@/features/agents/components/agent-pin-transition";
 import { ChatNavigationGateContext } from "@/features/agents/components/chat-link-pressable";
@@ -14,6 +15,7 @@ import { QueuedMessagesProvider } from "@/features/chat/context/queued-messages-
 import { setLiveActivityNavigator } from "@/features/live-activity/model/live-activity-link";
 import { LiveVoiceWorkspaceProvider } from "@/features/live-voice/context/live-voice-workspace-provider";
 import { AppDrawerShell } from "@/features/servers/components/app-drawer-shell";
+import { useCustomTheme } from "@/features/settings/model/custom-theme";
 import { MobileWorkspaceProvider } from "@/features/workspace/context/mobile-workspace-context";
 import { isAndroid, isIOS } from "@/shared/lib/platform";
 import { sheetHeaderInsetOptions } from "@/shared/lib/sheet-header";
@@ -31,6 +33,8 @@ function AuthenticatedStack() {
   const [navigationGate] = useState(createChatNavigationGate);
   const { agentId: openAgentId } = useGlobalSearchParams<{ agentId?: string }>();
   const { session } = useMobileSession();
+  const customTheme = useCustomTheme();
+  const customBackground = customTheme.mode === "custom" && customTheme.imageUri !== null;
   const openChat = useRef<string | null>(null);
   openChat.current = segments.at(-2) === "chat" && typeof openAgentId === "string" ? openAgentId : null;
   const onChatList = useRef(false);
@@ -58,200 +62,93 @@ function AuthenticatedStack() {
 
   return (
     <ChatNavigationGateContext value={navigationGate}>
-      <Stack
-        initialRouteName="connected"
-        screenListeners={({ route }) =>
-          route.name === "connected"
-            ? {
-                transitionStart: () => navigationGate.start(),
-                transitionEnd: () => navigationGate.finish(),
-                focus: () => navigationGate.focus(),
-                blur: () => navigationGate.blur(),
-              }
-            : {
-                gestureCancel: () => navigationGate.cancel(),
-              }
-        }
-        screenOptions={{
-          headerBackButtonDisplayMode: "minimal",
-          headerShadowVisible: false,
-          headerTransparent: isIOS,
-          orientation: "portrait",
-          sheetExpandsWhenScrolledToEdge: false,
-        }}
-      >
-        <Stack.Screen name="connected" options={{ animation: "fade", gestureEnabled: false, title: "" }} />
-        <Stack.Screen
-          name="chat/[agentId]"
-          options={{
-            animation: "slide_from_right",
-            contentStyle: { backgroundColor: background },
-            fullScreenGestureEnabled: false,
-            gestureEnabled: true,
-            headerShown: false,
-          }}
-        />
-        <Stack.Screen
-          name="code-preview/[previewId]"
-          options={{
-            animation: "slide_from_right",
-            contentStyle: { backgroundColor: background },
-            // The diagram pans with one finger, so only the screen edge goes back.
-            fullScreenGestureEnabled: false,
-            gestureEnabled: true,
-            // The screen draws the app's glass header, as the chat does.
-            headerShown: false,
-          }}
-        />
-        <Stack.Screen
-          name="remote-desktop/[serverId]"
-          options={{
-            animation: "fade",
-            contentStyle: { backgroundColor: background },
-            fullScreenGestureEnabled: false,
-            gestureEnabled: true,
-            headerShown: false,
-            orientation: "all",
-          }}
-        />
-        <Stack.Screen
-          name="channel/[channelId]"
-          options={{
-            animation: "slide_from_right",
-            contentStyle: { backgroundColor: background },
-            fullScreenGestureEnabled: false,
-            gestureEnabled: true,
-            headerShown: false,
-          }}
-        />
-        <Stack.Screen
-          name="channel-info/[channelId]"
-          options={{
-            contentStyle: { backgroundColor: sheetBackground },
-            headerShown: false,
-            scrollEdgeEffects: { top: "hidden", bottom: "soft" },
-            presentation: "formSheet",
-            sheetAllowedDetents: [0.85],
-            sheetGrabberVisible: true,
-          }}
-        />
-        <Stack.Screen
-          name="channel-actions/[channelId]"
-          options={{
-            ...sheetHeaderInsetOptions,
-            contentStyle: { backgroundColor: sheetBackground },
-            headerStyle: { backgroundColor: sheetBackground },
-            headerTransparent: false,
-            headerBlurEffect: "none",
-            scrollEdgeEffects: { top: "hidden", bottom: "soft" },
-            presentation: "formSheet",
-            sheetAllowedDetents: [0.6],
-            sheetGrabberVisible: true,
-            title: t("mobile.app.route.actionsNeeded"),
-          }}
-        />
-        <Stack.Screen
-          name="add-channel"
-          options={{
-            ...sheetHeaderInsetOptions,
-            contentStyle: { backgroundColor: sheetBackground },
-            headerStyle: { backgroundColor: isIOS ? "transparent" : sheetBackground },
-            headerTransparent: isIOS,
-            headerBlurEffect: "none",
-            scrollEdgeEffects: { top: "hidden", bottom: "soft" },
-            presentation: "formSheet",
-            sheetAllowedDetents: [0.85],
-            sheetGrabberVisible: true,
-            title: t("mobile.app.route.newChannel"),
-          }}
-        />
-        <Stack.Screen
-          name="add-agent"
-          options={{
-            ...sheetHeaderInsetOptions,
-            contentStyle: { backgroundColor: sheetBackground },
-            headerStyle: { backgroundColor: isIOS ? "transparent" : sheetBackground },
-            headerTransparent: isIOS,
-            headerBlurEffect: "none",
-            scrollEdgeEffects: { top: "hidden", bottom: "soft" },
-            presentation: "formSheet",
-            sheetAllowedDetents: [0.85],
-            sheetGrabberVisible: true,
-            title: t("mobile.app.route.createAgent"),
-          }}
-        />
-        <Stack.Screen
-          name="agent-info/[agentId]"
-          options={{
-            contentStyle: { backgroundColor: sheetBackground },
-            headerShown: false,
-            scrollEdgeEffects: { top: "hidden", bottom: "soft" },
-            presentation: "formSheet",
-            sheetAllowedDetents: [0.85],
-            sheetGrabberVisible: true,
-          }}
-        />
-        <Stack.Screen
-          name="install-agent"
-          options={{
-            ...sheetHeaderInsetOptions,
-            contentStyle: { backgroundColor: sheetBackground },
-            headerStyle: { backgroundColor: isIOS ? "transparent" : sheetBackground },
-            headerTransparent: isIOS,
-            headerBlurEffect: "none",
-            scrollEdgeEffects: { top: "hidden", bottom: "soft" },
-            presentation: "formSheet",
-            // A page to read before adding: full height, as the agent search.
-            sheetAllowedDetents: [1],
-            sheetInitialDetentIndex: "last",
-            sheetGrabberVisible: true,
-            title: t("mobile.app.route.addSharedAgent"),
-          }}
-        />
-        <Stack.Screen
-          name="section-form"
-          // Android: autoFocus focuses the name field while the sheet opens, and Android does not show
-          // the keyboard then. Focusing the field again after the opening shows it.
-          listeners={
-            isAndroid
+      <View className="flex-1" style={{ backgroundColor: background }}>
+        {customBackground ? (
+          <Image
+            source={{ uri: customTheme.imageUri ?? undefined }}
+            contentFit="cover"
+            blurRadius={customTheme.blur}
+            style={[StyleSheet.absoluteFill, { opacity: customTheme.opacity / 100 }]}
+            pointerEvents="none"
+          />
+        ) : null}
+        <Stack
+          initialRouteName="connected"
+          screenListeners={({ route }) =>
+            route.name === "connected"
               ? {
-                  transitionEnd: (event) => {
-                    if (event.data.closing) return;
-                    const input = TextInput.State.currentlyFocusedInput();
-                    if (!input) return;
-                    input.blur();
-                    input.focus();
-                  },
+                  transitionStart: () => navigationGate.start(),
+                  transitionEnd: () => navigationGate.finish(),
+                  focus: () => navigationGate.focus(),
+                  blur: () => navigationGate.blur(),
                 }
-              : undefined
+              : {
+                  gestureCancel: () => navigationGate.cancel(),
+                }
           }
-          options={{
-            ...sheetHeaderInsetOptions,
-            contentStyle: { backgroundColor: sheetBackground },
-            headerStyle: { backgroundColor: isIOS ? "transparent" : sheetBackground },
+          screenOptions={{
+            headerBackButtonDisplayMode: "minimal",
+            headerShadowVisible: false,
             headerTransparent: isIOS,
-            headerBlurEffect: "none",
-            scrollEdgeEffects: { top: "hidden", bottom: "soft" },
-            presentation: "formSheet",
-            sheetAllowedDetents: [0.85],
-            sheetGrabberVisible: true,
-            title: t("mobile.app.route.newSection"),
+            orientation: "portrait",
+            sheetExpandsWhenScrolledToEdge: false,
+            contentStyle: { backgroundColor: customBackground ? "transparent" : background },
           }}
-        />
-        <Stack.Screen
-          name="add-server"
-          options={{
-            contentStyle: { backgroundColor: sheetBackground },
-            headerShown: false,
-            scrollEdgeEffects: { top: "hidden", bottom: "soft" },
-            presentation: "formSheet",
-            sheetAllowedDetents: [0.85],
-            sheetGrabberVisible: true,
-          }}
-        />
-        <Stack.Protected guard={!session?.localOnly}>
+        >
           <Stack.Screen
-            name="hosted-server"
+            name="connected"
+            options={{
+              animation: "fade",
+              contentStyle: { backgroundColor: customBackground ? "transparent" : background },
+              gestureEnabled: false,
+              title: "",
+            }}
+          />
+          <Stack.Screen
+            name="chat/[agentId]"
+            options={{
+              animation: "slide_from_right",
+              contentStyle: { backgroundColor: customBackground ? "transparent" : background },
+              fullScreenGestureEnabled: false,
+              gestureEnabled: true,
+              headerShown: false,
+            }}
+          />
+          <Stack.Screen
+            name="code-preview/[previewId]"
+            options={{
+              animation: "slide_from_right",
+              contentStyle: { backgroundColor: customBackground ? "transparent" : background },
+              // The diagram pans with one finger, so only the screen edge goes back.
+              fullScreenGestureEnabled: false,
+              gestureEnabled: true,
+              // The screen draws the app's glass header, as the chat does.
+              headerShown: false,
+            }}
+          />
+          <Stack.Screen
+            name="remote-desktop/[serverId]"
+            options={{
+              animation: "fade",
+              contentStyle: { backgroundColor: background },
+              fullScreenGestureEnabled: false,
+              gestureEnabled: true,
+              headerShown: false,
+              orientation: "all",
+            }}
+          />
+          <Stack.Screen
+            name="channel/[channelId]"
+            options={{
+              animation: "slide_from_right",
+              contentStyle: { backgroundColor: customBackground ? "transparent" : background },
+              fullScreenGestureEnabled: false,
+              gestureEnabled: true,
+              headerShown: false,
+            }}
+          />
+          <Stack.Screen
+            name="channel-info/[channelId]"
             options={{
               contentStyle: { backgroundColor: sheetBackground },
               headerShown: false,
@@ -261,97 +158,224 @@ function AuthenticatedStack() {
               sheetGrabberVisible: true,
             }}
           />
-        </Stack.Protected>
-        <Stack.Screen
-          name="search-agents"
-          options={{
-            contentStyle: { backgroundColor: sheetBackground },
-            headerShown: false,
-            scrollEdgeEffects: { top: "hidden", bottom: "soft" },
-            presentation: "formSheet",
-            sheetAllowedDetents: [1],
-            sheetGrabberVisible: true,
-            sheetInitialDetentIndex: "last",
-          }}
-        />
-        <Stack.Screen
-          name="hidden-chats"
-          options={{
-            contentStyle: { backgroundColor: sheetBackground },
-            headerShown: false,
-            scrollEdgeEffects: { top: "hidden", bottom: "soft" },
-            presentation: "formSheet",
-            sheetAllowedDetents: [0.85],
-            sheetGrabberVisible: true,
-          }}
-        />
-        <Stack.Screen
-          name="server-settings"
-          options={{
-            contentStyle: { backgroundColor: sheetBackground },
-            headerShown: false,
-            scrollEdgeEffects: { top: "hidden", bottom: "soft" },
-            presentation: "formSheet",
-            sheetAllowedDetents: [0.85],
-            sheetGrabberVisible: true,
-          }}
-        />
-        <Stack.Screen
-          name="server-routines"
-          options={{
-            contentStyle: { backgroundColor: sheetBackground },
-            headerShown: false,
-            scrollEdgeEffects: { top: "hidden", bottom: "soft" },
-            presentation: "formSheet",
-            sheetAllowedDetents: [0.85],
-            sheetGrabberVisible: true,
-          }}
-        />
-        <Stack.Screen
-          name="server-usage"
-          options={{
-            contentStyle: { backgroundColor: sheetBackground },
-            headerShown: false,
-            scrollEdgeEffects: { top: "hidden", bottom: "soft" },
-            presentation: "formSheet",
-            sheetAllowedDetents: [0.85],
-            sheetGrabberVisible: true,
-          }}
-        />
-        <Stack.Screen
-          name="message-actions"
-          options={{
-            contentStyle: { backgroundColor: sheetBackground },
-            headerShown: false,
-            scrollEdgeEffects: { top: "hidden", bottom: "soft" },
-            presentation: "formSheet",
-            sheetAllowedDetents: [segments.at(-1) === "select-text" ? 0.85 : 0.4],
-            sheetGrabberVisible: true,
-          }}
-        />
-        <Stack.Screen
-          name="queued-messages"
-          options={{
-            contentStyle: { backgroundColor: sheetBackground },
-            headerShown: false,
-            scrollEdgeEffects: { top: "hidden", bottom: "soft" },
-            presentation: "formSheet",
-            sheetAllowedDetents: [0.85],
-            sheetGrabberVisible: true,
-          }}
-        />
-        <Stack.Screen
-          name="settings"
-          options={{
-            contentStyle: { backgroundColor: sheetBackground },
-            headerShown: false,
-            scrollEdgeEffects: { top: "hidden", bottom: "soft" },
-            presentation: "formSheet",
-            sheetAllowedDetents: [0.85],
-            sheetGrabberVisible: true,
-          }}
-        />
-      </Stack>
+          <Stack.Screen
+            name="channel-actions/[channelId]"
+            options={{
+              ...sheetHeaderInsetOptions,
+              contentStyle: { backgroundColor: sheetBackground },
+              headerStyle: { backgroundColor: sheetBackground },
+              headerTransparent: false,
+              headerBlurEffect: "none",
+              scrollEdgeEffects: { top: "hidden", bottom: "soft" },
+              presentation: "formSheet",
+              sheetAllowedDetents: [0.6],
+              sheetGrabberVisible: true,
+              title: t("mobile.app.route.actionsNeeded"),
+            }}
+          />
+          <Stack.Screen
+            name="add-channel"
+            options={{
+              ...sheetHeaderInsetOptions,
+              contentStyle: { backgroundColor: sheetBackground },
+              headerStyle: { backgroundColor: isIOS ? "transparent" : sheetBackground },
+              headerTransparent: isIOS,
+              headerBlurEffect: "none",
+              scrollEdgeEffects: { top: "hidden", bottom: "soft" },
+              presentation: "formSheet",
+              sheetAllowedDetents: [0.85],
+              sheetGrabberVisible: true,
+              title: t("mobile.app.route.newChannel"),
+            }}
+          />
+          <Stack.Screen
+            name="add-agent"
+            options={{
+              ...sheetHeaderInsetOptions,
+              contentStyle: { backgroundColor: sheetBackground },
+              headerStyle: { backgroundColor: isIOS ? "transparent" : sheetBackground },
+              headerTransparent: isIOS,
+              headerBlurEffect: "none",
+              scrollEdgeEffects: { top: "hidden", bottom: "soft" },
+              presentation: "formSheet",
+              sheetAllowedDetents: [0.85],
+              sheetGrabberVisible: true,
+              title: t("mobile.app.route.createAgent"),
+            }}
+          />
+          <Stack.Screen
+            name="agent-info/[agentId]"
+            options={{
+              contentStyle: { backgroundColor: sheetBackground },
+              headerShown: false,
+              scrollEdgeEffects: { top: "hidden", bottom: "soft" },
+              presentation: "formSheet",
+              sheetAllowedDetents: [0.85],
+              sheetGrabberVisible: true,
+            }}
+          />
+          <Stack.Screen
+            name="install-agent"
+            options={{
+              ...sheetHeaderInsetOptions,
+              contentStyle: { backgroundColor: sheetBackground },
+              headerStyle: { backgroundColor: isIOS ? "transparent" : sheetBackground },
+              headerTransparent: isIOS,
+              headerBlurEffect: "none",
+              scrollEdgeEffects: { top: "hidden", bottom: "soft" },
+              presentation: "formSheet",
+              // A page to read before adding: full height, as the agent search.
+              sheetAllowedDetents: [1],
+              sheetInitialDetentIndex: "last",
+              sheetGrabberVisible: true,
+              title: t("mobile.app.route.addSharedAgent"),
+            }}
+          />
+          <Stack.Screen
+            name="section-form"
+            // Android: autoFocus focuses the name field while the sheet opens, and Android does not show
+            // the keyboard then. Focusing the field again after the opening shows it.
+            listeners={
+              isAndroid
+                ? {
+                    transitionEnd: (event) => {
+                      if (event.data.closing) return;
+                      const input = TextInput.State.currentlyFocusedInput();
+                      if (!input) return;
+                      input.blur();
+                      input.focus();
+                    },
+                  }
+                : undefined
+            }
+            options={{
+              ...sheetHeaderInsetOptions,
+              contentStyle: { backgroundColor: sheetBackground },
+              headerStyle: { backgroundColor: isIOS ? "transparent" : sheetBackground },
+              headerTransparent: isIOS,
+              headerBlurEffect: "none",
+              scrollEdgeEffects: { top: "hidden", bottom: "soft" },
+              presentation: "formSheet",
+              sheetAllowedDetents: [0.85],
+              sheetGrabberVisible: true,
+              title: t("mobile.app.route.newSection"),
+            }}
+          />
+          <Stack.Screen
+            name="add-server"
+            options={{
+              contentStyle: { backgroundColor: sheetBackground },
+              headerShown: false,
+              scrollEdgeEffects: { top: "hidden", bottom: "soft" },
+              presentation: "formSheet",
+              sheetAllowedDetents: [0.85],
+              sheetGrabberVisible: true,
+            }}
+          />
+          <Stack.Protected guard={!session?.localOnly}>
+            <Stack.Screen
+              name="hosted-server"
+              options={{
+                contentStyle: { backgroundColor: sheetBackground },
+                headerShown: false,
+                scrollEdgeEffects: { top: "hidden", bottom: "soft" },
+                presentation: "formSheet",
+                sheetAllowedDetents: [0.85],
+                sheetGrabberVisible: true,
+              }}
+            />
+          </Stack.Protected>
+          <Stack.Screen
+            name="search-agents"
+            options={{
+              contentStyle: { backgroundColor: sheetBackground },
+              headerShown: false,
+              scrollEdgeEffects: { top: "hidden", bottom: "soft" },
+              presentation: "formSheet",
+              sheetAllowedDetents: [1],
+              sheetGrabberVisible: true,
+              sheetInitialDetentIndex: "last",
+            }}
+          />
+          <Stack.Screen
+            name="hidden-chats"
+            options={{
+              contentStyle: { backgroundColor: sheetBackground },
+              headerShown: false,
+              scrollEdgeEffects: { top: "hidden", bottom: "soft" },
+              presentation: "formSheet",
+              sheetAllowedDetents: [0.85],
+              sheetGrabberVisible: true,
+            }}
+          />
+          <Stack.Screen
+            name="server-settings"
+            options={{
+              contentStyle: { backgroundColor: sheetBackground },
+              headerShown: false,
+              scrollEdgeEffects: { top: "hidden", bottom: "soft" },
+              presentation: "formSheet",
+              sheetAllowedDetents: [0.85],
+              sheetGrabberVisible: true,
+            }}
+          />
+          <Stack.Screen
+            name="server-routines"
+            options={{
+              contentStyle: { backgroundColor: sheetBackground },
+              headerShown: false,
+              scrollEdgeEffects: { top: "hidden", bottom: "soft" },
+              presentation: "formSheet",
+              sheetAllowedDetents: [0.85],
+              sheetGrabberVisible: true,
+            }}
+          />
+          <Stack.Screen
+            name="server-usage"
+            options={{
+              contentStyle: { backgroundColor: sheetBackground },
+              headerShown: false,
+              scrollEdgeEffects: { top: "hidden", bottom: "soft" },
+              presentation: "formSheet",
+              sheetAllowedDetents: [0.85],
+              sheetGrabberVisible: true,
+            }}
+          />
+          <Stack.Screen
+            name="message-actions"
+            options={{
+              contentStyle: { backgroundColor: sheetBackground },
+              headerShown: false,
+              scrollEdgeEffects: { top: "hidden", bottom: "soft" },
+              presentation: "formSheet",
+              sheetAllowedDetents: [segments.at(-1) === "select-text" ? 0.85 : 0.4],
+              sheetGrabberVisible: true,
+            }}
+          />
+          <Stack.Screen
+            name="queued-messages"
+            options={{
+              contentStyle: { backgroundColor: sheetBackground },
+              headerShown: false,
+              scrollEdgeEffects: { top: "hidden", bottom: "soft" },
+              presentation: "formSheet",
+              sheetAllowedDetents: [0.85],
+              sheetGrabberVisible: true,
+            }}
+          />
+          <Stack.Screen
+            name="settings"
+            options={{
+              contentStyle: { backgroundColor: sheetBackground },
+              headerShown: false,
+              scrollEdgeEffects: { top: "hidden", bottom: "soft" },
+              presentation: "formSheet",
+              sheetAllowedDetents: [0.85],
+              sheetGrabberVisible: true,
+            }}
+          />
+        </Stack>
+      </View>
     </ChatNavigationGateContext>
   );
 }

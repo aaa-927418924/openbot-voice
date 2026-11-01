@@ -31,13 +31,17 @@ import { useI18n } from "../../i18n-context";
 import { ComputerUseSetup } from "../computer-use/ComputerUseSetup";
 import { SettingsDynamicIslandTab } from "./SettingsDynamicIslandTab";
 import { SettingsGeneralTab } from "./SettingsGeneralTab";
+import { SettingsThemeTab } from "./SettingsThemeTab";
 import { navItem, navItems, type SettingsTab } from "./settings-tabs";
+import { DEFAULT_DESKTOP_THEME, type DesktopThemeSettings } from "./theme-settings";
 
 export interface SettingsModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   value: GeneralSettingsValue;
   onValueChange: (value: GeneralSettingsValue) => void;
+  themeSettings?: DesktopThemeSettings;
+  onThemeSettingsChange?: (value: DesktopThemeSettings) => boolean;
   appInfo: AppInfo | null;
   /** The built-in display's notch, null when it has none, or undefined before main answers. */
   builtInDisplayGeometry?: DynamicIslandGeometry | undefined;
@@ -139,6 +143,7 @@ export function SettingsModal(props: SettingsModalProps) {
     onChange(value: string) {
       if (
         value === "general" ||
+        value === "theme" ||
         (value === "dynamic-island" && isMac()) ||
         value === "computer-use" ||
         value === "profile" ||
@@ -212,6 +217,13 @@ export function SettingsModal(props: SettingsModalProps) {
             onUnhideServer={props.onUnhideServer ?? (() => {})}
             onUnhideAllServers={props.onUnhideAllServers ?? (() => {})}
             onExportRemoteDesktopSupportLog={props.onExportRemoteDesktopSupportLog}
+          />
+        </Tabs.Content>
+
+        <Tabs.Content value="theme" class="settings-modal-tab-panel" data-tab="theme">
+          <SettingsThemeTab
+            value={props.themeSettings ?? DEFAULT_DESKTOP_THEME}
+            onChange={props.onThemeSettingsChange ?? (() => true)}
           />
         </Tabs.Content>
 

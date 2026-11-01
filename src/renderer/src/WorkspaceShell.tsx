@@ -15,6 +15,7 @@ import { SchedulePanel } from "./features/schedule/SchedulePanel";
 import { useServerMigration } from "./features/servers/server-migration-context";
 import { useServers } from "./features/servers/servers-context";
 import { WorkspaceServerRail } from "./features/servers/WorkspaceServerRail";
+import { useSettings } from "./features/settings/settings-context";
 import { WorkspaceSidebar } from "./features/sidebar/WorkspaceSidebar";
 import { useUsage } from "./features/usage/usage-context";
 import { useLayout } from "./layout";
@@ -51,6 +52,7 @@ export function WorkspaceShell(props: { account: () => CentralAuthUser }) {
   const migration = useServerMigration();
   const openMigration = () => void migration.openDialog();
   const { remoteDesktopWorkspaceVisible } = useRemoteDesktop();
+  const { themeSettings } = useSettings();
   const { agentSetupOpen, serverOnboardingOpen } = useAgents();
   const { activeDirectMember } = useDirectMessages();
   const usageServerId = () => (activeServer() ? usage.state.serverId : null);
@@ -74,6 +76,7 @@ export function WorkspaceShell(props: { account: () => CentralAuthUser }) {
       blockedServer={blockedRemoteServer()}
       onRetryServer={retryServerConnection}
       usageOpen={!!usageServerId()}
+      theme={themeSettings()}
       left={
         <>
           <WorkspaceServerRail onMigrateToCloud={openMigration} />

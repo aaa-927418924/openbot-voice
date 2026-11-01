@@ -237,13 +237,15 @@ const RemoteDesktop = createSimpleContext({
     async function disconnectRemoteDesktopWorkspace(restoreFocus = true): Promise<void> {
       const serverId = remoteDesktopWorkspaceServerId();
       if (!serverId) return;
+      const session = latestRemoteDesktopSession(serverId);
       ++remoteDesktopConnectionRequest;
       clearRemoteDesktopConnectionError();
       setRemoteDesktopSessionEstablished(false);
-      const session = latestRemoteDesktopSession(serverId);
-      if (session) await disconnectRemoteDesktop(session.id);
-      else await remoteDesktopConnectPromise;
-      remoteDesktopConnectPromise = null;
+      // A server switch must not wait for a remote host that is still starting its viewer. The
+      // request revision above makes a late connect clean up its own session in
+      // startRemoteDesktopConnection; an already established session gets a best-effort disconnect
+      // while the workspace closes immediately.
+      if (session) void disconnectRemoteDesktop(session.id).catch(() => undefined);
       setRemoteDesktopConnectingServerId(null);
       setRemoteDesktopWorkspaceVisible(false);
       setRemoteDesktopWorkspaceServerId(null);

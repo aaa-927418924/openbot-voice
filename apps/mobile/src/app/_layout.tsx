@@ -18,6 +18,7 @@ import { MobileAnalyticsLifecycle } from "@/features/analytics/lifecycle";
 import { MobileSessionProvider, useMobileSession } from "@/features/auth/context/mobile-session-context";
 import { loadAppLanguage } from "@/features/settings/model/app-language";
 import { loadAppearance } from "@/features/settings/model/appearance";
+import { loadCustomTheme } from "@/features/settings/model/custom-theme";
 import { loadDictationLanguage } from "@/features/settings/model/dictation-language";
 import { loadHapticsPreference } from "@/features/settings/model/haptics";
 import { loadLiveActivitiesPreference } from "@/features/settings/model/live-activities";
@@ -168,6 +169,7 @@ export default function RootLayout() {
   }, [canvas]);
   useEffect(() => {
     void loadAppearance().catch(() => undefined);
+    void loadCustomTheme().catch(() => undefined);
     void loadHapticsPreference().catch(() => undefined);
     void loadAgentColorMessages().catch(() => undefined);
     void loadLiveActivitiesPreference().catch(() => undefined);

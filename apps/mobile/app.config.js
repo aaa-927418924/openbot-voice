@@ -1,11 +1,9 @@
-import type { ConfigContext, ExpoConfig } from "expo/config";
-import appJson from "./app.json";
-
-export default ({ config }: ConfigContext): ExpoConfig => {
-  const baseConfig: ExpoConfig = {
+/** @param {{ config: import("expo/config").ExpoConfig }} context */
+export default ({ config }) => {
+  const baseConfig = {
     ...config,
-    name: config.name ?? appJson.expo.name,
-    slug: config.slug ?? appJson.expo.slug,
+    name: config.name ?? "OpenBot",
+    slug: config.slug ?? "openbot",
   };
 
   if (process.env.OPENBOT_ANDROID_APK_VARIANT !== "voice") return baseConfig;

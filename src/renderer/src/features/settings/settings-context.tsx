@@ -19,6 +19,7 @@ import { useSetup } from "../onboarding/onboarding-context";
 import { settingsPort } from "./settings-port";
 import { isOpenSettingsShortcut } from "./settings-shortcut";
 import type { SettingsTab } from "./settings-tabs";
+import { type DesktopThemeSettings, loadDesktopThemeSettings, saveDesktopThemeSettings } from "./theme-settings";
 
 const ANALYTICS_APP_VERSION_STORAGE_KEY = "openbot:analytics-app-version";
 
@@ -75,6 +76,12 @@ const Settings = createSimpleContext({
       soundFeedback: isActionSoundEnabled(),
       soundTheme: readActionSoundTheme(),
     });
+    const [themeSettings, setThemeSettings] = createSignal<DesktopThemeSettings>(loadDesktopThemeSettings());
+    function updateThemeSettings(value: DesktopThemeSettings): boolean {
+      if (!saveDesktopThemeSettings(value)) return false;
+      setThemeSettings(value);
+      return true;
+    }
     const [windowsStartupSettings, setWindowsStartupSettings] = createSignal<WindowsStartupSettings | null>(null);
     let windowsStartupReadCount = 0;
     let windowsStartupSaveCount = 0;
@@ -479,6 +486,8 @@ const Settings = createSimpleContext({
     return {
       analyticsPreferenceLoaded,
       generalSettings,
+      themeSettings,
+      updateThemeSettings,
       windowsStartupSettings,
       builtInDisplayGeometry,
       turboModePending,

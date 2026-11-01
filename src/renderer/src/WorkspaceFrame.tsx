@@ -2,6 +2,7 @@ import type { ServerSummary } from "@openbot/contracts/ipc";
 import { RemoteCompatibilityScreen } from "@openbot/ui/features/remote-desktop/RemoteCompatibilityScreen";
 import type { JSX } from "@solidjs/web";
 import { omit, type ParentProps, Show } from "solid-js";
+import type { DesktopThemeSettings } from "./features/settings/theme-settings";
 import { useLayout } from "./layout";
 import { LEFT_PANEL_COMPACT } from "./layout-constants";
 import { usePlatform } from "./platform";
@@ -20,6 +21,8 @@ type WorkspaceFrameProps = ParentProps<
     left: JSX.Element;
     /** Whether the usage report is open. While it is, the middle panes are inert. */
     usageOpen: boolean;
+    /** The desktop's per-device background preference. The web frame leaves this unset. */
+    theme?: DesktopThemeSettings;
     usage?: JSX.Element;
     /** Dialogs and overlays after the panes. */
     after?: JSX.Element;
@@ -44,11 +47,13 @@ export function WorkspaceFrame(props: WorkspaceFrameProps) {
     "onRetryServer",
     "left",
     "usageOpen",
+    "theme",
     "usage",
     "after",
     "children",
     "class",
   );
+  const customTheme = () => (props.theme?.mode === "custom" && props.theme.imageDataUrl ? props.theme : null);
 
   return (
     <div
@@ -63,10 +68,16 @@ export function WorkspaceFrame(props: WorkspaceFrameProps) {
           "app-frame-with-server-rail": layout.serverRailVisible(),
           "app-frame-usage-open": props.usageOpen,
           "app-frame-platform-darwin": platform.appInfo()?.platform === "darwin",
+          "app-frame-custom-theme": customTheme() !== null,
         },
       ]}
       aria-hidden={props.hidden ? "true" : undefined}
-      style={`--left-panel-width: ${props.compact ? LEFT_PANEL_COMPACT : layout.leftPanelWidth()}px`}
+      style={`--left-panel-width: ${props.compact ? LEFT_PANEL_COMPACT : layout.leftPanelWidth()}px; ${(() => {
+        const theme = customTheme();
+        return theme
+          ? `--workspace-theme-image: url("${theme.imageDataUrl}"); --workspace-theme-blur: ${theme.blur}px; --workspace-theme-opacity: ${theme.opacity / 100}`
+          : "";
+      })()}`}
     >
       {props.left}
       <WorkspaceLeftPanelResizer />

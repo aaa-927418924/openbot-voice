@@ -8,6 +8,24 @@ export const messages = {
   "settings.language.system": "Langue du système",
   // The logo color setting, General tab.
   "settings.appearance.title": "Apparence",
+  "settings.theme.appearance.title": "Thème",
+  "settings.theme.dark": "Sombre",
+  "settings.theme.custom": "Personnalisé",
+  "settings.theme.background.title": "Image d’arrière-plan",
+  "settings.theme.background.image": "Choisir une image",
+  "settings.theme.background.imageDescription": "L’image reste sur cet appareil et n’est pas envoyée.",
+  "settings.theme.background.choose": "Choisir l’image",
+  "settings.theme.background.loading": "Préparation…",
+  "settings.theme.background.remove": "Supprimer",
+  "settings.theme.background.preview": "Aperçu de l’arrière-plan",
+  "settings.theme.background.blur": "Flou · {value}px",
+  "settings.theme.background.blurDescription": "Adoucit l’image derrière l’espace de travail.",
+  "settings.theme.background.blurLabel": "Flou de l’arrière-plan",
+  "settings.theme.background.opacity": "Opacité · {value}%",
+  "settings.theme.background.opacityDescription": "Règle la visibilité de l’image.",
+  "settings.theme.background.opacityLabel": "Opacité de l’image",
+  "settings.theme.saveFailed": "Impossible d’enregistrer le thème sur cet appareil.",
+  "settings.theme.imageFailed": "Impossible d’utiliser cette image. Choisissez-en une autre.",
   "settings.logoColor.title": "Couleur du logo",
   "settings.logoColor.description":
     "La couleur du logo OpenBot dans le Dock,\nla barre des tâches et la Dynamic Island.",
@@ -106,6 +124,8 @@ export const messages = {
   // The Settings window shell: its tab list, headers and save bar.
   "settings.tab.general.title": "Général",
   "settings.tab.general.description": "Contrôler le comportement d’OpenBot sur cet ordinateur.",
+  "settings.tab.theme.title": "Thème",
+  "settings.tab.theme.description": "Choisir un thème sombre ou un arrière-plan personnalisé.",
   "settings.tab.computerUse.title": "Computer Use",
   "settings.tab.computerUse.description":
     "Autoriser OpenBot à voir et à interagir avec les applications de cet ordinateur.",
