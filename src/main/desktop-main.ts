@@ -1009,15 +1009,31 @@ if (!hasSingleInstanceLock) {
       remoteServers.on("changed", forwardServers);
       // CSP is fixed for the current renderer document, so reload only when its trusted host set changes.
       let viewerOrigins = remoteServers.remoteDesktopViewerOrigins().join("\n");
+      let connectionSequences = new Map(
+        remoteServers.list().map((server) => [server.id, server.connectionSequence ?? 0] as const),
+      );
       let rendererLoaded = false;
-      remoteServers.on("changed", () => {
+      remoteServers.on("changed", (servers) => {
+        const nextConnectionSequences = new Map<string, number>();
+        for (const server of servers) {
+          const sequence = server.connectionSequence ?? 0;
+          const previous = connectionSequences.get(server.id);
+          if (previous !== undefined && sequence > previous) {
+            trace.record({ kind: "ipc", name: "remote-server:reconnected", durationMs: 0, outcome: "ok" });
+          }
+          nextConnectionSequences.set(server.id, sequence);
+        }
+        connectionSequences = nextConnectionSequences;
+
         const nextViewerOrigins = remoteServers.remoteDesktopViewerOrigins().join("\n");
         if (nextViewerOrigins === viewerOrigins) return;
         viewerOrigins = nextViewerOrigins;
         if (!rendererLoaded) return;
         const window = windows.getMainWindow();
-        if (window && !window.isDestroyed() && isTrustedRendererUrl(window.webContents.getURL()))
+        if (window && !window.isDestroyed() && isTrustedRendererUrl(window.webContents.getURL())) {
+          trace.record({ kind: "ipc", name: "renderer:reload-for-viewer-csp", durationMs: 0, outcome: "ok" });
           window.webContents.reload();
+        }
       });
       remoteServers.on("agent", (serverId, event, bufferedLive) => {
         forwardAgentEvent(serverId, event, bufferedLive);
