@@ -177,6 +177,7 @@ import { SelfHostedIdentityApiServer, selfHostedTeamProfile } from "./self-hoste
 import { SelfHostedIdentityAuthority } from "./self-hosted-identity-authority";
 import { ServerMigrationDestination } from "./server-migration-destination";
 import { createLocalServerMigrationPeer } from "./server-migration-local-peer";
+import { serverMigrationSourceStagingRoot } from "./server-migration-paths";
 import { ServerMigrationSourceService } from "./server-migration-source";
 import { ServerMode, type ServerModeEnvironment } from "./server-mode";
 import {
@@ -2035,7 +2036,7 @@ export async function createApplicationServices({
           userDataRoot: migrationUserDataRoot,
           openBotRoot: migrationOpenBotRoot,
           // This process's own copy only. The local server data stays where it is.
-          stagingRoot: join(migrationUserDataRoot, "server-migration-staging"),
+          stagingRoot: serverMigrationSourceStagingRoot(migrationUserDataRoot, migrationOpenBotRoot),
           localMembers: () => teamStore.listMembers(),
           localOwnerMemberId: () => teamStore.getOwnerMemberId(),
           destinations: () => {
