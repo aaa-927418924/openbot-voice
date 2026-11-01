@@ -20,6 +20,7 @@ import {
   type MacPermissionId,
 } from "@openbot/contracts/ipc";
 import type { AppTranslate } from "@openbot/i18n";
+import { createOpenBotLogger } from "@openbot/logging";
 import { app, BrowserWindow, clipboard, type Display, Menu, type Point, type Rectangle, screen } from "electron";
 import type { AgentService } from "../backend/agent-service";
 import type { BrowserHost } from "../backend/browser-host";
@@ -47,6 +48,9 @@ import { isTrustedRendererUrl } from "./trusted-renderer";
 import type { UpdateService } from "./update-service";
 import { isWindowsStartupMinimized } from "./windows-startup";
 
+const hiddenMainWindows = new WeakSet<BrowserWindow>();
+const logger = createOpenBotLogger("main-window");
+
 /**
  * What the window surface reads off the running application. Deliberately narrower than
  * `ApplicationServices`: keeping it structural is what lets the composition root import this
@@ -72,6 +76,7 @@ export interface MainWindowContext {
   holder: MainWindowHolder;
   statePath: string;
   appIconPath: string;
+  startHidden: boolean;
   developmentProfile: string | null;
   developmentRemoteRole: "host" | "client" | null;
   developmentTestClientEnabled: boolean;
@@ -102,6 +107,7 @@ export function createMainWindowController({
   holder,
   statePath,
   appIconPath,
+  startHidden,
   developmentProfile,
   developmentRemoteRole,
   developmentTestClientEnabled,
@@ -136,6 +142,7 @@ export function createMainWindowController({
       minWidth: 960,
       minHeight: 640,
       show: false,
+      ...(startHidden ? { focusable: false, opacity: 0 } : {}),
       backgroundColor: "#0b0d0e",
       title:
         developmentProfile === "test-client"
@@ -164,6 +171,20 @@ export function createMainWindowController({
         webSecurity: true,
       },
     });
+    if (startHidden) {
+      // The cloud host needs its renderer for the existing Team services, but its window is only
+      // an implementation detail. Keep OS activation, tray actions, and late startup callbacks
+      // from exposing it after the initial ready-to-show event.
+      hiddenMainWindows.add(window);
+      window.setSkipTaskbar(true);
+      window.setIgnoreMouseEvents(true, { forward: true });
+      window.on("show", () => {
+        logger.warn("The background Cloud host window received a show request; hiding it.");
+        window.hide();
+      });
+      window.hide();
+      logger.info("Created the Cloud host renderer in background mode.");
+    }
     if (process.platform === "win32" || process.platform === "linux") {
       window.setAutoHideMenuBar(false);
       window.setMenuBarVisibility(false);
@@ -171,6 +192,10 @@ export function createMainWindowController({
 
     window.once("ready-to-show", () => {
       performance.mark("openbot:window-ready");
+      if (startHidden) {
+        window.hide();
+        return;
+      }
       if (
         !isWindowsStartupMinimized(process.platform, process.argv) &&
         shouldShowDevelopmentWindow({
@@ -183,7 +208,7 @@ export function createMainWindowController({
     });
     window.on("close", (event) => {
       rememberMainWindowBounds(window.getNormalBounds());
-      if (shouldHideMainWindowOnClose(process.platform, isQuitting())) {
+      if (shouldHideMainWindowOnClose(process.platform, isQuitting(), startHidden)) {
         // The hidden renderer owns the cross-host Dynamic Island coordinator and must outlive its visible window.
         event.preventDefault();
         window.hide();
@@ -552,6 +577,7 @@ export function sendComputerUseHighlightPlacement(
 }
 
 export function showMainWindow(window: BrowserWindow): void {
+  if (hiddenMainWindows.has(window)) return;
   presentMainWindow(window, process.platform, () => app.show());
 }
 

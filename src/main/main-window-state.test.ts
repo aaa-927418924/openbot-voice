@@ -30,6 +30,11 @@ describe("main window state", () => {
     expect(shouldHideMainWindowOnClose("win32", true)).toBe(false);
   });
 
+  it("hides the background Cloud host window on Linux but allows the service to quit", () => {
+    expect(shouldHideMainWindowOnClose("linux", false, true)).toBe(true);
+    expect(shouldHideMainWindowOnClose("linux", true, true)).toBe(false);
+  });
+
   it("keeps the macOS application in the Dock and application switcher", async () => {
     const setActivationPolicy = vi.fn();
     const showDock = vi.fn(async () => undefined);

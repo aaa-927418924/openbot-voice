@@ -325,6 +325,7 @@ const windows = createMainWindowController({
   holder: windowHolder,
   statePath: join(app.getPath("userData"), MAIN_WINDOW_STATE_FILE),
   appIconPath,
+  startHidden: cloudHostMode,
   developmentProfile,
   developmentRemoteRole,
   developmentTestClientEnabled,
@@ -1224,6 +1225,7 @@ if (!hasSingleInstanceLock) {
       });
 
       app.on("activate", () => {
+        if (cloudHostMode) return;
         const window = windowHolder.current;
         if (window && !window.isDestroyed()) {
           showMainWindow(window);
