@@ -767,8 +767,10 @@ function isAllowedAssetDirectory(path: string): boolean {
     path === "user-data/avatars" ||
     path === "user-data/avatars/agents" ||
     path.startsWith("user-data/avatars/agents/") ||
+    path === "user-data/openbot-team-server-v1.json.assets" ||
     path === "user-data/openbot-team-server-v1.json.assets/logo" ||
     path.startsWith("user-data/openbot-team-server-v1.json.assets/logo/") ||
+    path === "user-data/openbot-team-server-v2.json.assets" ||
     path === "user-data/openbot-team-server-v2.json.assets/logo" ||
     path.startsWith("user-data/openbot-team-server-v2.json.assets/logo/")
   );

@@ -4,7 +4,11 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { Effect } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ServerMigrationDestination } from "./server-migration-destination";
+import {
+  activationRecordDirectory,
+  recoverServerMigrationAtStartup,
+  ServerMigrationDestination,
+} from "./server-migration-destination";
 import { createServerMigrationSnapshot } from "./server-migration-snapshot";
 
 describe("the server migration destination", () => {
@@ -25,6 +29,7 @@ describe("the server migration destination", () => {
       mkdir(join(userDataRoot, "avatars", "agents"), { recursive: true }),
       mkdir(join(openBotRoot, "Agents", "old-agent"), { recursive: true }),
       mkdir(join(sourceUserData, "avatars", "agents", "new-agent"), { recursive: true }),
+      mkdir(join(sourceUserData, "openbot-team-server-v2.json.assets", "logo"), { recursive: true }),
       mkdir(join(sourceOpenBot, "Agents", "new-agent"), { recursive: true }),
       mkdir(join(sourceOpenBot, "Shared", "Data"), { recursive: true }),
     ]);
@@ -37,6 +42,7 @@ describe("the server migration destination", () => {
     await writeDatabase(join(sourceOpenBot, "Shared", "Data", "agent-data.db"), "source agent data");
     await writeFile(join(sourceOpenBot, "Agents", "new-agent", "workspace.md"), "migrated workspace");
     await writeFile(join(sourceUserData, "avatars", "agents", "new-agent", "avatar.png"), "migrated avatar");
+    await writeFile(join(sourceUserData, "openbot-team-server-v2.json.assets", "logo", "server.png"), "server logo");
 
     snapshotPath = join(root, "snapshots", "snapshot-1");
     await mkdir(dirname(snapshotPath), { recursive: true });
@@ -94,6 +100,9 @@ describe("the server migration destination", () => {
     expect(readDatabase(join(userDataRoot, "openbot.db"))).toBe("source chat");
     expect(readDatabase(join(openBotRoot, "Shared", "Data", "agent-data.db"))).toBe("source agent data");
     expect(await readFile(join(openBotRoot, "Agents", "new-agent", "workspace.md"), "utf8")).toBe("migrated workspace");
+    expect(await readFile(join(userDataRoot, "openbot-team-server-v2.json.assets", "logo", "server.png"), "utf8")).toBe(
+      "server logo",
+    );
     // The destination's own identity files are copied over the staged snapshot before publication.
     expect(await readFile(join(userDataRoot, "openbot-team-server-v2.json"), "utf8")).toBe("destination identity");
     expect(await readFile(join(userDataRoot, "self-hosted-identity.json"), "utf8")).toBe("destination auth");
@@ -118,6 +127,36 @@ describe("the server migration destination", () => {
     expect(activated).toHaveBeenCalledOnce();
     expect(await backupNames()).toEqual(backups);
     expect(readDatabase(join(userDataRoot, "openbot.db"))).toBe("source chat");
+  });
+
+  it("keeps an unstarted prepared transfer retryable after startup recovery", async () => {
+    const transferId = "retry-transfer";
+    const recordDirectory = activationRecordDirectory(userDataRoot);
+    const recordPath = join(recordDirectory, `${transferId}.json`);
+    const stagedUserDataRoot = `${userDataRoot}.migration-retry`;
+    const stagedOpenBotRoot = `${openBotRoot}.migration-retry`;
+    await mkdir(recordDirectory, { recursive: true });
+    await writeFile(
+      recordPath,
+      `${JSON.stringify({
+        version: 1,
+        transferId,
+        phase: "prepared",
+        stagedUserDataRoot,
+        stagedOpenBotRoot,
+        updatedAt: new Date().toISOString(),
+      })}\n`,
+      { mode: 0o600 },
+    );
+
+    await recoverServerMigrationAtStartup({ userDataRoot, openBotRoot });
+    await expect(readFile(recordPath, "utf8")).resolves.toContain('"phase":"prepared"');
+
+    const service = create(vi.fn());
+    await service.migration.activate({ memberId: "owner-1", transferId, snapshotPath, manifest });
+
+    expect(readDatabase(join(userDataRoot, "openbot.db"))).toBe("source chat");
+    await expect(readFile(recordPath, "utf8")).resolves.toContain('"phase":"activated"');
   });
 
   it("refuses a member that is not the owner before it changes any root", async () => {

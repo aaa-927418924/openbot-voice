@@ -148,8 +148,10 @@ export async function reconcileServerMigrationActivations(userDataRoot: string):
     const record = await readRecord(path);
     if (!record || record.phase === "activated") continue;
     const staged = (await pathExists(record.stagedUserDataRoot)) || (await pathExists(record.stagedOpenBotRoot));
-    // A committed activation moved both staged roots to the active paths.
-    if (!staged) {
+    // Only a publishing record proves that root activation began. A prepared record can have no
+    // staged roots when import validation failed before it created either directory; marking that
+    // attempt activated would make every retry a no-op and hide the failed migration.
+    if (record.phase === "publishing" && !staged) {
       await writeRecord(path, { ...record, phase: "activated", updatedAt: new Date().toISOString() });
     }
   }
