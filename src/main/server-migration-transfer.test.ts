@@ -169,7 +169,12 @@ describe("server migration transfer", () => {
       ...base,
       missingAttachmentPaths: ["openbot-migration-path://Shared/../private.png"],
     };
-    for (const manifest of [traversal, duplicate, privateFile, outsideMissingAttachment]) {
+    const parentOfOutsideAssetDirectory = "user-data/openbot-team-server-v2.json.assets";
+    const outsideAssetDirectory = {
+      ...base,
+      directories: [...base.directories, parentOfOutsideAssetDirectory, `${parentOfOutsideAssetDirectory}/private`],
+    };
+    for (const manifest of [traversal, duplicate, privateFile, outsideMissingAttachment, outsideAssetDirectory]) {
       await expect(run(service.begin({ memberId: OWNER, requestId: randomUUID(), manifest }))).rejects.toBeInstanceOf(
         ServerMigrationTransferFailure,
       );
@@ -185,6 +190,36 @@ describe("server migration transfer", () => {
     await expect(
       run(oversizedFile.begin({ memberId: OWNER, requestId: randomUUID(), manifest: base })),
     ).rejects.toMatchObject({ code: "invalid_manifest" });
+  });
+
+  it("accepts only the parent directories needed by allowlisted server logo assets", async () => {
+    const logo = Buffer.from("server logo bytes");
+    const base = makeManifest();
+    const logoPaths = [
+      "user-data/openbot-team-server-v1.json.assets/logo",
+      "user-data/openbot-team-server-v2.json.assets/logo",
+    ];
+    const manifest = {
+      ...base,
+      directories: [
+        ...base.directories,
+        ...logoPaths.flatMap((path) => [path.slice(0, path.lastIndexOf("/")), path]),
+      ].sort(),
+      files: [
+        ...base.files,
+        ...logoPaths.map((path) => ({
+          path: `${path}/server.png`,
+          bytes: logo.byteLength,
+          sha256: hash(logo),
+        })),
+      ].sort((left, right) => left.path.localeCompare(right.path)),
+      totalBytes: base.totalBytes + logo.byteLength * logoPaths.length,
+    };
+
+    await expect(run(service.begin({ memberId: OWNER, requestId: randomUUID(), manifest }))).resolves.toMatchObject({
+      state: "receiving",
+      totalBytes: manifest.totalBytes,
+    });
   });
 
   it("rejects malformed chunks and symlink targets without changing files outside staging", async () => {

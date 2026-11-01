@@ -29,6 +29,10 @@ const ASSET_ROOTS = [
   "user-data/openbot-team-server-v1.json.assets/logo",
   "user-data/openbot-team-server-v2.json.assets/logo",
 ] as const;
+const ASSET_PARENT_DIRECTORIES = new Set([
+  "user-data/openbot-team-server-v1.json.assets",
+  "user-data/openbot-team-server-v2.json.assets",
+]);
 const WORKSPACE_ROOTS = ["home/OpenBot/Agents", "home/OpenBot/Bots", "home/OpenBot/Shared"] as const;
 const ROOT_DIRECTORIES = new Set(["user-data", "home", "home/OpenBot"]);
 const ASSET_EXTENSIONS = new Set([".gif", ".jpeg", ".jpg", ".png", ".svg", ".webp"]);
@@ -774,6 +778,7 @@ function allowedDirectory(path: string): boolean {
   if (!safeRelativePath(path)) return false;
   return (
     ROOT_DIRECTORIES.has(path) ||
+    ASSET_PARENT_DIRECTORIES.has(path) ||
     path === "user-data/avatars" ||
     path === "user-data/avatars/agents" ||
     path.startsWith("user-data/avatars/agents/") ||
