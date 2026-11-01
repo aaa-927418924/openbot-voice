@@ -297,5 +297,7 @@ export interface TeamApiOptions {
   now?: () => number;
   /** Binds only to a detected Tailscale interface address rather than loopback. */
   bindToTailnet?: boolean;
+  /** Optional non-default Tailscale port for a separately hosted OpenBot instance. */
+  tailnetPort?: number;
   logger?: Logger;
 }

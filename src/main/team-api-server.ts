@@ -319,7 +319,7 @@ export class TeamApiServer {
     let port: number;
     if (this.#options.bindToTailnet) {
       const binding = yield* remoteCall(() =>
-        listenOnTailscale(server, () => new Error(sourceText("error.team.bindFailed"))),
+        listenOnTailscale(server, () => new Error(sourceText("error.team.bindFailed")), this.#options.tailnetPort),
       );
       port = binding.port;
       this.#port = port;

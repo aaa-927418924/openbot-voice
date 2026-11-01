@@ -90,6 +90,7 @@ import {
   showMainWindow,
 } from "./main-window";
 import { ensureMacApplicationPresence, secondLaunchResponse } from "./main-window-state";
+import { isOpenBotCloudHost, resolveOpenBotDataRoot } from "./openbot-runtime-config";
 import { watchRemoteHostDirectory } from "./remote-server-host-directory";
 import { createRendererForwarders } from "./renderer-forwarders";
 import { sendToRenderer } from "./renderer-ipc";
@@ -140,6 +141,7 @@ const developmentTestClientEnabled = !app.isPackaged && process.env.OPENBOT_DEV_
 const hostedServer = takeHostedServerEnvironment(process.env, app.isPackaged, process.platform);
 const hostingDeveloperKey = takeHostingDeveloperKey(process.env, app.isPackaged);
 const serverMode = takeServerModeEnvironment(process.env, app.isPackaged, process.platform);
+const cloudHostMode = isOpenBotCloudHost();
 const inviteLinkOptions = {
   allowLocalDevelopmentApiUrl: developmentRemoteRole !== null,
   // Device-link invitations use the owner's direct Tailscale API. The host key is still verified
@@ -881,10 +883,12 @@ if (!hasSingleInstanceLock) {
       // Linux registers the scheme through xdg-settings, which can only name a desktop entry that
       // exists, so an AppImage writes its own first. Windows gets the scheme from the NSIS installer
       // instead.
-      await Effect.runPromise(
-        installLinuxDesktopEntry({ platform: process.platform, environment: process.env, iconPath: appIconPath }),
-      );
-      if (process.platform === "darwin" || process.platform === "linux") {
+      if (!cloudHostMode) {
+        await Effect.runPromise(
+          installLinuxDesktopEntry({ platform: process.platform, environment: process.env, iconPath: appIconPath }),
+        );
+      }
+      if (!cloudHostMode && (process.platform === "darwin" || process.platform === "linux")) {
         if (!app.setAsDefaultProtocolClient("openbot")) {
           logger.warn("Unable to register the openbot:// scheme. Invitation links will not open OpenBot.");
         }
@@ -899,7 +903,7 @@ if (!hasSingleInstanceLock) {
       try {
         const recovery = await recoverServerMigrationAtStartup({
           userDataRoot: app.getPath("userData"),
-          openBotRoot: join(homedir(), "OpenBot"),
+          openBotRoot: resolveOpenBotDataRoot(homedir()),
         });
         if (recovery.status !== "none") {
           logger.info(`Recovered a server migration activation: ${recovery.status}.`);

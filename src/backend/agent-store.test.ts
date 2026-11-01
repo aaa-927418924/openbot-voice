@@ -60,6 +60,20 @@ describe("AgentStore", () => {
     expect(chief.workspacePath).not.toBe(sales.workspacePath);
   });
 
+  it("stores cloud-host agent data in its dedicated data root", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-store-cloud-root-"));
+    temporaryRoots.push(root);
+    const home = join(root, "home");
+    const cloudData = join(root, "cloud-data");
+    const store = new AgentStore(join(root, "cloud-user-data"), home, undefined, cloudData);
+
+    await runCauseEffect(store.initialize());
+    const agent = await runCauseEffect(store.getOrCreate("cloud-agent"));
+
+    expect(agent.workspacePath).toBe(join(cloudData, "Agents", "cloud-agent"));
+    expect(store.sharedRoot).toBe(join(cloudData, "Shared"));
+  });
+
   it("persists each agent's selected Codex Live voice", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-store-"));
     temporaryRoots.push(root);

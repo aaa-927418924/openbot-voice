@@ -120,13 +120,19 @@ describe("local-to-server migration flow", () => {
       stagingRoot: join(root, "source-staging"),
       localMembers: () => [owner],
       localOwnerMemberId: () => owner.id,
-      destinations: () => [{ serverId: "cloud", serverName: "Cloud server" }],
+      sourceServerId: () => "local",
+      destinations: () => [
+        { serverId: "local", serverName: "Local server" },
+        { serverId: "cloud", serverName: "Cloud server" },
+      ],
       peerFor: (serverId) => (serverId === "cloud" ? peer : null),
       onChange: (snapshot) => {
         if (snapshot.phase === "failed") finishFailure(snapshot);
         if (snapshot.phase === "completed") finishSuccess(snapshot);
       },
     });
+
+    expect(source.destinations()).toEqual([{ serverId: "cloud", serverName: "Cloud server" }]);
 
     const initial = source.start("cloud");
     const firstAttempt = await failed;

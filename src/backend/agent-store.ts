@@ -151,13 +151,17 @@ export class AgentStore {
   readonly #avatarUpdateQueue = Semaphore.makeUnsafe(1);
   readonly #creationQueue = Semaphore.makeUnsafe(1);
 
-  constructor(userDataPath: string, homePath: string, database = new OpenBotDatabase(userDataPath)) {
-    const openbotRoot = join(homePath, "OpenBot");
+  constructor(
+    userDataPath: string,
+    homePath: string,
+    database = new OpenBotDatabase(userDataPath),
+    openBotRoot = join(homePath, "OpenBot"),
+  ) {
     this.#statePath = join(userDataPath, LEGACY_AGENTS_STATE_FILE);
-    this.#agentsRoot = join(openbotRoot, "Agents");
-    this.#legacyAgentsRoot = join(openbotRoot, "Bots");
-    this.#sharedRoot = join(openbotRoot, "Shared");
-    this.#downloadsRoot = join(openbotRoot, "Downloads");
+    this.#agentsRoot = join(openBotRoot, "Agents");
+    this.#legacyAgentsRoot = join(openBotRoot, "Bots");
+    this.#sharedRoot = join(openBotRoot, "Shared");
+    this.#downloadsRoot = join(openBotRoot, "Downloads");
     this.#avatarsRoot = join(userDataPath, "avatars", "agents");
     this.#duplicationsRoot = join(userDataPath, "agent-duplications");
     this.#automationRoot = automationRoot(userDataPath);

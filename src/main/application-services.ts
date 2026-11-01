@@ -53,7 +53,7 @@ import type {
   ServerMigrationJobSnapshot,
   VoiceModelStatus,
 } from "@openbot/contracts/ipc";
-import { IPC_ENDPOINTS, isManagedToolRuntime, isUpdateBusyPhase, LOCAL_SERVER_ID } from "@openbot/contracts/ipc";
+import { IPC_ENDPOINTS, isManagedToolRuntime, isUpdateBusyPhase } from "@openbot/contracts/ipc";
 import { decodeRecord, requiredString } from "@openbot/contracts/ipc-decoding";
 import { SERVER_MIGRATION_MISSING_ATTACHMENTS_CAPABILITY } from "@openbot/contracts/team-protocol/server-migration-v1";
 import { sourceText } from "@openbot/i18n/source";
@@ -155,6 +155,7 @@ import { MessagingCredentialStore } from "./messaging-credential-store";
 import { NotificationPreferenceStore } from "./notification-preference-store";
 import { OnePasswordConnectorService } from "./onepassword-connector-service";
 import { OnePasswordConnectorStore } from "./onepassword-connector-store";
+import { isOpenBotCloudHost, readOpenBotCloudHostPort, resolveOpenBotDataRoot } from "./openbot-runtime-config";
 import { ProviderCredentialStore } from "./provider-credential-store";
 import { createProviderDetection, type ProviderDetection } from "./provider-detection";
 import { PROVIDER_DETECTION_SETTINGS_FILE, ProviderDetectionSettingsStore } from "./provider-detection-settings-store";
@@ -177,7 +178,6 @@ import { SelfHostedDesktopAccountManager } from "./self-hosted-desktop-account";
 import { SelfHostedIdentityApiServer, selfHostedTeamProfile } from "./self-hosted-identity-api";
 import { SelfHostedIdentityAuthority } from "./self-hosted-identity-authority";
 import { ServerMigrationDestination } from "./server-migration-destination";
-import { createLocalServerMigrationPeer } from "./server-migration-local-peer";
 import { serverMigrationSourceStagingRoot } from "./server-migration-paths";
 import { ServerMigrationSourceService } from "./server-migration-source";
 import { ServerMode, type ServerModeEnvironment } from "./server-mode";
@@ -615,6 +615,7 @@ export async function createApplicationServices({
     process.env.OPENBOT_AUTH_API_URL,
     app.isPackaged ? "https://api.openbot.run" : "http://127.0.0.1:3100",
   );
+  const cloudHostMode = isOpenBotCloudHost();
   const centralAuth = new CentralAuthManager({
     apiUrl: centralAuthApiUrl,
     mobileConnectApiUrl: readMobileConnectApiUrl(process.env.OPENBOT_MOBILE_AUTH_API_URL, centralAuthApiUrl),
@@ -632,7 +633,7 @@ export async function createApplicationServices({
   );
   // New installs do not create a server by default. Existing completed installs keep their
   // historical default when the preference file is missing; an explicit saved choice wins.
-  await localHostPreference.initialize(setupState.completed);
+  await localHostPreference.initialize(setupState.completed || cloudHostMode);
   let localHostRetry: { start: () => Promise<HostStatus | null>; stop: () => Promise<void> } | null = null;
   const selfHostedDesktopAccount = new SelfHostedDesktopAccountManager({
     path: join(app.getPath("userData"), "self-hosted-desktop-account-v1.json"),
@@ -640,7 +641,7 @@ export async function createApplicationServices({
   });
   if (localOnlyNetworking) await selfHostedDesktopAccount.initialize();
   let selfHostedIdentityAuthority: SelfHostedIdentityAuthority | null = null;
-  if (localOnlyNetworking) {
+  if (localOnlyNetworking && !cloudHostMode) {
     const authority = new SelfHostedIdentityAuthority({
       path: join(app.getPath("userData"), "self-hosted-identity.json"),
     });
@@ -711,7 +712,8 @@ export async function createApplicationServices({
     }
     centralAuth.stopProfileRefresh();
   });
-  const store = new AgentStore(app.getPath("userData"), homedir());
+  const openBotDataRoot = resolveOpenBotDataRoot(homedir());
+  const store = new AgentStore(app.getPath("userData"), homedir(), undefined, openBotDataRoot);
   await runCauseEffect(store.initialize());
   const managedSkills = new ManagedSkillService(
     app.isPackaged
@@ -1385,7 +1387,7 @@ export async function createApplicationServices({
     };
     await ensureLocalHostConfigured(
       teamStore,
-      hostname(),
+      cloudHostMode ? process.env.OPENBOT_LOCAL_SERVER_NAME?.trim() || "OpenBot Cloud" : hostname(),
       randomBytes(32).toString("base64url"),
       user.id,
       user.email,
@@ -1603,7 +1605,7 @@ export async function createApplicationServices({
   // received snapshot is staged beside the active roots, because activation renames the two root
   // pairs; the transfer directory is private to this host and outside both roots.
   const migrationUserDataRoot = app.getPath("userData");
-  const migrationOpenBotRoot = join(homedir(), "OpenBot");
+  const migrationOpenBotRoot = openBotDataRoot;
   const serverMigrationDestination =
     process.platform === "linux"
       ? new ServerMigrationDestination({
@@ -1623,7 +1625,7 @@ export async function createApplicationServices({
           // again; a desktop host has no supervisor, so it relaunches itself while packaged.
           onActivated: () => {
             setTimeout(() => {
-              if (app.isPackaged && !serverModeEnvironment) {
+              if (app.isPackaged && !serverModeEnvironment && !cloudHostMode) {
                 // Electron relaunches `process.execPath`, which for an AppImage is the temporary
                 // mount point that vanishes on exit; the AppImage file itself must be relaunched.
                 const appImage = process.env.APPIMAGE?.trim();
@@ -1705,6 +1707,7 @@ export async function createApplicationServices({
       centralAuth.updateRemoteHostLogo(hostId, image, version).pipe(toRemoteWorkflowError),
     localDevelopmentHost: developmentRemoteRole === "host",
     localOnlyNetworking,
+    ...(cloudHostMode ? { tailnetPort: readOpenBotCloudHostPort() } : {}),
     logDirectory: join(app.getPath("userData"), "logs", "remote"),
     removeLegacyRemoteDesktopCredential: () =>
       Effect.tryPromise({
@@ -2022,17 +2025,8 @@ export async function createApplicationServices({
   teardown.push(TEARDOWN_ORDER.remoteServers, "the remote servers", () => runCauseEffect(remoteServers.stop()));
   await runCauseEffect(remoteServers.initialize());
   criticalActionTargets = { agents: service, remoteServers };
-  // The source of a local-to-server migration. A server-mode host is only a destination, and a
-  // macOS desktop cannot run the local server that a snapshot comes from.
-  // This computer's own local server is a destination whenever this process can receive into it,
-  // so the local row in the server list offers the same migration as a remote host.
-  const localMigrationDestination = (): { serverId: string; serverName: string } | null => {
-    if (!serverMigrationDestination || teamStore.getOwnerMemberId() === null) return null;
-    const local = remoteServers.list().find((server) => server.id === LOCAL_SERVER_ID);
-    return local ? { serverId: LOCAL_SERVER_ID, serverName: local.name } : null;
-  };
   const serverMigration =
-    !serverModeEnvironment && (process.platform === "win32" || process.platform === "linux")
+    !serverModeEnvironment && !cloudHostMode && (process.platform === "win32" || process.platform === "linux")
       ? new ServerMigrationSourceService({
           userDataRoot: migrationUserDataRoot,
           openBotRoot: migrationOpenBotRoot,
@@ -2040,25 +2034,9 @@ export async function createApplicationServices({
           stagingRoot: serverMigrationSourceStagingRoot(migrationUserDataRoot, migrationOpenBotRoot),
           localMembers: () => teamStore.listMembers(),
           localOwnerMemberId: () => teamStore.getOwnerMemberId(),
-          destinations: () => {
-            const local = localMigrationDestination();
-            return [...remoteServers.migrationDestinations(), ...(local ? [local] : [])];
-          },
+          sourceServerId: () => teamStore.getIdentity()?.serverId ?? null,
+          destinations: () => remoteServers.migrationDestinations(),
           peerFor: (serverId) => {
-            if (serverId === LOCAL_SERVER_ID) {
-              // The local destination lives in this process, so the snapshot goes straight into its
-              // transfer service rather than through a socket or a session token.
-              const local = localMigrationDestination();
-              const owner = teamStore.getOwnerMemberId();
-              if (!local || !owner || !serverMigrationDestination) return null;
-              return createLocalServerMigrationPeer({
-                serverId,
-                serverName: local.serverName,
-                migration: serverMigrationDestination.migration,
-                memberId: owner,
-                members: () => teamStore.listMembers(),
-              });
-            }
             const destination = remoteServers.migrationDestinations().find((item) => item.serverId === serverId);
             if (!destination) return null;
             return {

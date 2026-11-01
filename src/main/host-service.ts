@@ -94,6 +94,8 @@ interface HostServiceOptions {
   localDevelopmentHost?: boolean;
   /** Serve direct clients only over Tailscale; never expose the Team API on a wildcard interface. */
   localOnlyNetworking?: boolean;
+  /** Optional non-default Tailscale port for a separately hosted OpenBot instance. */
+  tailnetPort?: number;
   /** Present only on a Linux server-mode host. It advertises `server-migration-v1`. */
   serverMigration?: ForwardedApiOptions["serverMigration"];
   logDirectory?: string;
@@ -289,6 +291,7 @@ export class HostService extends EventEmitter<HostEvents> {
     this.#api = new TeamApiServer({
       appVersion: options.appVersion,
       bindToTailnet: options.localOnlyNetworking ?? false,
+      tailnetPort: options.tailnetPort,
       store: options.store,
       agents: options.agents,
       channels: options.channels,

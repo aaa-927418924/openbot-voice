@@ -76,6 +76,8 @@ export interface ServerMigrationSourceOptions {
   localMembers: () => readonly TeamMemberSummary[];
   /** The owner membership of this local host, when it has one. */
   localOwnerMemberId: () => string | null;
+  /** The source identity is never a valid migration destination. */
+  sourceServerId: () => string | null;
   destinations: () => ServerMigrationDestination[];
   peerFor: (serverId: string) => ServerMigrationDestinationPeer | null;
   onChange: (snapshot: ServerMigrationJobSnapshot) => void;
@@ -106,7 +108,8 @@ export class ServerMigrationSourceService {
   }
 
   destinations(): ServerMigrationDestination[] {
-    return this.#options.destinations();
+    const sourceServerId = this.#options.sourceServerId();
+    return this.#options.destinations().filter((destination) => destination.serverId !== sourceServerId);
   }
 
   state(): ServerMigrationJobSnapshot | null {
