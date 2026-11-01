@@ -26,6 +26,7 @@ import {
 import { runCauseEffect } from "../backend/effect-boundary";
 import { readAppVariant, resolveAppIconPath, resolveLogoColorIconPath } from "./app-icon";
 import { type ApplicationServices, createApplicationServices } from "./application-services";
+import { addTailnetViewerOrigins } from "./content-security-policy";
 import { type DeepLink, findDeepLink, parseDeepLink } from "./deep-link-router";
 import { requestNotificationPermission, showRetainedNotification } from "./desktop-notifications";
 import { guardDevelopmentOutput } from "./development-output";
@@ -1007,8 +1008,9 @@ if (!hasSingleInstanceLock) {
       built.githubConnector.onChanged(forwardGitHubConnectorStatus);
       built.onePasswordConnector.onChanged(forwardOnePasswordConnectorStatus);
       remoteServers.on("changed", forwardServers);
-      // CSP is fixed for the current renderer document, so reload only when its trusted host set changes.
-      let viewerOrigins = remoteServers.remoteDesktopViewerOrigins().join("\n");
+      // CSP is fixed for the current renderer document. Retain enrolled origins for this window so
+      // a temporary directory omission doesn't reload the whole renderer or create a reload loop.
+      const viewerOrigins = new Set(remoteServers.remoteDesktopViewerOrigins());
       let connectionSequences = new Map(
         remoteServers.list().map((server) => [server.id, server.connectionSequence ?? 0] as const),
       );
@@ -1025,9 +1027,7 @@ if (!hasSingleInstanceLock) {
         }
         connectionSequences = nextConnectionSequences;
 
-        const nextViewerOrigins = remoteServers.remoteDesktopViewerOrigins().join("\n");
-        if (nextViewerOrigins === viewerOrigins) return;
-        viewerOrigins = nextViewerOrigins;
+        if (!addTailnetViewerOrigins(viewerOrigins, remoteServers.remoteDesktopViewerOrigins())) return;
         if (!rendererLoaded) return;
         const window = windows.getMainWindow();
         if (window && !window.isDestroyed() && isTrustedRendererUrl(window.webContents.getURL())) {

@@ -1,5 +1,28 @@
 import { describe, expect, it } from "vitest";
-import { buildContentSecurityPolicy, readSelfHostedSignalOrigin } from "./content-security-policy";
+import {
+  addTailnetViewerOrigins,
+  buildContentSecurityPolicy,
+  readSelfHostedSignalOrigin,
+} from "./content-security-policy";
+
+describe("addTailnetViewerOrigins", () => {
+  it("does not drop a known origin when the server directory temporarily omits it", () => {
+    const known = new Set(["http://100.100.135.107:43123"]);
+
+    expect(addTailnetViewerOrigins(known, [])).toBe(false);
+    expect(addTailnetViewerOrigins(known, ["http://100.100.135.107:43123/"])).toBe(false);
+    expect(addTailnetViewerOrigins(known, ["http://192.168.1.2:43123"])).toBe(false);
+    expect(known).toEqual(new Set(["http://100.100.135.107:43123"]));
+  });
+
+  it("requests one CSP refresh for a newly enrolled Tailnet origin", () => {
+    const known = new Set(["http://100.100.135.107:43123"]);
+
+    expect(addTailnetViewerOrigins(known, ["http://100.64.1.2:43123"])).toBe(true);
+    expect(addTailnetViewerOrigins(known, ["http://100.64.1.2:43123/"])).toBe(false);
+    expect(known).toEqual(new Set(["http://100.100.135.107:43123", "http://100.64.1.2:43123"]));
+  });
+});
 
 describe("buildContentSecurityPolicy", () => {
   it("allows the production analytics endpoint", () => {

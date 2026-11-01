@@ -1,6 +1,23 @@
 import { isTailscaleApiUrl } from "@openbot/contracts/invite-links";
 import { isMobileConnectDevelopmentHost } from "@openbot/contracts/mobile-connect";
 
+/**
+ * Keep already-enrolled viewer origins for this renderer session. A directory refresh can briefly
+ * omit a host; dropping its origin would make the Electron main process reload the whole window,
+ * only to add the same origin and reload it again when the directory catches up.
+ */
+export function addTailnetViewerOrigins(knownOrigins: Set<string>, candidates: readonly string[]): boolean {
+  let added = false;
+  for (const candidate of candidates) {
+    if (!isTailscaleApiUrl(candidate)) continue;
+    const origin = new URL(candidate).origin;
+    if (knownOrigins.has(origin)) continue;
+    knownOrigins.add(origin);
+    added = true;
+  }
+  return added;
+}
+
 export function buildContentSecurityPolicy(
   packaged: boolean,
   developmentSignalUrl?: string,
