@@ -84,6 +84,11 @@ export function ServerMigrationOverlay() {
                     <Show when={current().phase === "completed"}>
                       <p class="server-migration-note">{t("server.migration.completedDetail")}</p>
                     </Show>
+                    <Show when={current().phase === "failed" && current().message}>
+                      <p class="server-migration-error" role="alert">
+                        {errorMessage(current().message, t("server.migration.startFailed"))}
+                      </p>
+                    </Show>
                     <Show when={current().phase === "cancelled" || current().phase === "failed"}>
                       <p class="server-migration-note">{t("server.migration.retryNote")}</p>
                     </Show>
