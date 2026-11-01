@@ -4,6 +4,7 @@ import {
   SERVER_MIGRATION_CHUNK_BYTES_LIMIT,
   SERVER_MIGRATION_CHUNK_SHA256_HEADER,
   SERVER_MIGRATION_JSON_BYTES_LIMIT,
+  SERVER_MIGRATION_MISSING_ATTACHMENTS_CAPABILITY,
   SERVER_MIGRATION_ROUTES,
 } from "@openbot/contracts/team-protocol/server-migration-v1";
 import { teamSideRouteCodec } from "@openbot/contracts/team-protocol/side-routes";
@@ -46,6 +47,13 @@ export async function routeServerMigration(
   if (url.pathname === SERVER_MIGRATION_ROUTES.begin) {
     assertNoQuery(url);
     const body = await readMigrationJson(context);
+    if (
+      isDynamicRecord(body.manifest) &&
+      body.manifest.missingAttachmentPaths !== undefined &&
+      !context.capabilities.has(SERVER_MIGRATION_MISSING_ATTACHMENTS_CAPABILITY)
+    ) {
+      throw new HttpError(404, sourceText("error.team.routeNotFound"));
+    }
     const status = await runTransfer(
       migration.transfer.begin({
         memberId,

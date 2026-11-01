@@ -16,6 +16,8 @@ import {
 } from "./admin-wire";
 
 export const SERVER_MIGRATION_CAPABILITY = "server-migration-v1";
+/** A destination with this capability can preserve chat references to files already missing on the source. */
+export const SERVER_MIGRATION_MISSING_ATTACHMENTS_CAPABILITY = "server-migration-missing-attachments-v1";
 
 export const SERVER_MIGRATION_ROUTES = {
   begin: "/v1/server-migration/transfers/begin",
@@ -44,6 +46,24 @@ const path: AdminDecoder = (value) => {
   }
   return value;
 };
+const portableAttachmentPath: AdminDecoder = (value) => {
+  const prefix = "openbot-migration-path://";
+  if (!isString(value) || value.length > 4_096 || !value.startsWith(prefix)) {
+    throw new Error("Invalid portable attachment path.");
+  }
+  const relative = value.slice(prefix.length);
+  const segments = relative.split("/");
+  if (
+    segments.length < 2 ||
+    !["Agents", "Bots", "Shared"].includes(segments[0] ?? "") ||
+    segments.some(
+      (segment) => !segment || segment === "." || segment === ".." || segment.includes("\\") || segment.includes("\0"),
+    )
+  ) {
+    throw new Error("Invalid portable attachment path.");
+  }
+  return value;
+};
 const sha256: AdminDecoder = (value) => {
   if (!isString(value) || !/^[a-f0-9]{64}$/u.test(value)) throw new Error("Invalid migration checksum.");
   return value;
@@ -53,13 +73,16 @@ const version: AdminDecoder = (value) => {
   return 2;
 };
 const manifestFile = fields({ path, bytes: count, sha256 });
-const manifest = fields({
-  version,
-  createdAt: string(128),
-  directories: list(path, 50_000),
-  files: list(manifestFile, 50_000),
-  totalBytes: count,
-});
+const manifest = fields(
+  {
+    version,
+    createdAt: string(128),
+    directories: list(path, 50_000),
+    files: list(manifestFile, 50_000),
+    totalBytes: count,
+  },
+  { missingAttachmentPaths: list(portableAttachmentPath, 50_000) },
+);
 const statusFile = fields({
   path,
   bytes: count,

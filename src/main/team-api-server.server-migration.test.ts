@@ -9,6 +9,7 @@ import {
   SERVER_MIGRATION_CHUNK_BYTES_LIMIT,
   SERVER_MIGRATION_CHUNK_SHA256_HEADER,
   SERVER_MIGRATION_JSON_BYTES_LIMIT,
+  SERVER_MIGRATION_MISSING_ATTACHMENTS_CAPABILITY,
   SERVER_MIGRATION_ROUTES,
 } from "@openbot/contracts/team-protocol/server-migration-v1";
 import { afterEach, describe, expect, it } from "vitest";
@@ -17,14 +18,12 @@ import { createTeamApiFixture, stopTeamApiFixtures, type TeamApiOptions } from "
 
 afterEach(stopTeamApiFixtures);
 
-async function advertisesMigration(response: Response): Promise<boolean> {
+async function advertisesMigration(response: Response, capability = SERVER_MIGRATION_CAPABILITY): Promise<boolean> {
   const value = await response.json();
   if (!isDynamicRecord(value) || !Array.isArray(value.capabilities)) {
     throw new Error("Compatibility response is missing its capability list.");
   }
-  return value.capabilities.some(
-    (capability: unknown) => isString(capability) && capability === SERVER_MIGRATION_CAPABILITY,
-  );
+  return value.capabilities.some((candidate: unknown) => isString(candidate) && candidate === capability);
 }
 
 const manifest: ServerMigrationSnapshotManifest = {
@@ -32,6 +31,7 @@ const manifest: ServerMigrationSnapshotManifest = {
   createdAt: "2026-10-31T00:00:00.000Z",
   directories: ["user-data", "home", "home/OpenBot"],
   files: [{ path: "user-data/openbot.db", bytes: 1, sha256: "0".repeat(64) }],
+  missingAttachmentPaths: ["openbot-migration-path://Shared/Transfers/generated/missing-id/image.png"],
   totalBytes: 1,
 };
 
@@ -89,7 +89,7 @@ function createMigration() {
 function headers(token: string, contentType?: string): Record<string, string> {
   return {
     Authorization: `Bearer ${token}`,
-    "OpenBot-Capabilities": SERVER_MIGRATION_CAPABILITY,
+    "OpenBot-Capabilities": `${SERVER_MIGRATION_CAPABILITY},${SERVER_MIGRATION_MISSING_ATTACHMENTS_CAPABILITY}`,
     ...(contentType ? { "Content-Type": contentType } : {}),
   };
 }
@@ -113,8 +113,18 @@ describe("Team API server migration destination", () => {
     const thirdFixture = await createTeamApiFixture("server-migration-capability-on");
     const third = await thirdFixture.start({ serverMigration: enabled.migration });
     const enabledResponse = await fetch(`${third.base}/v1/compatibility`);
-    if (process.platform === "linux") expect(await advertisesMigration(enabledResponse)).toBe(true);
-    else expect(await advertisesMigration(enabledResponse)).toBe(false);
+    const missingAttachmentsResponse = await fetch(`${third.base}/v1/compatibility`);
+    if (process.platform === "linux") {
+      expect(await advertisesMigration(enabledResponse)).toBe(true);
+      expect(
+        await advertisesMigration(missingAttachmentsResponse, SERVER_MIGRATION_MISSING_ATTACHMENTS_CAPABILITY),
+      ).toBe(true);
+    } else {
+      expect(await advertisesMigration(enabledResponse)).toBe(false);
+      expect(
+        await advertisesMigration(missingAttachmentsResponse, SERVER_MIGRATION_MISSING_ATTACHMENTS_CAPABILITY),
+      ).toBe(false);
+    }
   });
 
   it("routes every operation as the authenticated owner and keeps target paths off the wire", async () => {
@@ -212,6 +222,13 @@ describe("Team API server migration destination", () => {
       body,
     });
     expect(noCapability.status).toBe(404);
+
+    const noMissingAttachmentCapability = await fetch(`${base}${path}`, {
+      method: "POST",
+      headers: { ...headers(ownerToken, "application/json"), "OpenBot-Capabilities": SERVER_MIGRATION_CAPABILITY },
+      body,
+    });
+    expect(noMissingAttachmentCapability.status).toBe(404);
 
     const wrongType = await fetch(
       `${base}${SERVER_MIGRATION_ROUTES.chunk}?transferId=transfer-1&path=user-data%2Fopenbot.db&offset=0`,

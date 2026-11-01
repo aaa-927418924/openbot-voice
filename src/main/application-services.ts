@@ -55,6 +55,7 @@ import type {
 } from "@openbot/contracts/ipc";
 import { IPC_ENDPOINTS, isManagedToolRuntime, isUpdateBusyPhase, LOCAL_SERVER_ID } from "@openbot/contracts/ipc";
 import { decodeRecord, requiredString } from "@openbot/contracts/ipc-decoding";
+import { SERVER_MIGRATION_MISSING_ATTACHMENTS_CAPABILITY } from "@openbot/contracts/team-protocol/server-migration-v1";
 import { sourceText } from "@openbot/i18n/source";
 import { createOpenBotLogger, toLogValue } from "@openbot/logging";
 import { REMOTE_ACCOUNT_CHECK_INTERVAL_MS } from "@openbot/team-client";
@@ -2063,6 +2064,10 @@ export async function createApplicationServices({
             return {
               serverId,
               serverName: destination.serverName,
+              supportsMissingAttachments: remoteServers.supportsCapability(
+                serverId,
+                SERVER_MIGRATION_MISSING_ATTACHMENTS_CAPABILITY,
+              ),
               members: () => runCauseEffect(remoteServers.listMembers(serverId)),
               request: (path, decoder, init) =>
                 runCauseEffect(remoteServers.migrationRequest(serverId, path, decoder, init)),

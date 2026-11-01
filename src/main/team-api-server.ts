@@ -44,6 +44,7 @@ import {
   PROVIDERS_SIGN_IN_V3_CAPABILITY,
   PROVIDERS_V4_CAPABILITY,
   SERVER_MIGRATION_CAPABILITY,
+  SERVER_MIGRATION_MISSING_ATTACHMENTS_CAPABILITY,
   SHARED_TABLES_CAPABILITY,
   SKILLS_ADMIN_CAPABILITY,
   SKILLS_EVENTS_CAPABILITY,
@@ -1422,6 +1423,8 @@ export class TeamApiServer {
         if (capability === AGENT_IMPORT_CAPABILITY) return this.#options.agentImport !== undefined;
         if (capability === LIVE_ACTIVITY_PUSH_CAPABILITY) return this.#options.liveActivityPush !== undefined;
         if (capability === SERVER_MIGRATION_CAPABILITY)
+          return process.platform === "linux" && this.#options.serverMigration?.serverMode === true;
+        if (capability === SERVER_MIGRATION_MISSING_ATTACHMENTS_CAPABILITY)
           return process.platform === "linux" && this.#options.serverMigration?.serverMode === true;
         return true;
       }),

@@ -17,6 +17,7 @@ const SNAPSHOT_NAME = "snapshot";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const OWNER_ID = /^[A-Za-z0-9_-]{1,128}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
+const PORTABLE_ATTACHMENT_PREFIX = "openbot-migration-path://";
 const REQUIRED_FILES = ["user-data/openbot.db", "home/OpenBot/Shared/Data/agent-data.db"];
 const FIXED_FILES = new Set([
   ...REQUIRED_FILES,
@@ -46,6 +47,7 @@ const manifestSchema = z
         })
         .strict(),
     ),
+    missingAttachmentPaths: z.array(z.string().max(4096)).optional(),
     totalBytes: z.number().int().nonnegative(),
   })
   .strict();
@@ -703,8 +705,23 @@ function parseManifest(value: unknown, limits: ServerMigrationTransferLimits): S
   if (!Number.isSafeInteger(input.totalBytes)) fail("invalid_manifest", "The manifest byte total is invalid.");
   const directories = new Set(input.directories);
   const files = new Map(input.files.map((file) => [file.path, file]));
-  if (directories.size !== input.directories.length || files.size !== input.files.length) {
+  const missingAttachmentPathList = input.missingAttachmentPaths ?? [];
+  const missingAttachmentPaths = new Set(missingAttachmentPathList);
+  if (
+    directories.size !== input.directories.length ||
+    files.size !== input.files.length ||
+    missingAttachmentPaths.size !== missingAttachmentPathList.length
+  ) {
     fail("invalid_manifest", "The manifest contains duplicate paths.");
+  }
+  for (const path of missingAttachmentPaths) {
+    if (!safePortableAttachmentPath(path)) {
+      fail("invalid_manifest", "The manifest has a missing attachment outside the data allowlist.");
+    }
+    const relativePath = path.slice(PORTABLE_ATTACHMENT_PREFIX.length);
+    if (files.has(`home/OpenBot/${relativePath}`)) {
+      fail("invalid_manifest", "The manifest marks an included attachment as missing.");
+    }
   }
   for (const path of directories) {
     if (!allowedDirectory(path)) fail("invalid_manifest", "The manifest has a directory outside the data allowlist.");
@@ -730,8 +747,17 @@ function parseManifest(value: unknown, limits: ServerMigrationTransferLimits): S
     createdAt: input.createdAt,
     directories: [...directories].sort(),
     files: [...files.values()].sort((left, right) => left.path.localeCompare(right.path)),
+    missingAttachmentPaths: [...missingAttachmentPaths].sort((left, right) => left.localeCompare(right)),
     totalBytes: total,
   };
+}
+
+function safePortableAttachmentPath(path: string): boolean {
+  if (!path.startsWith(PORTABLE_ATTACHMENT_PREFIX)) return false;
+  const relativePath = path.slice(PORTABLE_ATTACHMENT_PREFIX.length);
+  if (!safeRelativePath(relativePath)) return false;
+  const segments = relativePath.split("/");
+  return segments.length > 1 && ["Agents", "Bots", "Shared"].includes(segments[0] ?? "");
 }
 
 function allowedFile(path: string): boolean {
@@ -786,6 +812,9 @@ function canonicalManifest(value: ServerMigrationSnapshotManifest): string {
     files: [...value.files]
       .sort((a, b) => a.path.localeCompare(b.path))
       .map((file) => ({ path: file.path, bytes: file.bytes, sha256: file.sha256 })),
+    ...(value.missingAttachmentPaths && value.missingAttachmentPaths.length > 0
+      ? { missingAttachmentPaths: [...value.missingAttachmentPaths].sort((left, right) => left.localeCompare(right)) }
+      : {}),
     totalBytes: value.totalBytes,
   });
 }

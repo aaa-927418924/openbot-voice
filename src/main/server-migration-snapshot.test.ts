@@ -377,6 +377,79 @@ describe("server migration snapshots", () => {
     expect(await fileExists(openBotDestination)).toBe(false);
   });
 
+  it("migrates attachment references whose source files were already missing", async () => {
+    const attachmentId = "8bc95574-c965-431c-bb7f-d7cf09ed3673";
+    const attachmentPath = join(
+      openBotRoot,
+      "Shared",
+      "Transfers",
+      "generated",
+      attachmentId,
+      "Dario-Amodei-full-body.png",
+    );
+    const attachment = {
+      id: attachmentId,
+      name: "Dario-Amodei-full-body.png",
+      path: attachmentPath,
+      size: 35_413_579,
+      kind: "image",
+      mimeType: "image/png",
+      previewKind: "image",
+      sha256: "c".repeat(64),
+      ownerAgentId: "agent-1",
+      ownerThreadId: "thread-1",
+    };
+    const userDatabase = new DatabaseSync(join(userDataRoot, "openbot.db"));
+    userDatabase.exec(`
+      CREATE TABLE projection_attachments (
+        attachment_id TEXT PRIMARY KEY,
+        owner_kind TEXT NOT NULL,
+        path TEXT NOT NULL,
+        metadata_json TEXT NOT NULL
+      );
+    `);
+    userDatabase
+      .prepare("INSERT INTO projection_attachments VALUES (?, ?, ?, ?)")
+      .run(attachmentId, "generated", attachmentPath, JSON.stringify(attachment));
+    sourceDatabases.push(userDatabase);
+    await mkdir(join(openBotRoot, "Shared", "Data"), { recursive: true });
+    new DatabaseSync(join(openBotRoot, "Shared", "Data", "agent-data.db")).close();
+
+    const snapshotPath = join(destinationParent, "snapshot-with-missing-attachment");
+    const snapshot = await createServerMigrationSnapshot({ userDataRoot, openBotRoot, destinationPath: snapshotPath });
+    const portablePath = `openbot-migration-path://Shared/Transfers/generated/${attachmentId}/${attachment.name}`;
+    expect(snapshot.manifest.missingAttachmentPaths).toEqual([portablePath]);
+    expect(await fileExists(attachmentPath)).toBe(false);
+
+    const destinationUserData = join(root, "missing-attachment-profile", "OpenBot");
+    const destinationOpenBot = join(root, "missing-attachment-workspace", "OpenBot");
+    await mkdir(dirname(destinationUserData), { recursive: true });
+    await mkdir(dirname(destinationOpenBot), { recursive: true });
+    await importServerMigrationSnapshot({
+      snapshotPath,
+      userDataRoot: destinationUserData,
+      openBotRoot: destinationOpenBot,
+    });
+
+    const importedDatabase = new DatabaseSync(join(destinationUserData, "openbot.db"), { readOnly: true });
+    try {
+      expect(importedDatabase.prepare("SELECT path FROM projection_attachments").get()).toEqual({
+        path: join(destinationOpenBot, "Shared", "Transfers", "generated", attachmentId, attachment.name),
+      });
+    } finally {
+      importedDatabase.close();
+    }
+    expect(
+      await fileExists(join(destinationOpenBot, "Shared", "Transfers", "generated", attachmentId, attachment.name)),
+    ).toBe(false);
+    const sourceDatabase = new DatabaseSync(join(userDataRoot, "openbot.db"), { readOnly: true });
+    try {
+      expect(sourceDatabase.prepare("SELECT path FROM projection_attachments").get()).toEqual({ path: attachmentPath });
+    } finally {
+      sourceDatabase.close();
+    }
+  });
+
   it("recovers a user root left by a crash between import root publications", async () => {
     const userDatabase = openWalDatabase(join(userDataRoot, "openbot.db"), "messages", "hello");
     const agentPath = join(openBotRoot, "Shared", "Data", "agent-data.db");

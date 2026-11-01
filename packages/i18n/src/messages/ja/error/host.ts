@@ -33,4 +33,6 @@ export const messages = {
   "error.host.migrationSnapshotFailed": "このコンピューターは移行スナップショットを準備できませんでした。",
   "error.host.migrationTransferFailed": "移行の転送に失敗しました。",
   "error.host.migrationCancelled": "移行はキャンセルされました。",
+  "error.host.migrationMissingAttachmentSupport":
+    "移行先は、すでに欠落している添付ファイルの参照を保持できません。移行先サーバーを更新してから再試行してください。",
 } as const satisfies PartialTranslation<typeof source>;

@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { TEAM_CURRENT_CAPABILITIES } from "./current";
 import { optionalRouteCodec } from "./optional-routes";
-import { SERVER_MIGRATION_CAPABILITY, SERVER_MIGRATION_ROUTES } from "./server-migration-v1";
+import {
+  SERVER_MIGRATION_CAPABILITY,
+  SERVER_MIGRATION_MISSING_ATTACHMENTS_CAPABILITY,
+  SERVER_MIGRATION_ROUTES,
+} from "./server-migration-v1";
 
 const manifest = {
   version: 2,
@@ -20,12 +24,28 @@ const manifest = {
 describe("server-migration-v1 contract", () => {
   it("registers an additive capability and bounded begin/finalize codecs", () => {
     expect(TEAM_CURRENT_CAPABILITIES).toContain(SERVER_MIGRATION_CAPABILITY);
+    expect(TEAM_CURRENT_CAPABILITIES).toContain(SERVER_MIGRATION_MISSING_ATTACHMENTS_CAPABILITY);
     const begin = optionalRouteCodec(SERVER_MIGRATION_ROUTES.begin);
     const finalize = optionalRouteCodec(SERVER_MIGRATION_ROUTES.finalize);
     expect(begin?.request({ requestId: "request-1", manifest })).toEqual({ requestId: "request-1", manifest });
     expect(
       finalize?.response(200, { transferId: "transfer-1", manifest, snapshotPath: "/private/server/path" }),
     ).toEqual({ transferId: "transfer-1", manifest });
+  });
+
+  it("accepts the optional missing-attachment list only as portable workspace references", () => {
+    const begin = optionalRouteCodec(SERVER_MIGRATION_ROUTES.begin);
+    const missingAttachmentPaths = ["openbot-migration-path://Shared/Transfers/generated/missing-id/image.png"];
+    expect(begin?.request({ requestId: "request-1", manifest: { ...manifest, missingAttachmentPaths } })).toEqual({
+      requestId: "request-1",
+      manifest: { ...manifest, missingAttachmentPaths },
+    });
+    expect(() =>
+      begin?.request({
+        requestId: "request-1",
+        manifest: { ...manifest, missingAttachmentPaths: ["openbot-migration-path://Shared/../private.png"] },
+      }),
+    ).toThrow();
   });
 
   it("rejects malformed manifests and absolute paths in wire data", () => {

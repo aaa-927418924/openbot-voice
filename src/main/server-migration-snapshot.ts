@@ -31,6 +31,8 @@ export interface ServerMigrationSnapshotManifest {
   createdAt: string;
   directories: string[];
   files: ServerMigrationSnapshotFile[];
+  /** Portable references whose source file was already absent before snapshot creation. */
+  missingAttachmentPaths?: string[];
   totalBytes: number;
 }
 
@@ -60,6 +62,8 @@ export interface ImportServerMigrationSnapshotOptions {
   userDataRoot: string;
   /** New, non-existing `~/OpenBot` workspace directory. Its parent must already exist. */
   openBotRoot: string;
+  /** Final `~/OpenBot` path to embed in attachment references when `openBotRoot` is a staging path. */
+  attachmentOpenBotRoot?: string;
 }
 
 export interface ImportedServerMigrationSnapshot {
@@ -103,6 +107,7 @@ const snapshotManifestSchema = z
     createdAt: z.string(),
     directories: z.array(z.string()),
     files: z.array(snapshotFileSchema),
+    missingAttachmentPaths: z.array(z.string().max(4096)).optional().default([]),
     totalBytes: z.number().int().nonnegative(),
   })
   .strict();
@@ -229,7 +234,7 @@ export async function createServerMigrationSnapshot(
       `home/OpenBot/${AGENT_DATABASE_RELATIVE_PATH}`,
     );
 
-    await validatePortableAttachmentReferences(stagePath, builder);
+    const missingAttachmentPaths = await validatePortableAttachmentReferences(stagePath, builder);
 
     builder.files.sort((left, right) => left.path.localeCompare(right.path));
     const directories = [...builder.directories].sort((left, right) => left.localeCompare(right));
@@ -242,6 +247,7 @@ export async function createServerMigrationSnapshot(
       createdAt: new Date().toISOString(),
       directories,
       files: builder.files,
+      ...(missingAttachmentPaths.length > 0 ? { missingAttachmentPaths } : {}),
       totalBytes,
     };
     const manifestPath = join(stagePath, SNAPSHOT_MANIFEST_FILE);
@@ -273,6 +279,7 @@ export async function importServerMigrationSnapshot(
   assertImportManifestAllowlist(manifest);
   await recoverInterruptedImport(options);
   const roots = await resolveFreshDestinationRoots(options, snapshotRoot);
+  const attachmentOpenBotRoot = resolveAttachmentOpenBotRoot(options, roots, snapshotRoot);
   const userStage = await createSiblingStage(roots.userDataRoot);
   let openBotStage: string | null = null;
   let userPublished = false;
@@ -284,16 +291,21 @@ export async function importServerMigrationSnapshot(
     await materializeSnapshot(snapshotRoot, manifest, userStage, openBotStage);
 
     const mailboxPath = join(userStage, "mailbox.json");
-    const attachmentReferences = await rebaseMailboxFile(mailboxPath, roots.openBotRoot);
+    const attachmentReferences = await rebaseMailboxFile(mailboxPath, attachmentOpenBotRoot);
     const userDatabasePath = join(userStage, "openbot.db");
     const agentDatabasePath = join(openBotStage, AGENT_DATABASE_RELATIVE_PATH);
     mergeAttachmentReferences(
       attachmentReferences,
-      await restoreDatabaseAttachmentPaths(userDatabasePath, roots.openBotRoot),
+      await restoreDatabaseAttachmentPaths(userDatabasePath, attachmentOpenBotRoot),
     );
     await validateSqliteIntegrity(userDatabasePath, "openbot.db");
     await validateSqliteIntegrity(agentDatabasePath, AGENT_DATABASE_RELATIVE_PATH);
-    await validateImportedAttachmentReferences(attachmentReferences, openBotStage, roots.openBotRoot);
+    await validateImportedAttachmentReferences(
+      attachmentReferences,
+      openBotStage,
+      attachmentOpenBotRoot,
+      manifest.missingAttachmentPaths,
+    );
 
     const recoveryData = { userDataRoot: roots.userDataRoot, openBotRoot: roots.openBotRoot, userStage, openBotStage };
     const recoveryRecord = `${JSON.stringify(recoveryData)}\n`;
@@ -449,6 +461,26 @@ async function resolveFreshDestinationRoots(
     throw new ServerMigrationSnapshotError("The snapshot cannot overlap an import destination.");
   }
   return { userDataRoot, openBotRoot };
+}
+
+function resolveAttachmentOpenBotRoot(
+  options: ImportServerMigrationSnapshotOptions,
+  roots: SourceRoots,
+  snapshotRoot: string,
+): string {
+  const attachmentOpenBotRoot = options.attachmentOpenBotRoot ?? roots.openBotRoot;
+  if (!isAbsolute(attachmentOpenBotRoot)) {
+    throw new ServerMigrationSnapshotError("The attachment workspace root must be an absolute path.");
+  }
+  const resolved = resolve(attachmentOpenBotRoot);
+  if (
+    pathsOverlap(resolved, roots.userDataRoot) ||
+    (resolved !== roots.openBotRoot && pathsOverlap(resolved, roots.openBotRoot)) ||
+    pathsOverlap(resolved, snapshotRoot)
+  ) {
+    throw new ServerMigrationSnapshotError("The attachment workspace root overlaps migration data.");
+  }
+  return resolved;
 }
 
 /** Roll back a user root left published by a process crash between the two root publications. */
@@ -675,7 +707,21 @@ async function validateImportedAttachmentReferences(
   references: Map<string, boolean>,
   openBotStage: string,
   destinationOpenBotRoot: string,
+  missingAttachmentPaths: readonly string[] = [],
 ): Promise<void> {
+  const explicitlyMissing = new Set(missingAttachmentPaths.map(relativePathFromPortableMarker));
+  if (explicitlyMissing.size !== missingAttachmentPaths.length) {
+    throw new ServerMigrationSnapshotError("The snapshot lists a missing attachment more than once.");
+  }
+  for (const relativePath of explicitlyMissing) {
+    const absolutePath = resolve(destinationOpenBotRoot, ...relativePath.split("/"));
+    if (!references.has(absolutePath)) {
+      throw new ServerMigrationSnapshotError("The snapshot lists a missing attachment that is not referenced.");
+    }
+    if (await lstatOptional(resolveStagedPath(openBotStage, relativePath))) {
+      throw new ServerMigrationSnapshotError("The snapshot lists an attachment as missing but includes its file.");
+    }
+  }
   for (const [absolutePath, mayBeMissing] of references) {
     const relativePath = relative(destinationOpenBotRoot, absolutePath).split(sep).join("/");
     if (!isIncludedOpenBotRelativePath(relativePath)) {
@@ -685,7 +731,7 @@ async function validateImportedAttachmentReferences(
     }
     const target = resolveStagedPath(openBotStage, relativePath);
     const info = await lstatOptional(target);
-    if (!info && mayBeMissing) continue;
+    if (!info && (mayBeMissing || explicitlyMissing.has(relativePath))) continue;
     if (!info?.isFile() || info.isSymbolicLink()) {
       throw new ServerMigrationSnapshotError(
         `An attachment reference does not have an imported file: ${relativePath}.`,
@@ -694,18 +740,20 @@ async function validateImportedAttachmentReferences(
   }
 }
 
-async function validatePortableAttachmentReferences(snapshotRoot: string, builder: SnapshotBuilder): Promise<void> {
+async function validatePortableAttachmentReferences(snapshotRoot: string, builder: SnapshotBuilder): Promise<string[]> {
   const files = new Set(builder.files.map((file) => file.path));
+  const missing: string[] = [];
   for (const [portablePath, mayBeMissing] of builder.attachmentPaths) {
     const relativePath = relativePathFromPortableMarker(portablePath);
     if (files.has(`home/OpenBot/${relativePath}`) || mayBeMissing) continue;
-    throw new ServerMigrationSnapshotError(`An attachment reference is not included in the snapshot: ${relativePath}.`);
+    missing.push(portablePath);
   }
   // Both databases and JSON files must be regular staging files; verification catches links and
   // extra entries later, while this confirms the output roots used by path markers are present.
   if (!(await lstatOptional(join(snapshotRoot, "home/OpenBot")))) {
     throw new ServerMigrationSnapshotError("The portable attachment workspace is missing from the snapshot.");
   }
+  return missing.sort((left, right) => left.localeCompare(right));
 }
 
 function isAllowedWorkspacePath(path: string): boolean {
@@ -1460,10 +1508,27 @@ function decodeManifest(value: unknown): ServerMigrationSnapshotManifest {
     bytes: file.bytes,
     sha256: file.sha256,
   }));
+  const missingAttachmentPaths = record.missingAttachmentPaths.map((path) => {
+    const relativePath = relativePathFromPortableMarker(path);
+    if (path !== `${PORTABLE_OPENBOT_PATH_PREFIX}${relativePath}`) {
+      throw new ServerMigrationSnapshotError("The snapshot manifest contains a non-canonical missing attachment path.");
+    }
+    return path;
+  });
   const directorySet = new Set(directories);
   const fileSet = new Set(files.map((file) => file.path));
+  const missingAttachmentSet = new Set(missingAttachmentPaths);
   if (directorySet.size !== directories.length || fileSet.size !== files.length) {
     throw new ServerMigrationSnapshotError("The snapshot manifest contains duplicate paths.");
+  }
+  if (missingAttachmentSet.size !== missingAttachmentPaths.length) {
+    throw new ServerMigrationSnapshotError("The snapshot manifest lists a missing attachment more than once.");
+  }
+  for (const missingPath of missingAttachmentPaths) {
+    const relativePath = relativePathFromPortableMarker(missingPath);
+    if (fileSet.has(`home/OpenBot/${relativePath}`)) {
+      throw new ServerMigrationSnapshotError("The snapshot manifest marks an included attachment as missing.");
+    }
   }
   for (const file of files) {
     if (directorySet.has(file.path))
@@ -1478,6 +1543,9 @@ function decodeManifest(value: unknown): ServerMigrationSnapshotManifest {
     createdAt: record.createdAt,
     directories,
     files,
+    ...(missingAttachmentSet.size > 0
+      ? { missingAttachmentPaths: [...missingAttachmentSet].sort((left, right) => left.localeCompare(right)) }
+      : {}),
     totalBytes: total,
   };
 }

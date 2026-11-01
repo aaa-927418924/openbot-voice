@@ -31,4 +31,6 @@ export const messages = defineMessages("error.host", {
   "error.host.migrationSnapshotFailed": "This computer could not prepare the migration snapshot.",
   "error.host.migrationTransferFailed": "The migration transfer failed.",
   "error.host.migrationCancelled": "The migration was cancelled.",
+  "error.host.migrationMissingAttachmentSupport":
+    "This destination does not support preserving already-missing attachment references. Update the destination server and try again.",
 });

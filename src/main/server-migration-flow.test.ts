@@ -42,6 +42,34 @@ describe("local-to-server migration flow", () => {
     ]);
     writeDatabase(join(sourceUserData, "openbot.db"), "source chat history");
     writeDatabase(join(sourceOpenBot, "Shared", "Data", "agent-data.db"), "source agent data");
+    const missingAttachmentId = "8bc95574-c965-431c-bb7f-d7cf09ed3673";
+    const missingAttachmentName = "Dario-Amodei-full-body.png";
+    const missingAttachmentPath = join(
+      sourceOpenBot,
+      "Shared",
+      "Transfers",
+      "generated",
+      missingAttachmentId,
+      missingAttachmentName,
+    );
+    const sourceDatabase = new DatabaseSync(join(sourceUserData, "openbot.db"));
+    sourceDatabase.exec(`
+      CREATE TABLE projection_attachments (
+        attachment_id TEXT PRIMARY KEY,
+        owner_kind TEXT NOT NULL,
+        path TEXT NOT NULL,
+        metadata_json TEXT NOT NULL
+      );
+    `);
+    sourceDatabase
+      .prepare("INSERT INTO projection_attachments VALUES (?, ?, ?, ?)")
+      .run(
+        missingAttachmentId,
+        "generated",
+        missingAttachmentPath,
+        JSON.stringify({ id: missingAttachmentId, name: missingAttachmentName, path: missingAttachmentPath }),
+      );
+    sourceDatabase.close();
     writeDatabase(join(destinationUserData, "openbot.db"), "old destination history");
     writeDatabase(join(destinationOpenBot, "Shared", "Data", "agent-data.db"), "old destination agents");
     await writeFile(largeWorkspaceFile, Buffer.alloc(SERVER_MIGRATION_CHUNK_BYTES_LIMIT + 1, 7));
@@ -122,8 +150,32 @@ describe("local-to-server migration flow", () => {
       Buffer.alloc(SERVER_MIGRATION_CHUNK_BYTES_LIMIT + 1, 7),
     );
     expect(await readFile(largeWorkspaceFile)).toEqual(Buffer.alloc(SERVER_MIGRATION_CHUNK_BYTES_LIMIT + 1, 7));
+    expect(result.message).toBeTruthy();
+    const migratedDatabase = new DatabaseSync(join(destinationUserData, "openbot.db"), { readOnly: true });
+    try {
+      expect(migratedDatabase.prepare("SELECT path FROM projection_attachments").get()).toEqual({
+        path: join(destinationOpenBot, "Shared", "Transfers", "generated", missingAttachmentId, missingAttachmentName),
+      });
+    } finally {
+      migratedDatabase.close();
+    }
+    expect(await fileExists(missingAttachmentPath)).toBe(false);
+    expect(
+      await fileExists(
+        join(destinationOpenBot, "Shared", "Transfers", "generated", missingAttachmentId, missingAttachmentName),
+      ),
+    ).toBe(false);
   }, 30_000);
 });
+
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    await readFile(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function writeDatabase(path: string, value: string): void {
   const database = new DatabaseSync(path);

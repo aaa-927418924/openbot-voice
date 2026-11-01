@@ -46,6 +46,8 @@ export interface ServerMigrationDestinationPeer {
   serverId: string;
   serverName: string;
   members: () => Promise<TeamMemberSummary[]>;
+  /** The destination advertised support for preserving already-missing attachment references. */
+  supportsMissingAttachments?: boolean;
   request: <T>(path: string, decoder: (value: unknown) => T, init?: RemoteRequestInit) => Promise<T>;
   writeChunk: (input: {
     transferId: string;
@@ -151,7 +153,11 @@ export class ServerMigrationSourceService {
     job.running = true;
     job.cancelled = false;
     job.phase = job.manifest ? "sending" : "preparing";
-    job.message = null;
+    const missingAttachments = job.manifest?.missingAttachmentPaths?.length ?? 0;
+    job.message =
+      missingAttachments > 0
+        ? sourceText("status.host.migrationMissingAttachments", { count: missingAttachments })
+        : null;
     job.retryable = false;
     this.#emit();
     void this.#run(job);
@@ -227,9 +233,18 @@ export class ServerMigrationSourceService {
         }
       },
     });
+    const missingAttachments = snapshot.manifest.missingAttachmentPaths?.length ?? 0;
+    if (missingAttachments > 0 && !peer.supportsMissingAttachments) {
+      await rm(snapshot.path, { recursive: true, force: true });
+      throw new Error(sourceText("error.host.migrationMissingAttachmentSupport"));
+    }
     job.snapshotPath = snapshot.path;
     job.manifest = snapshot.manifest;
     job.totalBytes = snapshot.manifest.totalBytes;
+    job.message =
+      missingAttachments > 0
+        ? sourceText("status.host.migrationMissingAttachments", { count: missingAttachments })
+        : null;
     this.#emit();
   }
 

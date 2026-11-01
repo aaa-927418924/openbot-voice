@@ -31,7 +31,10 @@ describe("server migration transfer", () => {
   });
 
   it("resumes bounded chunks, accepts retries, verifies once complete, and keeps filesystem paths private", async () => {
-    const manifest = makeManifest();
+    const manifest = {
+      ...makeManifest(),
+      missingAttachmentPaths: ["openbot-migration-path://Shared/Transfers/generated/missing-id/image.png"],
+    };
     const requestId = randomUUID();
     const started = await run(service.begin({ memberId: OWNER, requestId, manifest }));
     const retriedBegin = await run(service.begin({ memberId: OWNER, requestId, manifest }));
@@ -162,7 +165,11 @@ describe("server migration transfer", () => {
       ],
       totalBytes: base.totalBytes + 1,
     };
-    for (const manifest of [traversal, duplicate, privateFile]) {
+    const outsideMissingAttachment = {
+      ...base,
+      missingAttachmentPaths: ["openbot-migration-path://Shared/../private.png"],
+    };
+    for (const manifest of [traversal, duplicate, privateFile, outsideMissingAttachment]) {
       await expect(run(service.begin({ memberId: OWNER, requestId: randomUUID(), manifest }))).rejects.toBeInstanceOf(
         ServerMigrationTransferFailure,
       );
@@ -274,6 +281,7 @@ function makeManifest(): ServerMigrationSnapshotManifest {
     createdAt: "2026-10-31T00:00:00.000Z",
     directories: ["user-data", "home", "home/OpenBot", "home/OpenBot/Shared", "home/OpenBot/Shared/Data"].sort(),
     files,
+    missingAttachmentPaths: [],
     totalBytes: files.reduce((total, file) => total + file.bytes, 0),
   };
 }

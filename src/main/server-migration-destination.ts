@@ -120,6 +120,7 @@ export class ServerMigrationDestination {
       snapshotPath,
       userDataRoot: record.stagedUserDataRoot,
       openBotRoot: record.stagedOpenBotRoot,
+      attachmentOpenBotRoot: this.#openBotRoot,
     });
     await preserveDestinationContinuity(this.#userDataRoot, record.stagedUserDataRoot);
 

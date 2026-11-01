@@ -35,6 +35,7 @@ export function createLocalServerMigrationPeer(
   return {
     serverId: options.serverId,
     serverName: options.serverName,
+    supportsMissingAttachments: true,
     members: async () => [...options.members()],
     request: async <T>(path: string, decoder: (value: unknown) => T, init?: RemoteRequestInit): Promise<T> => {
       const body = isDynamicRecord(init?.body) ? init.body : {};

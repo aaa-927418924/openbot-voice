@@ -12,6 +12,7 @@ const manifest: ServerMigrationSnapshotManifest = {
   createdAt: "2026-11-01T00:00:00.000Z",
   directories: ["user-data", "home", "home/OpenBot"],
   files: [{ path: "user-data/openbot.db", bytes: 4, sha256: "0".repeat(64) }],
+  missingAttachmentPaths: [],
   totalBytes: 4,
 };
 
