@@ -47,10 +47,7 @@
 }
 
 .attachment-video-expand-button {
-  position: absolute;
-  z-index: 1;
-  inset-block-start: var(--openbot-space-2);
-  inset-inline-end: var(--openbot-space-2);
+  flex: 0 0 auto;
   border: 1px solid var(--openbot-border);
   background: var(--openbot-bg-surface-raised);
   color: var(--openbot-text-primary);
