@@ -141,7 +141,7 @@ function AuthenticatedStack() {
           <Stack.Screen
             name="channel/[channelId]"
             options={{
-              animation: "slide_from_right",
+              animation: chatScreenAnimation(Platform.OS),
               contentStyle: { backgroundColor: customBackground ? "transparent" : background },
               fullScreenGestureEnabled: false,
               gestureEnabled: true,
