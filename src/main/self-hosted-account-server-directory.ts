@@ -35,6 +35,7 @@ interface StoredServer {
   readonly fingerprint: string;
   readonly publicKey: string;
   readonly logoKey: string | null;
+  readonly origin?: "cloud";
 }
 
 interface StoredMembership {
@@ -91,7 +92,8 @@ function decodeServer(value: unknown): StoredServer {
     !isString(value.publicKey) ||
     value.publicKey.length > 8192 ||
     remoteHostFingerprint(value.publicKey) !== value.fingerprint ||
-    !(value.logoKey === null || (isString(value.logoKey) && value.logoKey.length <= 256))
+    !(value.logoKey === null || (isString(value.logoKey) && value.logoKey.length <= 256)) ||
+    !(value.origin === undefined || value.origin === "cloud")
   ) {
     throw new Error("The account server directory is invalid.");
   }
@@ -102,6 +104,7 @@ function decodeServer(value: unknown): StoredServer {
     fingerprint: value.fingerprint,
     publicKey: value.publicKey,
     logoKey: value.logoKey,
+    ...(value.origin === undefined ? {} : { origin: value.origin }),
   };
 }
 
@@ -202,6 +205,7 @@ function decodeRegistration(value: unknown): AccountServerRegistration {
     logoKey: server.logoKey,
     membershipId: value.membershipId,
     role: value.role,
+    ...(server.origin === undefined ? {} : { origin: server.origin }),
     ...(value.legacyImport === true ? { legacyImport: true } : {}),
     ...(value.rejoin === true ? { rejoin: true } : {}),
   };
@@ -281,6 +285,7 @@ export class SelfHostedAccountServerDirectory {
                 fingerprint: server.fingerprint,
                 publicKey: server.publicKey,
                 logoKey: server.logoKey,
+                ...(server.origin === undefined ? {} : { origin: server.origin }),
                 membershipId: membership.membershipId,
                 role: membership.role,
                 // The synced directory is not an authority for Team server permissions.
@@ -332,7 +337,12 @@ export class SelfHostedAccountServerDirectory {
         throw new AccountServerDirectoryError(409, "host_identity_conflict");
       }
       const server: StoredServer = existing
-        ? { ...existing, name: registration.name, logoKey: registration.logoKey }
+        ? {
+            ...existing,
+            name: registration.name,
+            logoKey: registration.logoKey,
+            ...(registration.origin ? { origin: registration.origin } : {}),
+          }
         : {
             hostId: registration.hostId,
             name: registration.name,
@@ -340,6 +350,7 @@ export class SelfHostedAccountServerDirectory {
             fingerprint: registration.fingerprint,
             publicKey: registration.publicKey,
             logoKey: registration.logoKey,
+            ...(registration.origin === undefined ? {} : { origin: registration.origin }),
           };
       const membership: StoredMembership = {
         accountId,
@@ -400,6 +411,11 @@ export class SelfHostedAccountServerDirectory {
         fingerprint: registration.fingerprint,
         publicKey: registration.publicKey,
         logoKey: registration.logoKey,
+        ...(registration.origin === undefined
+          ? existing?.origin === undefined
+            ? {}
+            : { origin: existing.origin }
+          : { origin: registration.origin }),
       };
       const membership: StoredMembership = {
         accountId,
@@ -416,6 +432,7 @@ export class SelfHostedAccountServerDirectory {
         existing?.name === server.name &&
         existing.apiUrl === server.apiUrl &&
         existing.logoKey === server.logoKey &&
+        existing.origin === server.origin &&
         existingMembership?.membershipId === membership.membershipId &&
         existingMembership.role === membership.role
       ) {
@@ -494,6 +511,7 @@ export class SelfHostedAccountServerDirectory {
               name: registration.name,
               apiUrl: registration.apiUrl,
               logoKey: registration.logoKey,
+              ...(registration.origin ? { origin: registration.origin } : {}),
             }
           : existing;
       } else {
@@ -505,6 +523,7 @@ export class SelfHostedAccountServerDirectory {
           fingerprint: registration.fingerprint,
           publicKey: registration.publicKey,
           logoKey: registration.logoKey,
+          ...(registration.origin === undefined ? {} : { origin: registration.origin }),
         };
       }
       const membership = this.#state.memberships.find(

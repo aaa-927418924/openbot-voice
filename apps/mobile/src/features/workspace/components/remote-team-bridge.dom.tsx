@@ -17,6 +17,7 @@ import {
   type RemoteTeamPeerActions,
 } from "@openbot/team-client/remote-peer";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { remoteDesktopViewerUrl } from "@/features/workspace/model/remote-desktop-viewer-url";
 
 interface RemoteTeamBridgeProps extends RemoteTeamPeerActions {
   commands: RemoteTeamCommand[];
@@ -24,6 +25,7 @@ interface RemoteTeamBridgeProps extends RemoteTeamPeerActions {
   onCommandResult: (result: RemoteTeamCommandResult) => Promise<void>;
   remoteDesktopSession?: RemoteDesktopSession | null;
   directRemoteDesktop?: boolean;
+  remoteDesktopBaseUrl?: string;
   remoteDesktopLabels?: { back: string; connecting: string; title: string };
   onCloseRemoteDesktop?: (sessionId: string) => Promise<void>;
   dom?: import("expo/dom").DOMProps;
@@ -91,6 +93,7 @@ export default function RemoteTeamBridge({
   onCommandResult,
   remoteDesktopSession = null,
   directRemoteDesktop = false,
+  remoteDesktopBaseUrl,
   remoteDesktopLabels = { back: "Back", connecting: "Connecting…", title: "Remote desktop" },
   onCloseRemoteDesktop,
   ...callbacks
@@ -102,26 +105,25 @@ export default function RemoteTeamBridge({
   const [viewerState, setViewerState] = useState("connecting");
   const viewerUrl = useMemo(() => {
     if (!remoteDesktopSession) return null;
-    const url = new URL(remoteDesktopSession.viewerUrl);
-    if (!directRemoteDesktop) url.searchParams.set("openbotRelay", "1");
-    else url.searchParams.delete("openbotRelay");
-    url.hash = remoteDesktopSession.viewerGrant;
-    return url.toString();
-  }, [directRemoteDesktop, remoteDesktopSession]);
+    return remoteDesktopViewerUrl(remoteDesktopSession, {
+      direct: directRemoteDesktop,
+      baseUrl: remoteDesktopBaseUrl,
+    });
+  }, [directRemoteDesktop, remoteDesktopBaseUrl, remoteDesktopSession]);
 
-  const sendViewerMessage = useCallback((message: ViewerSocketMessage) => {
-    const session = viewerSession.current;
-    const frame = viewerFrame.current?.contentWindow;
-    if (!session || !frame) return;
-    try {
-      frame.postMessage(
-        { source: SOCKET_SOURCE, sessionId: session.id, ...message },
-        new URL(session.viewerUrl).origin,
-      );
-    } catch {
-      // A viewer can disappear while a final WebRTC frame is being delivered.
-    }
-  }, []);
+  const sendViewerMessage = useCallback(
+    (message: ViewerSocketMessage) => {
+      const session = viewerSession.current;
+      const frame = viewerFrame.current?.contentWindow;
+      if (!session || !frame || !viewerUrl) return;
+      try {
+        frame.postMessage({ source: SOCKET_SOURCE, sessionId: session.id, ...message }, new URL(viewerUrl).origin);
+      } catch {
+        // A viewer can disappear while a final WebRTC frame is being delivered.
+      }
+    },
+    [viewerUrl],
+  );
 
   const onHostStreamData = (data: string | ArrayBuffer) => {
     const session = viewerSession.current;
@@ -190,7 +192,8 @@ export default function RemoteTeamBridge({
     viewerStreams.current.clear();
     setViewerState("connecting");
     if (!remoteDesktopSession) return;
-    const origin = new URL(remoteDesktopSession.viewerUrl).origin;
+    if (!viewerUrl) return;
+    const origin = new URL(viewerUrl).origin;
     const streamPath = `${TEAM_API_ROUTES.remoteScreen.session(remoteDesktopSession.id)}/stream`;
     const handleMessage = (event: MessageEvent) => {
       if (event.source !== viewerFrame.current?.contentWindow || event.origin !== origin) return;
@@ -205,7 +208,7 @@ export default function RemoteTeamBridge({
       if (command.type === "open") {
         let path: string;
         try {
-          const url = new URL(command.path, remoteDesktopSession.viewerUrl);
+          const url = new URL(command.path, viewerUrl);
           if (url.origin !== origin || url.pathname !== streamPath) return;
           path = `${url.pathname}${url.search}`;
         } catch {
@@ -262,7 +265,7 @@ export default function RemoteTeamBridge({
           .catch(() => undefined);
       viewerStreams.current.clear();
     };
-  }, [peer, remoteDesktopSession, sendViewerMessage]);
+  }, [peer, remoteDesktopSession, sendViewerMessage, viewerUrl]);
 
   useEffect(
     () => () => {

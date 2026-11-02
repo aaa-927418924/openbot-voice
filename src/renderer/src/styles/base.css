@@ -22,6 +22,7 @@ html body {
 
 #root {
   position: absolute;
+  z-index: 1;
   inset: env(titlebar-area-height, 0px) 0 0;
   min-width: 0;
   overflow: hidden;
@@ -37,6 +38,27 @@ body::before {
   content: "";
   background: var(--openbot-bg-native-canvas);
   -webkit-app-region: drag;
+}
+
+body::after {
+  position: fixed;
+  z-index: 0;
+  inset: -24px;
+  content: "";
+  pointer-events: none;
+}
+
+body.app-custom-theme::before {
+  background: var(--openbot-transparent);
+}
+
+body.app-custom-theme::after {
+  background-image: var(--workspace-theme-image);
+  background-position: center;
+  background-size: cover;
+  filter: blur(var(--workspace-theme-blur, 8px));
+  opacity: var(--workspace-theme-opacity, 0.72);
+  transform: scale(1.04);
 }
 
 button,

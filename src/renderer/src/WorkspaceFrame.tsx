@@ -1,7 +1,7 @@
 import type { ServerSummary } from "@openbot/contracts/ipc";
 import { RemoteCompatibilityScreen } from "@openbot/ui/features/remote-desktop/RemoteCompatibilityScreen";
 import type { JSX } from "@solidjs/web";
-import { omit, type ParentProps, Show } from "solid-js";
+import { createEffect, omit, onCleanup, type ParentProps, Show } from "solid-js";
 import type { DesktopThemeSettings } from "./features/settings/theme-settings";
 import { useLayout } from "./layout";
 import { LEFT_PANEL_COMPACT } from "./layout-constants";
@@ -29,6 +29,12 @@ type WorkspaceFrameProps = ParentProps<
   } & Omit<JSX.HTMLAttributes<HTMLDivElement>, "children">
 >;
 
+function workspaceThemeStyle(theme: DesktopThemeSettings | null): string {
+  if (theme === null) return "";
+  const { imageDataUrl, blur, opacity } = theme;
+  return `--workspace-theme-image: url("${imageDataUrl}"); --workspace-theme-blur: ${blur}px; --workspace-theme-opacity: ${opacity / 100}`;
+}
+
 /**
  * The application frame that the desktop shell and the web client share: the grid classes, the left
  * column width and its resizer, the compatibility screen, and the usage report slot. The panes come
@@ -55,6 +61,28 @@ export function WorkspaceFrame(props: WorkspaceFrameProps) {
   );
   const customTheme = () => (props.theme?.mode === "custom" && props.theme.imageDataUrl ? props.theme : null);
 
+  createEffect(() => {
+    const theme = customTheme();
+    const body = document.body;
+    body.classList.toggle("app-custom-theme", theme !== null);
+    if (theme) {
+      body.style.setProperty("--workspace-theme-image", `url("${theme.imageDataUrl}")`);
+      body.style.setProperty("--workspace-theme-blur", `${theme.blur}px`);
+      body.style.setProperty("--workspace-theme-opacity", String(theme.opacity / 100));
+    } else {
+      body.style.removeProperty("--workspace-theme-image");
+      body.style.removeProperty("--workspace-theme-blur");
+      body.style.removeProperty("--workspace-theme-opacity");
+    }
+  });
+
+  onCleanup(() => {
+    document.body.classList.remove("app-custom-theme");
+    document.body.style.removeProperty("--workspace-theme-image");
+    document.body.style.removeProperty("--workspace-theme-blur");
+    document.body.style.removeProperty("--workspace-theme-opacity");
+  });
+
   return (
     <div
       {...rest}
@@ -72,12 +100,7 @@ export function WorkspaceFrame(props: WorkspaceFrameProps) {
         },
       ]}
       aria-hidden={props.hidden ? "true" : undefined}
-      style={`--left-panel-width: ${props.compact ? LEFT_PANEL_COMPACT : layout.leftPanelWidth()}px; ${(() => {
-        const theme = customTheme();
-        return theme
-          ? `--workspace-theme-image: url("${theme.imageDataUrl}"); --workspace-theme-blur: ${theme.blur}px; --workspace-theme-opacity: ${theme.opacity / 100}`
-          : "";
-      })()}`}
+      style={`--left-panel-width: ${props.compact ? LEFT_PANEL_COMPACT : layout.leftPanelWidth()}px; ${workspaceThemeStyle(customTheme())}`}
     >
       {props.left}
       <WorkspaceLeftPanelResizer />

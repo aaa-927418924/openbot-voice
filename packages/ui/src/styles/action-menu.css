@@ -58,6 +58,10 @@
   animation: ui-menu-out var(--ui-menu-duration) var(--ui-menu-ease) both;
 }
 
+.ui-action-menu[data-menu-position-pending] {
+  visibility: hidden;
+}
+
 /* Kobalte labels a submenu with the id of its sub-trigger. The exit copy keeps the label. */
 .ui-action-menu[aria-labelledby*="sub-trigger"] {
   animation-duration: var(--ui-submenu-duration);

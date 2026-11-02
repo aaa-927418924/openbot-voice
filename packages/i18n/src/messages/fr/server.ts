@@ -39,6 +39,7 @@ export const messages = {
   "server.join.emailBound": "Cette invitation fonctionne uniquement pour son destinataire e-mail.",
   "server.join.unknownDate": "Inconnue",
   "server.role.admin": "Admin",
+  "server.origin.cloud": "Serveur cloud",
   "server.role.member": "Membre",
   "server.mute.for15Minutes": "Pendant 15 minutes",
   "server.mute.for1Hour": "Pendant 1 heure",

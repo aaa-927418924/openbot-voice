@@ -14,6 +14,8 @@ interface ChatGlassButtonProps extends PropsWithChildren {
   className?: string;
   disabled?: boolean;
   fallbackBackground: ViewStyle["backgroundColor"];
+  /** Lets a local wallpaper remain visible behind floating controls. */
+  transparentSurface?: boolean;
   height?: number;
   /**
    * Hides the button in place. Glass stops rendering under any ancestor with zero opacity, so
@@ -32,6 +34,7 @@ export function ChatGlassButton({
   className = "flex-1 flex-row items-center justify-center",
   disabled = false,
   fallbackBackground,
+  transparentSurface = false,
   height = 48,
   hidden,
   liquidGlassAvailable,
@@ -65,7 +68,7 @@ export function ChatGlassButton({
             position: "absolute",
             inset: 0,
             backgroundColor: fallbackBackground,
-            opacity: hidden ? 0 : 1,
+            opacity: hidden ? 0 : transparentSurface ? 0.38 : 1,
             ...FADE,
           }}
         />

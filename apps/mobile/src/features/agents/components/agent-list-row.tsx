@@ -25,6 +25,7 @@ import { useAgentPinTransition } from "@/features/agents/components/agent-pin-tr
 import { BloubAvatar } from "@/features/agents/components/bloub-avatar";
 import { ChatLinkPressable } from "@/features/agents/components/chat-link-pressable";
 import { markdownPreviewText } from "@/features/chat/model/chat-markdown-parser";
+import { useCustomTheme } from "@/features/settings/model/custom-theme";
 import { useAgentUnread } from "@/features/workspace/components/use-live-workspace";
 import { type MobileAgent, useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
 import { canToggleAgentPin } from "@/features/workspace/model/agent-pins";
@@ -106,6 +107,8 @@ export function AgentListRow({
 }: AgentListRowProps) {
   const { t } = useText();
   const [background] = useThemeColor(["background"]);
+  const customTheme = useCustomTheme();
+  const hasCustomBackground = customTheme.mode === "custom" && customTheme.imageUri !== null;
   const { pinnedAgentIds, pinnedChannelIds } = useMobileWorkspace();
   const { toggleAgentPinAnimated, transition } = useAgentPinTransition();
   const editMenu = useRef<MenuComponentRef>(null);
@@ -163,7 +166,7 @@ export function AgentListRow({
           className="min-h-[72px] w-full flex-row items-center gap-3 py-1"
           style={{
             // In the Android search sheet the row shows the sheet color, not the home list color.
-            backgroundColor: onOpen && isAndroid ? "transparent" : background,
+            backgroundColor: (onOpen && isAndroid) || hasCustomBackground ? "transparent" : background,
             opacity: pressed ? 0.58 : 1,
             paddingLeft: leftInset,
             paddingRight: rightInset,
@@ -223,6 +226,7 @@ export function AgentListRow({
     <AgentPinSwipeRow
       agentName={agent.name}
       pinBlocked={!canToggleAgentPin([...pinnedAgentIds, ...pinnedChannelIds], agent.id)}
+      transparentBackground={hasCustomBackground}
       onPin={(withHaptic) => toggleAgentPinAnimated(agent.id, { haptic: withHaptic })}
     >
       {Platform.OS === "android" ? (

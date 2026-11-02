@@ -1,6 +1,6 @@
 import { Image } from "expo-image";
 import { Slider, Typography } from "heroui-native";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { View } from "react-native";
 import { UsageSegments } from "@/features/agents/components/usage-segments";
 import {
@@ -21,6 +21,18 @@ export function ThemeSettingsScreen() {
   const { t } = useText();
   const theme = useCustomTheme();
   const [error, setError] = useState<string | null>(null);
+  const [blur, setBlur] = useState(theme.blur);
+  const [opacity, setOpacity] = useState(theme.opacity);
+  const draftRange = useRef({ blur: theme.blur, opacity: theme.opacity });
+
+  useEffect(() => {
+    draftRange.current.blur = theme.blur;
+    setBlur(theme.blur);
+  }, [theme.blur]);
+  useEffect(() => {
+    draftRange.current.opacity = theme.opacity;
+    setOpacity(theme.opacity);
+  }, [theme.opacity]);
   async function chooseImage() {
     if (theme.saving) return;
     setError(null);
@@ -50,7 +62,20 @@ export function ThemeSettingsScreen() {
   function saveRange(field: "blur" | "opacity", value: number | number[]) {
     const next = Array.isArray(value) ? value[0] : value;
     if (typeof next !== "number") return;
-    void saveCustomTheme({ ...theme, [field]: next }).catch(() => setError(t("mobile.settings.theme.saveFailed")));
+    draftRange.current[field] = next;
+    if (field === "blur") setBlur(next);
+    else setOpacity(next);
+    void saveCustomTheme({ ...theme, ...draftRange.current }).catch(() =>
+      setError(t("mobile.settings.theme.saveFailed")),
+    );
+  }
+
+  function updateRange(field: "blur" | "opacity", value: number | number[]) {
+    const next = Array.isArray(value) ? value[0] : value;
+    if (typeof next !== "number") return;
+    draftRange.current[field] = next;
+    if (field === "blur") setBlur(next);
+    else setOpacity(next);
   }
 
   async function changeMode(mode: "dark" | "custom") {
@@ -96,8 +121,8 @@ export function ThemeSettingsScreen() {
               <Image
                 source={{ uri: theme.imageUri }}
                 contentFit="cover"
-                blurRadius={theme.blur}
-                style={{ width: "100%", height: 176, borderRadius: 14, opacity: theme.opacity / 100 }}
+                blurRadius={blur}
+                style={{ width: "100%", height: 176, borderRadius: 14, opacity: opacity / 100 }}
                 accessibilityLabel={t("mobile.settings.theme.background.preview")}
               />
               <SettingsRow onPress={() => void removeImage()} disabled={theme.saving} disclosure={false}>
@@ -111,15 +136,16 @@ export function ThemeSettingsScreen() {
             <View className="gap-2 px-4 py-3">
               <View className="flex-row items-center justify-between">
                 <Typography.Paragraph type="body-sm">
-                  {t("mobile.settings.theme.background.blur", { value: theme.blur })}
+                  {t("mobile.settings.theme.background.blur", { value: blur })}
                 </Typography.Paragraph>
               </View>
               <Slider
-                value={theme.blur}
+                value={blur}
                 minValue={0}
                 maxValue={24}
                 step={1}
                 isDisabled={!theme.ready || theme.saving}
+                onChange={(value) => updateRange("blur", value)}
                 onChangeEnd={(value) => saveRange("blur", value)}
                 aria-label={t("mobile.settings.theme.background.blurLabel")}
               >
@@ -136,14 +162,15 @@ export function ThemeSettingsScreen() {
           {theme.imageUri ? (
             <View className="gap-2 px-4 py-3">
               <Typography.Paragraph type="body-sm">
-                {t("mobile.settings.theme.background.opacity", { value: theme.opacity })}
+                {t("mobile.settings.theme.background.opacity", { value: opacity })}
               </Typography.Paragraph>
               <Slider
-                value={theme.opacity}
+                value={opacity}
                 minValue={10}
                 maxValue={100}
                 step={1}
                 isDisabled={!theme.ready || theme.saving}
+                onChange={(value) => updateRange("opacity", value)}
                 onChangeEnd={(value) => saveRange("opacity", value)}
                 aria-label={t("mobile.settings.theme.background.opacityLabel")}
               >

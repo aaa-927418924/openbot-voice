@@ -4,6 +4,7 @@ import type { messages as source } from "../../en/mobile/server";
 export const messages = {
   "mobile.server.drawer.local": "Local",
   "mobile.server.drawer.remote": "Distant",
+  "mobile.server.drawer.cloud": "Cloud",
   "mobile.server.drawer.options": "Options",
   "mobile.server.drawer.hide": "Masquer le serveur",
   "mobile.server.drawer.hideFailed": "Impossible de masquer le serveur. Réessayez.",

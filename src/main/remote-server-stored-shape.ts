@@ -45,6 +45,8 @@ export interface StoredRemoteServer {
   encryptedToken: string;
   remoteDesktopAvailable: boolean;
   logoVersion?: string | null;
+  /** A verified account-directory marker; absent on older server entries. */
+  origin?: "cloud";
   role: TeamRole;
   /** Membership identifier returned by account auth; used to seed cross-device server sync. */
   membershipId?: string;
@@ -254,6 +256,7 @@ function readStoredRemoteServer(value: unknown): StoredRemoteServer | null {
     !isString(value.encryptedToken) ||
     !(value.remoteDesktopAvailable === undefined || isBoolean(value.remoteDesktopAvailable)) ||
     !(value.logoVersion === undefined || value.logoVersion === null || isString(value.logoVersion)) ||
+    !(value.origin === undefined || value.origin === "cloud") ||
     !(value.transport === undefined || value.transport === "webrtc-v2") ||
     !(value.pendingAccountAuthentication === undefined || isBoolean(value.pendingAccountAuthentication)) ||
     (value.pendingAccountAuthentication === true && value.encryptedToken !== "") ||
@@ -296,6 +299,7 @@ function readStoredRemoteServer(value: unknown): StoredRemoteServer | null {
     encryptedToken: value.encryptedToken,
     remoteDesktopAvailable: value.remoteDesktopAvailable ?? false,
     ...(value.logoVersion === undefined ? {} : { logoVersion: value.logoVersion }),
+    ...(value.origin === undefined ? {} : { origin: value.origin }),
     role: value.role,
     ...(isString(value.membershipId) && value.membershipId.length > 0 && value.membershipId.length <= 128
       ? { membershipId: value.membershipId }

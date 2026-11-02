@@ -84,15 +84,18 @@ export function AgentPinSwipeRow({
   agentName,
   pinned = false,
   pinBlocked,
+  transparentBackground = false,
   onPin,
   children,
 }: PropsWithChildren<{
   agentName: string;
   pinned?: boolean;
   pinBlocked: boolean;
+  transparentBackground?: boolean;
   onPin: (withHaptic: boolean) => void;
 }>) {
   const [background] = useThemeColor(["background"]);
+  const rowBackground = transparentBackground ? "transparent" : background;
   const { openingGesture } = useAppDrawer();
   const swipe = useAgentPinSwipe(openingGesture, onPin, pinBlocked);
   const { t } = useText();
@@ -102,8 +105,8 @@ export function AgentPinSwipeRow({
       <ReanimatedSwipeable
         ref={swipe.swipeable}
         enabled={!swipe.pinPending}
-        containerStyle={{ backgroundColor: background, overflow: "hidden" }}
-        childrenContainerStyle={{ backgroundColor: background }}
+        containerStyle={{ backgroundColor: rowBackground, overflow: "hidden" }}
+        childrenContainerStyle={{ backgroundColor: rowBackground }}
         friction={1}
         overshootRight
         overshootFriction={1}

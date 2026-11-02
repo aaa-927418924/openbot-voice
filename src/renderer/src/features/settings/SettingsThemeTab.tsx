@@ -16,6 +16,11 @@ import { createSignal, For, Show } from "solid-js";
 import { useI18n } from "../../i18n-context";
 import { type DesktopThemeSettings, encodeDesktopThemeImage } from "./theme-settings";
 
+const THEME_MODE_LABELS = {
+  dark: "settings.theme.dark",
+  custom: "settings.theme.custom",
+} as const;
+
 export function SettingsThemeTab(props: {
   value: DesktopThemeSettings;
   onChange: (value: DesktopThemeSettings) => boolean;
@@ -59,7 +64,7 @@ export function SettingsThemeTab(props: {
                 <RadioGroup.Item class="settings-theme-segment" value={mode}>
                   <RadioGroup.ItemInput />
                   <RadioGroup.ItemControl class="settings-theme-segment-control">
-                    <RadioGroup.ItemLabel>{i18n.t(`settings.theme.${mode}`)}</RadioGroup.ItemLabel>
+                    <RadioGroup.ItemLabel>{i18n.t(THEME_MODE_LABELS[mode])}</RadioGroup.ItemLabel>
                   </RadioGroup.ItemControl>
                 </RadioGroup.Item>
               )}

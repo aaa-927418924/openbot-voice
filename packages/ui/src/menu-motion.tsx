@@ -89,14 +89,31 @@ function leave(panel: HTMLElement, place: Node | null): void {
  * Gives menu content its exit animation. Submenu handoff is intentionally left to Kobalte so rapid
  * pointer movement does not clone and animate overlapping panels on top of one another.
  */
-export function useMenuMotion(): (element: HTMLElement) => void {
+export function useMenuMotion(options: { waitForPlacement?: boolean } = {}): (element: HTMLElement) => void {
   let panel: HTMLElement | undefined;
   let place: Node | null = null;
+  let placementObserver: MutationObserver | undefined;
   onCleanup(() => {
+    placementObserver?.disconnect();
     if (panel && motionAllowed(panel)) leave(panel, place);
   });
   return (element) => {
     panel = element;
+    if (options.waitForPlacement) {
+      const positioner = positionerOf(element);
+      const isPlaced = () => Boolean(positioner?.style.transform.startsWith("translate3d("));
+      if (positioner && !isPlaced()) {
+        element.dataset.menuPositionPending = "";
+        placementObserver?.disconnect();
+        placementObserver = new MutationObserver(() => {
+          if (!isPlaced()) return;
+          delete element.dataset.menuPositionPending;
+          placementObserver?.disconnect();
+          placementObserver = undefined;
+        });
+        placementObserver.observe(positioner, { attributes: true, attributeFilter: ["style"] });
+      }
+    }
     if (!motionAllowed(element)) return;
     requestAnimationFrame(() => {
       if (!element.isConnected) return;

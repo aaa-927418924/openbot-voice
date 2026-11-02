@@ -2,7 +2,7 @@ import { type MenuAction, type MenuComponentRef, MenuView } from "@expo/ui/commu
 import type { MobileTranslate } from "@openbot/i18n/mobile";
 import type { Href } from "expo-router";
 import { Typography } from "heroui-native";
-import { Check, Plus, Settings } from "lucide-react-native";
+import { Check, Cloud, Plus, Settings } from "lucide-react-native";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Alert, Pressable, ScrollView, View, type ViewStyle } from "react-native";
 import { useUniwind } from "uniwind";
@@ -168,7 +168,7 @@ export function ServerDrawerContent({
         key={serverItem.id}
         accessibilityRole="button"
         accessibilityState={{ selected }}
-        accessibilityLabel={`${serverItem.name}, ${serverLabel}, ${serverStatusLabel(serverItem, t)}`}
+        accessibilityLabel={`${serverItem.name}, ${serverItem.accountServer?.origin === "cloud" ? t("mobile.server.drawer.cloud") : serverLabel}, ${serverStatusLabel(serverItem, t)}`}
         accessibilityActions={accessibilityActions}
         onAccessibilityAction={(event) => {
           const action = event.nativeEvent.actionName;
@@ -188,13 +188,18 @@ export function ServerDrawerContent({
       >
         <ServerAvatar server={serverItem} />
         <View className="min-w-0 flex-1">
-          <Typography.Paragraph
-            weight="medium"
-            className={serverItem.state === "online" ? undefined : "text-text-secondary"}
-            numberOfLines={1}
-          >
-            {serverItem.name}
-          </Typography.Paragraph>
+          <View className="min-w-0 flex-row items-center gap-1.5">
+            <Typography.Paragraph
+              weight="medium"
+              className={`min-w-0 flex-1 ${serverItem.state === "online" ? "" : "text-text-secondary"}`}
+              numberOfLines={1}
+            >
+              {serverItem.name}
+            </Typography.Paragraph>
+            {serverItem.accountServer?.origin === "cloud" ? (
+              <Cloud size={14} color={mutedColor} accessible={false} />
+            ) : null}
+          </View>
           <Typography.Paragraph
             type="body-xs"
             className={serverItem.state === "error" ? "text-danger-text" : "text-text-secondary"}

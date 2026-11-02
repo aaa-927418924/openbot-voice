@@ -7,6 +7,7 @@ import {
   Check,
   ChevronRight,
   ChevronsUpDown,
+  Cloud,
   ContextMenu,
   DropdownMenu,
   Moon,
@@ -134,6 +135,7 @@ export function ServerMenu(props: ServerMenuProps) {
           })}
           aria-label={[
             t("server.menu.open", { name: props.serverName }),
+            ...(activeServer()?.origin === "cloud" ? [t("server.origin.cloud")] : []),
             ...(activeSleep() === "sleeping" ? [t("server.state.sleeping")] : []),
             ...(activeSleep() === "waking" ? [t("server.state.waking")] : []),
           ].join(", ")}
@@ -170,6 +172,9 @@ export function ServerMenu(props: ServerMenuProps) {
             }}
           </For>
           <SwapLabel class="sidebar-server-name-label" text={props.serverName} from={shownBefore?.name} />
+          <Show when={activeServer()?.origin === "cloud"}>
+            <Cloud class="sidebar-server-cloud" aria-hidden="true" />
+          </Show>
           <Show when={activeSleep()}>
             {(sleep) => <Moon class="sidebar-server-name-sleep" data-state={sleep()} aria-hidden="true" />}
           </Show>
@@ -204,7 +209,11 @@ export function ServerMenu(props: ServerMenuProps) {
                   <DropdownMenu.Sub>
                     <DropdownMenu.SubTrigger
                       class="server-menu-row"
-                      aria-label={[server().name, ...serverStatusLabels(server(), t)].join(", ")}
+                      aria-label={[
+                        server().name,
+                        ...(server().origin === "cloud" ? [t("server.origin.cloud")] : []),
+                        ...serverStatusLabels(server(), t),
+                      ].join(", ")}
                       aria-current={server().active ? "true" : undefined}
                       data-cuelume-navigate=""
                       onClick={() => selectServer(server())}
@@ -215,6 +224,9 @@ export function ServerMenu(props: ServerMenuProps) {
                         <ServerMark server={server()} />
                       </span>
                       <span class="server-menu-name">{server().name}</span>
+                      <Show when={server().origin === "cloud"}>
+                        <Cloud class="server-menu-cloud" aria-hidden="true" />
+                      </Show>
                       <ServerSleepDot server={server()} class="server-menu-sleep" />
                       <Show when={server().notificationsMuted}>
                         <BellOff class="server-menu-muted size-3" aria-hidden="true" />

@@ -42,6 +42,8 @@ export interface AccountServerDirectoryEntry {
   readonly role: TeamRole;
   /** True only when the identity host has verified that this account owns this host. */
   readonly isOwner: boolean;
+  /** Set by the host's local account directory when it is running as the OpenBot Cloud host. */
+  readonly origin?: "cloud";
 }
 
 /** Device-independent fields only. Team session tokens remain in each device's secure storage. */

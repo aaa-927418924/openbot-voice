@@ -53,6 +53,7 @@ export function remoteServerSummaries(
         apiUrl: server.transport === "webrtc-v2" ? null : server.apiUrl,
         remoteDesktopAvailable: server.remoteDesktopAvailable ?? false,
         logoUrl: server.logoVersion ? remoteServerLogoUrl(server.id, server.logoVersion) : null,
+        ...(server.origin === undefined ? {} : { origin: server.origin }),
         role: server.role,
         active: activeServerId === server.id,
         ...(server.memberLimit === undefined ? {} : { memberLimit: server.memberLimit }),

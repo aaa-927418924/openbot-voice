@@ -97,6 +97,7 @@ export const messages = {
   "server.hosted.failedDescription": "Tekrar deneyin. Yeniden başarısız olursa sunucuyu Ayarlar'dan silin.",
   "server.hosted.tryAgain": "Tekrar dene",
   "server.role.admin": "Yönetici",
+  "server.origin.cloud": "Bulut sunucusu",
   "server.role.member": "Üye",
   "server.mute.for15Minutes": "15 dakika boyunca",
   "server.mute.for1Hour": "1 saat boyunca",

@@ -1,15 +1,5 @@
 import type { AppTextKey } from "@openbot/i18n";
-import {
-  CircleArrowDown,
-  CreditCard,
-  Image,
-  MousePointer2,
-  PanelTop,
-  Server,
-  Settings,
-  Smartphone,
-  UserRound,
-} from "@openbot/ui";
+import { Image, MousePointer2, PanelTop, Server, Settings, Smartphone, UserRound } from "@openbot/ui";
 
 export type SettingsTab =
   | "general"
@@ -17,9 +7,7 @@ export type SettingsTab =
   | "dynamic-island"
   | "computer-use"
   | "profile"
-  | "billing"
   | "mobile-connect"
-  | "updates"
   | "hosted-servers";
 
 /**
@@ -66,22 +54,10 @@ export const navItems: ReadonlyArray<SettingsNavItem> = [
     icon: UserRound,
   },
   {
-    value: "billing",
-    titleKey: "settings.tab.billing.title",
-    descriptionKey: "settings.tab.billing.description",
-    icon: CreditCard,
-  },
-  {
     value: "mobile-connect",
     titleKey: "settings.tab.mobileConnect.title",
     descriptionKey: "settings.tab.mobileConnect.description",
     icon: Smartphone,
-  },
-  {
-    value: "updates",
-    titleKey: "settings.tab.updates.title",
-    descriptionKey: "settings.tab.updates.description",
-    icon: CircleArrowDown,
   },
   {
     value: "hosted-servers",

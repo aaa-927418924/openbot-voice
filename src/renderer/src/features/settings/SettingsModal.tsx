@@ -13,19 +13,15 @@ import type {
   WindowsStartupSettings,
 } from "@openbot/contracts/ipc";
 import { Tabs } from "@openbot/ui";
-import { BillingPanel } from "@openbot/ui/features/billing/BillingPanel";
-import { createBillingStore } from "@openbot/ui/features/billing/billing-store";
 import type { GeneralSettingsValue } from "@openbot/ui/features/settings/app-settings";
 import { ProfileNameSaveBar } from "@openbot/ui/features/settings/ProfileNameSaveBar";
 import { SettingsDialogShell } from "@openbot/ui/features/settings/SettingsDialogShell";
 import { SettingsHostedServersTab } from "@openbot/ui/features/settings/SettingsHostedServersTab";
 import { SettingsMobileConnectTab } from "@openbot/ui/features/settings/SettingsMobileConnectTab";
 import { SettingsProfileTab } from "@openbot/ui/features/settings/SettingsProfileTab";
-import { SettingsUpdatesTab } from "@openbot/ui/features/settings/SettingsUpdatesTab";
 import { createSettingsHostedServersStore } from "@openbot/ui/features/settings/stores/hosted-servers-store";
 import { createSettingsMobileConnectStore } from "@openbot/ui/features/settings/stores/mobile-connect-store";
 import { createSettingsProfileStore } from "@openbot/ui/features/settings/stores/profile-store";
-import { createSettingsUpdatesStore } from "@openbot/ui/features/settings/stores/updates-store";
 import { createEffect, createSignal, Show, untrack } from "solid-js";
 import { useI18n } from "../../i18n-context";
 import { ComputerUseSetup } from "../computer-use/ComputerUseSetup";
@@ -46,8 +42,8 @@ export interface SettingsModalProps {
   /** The built-in display's notch, null when it has none, or undefined before main answers. */
   builtInDisplayGeometry?: DynamicIslandGeometry | undefined;
   windowsStartupSettings?: WindowsStartupSettings | null;
-  updateStatus: UpdateStatus;
-  onUpdateAction: () => Promise<void>;
+  updateStatus?: UpdateStatus;
+  onUpdateAction?: () => Promise<void>;
   onCancelScheduledRestart?: () => Promise<void>;
   onRestartWhenIdle?: () => Promise<void>;
   onCancelIdleRestart?: () => Promise<void>;
@@ -96,11 +92,6 @@ export function SettingsModal(props: SettingsModalProps) {
   let modalElement: HTMLElement | undefined;
   const profile = createSettingsProfileStore(props, () => activeTab() === "profile");
   const mobileConnect = createSettingsMobileConnectStore(props, () => activeTab() === "mobile-connect");
-  const updates = createSettingsUpdatesStore(props);
-  const billing = createBillingStore(
-    () => props.billingApi,
-    () => props.open && activeTab() === "billing",
-  );
   const hostedServers = createSettingsHostedServersStore(props, () => activeTab() === "hosted-servers");
 
   // The Dynamic Island exists only on macOS, so other platforms get no tab for it.
@@ -147,9 +138,7 @@ export function SettingsModal(props: SettingsModalProps) {
         (value === "dynamic-island" && isMac()) ||
         value === "computer-use" ||
         value === "profile" ||
-        value === "billing" ||
         value === "mobile-connect" ||
-        value === "updates" ||
         (value === "hosted-servers" && hostedServersShown())
       ) {
         setActiveTab(value);
@@ -252,10 +241,6 @@ export function SettingsModal(props: SettingsModalProps) {
           />
         </Tabs.Content>
 
-        <Tabs.Content value="billing" class="settings-modal-tab-panel" data-tab="billing">
-          <BillingPanel store={billing} available={Boolean(props.billingApi)} />
-        </Tabs.Content>
-
         <Tabs.Content value="mobile-connect" class="settings-modal-tab-panel" data-tab="mobile-connect">
           <SettingsMobileConnectTab
             store={mobileConnect}
@@ -264,14 +249,6 @@ export function SettingsModal(props: SettingsModalProps) {
           />
         </Tabs.Content>
 
-        <Tabs.Content value="updates" class="settings-modal-tab-panel" data-tab="updates">
-          <SettingsUpdatesTab
-            store={updates}
-            value={props.value}
-            onUpdateSetting={updateSetting}
-            selectMount={modalElement}
-          />
-        </Tabs.Content>
         <Show when={hostedServersShown()}>
           <Tabs.Content value="hosted-servers" class="settings-modal-tab-panel" data-tab="hosted-servers">
             <SettingsHostedServersTab

@@ -63,6 +63,8 @@ export interface RemoteServerPatch {
   role?: TeamRole;
   encryptedToken?: string;
   logoVersion?: string | null;
+  /** Set to null to clear an account-directory origin marker. */
+  origin?: "cloud" | null;
   remoteDesktopAvailable?: boolean;
   /** Set to null to clear an explicit account rejoin that has been confirmed. */
   pendingAccountRejoinId?: string | null;
@@ -264,6 +266,7 @@ export class RemoteServerStore implements RemoteServerDirectory {
       remoteDesktopAvailable: false,
       logoVersion: entry.logoKey,
       role: entry.role,
+      ...(entry.origin === undefined ? {} : { origin: entry.origin }),
       membershipId: entry.membershipId,
       accountId,
       pendingAccountAuthentication: true,
@@ -287,9 +290,14 @@ export class RemoteServerStore implements RemoteServerDirectory {
       accountSignInRetryAt,
       accountSignInRetryAccountId,
       accountSignInRetryReason,
+      origin,
       ...fields
     } = patch;
     const updated: StoredRemoteServer = { ...current, ...fields };
+    if ("origin" in patch) {
+      if (origin === "cloud") updated.origin = origin;
+      else delete updated.origin;
+    }
     if ("pendingAccountRejoinId" in patch) {
       if (pendingAccountRejoinId) updated.pendingAccountRejoinId = pendingAccountRejoinId;
       else delete updated.pendingAccountRejoinId;

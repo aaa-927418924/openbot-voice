@@ -39,6 +39,7 @@ export const messages = {
   "server.join.emailBound": "この招待は、宛先のメールアドレスの受信者だけが使用できます。",
   "server.join.unknownDate": "不明",
   "server.role.admin": "管理者",
+  "server.origin.cloud": "クラウドサーバー",
   "server.role.member": "メンバー",
   "server.mute.for15Minutes": "15 分間",
   "server.mute.for1Hour": "1 時間",

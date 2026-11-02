@@ -13,6 +13,7 @@ import { useAgentPinTransition } from "@/features/agents/components/agent-pin-tr
 import { ChatLinkPressable } from "@/features/agents/components/chat-link-pressable";
 import { PinnedChatItem, usePinnedItemWidth } from "@/features/agents/components/pinned-agents-grid";
 import { useChatSectionMenu } from "@/features/agents/components/use-chat-section-menu";
+import { useCustomTheme } from "@/features/settings/model/custom-theme";
 import { useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
 import { canToggleAgentPin } from "@/features/workspace/model/agent-pins";
 import type { MobileAgent } from "@/features/workspace/model/workspace-types";
@@ -33,6 +34,8 @@ export const ChannelListRow = memo(function ChannelListRow({
   pinned?: boolean;
 }) {
   const { t } = useText();
+  const customTheme = useCustomTheme();
+  const hasCustomBackground = customTheme.mode === "custom" && customTheme.imageUri !== null;
   const { pinnedAgentIds, pinnedChannelIds, hideChannel, servers, channelStore } = useMobileWorkspace();
   const { toggleChannelPinAnimated } = useAgentPinTransition();
   const { theme } = useUniwind();
@@ -145,9 +148,13 @@ export const ChannelListRow = memo(function ChannelListRow({
               className={
                 pinned
                   ? "w-full items-center gap-2 px-1"
-                  : "min-h-[72px] w-full flex-row items-center gap-3 bg-background py-1"
+                  : `min-h-[72px] w-full flex-row items-center gap-3 py-1${hasCustomBackground ? "" : " bg-background"}`
               }
-              style={{ paddingLeft: pinned ? 4 : 15, paddingRight: pinned ? 4 : 24, opacity: pressed ? 0.58 : 1 }}
+              style={{
+                paddingLeft: pinned ? 4 : 15,
+                paddingRight: pinned ? 4 : 24,
+                opacity: pressed ? 0.58 : 1,
+              }}
             >
               <Link.AppleZoom>
                 <AgentPinAvatar agentId={channel.id} location={pinned ? "pinned" : "row"} size={pinned ? 72 : 60}>
@@ -285,7 +292,13 @@ export const ChannelListRow = memo(function ChannelListRow({
   return pinned ? (
     <PinnedChatItem>{content}</PinnedChatItem>
   ) : (
-    <AgentPinSwipeRow pinned={isPinned} agentName={channel.name} pinBlocked={!canPin} onPin={togglePin}>
+    <AgentPinSwipeRow
+      pinned={isPinned}
+      agentName={channel.name}
+      pinBlocked={!canPin}
+      transparentBackground={hasCustomBackground}
+      onPin={togglePin}
+    >
       {content}
     </AgentPinSwipeRow>
   );

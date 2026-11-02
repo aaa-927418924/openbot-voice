@@ -37,6 +37,52 @@ afterEach(async () => {
 });
 
 describe("Team API compatibility negotiation", () => {
+  it("passes a Remote Desktop request deadline to the WebRTC transport", async () => {
+    const server = storedHttpsServer("viewer", { transport: "webrtc-v2", apiUrl: "webrtc://viewer" });
+    const connections = new RemoteServerConnections({
+      appVersion: null,
+      onChanged: () => undefined,
+      onReconnectSuspended: () => undefined,
+    });
+    const request = vi.fn((_hostId: string, path: string) =>
+      remoteDecode(() =>
+        path === TEAM_API_ROUTES.compatibility
+          ? { appVersion: "0.4.0", protocol: { minimum: 1, maximum: 2 }, capabilities: [] }
+          : { sessionId: "session" },
+      ),
+    );
+    const client = new RemoteServerClient({
+      appVersion: "0.4.0",
+      servers: { require: () => server, token: () => "token" },
+      connections,
+      transport: {
+        request,
+        requestResponse: () => remoteDecode(() => ({ status: 204, body: {} })),
+      },
+    });
+
+    await runCauseEffect(
+      client.request("viewer", TEAM_API_ROUTES.remoteScreen.sessions, (value) => value, {
+        method: "POST",
+        body: {},
+        timeoutMs: 180_000,
+      }),
+    );
+
+    expect(request).toHaveBeenNthCalledWith(
+      1,
+      "viewer",
+      TEAM_API_ROUTES.compatibility,
+      expect.objectContaining({ timeoutMs: 180_000 }),
+    );
+    expect(request).toHaveBeenNthCalledWith(
+      2,
+      "viewer",
+      TEAM_API_ROUTES.remoteScreen.sessions,
+      expect.objectContaining({ method: "POST", timeoutMs: expect.any(Number) }),
+    );
+  });
+
   it("keeps the Live voice capability on V6 when a stale protocol is passed to the HTTP boundary", async () => {
     const path = "/v1/agents/agent-voice";
     const stub = stubTeamFetch({ routes: { [path]: () => new Response(null, { status: 204 }) } });

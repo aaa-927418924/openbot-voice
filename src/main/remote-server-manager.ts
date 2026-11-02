@@ -765,6 +765,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         encryptedToken: yield* remoteDecode(() => this.#store.sealToken(result.sessionToken)),
         remoteDesktopAvailable: false,
         logoVersion: identity.logoVersion,
+        ...(entry.origin === undefined ? {} : { origin: entry.origin }),
         role: result.member.role,
         ...(result.member.id ? { membershipId: result.member.id } : { membershipId: entry.membershipId }),
         ...(this.#centralAccount.getAccountId?.()
@@ -992,6 +993,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
           existingLocalEntry.fingerprint !== localRegistration.fingerprint ||
           existingLocalEntry.publicKey !== localRegistration.publicKey ||
           existingLocalEntry.logoKey !== localRegistration.logoKey ||
+          existingLocalEntry.origin !== localRegistration.origin ||
           existingLocalEntry.membershipId !== localRegistration.membershipId ||
           existingLocalEntry.role !== localRegistration.role
         ) {
@@ -1084,6 +1086,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
               fingerprint: server.fingerprint,
               publicKey: server.publicKey,
               logoKey: server.logoVersion ?? null,
+              ...(server.origin === undefined ? {} : { origin: server.origin }),
               membershipId: server.membershipId,
               role: server.role,
               isOwner: server.role === "owner",
@@ -1138,6 +1141,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         const existing = this.#store.find(entry.hostId);
         if (existing && (existing.fingerprint !== entry.fingerprint || existing.publicKey !== entry.publicKey))
           continue;
+        if (existing && existing.origin !== entry.origin) {
+          yield* this.#store.update(entry.hostId, { origin: entry.origin ?? null });
+        }
         if (existing) {
           // A directory poll must not replace a valid per-device Team session. The account entry
           // is shared, but each device's encrypted session token is local to that device. If this

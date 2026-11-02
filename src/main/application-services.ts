@@ -1461,6 +1461,7 @@ export async function createApplicationServices({
       logoKey: identity.logoVersion,
       membershipId,
       role: "member",
+      ...(cloudHostMode ? { origin: "cloud" as const } : {}),
     };
   };
   let selfHostedIdentityReady = selfHostedIdentityAuthority !== null;

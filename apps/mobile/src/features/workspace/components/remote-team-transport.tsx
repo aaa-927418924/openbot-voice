@@ -456,7 +456,10 @@ export const RemoteTeamTransport = forwardRef<RemoteTeamTransportRef, RemoteTeam
         active={foreground}
         commands={commands}
         remoteDesktopSession={remoteDesktopSession}
-        directRemoteDesktop={Boolean(directServer.current || accountServer)}
+        directRemoteDesktop={Boolean(
+          directServer.current && hostIdRef.current && directServer.current.hostId === hostIdRef.current,
+        )}
+        remoteDesktopBaseUrl={accountServer?.hostId === hostIdRef.current ? accountServer.apiUrl : undefined}
         remoteDesktopLabels={{
           back: currentText().t("mobile.remoteDesktop.back"),
           connecting: currentText().t("mobile.remoteDesktop.connecting"),

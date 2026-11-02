@@ -66,6 +66,8 @@ export interface ServerSummary {
   id: string;
   name: string;
   kind: "local" | "remote";
+  /** The account directory verified that this remote server runs as the OpenBot Cloud host. */
+  origin?: "cloud";
   state: ServerConnectionState;
   apiUrl: string | null;
   remoteDesktopAvailable: boolean;

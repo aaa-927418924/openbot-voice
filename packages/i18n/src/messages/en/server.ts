@@ -95,6 +95,7 @@ export const messages = defineMessages("server", {
   "server.hosted.failedDescription": "Try again. If it fails again, delete the server in Settings.",
   "server.hosted.tryAgain": "Try again",
   "server.role.admin": "Admin",
+  "server.origin.cloud": "Cloud server",
   "server.role.member": "Member",
   "server.mute.for15Minutes": "For 15 minutes",
   "server.mute.for1Hour": "For 1 hour",

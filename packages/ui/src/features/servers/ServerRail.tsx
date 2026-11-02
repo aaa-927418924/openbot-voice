@@ -1,6 +1,6 @@
 import type { HostedServerSleep, ServerConnectionState, ServerSummary } from "@openbot/contracts/ipc";
 import type { AppTextKey, AppTranslate } from "@openbot/i18n";
-import { BellOff, buttonVariants, ContextMenu, ServerGradientLogo, Tooltip } from "@openbot/ui";
+import { BellOff, buttonVariants, Cloud, ContextMenu, ServerGradientLogo, Tooltip } from "@openbot/ui";
 import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
 import { createScrollFades } from "../../components/createScrollFades";
 import { createVerticalDragPreview } from "../../components/createVerticalDragPreview";
@@ -363,7 +363,11 @@ function ServerRailButton(
   const { t, format } = useText();
   let trigger: HTMLElement | null = null;
   const buttonLabel = () =>
-    [t("server.rail.buttonLabel", { name: props.server.name }), ...serverStatusLabels(props.server, t)].join(", ");
+    [
+      t("server.rail.buttonLabel", { name: props.server.name }),
+      ...(props.server.origin === "cloud" ? [t("server.origin.cloud")] : []),
+      ...serverStatusLabels(props.server, t),
+    ].join(", ");
   const muteDescription = () => serverMuteDescription(props.server, t, format);
   const sleepLabel = () => {
     const sleep = serverHostedSleep(props.server);
@@ -411,7 +415,14 @@ function ServerRailButton(
         }}
       >
         <span class="server-rail-mark" aria-hidden="true" />
-        <ServerMark server={props.server} />
+        <span class="server-rail-server-image">
+          <ServerMark server={props.server} />
+          <Show when={props.server.origin === "cloud"}>
+            <span class="server-rail-cloud-badge">
+              <Cloud class="size-2.5" aria-hidden="true" />
+            </span>
+          </Show>
+        </span>
         <Show when={props.server.notificationsMuted}>
           <BellOff class="server-rail-muted size-3" aria-hidden="true" />
         </Show>

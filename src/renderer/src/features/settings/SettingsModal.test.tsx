@@ -68,6 +68,8 @@ describe("SettingsModal", () => {
       />
     ));
     await screen.findByRole("dialog", { name: "General" });
+    expect(screen.queryByRole("tab", { name: "Payment" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Updates" })).not.toBeInTheDocument();
     const backdrop = document.querySelector(".settings-modal-backdrop");
     if (!(backdrop instanceof HTMLElement)) throw new Error("Settings backdrop is missing.");
     await fireEvent.pointerDown(backdrop, { pointerType: "mouse", button: 0 });
@@ -278,20 +280,6 @@ describe("SettingsModal", () => {
     expect(screen.getByRole("button", { name: /^Open external links in/ })).toHaveTextContent("OpenBot");
     expect(screen.getByRole("switch", { name: "Share product analytics" })).not.toBeChecked();
 
-    await fireEvent.click(screen.getByRole("tab", { name: "Updates" }));
-    const autoDownload = await screen.findByRole("switch", { name: "Automatically download updates" });
-    expect(autoDownload).toBeChecked();
-    await fireEvent.click(autoDownload);
-    expect(value().autoDownloadUpdates).toBe(false);
-
-    await fireEvent.keyDown(screen.getByRole("dialog", { name: "Updates" }), { key: "Escape" });
-    // The dialog is named after the active tab, so the wait has to target the Updates title.
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Updates" })).not.toBeInTheDocument());
-    await fireEvent.click(screen.getByRole("button", { name: "Open settings" }));
-    await fireEvent.click(await screen.findByRole("tab", { name: "Updates" }));
-
-    expect(await screen.findByRole("switch", { name: "Automatically download updates" })).not.toBeChecked();
-
     await fireEvent.click(screen.getByRole("tab", { name: "Dynamic Island" }));
     const width = await screen.findByRole("slider", { name: "Width" });
     await fireEvent.keyDown(width, { key: "ArrowLeft" });
@@ -309,123 +297,6 @@ describe("SettingsModal", () => {
       expect(screen.getByRole("switch", { name: dependent })).toBeDisabled();
     }
     expect(screen.getByRole("slider", { name: "Height" })).toHaveAttribute("aria-disabled", "true");
-  });
-
-  it("runs the updater and reflects its live status", async () => {
-    const [status, setStatus] = createSignal<UpdateStatus>(idleUpdateStatus);
-    const onUpdateAction = vi.fn(async () => {
-      setStatus({ ...idleUpdateStatus, phase: "up-to-date", checkedAt: "2026-08-26T12:00:00.000Z" });
-    });
-
-    render(() => (
-      <SettingsModal
-        open
-        onOpenChange={() => undefined}
-        value={DEFAULT_GENERAL_SETTINGS}
-        onValueChange={() => undefined}
-        appInfo={{ name: "OpenBot", version: "0.2.1", platform: "darwin", variant: "dev" }}
-        updateStatus={status()}
-        onUpdateAction={onUpdateAction}
-        account={account}
-        onUpdateAccountName={vi.fn(async () => undefined)}
-        onUpdateAccountAvatar={vi.fn(async () => undefined)}
-      />
-    ));
-
-    await fireEvent.click(screen.getByRole("tab", { name: "Updates" }));
-    await fireEvent.click(screen.getByRole("button", { name: "Check for updates" }));
-    await waitFor(() => expect(onUpdateAction).toHaveBeenCalledOnce());
-    expect(await screen.findByText("OpenBot is up to date on the Stable track.")).toBeInTheDocument();
-  });
-
-  it("reports host management instead of tenant update controls on a managed host", async () => {
-    const onUpdateAction = vi.fn(async () => undefined);
-    render(() => (
-      <SettingsModal
-        open
-        onOpenChange={() => undefined}
-        value={DEFAULT_GENERAL_SETTINGS}
-        onValueChange={() => undefined}
-        appInfo={{ name: "OpenBot", version: "0.16.0", platform: "darwin", variant: "dev" }}
-        updateStatus={{ ...idleUpdateStatus, phase: "up-to-date", currentVersion: "0.16.0", managedByHost: true }}
-        onUpdateAction={onUpdateAction}
-        account={account}
-        onUpdateAccountName={vi.fn(async () => undefined)}
-        onUpdateAccountAvatar={vi.fn(async () => undefined)}
-      />
-    ));
-
-    await fireEvent.click(screen.getByRole("tab", { name: "Updates" }));
-    expect(await screen.findByText("Managed by Host")).toBeInTheDocument();
-    expect(screen.getByText(/managed automatically by OpenBot Host Manager/)).toBeInTheDocument();
-    expect(screen.getByText(/Up to date/)).toBeInTheDocument();
-    // The host owns both the shared application and the download schedule, so neither the manual
-    // action nor the per-user download preference can change anything.
-    expect(screen.queryByRole("switch", { name: "Automatically download updates" })).not.toBeInTheDocument();
-    for (const name of ["Check for updates", "Download update", "Restart to update", "Managed by host"]) {
-      expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
-    }
-    expect(onUpdateAction).not.toHaveBeenCalled();
-  });
-
-  it("shows the live host update status while the host installs a new version", async () => {
-    const [status, setStatus] = createSignal<UpdateStatus>({
-      ...idleUpdateStatus,
-      phase: "downloading",
-      currentVersion: "0.16.0",
-      availableVersion: "0.17.0",
-      progress: 42,
-      managedByHost: true,
-    });
-
-    render(() => (
-      <SettingsModal
-        open
-        onOpenChange={() => undefined}
-        value={DEFAULT_GENERAL_SETTINGS}
-        onValueChange={() => undefined}
-        appInfo={{ name: "OpenBot", version: "0.16.0", platform: "darwin", variant: "dev" }}
-        updateStatus={status()}
-        onUpdateAction={vi.fn(async () => undefined)}
-        account={account}
-        onUpdateAccountName={vi.fn(async () => undefined)}
-        onUpdateAccountAvatar={vi.fn(async () => undefined)}
-      />
-    ));
-
-    await fireEvent.click(screen.getByRole("tab", { name: "Updates" }));
-    expect(await screen.findByText(/Downloading OpenBot v0.17.0 · 42%/)).toBeInTheDocument();
-
-    setStatus((current) => ({ ...current, phase: "ready", progress: null }));
-    expect(await screen.findByText(/Waiting for the other users of this Mac to be idle/)).toBeInTheDocument();
-
-    setStatus((current) => ({ ...current, phase: "installing" }));
-    expect(await screen.findByText("Installing OpenBot v0.17.0…")).toBeInTheDocument();
-    expect(screen.getByText("Managed by Host")).toBeInTheDocument();
-  });
-
-  it("disables busy update actions and shows action failures", async () => {
-    const onUpdateAction = vi.fn(async () => {
-      throw new Error("Update service is offline.");
-    });
-    render(() => (
-      <SettingsModal
-        open
-        onOpenChange={() => undefined}
-        value={DEFAULT_GENERAL_SETTINGS}
-        onValueChange={() => undefined}
-        appInfo={{ name: "OpenBot", version: "0.2.1", platform: "darwin", variant: "dev" }}
-        updateStatus={idleUpdateStatus}
-        onUpdateAction={onUpdateAction}
-        account={account}
-        onUpdateAccountName={vi.fn(async () => undefined)}
-        onUpdateAccountAvatar={vi.fn(async () => undefined)}
-      />
-    ));
-
-    await fireEvent.click(screen.getByRole("tab", { name: "Updates" }));
-    await fireEvent.click(screen.getByRole("button", { name: "Check for updates" }));
-    expect(await screen.findByText("Update service is offline.")).toBeInTheDocument();
   });
 
   it("resets a display-name draft and saves its trimmed value", async () => {
@@ -452,7 +323,7 @@ describe("SettingsModal", () => {
     await fireEvent.click(screen.getByRole("tab", { name: "Profile" }));
     const input = screen.getByRole("textbox", { name: "Display name" });
     await fireEvent.input(input, { target: { value: "Unsaved name" } });
-    await fireEvent.click(screen.getByRole("tab", { name: "Updates" }));
+    await fireEvent.click(screen.getByRole("tab", { name: "General" }));
     await fireEvent.click(screen.getByRole("button", { name: "Reset" }));
     await fireEvent.click(screen.getByRole("tab", { name: "Profile" }));
     expect(input).toHaveValue("Norbert");

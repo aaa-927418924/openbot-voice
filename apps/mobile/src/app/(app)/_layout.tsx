@@ -62,7 +62,7 @@ function AuthenticatedStack() {
 
   return (
     <ChatNavigationGateContext value={navigationGate}>
-      <View className="flex-1" style={{ backgroundColor: background }}>
+      <View className="flex-1" style={{ backgroundColor: customBackground ? "transparent" : background }}>
         {customBackground ? (
           <Image
             source={{ uri: customTheme.imageUri ?? undefined }}
@@ -89,7 +89,7 @@ function AuthenticatedStack() {
           screenOptions={{
             headerBackButtonDisplayMode: "minimal",
             headerShadowVisible: false,
-            headerTransparent: isIOS,
+            headerTransparent: isIOS || customBackground,
             orientation: "portrait",
             sheetExpandsWhenScrolledToEdge: false,
             contentStyle: { backgroundColor: customBackground ? "transparent" : background },

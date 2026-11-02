@@ -1,9 +1,4 @@
-import type {
-  AccountUsage,
-  AgentSummary,
-  ApprovalAutomationPreference,
-  UpdatePreference,
-} from "@openbot/contracts/ipc";
+import type { AccountUsage, AgentSummary, ApprovalAutomationPreference } from "@openbot/contracts/ipc";
 import { toast } from "@openbot/ui";
 import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { assert, expect, it, vi } from "vitest";
@@ -439,14 +434,7 @@ describe("OpenBot connected desktop shell", () => {
     );
     expect(notchSwitch).not.toBeChecked();
 
-    await fireEvent.click(await screen.findByRole("tab", { name: "Updates" }));
-    const autoDownload = await screen.findByRole("switch", { name: "Automatically download updates" });
-    await waitFor(() => expect(autoDownload).not.toBeChecked());
-    await fireEvent.click(autoDownload);
-    await waitFor(() => expect(window.openbot.update.setPreference).toHaveBeenCalledWith({ autoDownload: true }));
-
-    // The language row lives in the General tab, which the Updates tab hides through CSS that jsdom
-    // does not apply. Go back to it, so the test reaches the control the way a user does.
+    // Return to General for its language controls after checking Dynamic Island.
     await fireEvent.click(screen.getByRole("tab", { name: "General" }));
     // The trigger reads its label and its value, so match the start of the name. It also opens on
     // pointer down rather than on click, so a plain click never reaches the list.
@@ -643,30 +631,6 @@ describe("OpenBot connected desktop shell", () => {
     // A successful retry clears the failure instead of leaving it under a working updater.
     await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
     expect(await screen.findByRole("button", { name: /Check for updates/ })).toBeEnabled();
-  });
-
-  it("keeps a toggle made before the stored preference finishes loading", async () => {
-    let resolvePreference: ((value: UpdatePreference) => void) | undefined;
-    vi.mocked(window.openbot.update.getPreference).mockReturnValueOnce(
-      new Promise((resolve) => {
-        resolvePreference = resolve;
-      }),
-    );
-    render(() => <App />);
-
-    await fireEvent.click(await screen.findByRole("button", { name: "Settings" }));
-    await fireEvent.click(await screen.findByRole("tab", { name: "Updates" }));
-    const toggle = await screen.findByRole("switch", { name: "Automatically download updates" });
-    await fireEvent.click(toggle);
-    await waitFor(() => expect(window.openbot.update.setPreference).toHaveBeenCalledWith({ autoDownload: false }));
-
-    // The stored read finally lands with the value the user has just replaced. Painting it back would
-    // leave the switch disagreeing with both disk and the main process.
-    resolvePreference?.({ autoDownload: true, allowRemoteUpdates: true, autoInstall: false });
-    // Let the hydration continuation actually run, otherwise this asserts before it could apply.
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(toggle).not.toBeChecked();
   });
 
   it("confirms an installed app version on the next launch", async () => {

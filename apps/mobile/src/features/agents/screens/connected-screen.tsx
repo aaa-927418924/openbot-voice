@@ -267,11 +267,7 @@ export function ConnectedScreen() {
   };
 
   return (
-    <View
-      className={hasCustomBackground ? "flex-1" : "flex-1 bg-background"}
-      style={hasCustomBackground ? { backgroundColor: "rgba(16,17,20,0.62)" } : undefined}
-      onLayout={() => reportContentReady()}
-    >
+    <View className={hasCustomBackground ? "flex-1" : "flex-1 bg-background"} onLayout={() => reportContentReady()}>
       {listReady ? (
         <Animated.FlatList
           key={activeServer.id}
@@ -457,8 +453,12 @@ export function ConnectedScreen() {
               )
             : undefined,
           headerTintColor: foreground,
-          // The Android header is opaque. It takes the list color, as the transparent iOS header shows it.
-          ...(isAndroid ? { headerStyle: { backgroundColor: background } } : null),
+          ...(isAndroid
+            ? {
+                headerStyle: { backgroundColor: hasCustomBackground ? "transparent" : background },
+                headerTransparent: hasCustomBackground,
+              }
+            : null),
           title: "",
         }}
       />

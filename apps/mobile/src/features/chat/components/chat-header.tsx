@@ -22,6 +22,7 @@ interface ChatHeaderProps {
   fallbackBackground: ViewStyle["backgroundColor"];
   foreground: ViewStyle["backgroundColor"];
   liquidGlassAvailable: boolean;
+  customBackground?: boolean;
   topInset: number;
   onBack: () => void;
   needsAction?: boolean;
@@ -33,6 +34,7 @@ export function ChatHeader({
   fallbackBackground,
   foreground,
   liquidGlassAvailable,
+  customBackground = false,
   topInset,
   onBack,
   needsAction = false,
@@ -59,6 +61,7 @@ export function ChatHeader({
           accessibilityLabel={t("common.back")}
           fallbackBackground={fallbackBackground}
           liquidGlassAvailable={liquidGlassAvailable}
+          transparentSurface={customBackground}
           onPress={() => {
             void haptics.impact("soft");
             onBack();
@@ -68,11 +71,11 @@ export function ChatHeader({
         </ChatGlassIconButton>
 
         <GlassView
-          glassEffectStyle={liquidGlassAvailable ? "regular" : "none"}
+          glassEffectStyle={liquidGlassAvailable && !customBackground ? "regular" : "none"}
           style={{
             alignItems: "center",
             alignSelf: "stretch",
-            backgroundColor: liquidGlassAvailable ? "transparent" : fallbackBackground,
+            backgroundColor: liquidGlassAvailable || customBackground ? "transparent" : fallbackBackground,
             borderCurve: "continuous",
             borderRadius: 24,
             flexDirection: "row",
@@ -147,6 +150,7 @@ export function ChatHeader({
                     accessibilityLabel={t("mobile.chat.header.actionsNeeded")}
                     fallbackBackground={fallbackBackground}
                     liquidGlassAvailable={liquidGlassAvailable}
+                    transparentSurface={customBackground}
                     onPress={() => {
                       void haptics.impact("soft");
                       router.push({
@@ -166,6 +170,7 @@ export function ChatHeader({
               accessibilityLabel={t("mobile.remoteDesktop.workspaceLabel")}
               fallbackBackground={fallbackBackground}
               liquidGlassAvailable={liquidGlassAvailable}
+              transparentSurface={customBackground}
               disabled={disconnected}
               onPress={() => {
                 void haptics.impact("soft");

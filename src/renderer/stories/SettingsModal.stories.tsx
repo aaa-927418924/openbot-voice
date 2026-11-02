@@ -6,7 +6,6 @@ import { fn } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import { SettingsModal } from "../src/features/settings/SettingsModal";
 import type { SettingsTab } from "../src/features/settings/settings-tabs";
-import { createMockBilling } from "../src/preview/mock-billing";
 import { createMockOpenBot } from "./mock-openbot";
 import { previewStorySoundSettings } from "./sound-feedback-fixture";
 
@@ -32,11 +31,8 @@ function SettingsModalStory(props: {
   /** Adds the Hosted servers tab with a stopped server and a server whose plan ended. */
   hostedServers?: boolean;
   initialTab?: SettingsTab;
-  /** A restart that a server admin asked for. */
-  scheduledRestart?: UpdateStatus["scheduledRestart"];
 }) {
   const previousApi = window.openbot;
-  const billingApi = createMockBilling();
   const mock = createMockOpenBot();
   window.openbot = mock.api;
   onCleanup(() => {
@@ -46,11 +42,7 @@ function SettingsModalStory(props: {
   });
   const [open, setOpen] = createSignal(props.initialOpen);
   const [value, setValue] = createSignal({ ...DEFAULT_GENERAL_SETTINGS });
-  const [updateStatus, setUpdateStatus] = createSignal<UpdateStatus>(
-    props.scheduledRestart
-      ? { ...storyUpdateStatus, phase: "ready", availableVersion: "0.3.0", scheduledRestart: props.scheduledRestart }
-      : storyUpdateStatus,
-  );
+  const [updateStatus] = createSignal<UpdateStatus>(storyUpdateStatus);
   const [account, setAccount] = createSignal<CentralAuthUser>({ ...storyAccount });
   const [mobileDevices, setMobileDevices] = createSignal<MobileConnectedDevice[]>([
     {
@@ -71,10 +63,6 @@ function SettingsModalStory(props: {
 
   async function updateAccountName(name: string): Promise<void> {
     setAccount((current) => ({ ...current, name }));
-  }
-
-  async function runUpdateAction(): Promise<void> {
-    setUpdateStatus({ ...storyUpdateStatus, phase: "up-to-date", checkedAt: new Date().toISOString() });
   }
 
   async function createMobileConnect(): Promise<{ qrData: string; expiresAt: number }> {
@@ -106,10 +94,6 @@ function SettingsModalStory(props: {
           }}
           appInfo={storyAppInfo}
           updateStatus={updateStatus()}
-          onCancelScheduledRestart={async () => {
-            const { scheduledRestart: _cancelled, ...rest } = updateStatus();
-            setUpdateStatus(rest);
-          }}
           account={account()}
           onUpdateAccountName={updateAccountName}
           onUpdateAccountAvatar={updateAccountAvatar}
@@ -120,8 +104,6 @@ function SettingsModalStory(props: {
           onRevokeMobileConnectedDevice={async (sessionId) => {
             setMobileDevices((current) => current.filter((device) => device.sessionId !== sessionId));
           }}
-          onUpdateAction={runUpdateAction}
-          billingApi={billingApi}
           hostedServersApi={props.hostedServers ? mock.api.hostedServers : undefined}
           onAddHostedServer={props.hostedServers ? fn() : undefined}
         />
@@ -185,24 +167,9 @@ export const Narrow: Story = {
   parameters: { viewport: { defaultViewport: "settingsNarrow" } },
 };
 
-/** No plan yet. Choose a plan: the mock then shows it as active, as after a Stripe payment. */
-export const Billing: Story = {
-  render: () => <SettingsModalStory initialOpen initialTab="billing" />,
-};
-
 /** An account that can create hosted servers. Start, renew and delete change the mock list. */
 export const HostedServers: Story = {
   render: () => <SettingsModalStory initialOpen hostedServers initialTab="hosted-servers" />,
-};
-
-export const ScheduledRemoteUpdate: Story = {
-  render: () => (
-    <SettingsModalStory
-      initialOpen
-      initialTab="updates"
-      scheduledRestart={{ requestedBy: "Ada Lovelace", mode: "when-idle", waitingFor: ["agent-turn"] }}
-    />
-  ),
 };
 
 export const Interactive: Story = {

@@ -4,6 +4,7 @@ import type { messages as source } from "../../en/mobile/server";
 export const messages = {
   "mobile.server.drawer.local": "Yerel",
   "mobile.server.drawer.remote": "Uzak",
+  "mobile.server.drawer.cloud": "Bulut",
   "mobile.server.drawer.options": "Seçenekler",
   "mobile.server.drawer.hide": "Sunucuyu gizle",
   "mobile.server.drawer.hideFailed": "Sunucu gizlenemedi. Yeniden deneyin.",

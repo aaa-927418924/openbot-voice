@@ -4,6 +4,7 @@ import type { messages as source } from "../../en/mobile/server";
 export const messages = {
   "mobile.server.drawer.local": "ローカル",
   "mobile.server.drawer.remote": "リモート",
+  "mobile.server.drawer.cloud": "クラウド",
   "mobile.server.drawer.options": "オプション",
   "mobile.server.drawer.hide": "サーバーを非表示",
   "mobile.server.drawer.hideFailed": "サーバーを非表示にできなかった。もう一度試して。",

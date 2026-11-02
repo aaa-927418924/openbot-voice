@@ -170,7 +170,7 @@ export const DropdownMenu: DropdownMenuApi = {
   Sub: DropdownMenuPrimitive.Sub,
   SubTrigger: DropdownMenuPrimitive.SubTrigger,
   SubContent: (props) => {
-    const motion = useMenuMotion();
+    const motion = useMenuMotion({ waitForPlacement: true });
     return <DropdownMenuPrimitive.SubContent {...props} ref={[props.ref, motion]} />;
   },
   Item: (props) => <DropdownMenuPrimitive.Item data-cuelume-tap="" {...props} />,
@@ -213,7 +213,7 @@ export const ContextMenu: ContextMenuApi = {
   Sub: ContextMenuPrimitive.Sub,
   SubTrigger: ContextMenuPrimitive.SubTrigger,
   SubContent: (props) => {
-    const motion = useMenuMotion();
+    const motion = useMenuMotion({ waitForPlacement: true });
     return <ContextMenuPrimitive.SubContent {...props} ref={[props.ref, motion]} />;
   },
   Item: (props) => <ContextMenuPrimitive.Item data-cuelume-tap="" {...props} />,

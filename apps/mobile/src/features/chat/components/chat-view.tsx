@@ -525,7 +525,7 @@ export function ChatView({
 
   return (
     <GestureDetector gesture={edgeBackGesture}>
-      <View className="flex-1" style={{ backgroundColor: hasCustomBackground ? "rgba(16,17,20,0.62)" : background }}>
+      <View className="flex-1" style={{ backgroundColor: hasCustomBackground ? "transparent" : background }}>
         <View
           className="flex-1"
           // Nothing here may switch on the card: this view is an ancestor of
@@ -555,6 +555,7 @@ export function ChatView({
               fallbackBackground={fieldBackground}
               foreground={foreground}
               liquidGlassAvailable={liquidGlassAvailable}
+              customBackground={hasCustomBackground}
               topInset={insets.top}
               onBack={leaveConversation}
             />

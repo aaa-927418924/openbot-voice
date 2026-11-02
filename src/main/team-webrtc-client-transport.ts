@@ -315,6 +315,7 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
       agentCreateModel?: boolean;
       agentLiveVoiceSettings?: boolean;
       teamChannelIdentityAdmin?: boolean;
+      timeoutMs?: number;
     } = {},
   ): Effect.fn.Return<TeamProtocolV2Json | undefined, RemoteWorkflowError> {
     return yield* this.#owned(
@@ -336,6 +337,7 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
       agentCreateModel?: boolean;
       agentLiveVoiceSettings?: boolean;
       teamChannelIdentityAdmin?: boolean;
+      timeoutMs?: number;
     } = {},
   ): Effect.fn.Return<
     {
@@ -395,7 +397,7 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
           const timer = setTimeout(() => {
             this.#pending.delete(requestId);
             reject(new TeamWebRtcRequestError(504, "remote_timeout", sourceText("error.remote.requestTimeout")));
-          }, TEAM_WEBRTC_REMOTE_REQUEST_TIMEOUT_MILLISECONDS);
+          }, init.timeoutMs ?? TEAM_WEBRTC_REMOTE_REQUEST_TIMEOUT_MILLISECONDS);
           this.#pending.set(requestId, { hostId, resolve, reject, timer });
         }
         // The cleanup covers the send too: an interrupted send must not leave the entry and its timer.

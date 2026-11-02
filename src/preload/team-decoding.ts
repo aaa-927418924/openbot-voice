@@ -295,6 +295,7 @@ function server(summary: DynamicRecord): ServerSummary {
   const {
     notificationLevel,
     kind,
+    origin,
     state,
     role,
     compatibility,
@@ -306,6 +307,7 @@ function server(summary: DynamicRecord): ServerSummary {
   } = summary;
   if (!isOneOf(SERVER_NOTIFICATION_LEVELS, notificationLevel)) throw new Error("Invalid notificationLevel.");
   if (!isOneOf(SERVER_KINDS, kind)) throw new Error("Invalid kind.");
+  if (origin !== undefined && origin !== "cloud") throw new Error("Invalid origin.");
   if (!isOneOf(SERVER_STATES, state)) throw new Error("Invalid state.");
   if (connectionSequence !== undefined && !isNumber(connectionSequence)) throw new Error("Invalid connectionSequence.");
   if (memberLimit !== undefined && !(isNumber(memberLimit) && Number.isSafeInteger(memberLimit) && memberLimit >= 1)) {
@@ -318,6 +320,7 @@ function server(summary: DynamicRecord): ServerSummary {
     id: requiredString(summary, "id"),
     name: requiredString(summary, "name"),
     kind,
+    ...(origin === undefined ? {} : { origin }),
     state,
     apiUrl: nullableString(summary, "apiUrl"),
     remoteDesktopAvailable: requiredBoolean(summary, "remoteDesktopAvailable"),

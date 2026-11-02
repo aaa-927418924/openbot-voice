@@ -90,6 +90,7 @@ export const messages = {
   "server.hosted.failedDescription": "Tente novamente. Se falhar de novo, exclua o servidor em Configurações.",
   "server.hosted.tryAgain": "Tentar novamente",
   "server.role.admin": "Administrador",
+  "server.origin.cloud": "Servidor na nuvem",
   "server.role.member": "Membro",
   "server.mute.for15Minutes": "Por 15 minutos",
   "server.mute.for1Hour": "Por 1 hora",

@@ -714,6 +714,36 @@
   outline-offset: -1px;
 }
 
+.server-rail-server-image {
+  position: relative;
+  display: block;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+}
+
+.server-rail-cloud-badge {
+  position: absolute;
+  right: -4px;
+  bottom: -3px;
+  display: grid;
+  width: 16px;
+  height: 16px;
+  place-items: center;
+  border: 1px solid var(--openbot-border);
+  border-radius: var(--openbot-radius-pill);
+  background: var(--openbot-bg-surface);
+  color: var(--openbot-text-secondary);
+}
+
+.server-rail-cloud-badge svg {
+  width: 10px;
+  height: 10px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: var(--openbot-icon-stroke);
+}
+
 .server-rail-mark {
   position: absolute;
   top: 50%;
@@ -1118,6 +1148,14 @@ textarea {
   text-overflow: ellipsis;
 }
 
+.sidebar-server-cloud,
+.server-menu-cloud {
+  width: var(--openbot-icon-sm);
+  height: var(--openbot-icon-sm);
+  flex: 0 0 auto;
+  color: var(--openbot-text-muted);
+}
+
 .sidebar-server-name > .sidebar-server-name-chevron {
   width: var(--openbot-icon-sm);
   height: var(--openbot-icon-sm);
@@ -1191,6 +1229,10 @@ textarea {
 
 .server-menu-row {
   gap: var(--openbot-space-2);
+}
+
+.server-menu-cloud {
+  color: var(--openbot-text-secondary);
 }
 
 .server-menu-mark {

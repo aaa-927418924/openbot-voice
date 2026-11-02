@@ -63,29 +63,19 @@
   min-width: 0;
 }
 
-.app-frame-custom-theme {
-  --openbot-bg-canvas: var(--openbot-bg-overlay);
-  --openbot-bg-native-sidebar: var(--openbot-bg-glass);
-  --openbot-bg-sidebar: var(--openbot-bg-glass);
-  --openbot-bg-surface: var(--openbot-bg-glass);
-  --openbot-bg-surface-raised: var(--openbot-bg-glass);
-  --openbot-bg-control: var(--openbot-bg-glass);
-  isolation: isolate;
-  background: transparent;
+.settings-modal-card > .settings-theme-slider-row {
+  padding: var(--openbot-space-3) var(--openbot-space-4);
 }
 
-.app-frame-custom-theme::before {
-  position: absolute;
-  z-index: 0;
-  inset: -24px;
-  background-image: var(--workspace-theme-image);
-  background-position: center;
-  background-size: cover;
-  content: "";
-  filter: blur(var(--workspace-theme-blur, 8px));
-  opacity: var(--workspace-theme-opacity, 0.72);
-  pointer-events: none;
-  transform: scale(1.04);
+.app-frame-custom-theme {
+  --openbot-bg-canvas: var(--openbot-bg-canvas-clear);
+  --openbot-bg-native-sidebar: var(--openbot-bg-glass);
+  --openbot-bg-sidebar: var(--openbot-bg-glass);
+  --openbot-bg-surface: color-mix(in srgb, var(--openbot-bg-native-canvas) 52%, var(--openbot-transparent));
+  --openbot-bg-surface-raised: color-mix(in srgb, var(--openbot-bg-native-canvas) 62%, var(--openbot-transparent));
+  --openbot-bg-control: color-mix(in srgb, var(--openbot-bg-native-canvas) 62%, var(--openbot-transparent));
+  isolation: isolate;
+  background: transparent;
 }
 
 .app-frame-custom-theme > * {

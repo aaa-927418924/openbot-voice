@@ -73,12 +73,19 @@ export interface RemoteHostRequestTransport {
       agentCreateModel?: boolean;
       agentLiveVoiceSettings?: boolean;
       teamChannelIdentityAdmin?: boolean;
+      timeoutMs?: number;
     },
   ) => Effect.Effect<unknown, RemoteWorkflowError>;
   requestResponse: (
     hostId: string,
     path: string,
-    init?: { method?: string; body?: unknown; contentType?: string; preserveSemanticTags?: boolean },
+    init?: {
+      method?: string;
+      body?: unknown;
+      contentType?: string;
+      preserveSemanticTags?: boolean;
+      timeoutMs?: number;
+    },
   ) => Effect.Effect<
     {
       status: number;
@@ -159,7 +166,22 @@ export class RemoteServerClient {
     const refreshLiveVoiceSettings = isAgentLiveVoiceSettingsUpdate(path, init);
     return yield* Effect.gen({ self: this }, function* () {
       if (server.transport === "webrtc-v2") {
-        const compatibility = yield* this.ensureCompatibility(server, refreshLiveVoiceSettings);
+        const deadlineAt = init.timeoutMs === undefined ? null : Date.now() + init.timeoutMs;
+        const remainingTimeout = () => (deadlineAt === null ? undefined : Math.max(1, deadlineAt - Date.now()));
+        const negotiation = this.ensureCompatibility(server, refreshLiveVoiceSettings, remainingTimeout());
+        const compatibility = yield* deadlineAt === null
+          ? negotiation
+          : negotiation.pipe(
+              Effect.timeoutOrElse({
+                duration: remainingTimeout() ?? init.timeoutMs ?? 1,
+                orElse: () =>
+                  Effect.fail(
+                    new RemoteWorkflowError({
+                      cause: new RemoteRequestError(408, sourceText("error.remote.requestTimeout"), "request_timeout"),
+                    }),
+                  ),
+              }),
+            );
         if (refreshLiveVoiceSettings && !compatibility.capabilities.includes(AGENT_LIVE_VOICE_SETTINGS_CAPABILITY)) {
           return yield* remoteDecode(() => {
             throw new Error(sourceText("error.team.liveVoiceUnsupported"));
@@ -171,6 +193,7 @@ export class RemoteServerClient {
           agentCreateModel: this.supportsAgentCreateModel(path, init, compatibility.capabilities),
           agentLiveVoiceSettings: this.supportsAgentLiveVoiceSettings(path, init, compatibility.capabilities),
           teamChannelIdentityAdmin: compatibility.capabilities.includes(TEAM_CHANNEL_IDENTITY_ADMIN_CAPABILITY),
+          timeoutMs: remainingTimeout(),
         });
         // Decoding is outside the transport's catch on purpose. A frame that arrived intact and then
         // failed its route decoder is a protocol failure, not a request that happened to fail, and
@@ -231,7 +254,7 @@ export class RemoteServerClient {
    * `affectsConnection` is false for the remote viewer, whose requests are triggered by page loads
    * rather than by the user and so must not mark a healthy server offline.
    *
-   * `timeoutMs` applies to HTTP only. A WebRTC request has the transport's own limit.
+   * `timeoutMs` applies to HTTPS. WebRTC uses the transport's own limit.
    */
 
   readonly fetch = Effect.fn("RemoteClient.fetch")(function* (
@@ -387,7 +410,7 @@ export class RemoteServerClient {
     this.#compatibilityRequests.set(server.id, request);
     return yield* Effect.gen({ self: this }, function* () {
       const compatibility = yield* server.transport === "webrtc-v2"
-        ? this.#negotiateWebRtcCompatibilityEffect(server.id)
+        ? this.#negotiateWebRtcCompatibilityEffect(server.id, timeoutMs)
         : this.negotiateCompatibility(server.apiUrl, timeoutMs);
       this.#connections.setCompatibility(server.id, compatibility);
       this.#connections.clearStaleIssue(server.id, issueAtStart);
@@ -614,8 +637,9 @@ export class RemoteServerClient {
   readonly #negotiateWebRtcCompatibilityEffect = Effect.fn("RemoteClient.negotiateWebRtcCompatibility")(function* (
     this: RemoteServerClient,
     serverId: string,
+    timeoutMs?: number,
   ): Effect.fn.Return<ServerCompatibility, RemoteWorkflowError> {
-    const value = yield* this.#hostRequestEffect(serverId, TEAM_API_ROUTES.compatibility);
+    const value = yield* this.#hostRequestEffect(serverId, TEAM_API_ROUTES.compatibility, { timeoutMs });
     return yield* remoteDecode(() =>
       webRtcCompatibility(
         this.#appVersion,
@@ -641,6 +665,7 @@ export class RemoteServerClient {
       agentCreateModel?: boolean;
       agentLiveVoiceSettings?: boolean;
       teamChannelIdentityAdmin?: boolean;
+      timeoutMs?: number;
     } = {},
   ): Effect.fn.Return<unknown, RemoteWorkflowError> {
     return yield* Effect.gen({ self: this }, function* () {

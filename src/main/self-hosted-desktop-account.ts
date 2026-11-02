@@ -154,6 +154,7 @@ function decodeAccountServers(value: unknown): AccountServerDirectoryEntry[] {
       !isString(entry.fingerprint) ||
       !isString(entry.publicKey) ||
       !(entry.logoKey === null || isString(entry.logoKey)) ||
+      !(entry.origin === undefined || entry.origin === "cloud") ||
       !isString(entry.membershipId) ||
       (entry.role !== "owner" && entry.role !== "admin" && entry.role !== "member") ||
       typeof entry.isOwner !== "boolean"
@@ -167,6 +168,7 @@ function decodeAccountServers(value: unknown): AccountServerDirectoryEntry[] {
       fingerprint: entry.fingerprint,
       publicKey: entry.publicKey,
       logoKey: entry.logoKey,
+      ...(entry.origin === undefined ? {} : { origin: entry.origin }),
       membershipId: entry.membershipId,
       role: entry.role,
       isOwner: entry.isOwner,
