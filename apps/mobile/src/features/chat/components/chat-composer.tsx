@@ -1,7 +1,7 @@
 import { GlassView } from "expo-glass-effect";
 import { useIsFocused } from "expo-router";
 import { Button, Spinner, Typography } from "heroui-native";
-import { ArrowUp, Check, Mic, Plus, Reply, Square, X } from "lucide-react-native";
+import { ArrowUp, AudioLines, Check, Mic, Plus, Reply, Square, X } from "lucide-react-native";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   AccessibilityInfo,
@@ -901,7 +901,11 @@ export function ChatComposer({
                         strokeWidth={2}
                       />
                     ) : control.mode === "dictate" ? (
-                      <Mic color={String(foreground)} size={21} strokeWidth={1.8} />
+                      onStartLiveVoice && liveVoiceAvailable ? (
+                        <AudioLines color={String(foreground)} size={21} strokeWidth={1.8} />
+                      ) : (
+                        <Mic color={String(foreground)} size={21} strokeWidth={1.8} />
+                      )
                     ) : control.mode === "finish-dictation" ? (
                       <Check color={String(actionForeground)} size={20} strokeWidth={2.4} />
                     ) : (
