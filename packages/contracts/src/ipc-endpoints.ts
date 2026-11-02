@@ -330,6 +330,7 @@ import type {
   UpdateHostIdentityInput,
   UpdateTeamMemberInput,
 } from "./ipc-team-host";
+import type { SetTitleBarOverlayThemeInput } from "./ipc-titlebar";
 import type { VoiceModelStatus, VoiceTranscriptionInput, VoiceTranscriptionResult } from "./ipc-voice";
 import type { SetWindowsStartupSettingsInput, WindowsStartupSettings } from "./ipc-windows-startup";
 import type { AccountSession, MobileConnectedDevice, MobileConnectTicket } from "./mobile-connect";
@@ -462,6 +463,7 @@ export const IPC_ENDPOINTS = {
     ),
     getLocalHostSettings: request<undefined, LocalHostSettings>()("app:get-local-host-settings"),
     setLocalHostSettings: request<SetLocalHostSettingsInput, LocalHostSettings>()("app:set-local-host-settings"),
+    setTitleBarOverlayTheme: request<SetTitleBarOverlayThemeInput, void>()("app:set-titlebar-overlay-theme"),
     // Every window draws the logo, and the Dynamic Island has no Settings of its own, so the choice
     // is broadcast in the same way as the language.
     appLogoColorPreference: event<AppLogoColorPreference>()("app:logo-color-preference"),

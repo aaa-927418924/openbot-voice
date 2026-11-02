@@ -25,6 +25,7 @@ import type {
   SetDynamicIslandInteractiveInput,
   SetEnabledSkillInput,
   SetLocalHostSettingsInput,
+  SetTitleBarOverlayThemeInput,
   SetWindowsStartupSettingsInput,
   SubmitMarketplaceAgentInput,
   SubmitSkillInput,
@@ -45,6 +46,7 @@ import {
   isDynamicIslandPresentation,
   isSetApprovalAutomationInput,
   isSetLocalHostSettingsInput,
+  isSetTitleBarOverlayThemeInput,
   isSetWindowsStartupSettingsInput,
   isSkillCategory,
 } from "@openbot/contracts/ipc";
@@ -104,6 +106,11 @@ export function parseWindowsStartupSettings(input: unknown): SetWindowsStartupSe
 
 export function parseSetLocalHostSettings(input: unknown): SetLocalHostSettingsInput {
   if (!isSetLocalHostSettingsInput(input)) throw new Error("Local server settings are required.");
+  return input;
+}
+
+export function parseTitleBarOverlayTheme(input: unknown): SetTitleBarOverlayThemeInput {
+  if (!isSetTitleBarOverlayThemeInput(input)) throw new Error("Title bar colors are invalid.");
   return input;
 }
 

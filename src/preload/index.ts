@@ -492,6 +492,7 @@ const openbotApi: OpenBotDesktopApi = {
     setWindowsStartupSettings: decodeWindowsStartupSettings,
     getLocalHostSettings: decodeLocalHostSettings,
     setLocalHostSettings: decodeLocalHostSettings,
+    setTitleBarOverlayTheme: decodeVoid,
     openSettings: decodeVoid,
     openExternal: decodeVoid,
     openUrl: decodeVoid,

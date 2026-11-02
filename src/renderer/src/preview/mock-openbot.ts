@@ -506,6 +506,7 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
     }),
     getLocalHostSettings: async () => ({ supported: false, enabled: false }),
     setLocalHostSettings: async () => ({ supported: false, enabled: false }),
+    setTitleBarOverlayTheme: async () => undefined,
     onAppLogoColorPreference: (listener) => {
       logoColorListeners.add(listener);
       return () => logoColorListeners.delete(listener);

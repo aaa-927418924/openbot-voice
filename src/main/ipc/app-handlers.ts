@@ -40,6 +40,7 @@ import {
   parseExternalDestination,
   parseSetLocalHostSettings,
   parseSetup,
+  parseTitleBarOverlayTheme,
   parseWindowsStartupSettings,
 } from "./app-inputs";
 import { stringPayload } from "./validation";
@@ -176,6 +177,10 @@ export function appIpcHandlers({
       ),
       getLocalHostSettings: handler(getLocalHostSettings),
       setLocalHostSettings: payloadHandler(parseSetLocalHostSettings, (parsed) => setLocalHostSettings(parsed.enabled)),
+      setTitleBarOverlayTheme: payloadHandler(parseTitleBarOverlayTheme, ({ color, symbolColor }) => {
+        if (process.platform !== "win32" && process.platform !== "linux") return;
+        getMainWindow()?.setTitleBarOverlay({ color, symbolColor, height: 32 });
+      }),
       saveSetup: payloadHandler(parseSetup, async (input): Promise<AppSetupState> => {
         const previous = await runCauseEffect(readSetupState(setupFile));
         if (!previous.completed && getLocalHostSettings().supported) await setLocalHostSettings(true);

@@ -35,6 +35,50 @@ function workspaceThemeStyle(theme: DesktopThemeSettings | null): string {
   return `--workspace-theme-image: url("${imageDataUrl}"); --workspace-theme-blur: ${blur}px; --workspace-theme-opacity: ${opacity / 100}; --workspace-theme-accent: ${accentColor}`;
 }
 
+function titleBarOverlayTheme(): { color: string; symbolColor: string } | null {
+  const headerColor = getComputedStyle(document.body, "::before").backgroundColor;
+  const canvasColor = getComputedStyle(document.body).backgroundColor;
+  const textColor = getComputedStyle(document.body).color;
+  const sample = (color: string) => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 1;
+    canvas.height = 1;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) return null;
+    context.clearRect(0, 0, 1, 1);
+    context.fillStyle = color;
+    context.fillRect(0, 0, 1, 1);
+    const data = context.getImageData(0, 0, 1, 1).data;
+    return { red: data[0] ?? 0, green: data[1] ?? 0, blue: data[2] ?? 0, alpha: data[3] ?? 0 };
+  };
+  const header = sample(headerColor);
+  const canvas = sample(canvasColor);
+  const text = sample(textColor);
+  if (!header || !canvas || !text) return null;
+
+  const alpha = header.alpha / 255;
+  const red = Math.round(header.red * alpha + canvas.red * (1 - alpha));
+  const green = Math.round(header.green * alpha + canvas.green * (1 - alpha));
+  const blue = Math.round(header.blue * alpha + canvas.blue * (1 - alpha));
+  const channel = (value: number) => {
+    const normalized = value / 255;
+    return normalized <= 0.04045 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
+  };
+  const luminance = (color: { red: number; green: number; blue: number }) =>
+    0.2126 * channel(color.red) + 0.7152 * channel(color.green) + 0.0722 * channel(color.blue);
+  const backgroundLuminance = luminance({ red, green, blue });
+  const contrast = (foreground: number) =>
+    (Math.max(backgroundLuminance, foreground) + 0.05) / (Math.min(backgroundLuminance, foreground) + 0.05);
+  const textContrast = contrast(luminance(text));
+  const canvasContrast = contrast(luminance(canvas));
+  const symbol = textContrast >= canvasContrast ? text : canvas;
+
+  return {
+    color: `rgba(${header.red}, ${header.green}, ${header.blue}, ${alpha.toFixed(3)})`,
+    symbolColor: `rgba(${symbol.red}, ${symbol.green}, ${symbol.blue}, ${(symbol.alpha / 255).toFixed(3)})`,
+  };
+}
+
 /**
  * The application frame that the desktop shell and the web client share: the grid classes, the left
  * column width and its resizer, the compatibility screen, and the usage report slot. The panes come
@@ -77,6 +121,11 @@ export function WorkspaceFrame(props: WorkspaceFrameProps) {
         body.style.removeProperty("--workspace-theme-opacity");
         body.style.removeProperty("--workspace-theme-accent");
       }
+      const appInfo = platform.appInfo();
+      if (appInfo?.platform === "win32" || appInfo?.platform === "linux") {
+        const overlay = titleBarOverlayTheme();
+        if (overlay) void window.openbot.setTitleBarOverlayTheme(overlay).catch(() => undefined);
+      }
     },
   );
 
@@ -86,6 +135,11 @@ export function WorkspaceFrame(props: WorkspaceFrameProps) {
     document.body.style.removeProperty("--workspace-theme-blur");
     document.body.style.removeProperty("--workspace-theme-opacity");
     document.body.style.removeProperty("--workspace-theme-accent");
+    const appInfo = platform.appInfo();
+    if (appInfo?.platform === "win32" || appInfo?.platform === "linux") {
+      const overlay = titleBarOverlayTheme();
+      if (overlay) void window.openbot.setTitleBarOverlayTheme(overlay).catch(() => undefined);
+    }
   });
 
   return (
