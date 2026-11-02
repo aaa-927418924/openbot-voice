@@ -1,5 +1,6 @@
 import type { AgentEvent, TeamRealtimeEvent } from "@openbot/contracts/ipc";
 import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
+import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import {
   decodeTeamProtocolV2FileChunk,
   decodeTeamProtocolV2FileControlFrame,
@@ -22,6 +23,7 @@ import { runTeamEffect } from "./effect-boundary";
 import {
   createRemoteCommandMailbox,
   createRemoteTeamPeer,
+  REMOTE_DESKTOP_SESSION_START_REQUEST_TIMEOUT_MS,
   type RemoteTeamCommand,
   type RemoteTeamConnectionUpdate,
   type RemoteUploadProgress,
@@ -604,6 +606,10 @@ describe("browser remote peer recovery", () => {
     expect(remoteTeamRequestTimeoutMs("POST", LIVE_VOICE_CHANNEL_START_ROUTE)).toBe(45_000);
     expect(remoteTeamRequestTimeoutMs("POST", LIVE_VOICE_ROUTES.stop)).toBe(10_000);
     expect(remoteTeamRequestTimeoutMs("POST", LIVE_VOICE_ROUTES.sendText)).toBe(30_000);
+    expect(remoteTeamRequestTimeoutMs("POST", TEAM_API_ROUTES.remoteScreen.sessions)).toBe(
+      REMOTE_DESKTOP_SESSION_START_REQUEST_TIMEOUT_MS,
+    );
+    expect(REMOTE_DESKTOP_SESSION_START_REQUEST_TIMEOUT_MS).toBe(180_000);
     expect(remoteTeamRequestTimeoutMs("GET", LIVE_VOICE_ROUTES.start)).toBeUndefined();
     response.resolve();
     await network.runtime.dispose();

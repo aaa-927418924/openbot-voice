@@ -258,6 +258,8 @@ const COMPATIBILITY_REQUEST_TIMEOUT_MS = 3_000;
 /** The first read on a new peer also waits for a slow relay path, such as TURN over TLS on mobile data. */
 const FIRST_COMPATIBILITY_REQUEST_TIMEOUT_MS = 10_000;
 const REQUEST_TIMEOUT_MS = 10 * 60_000 + 30_000;
+/** Remote desktop startup can include a host screen-capture prompt, but must not wait forever. */
+export const REMOTE_DESKTOP_SESSION_START_REQUEST_TIMEOUT_MS = 180_000;
 const LIVE_VOICE_START_REQUEST_TIMEOUT_MS = 45_000;
 const LIVE_VOICE_STOP_REQUEST_TIMEOUT_MS = 10_000;
 const LIVE_VOICE_TEXT_REQUEST_TIMEOUT_MS = 30_000;
@@ -265,6 +267,7 @@ const LIVE_VOICE_TEXT_REQUEST_TIMEOUT_MS = 30_000;
 /** A voice setup or teardown should not leave the mobile UI waiting for the general RPC deadline. */
 export function remoteTeamRequestTimeoutMs(method: string, path: string) {
   if (method !== "POST") return undefined;
+  if (path === TEAM_API_ROUTES.remoteScreen.sessions) return REMOTE_DESKTOP_SESSION_START_REQUEST_TIMEOUT_MS;
   if (path === LIVE_VOICE_ROUTES.start || path === LIVE_VOICE_CHANNEL_START_ROUTE)
     return LIVE_VOICE_START_REQUEST_TIMEOUT_MS;
   if (path === LIVE_VOICE_ROUTES.stop) return LIVE_VOICE_STOP_REQUEST_TIMEOUT_MS;

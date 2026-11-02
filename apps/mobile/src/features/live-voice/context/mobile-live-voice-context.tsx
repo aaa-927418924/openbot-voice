@@ -75,11 +75,9 @@ function isVoiceStopping(state: MobileLiveVoiceState): boolean {
 export function MobileLiveVoiceProvider({
   children,
   host,
-  activeServerId,
   servers,
 }: PropsWithChildren<{
   host: MobileLiveVoiceHost;
-  activeServerId: string;
   servers: ServerSummary[];
 }>) {
   const foreground = useAppForeground();
@@ -89,8 +87,8 @@ export function MobileLiveVoiceProvider({
   stateRef.current = state;
   const originRef = useRef(origin);
   originRef.current = origin;
-  const actionContextRef = useRef({ activeServerId, foreground, servers });
-  actionContextRef.current = { activeServerId, foreground, servers };
+  const actionContextRef = useRef({ foreground, servers });
+  actionContextRef.current = { foreground, servers };
   const hostRef = useRef(host);
   hostRef.current = host;
   const mountedRef = useRef(true);
@@ -148,11 +146,10 @@ export function MobileLiveVoiceProvider({
   const canStart = useCallback(
     (target: MobileLiveVoiceTarget) =>
       foreground &&
-      target.serverId === activeServerId &&
       servers.some((server) => server.id === target.serverId && server.state === "online") &&
       hostRef.current.supportsLiveVoice(target.serverId, Boolean(target.channelId)) &&
       !isLiveVoiceBusy(stateRef.current),
-    [activeServerId, foreground, servers],
+    [foreground, servers],
   );
 
   const start = useCallback(
@@ -341,14 +338,12 @@ export function MobileLiveVoiceProvider({
     const supported = Boolean(
       originMatches &&
         foregroundAuthorized &&
-        actionContext.activeServerId === input.serverId &&
         serverOnline &&
         hostRef.current.supportsLiveVoice(input.serverId, Boolean(input.channelId)),
     );
     const allowed = isCurrentLiveVoiceStartAction(currentOrigin, input, {
       mounted: mountedRef.current,
       foreground: foregroundAuthorized,
-      activeServerId: actionContext.activeServerId,
       serverOnline,
       sessionPhase: stateRef.current.phase,
       hostSessionActive: stateRef.current.hostSessionActive,
@@ -358,7 +353,7 @@ export function MobileLiveVoiceProvider({
       supportLog.add(
         "warn",
         "connection",
-        `Live Voice start rejected locally (mounted=${mountedRef.current}, foreground=${actionContext.foreground}, selected=${actionContext.activeServerId === input.serverId}, online=${serverOnline}, supported=${supported}, phase=${stateRef.current.phase}, active=${stateRef.current.hostSessionActive})`,
+        `Live Voice start rejected locally (mounted=${mountedRef.current}, foreground=${actionContext.foreground}, online=${serverOnline}, supported=${supported}, phase=${stateRef.current.phase}, active=${stateRef.current.hostSessionActive})`,
       );
       return { kind: "rejected" };
     }
@@ -390,7 +385,6 @@ export function MobileLiveVoiceProvider({
   const liveVoiceContextAvailable = isMobileLiveVoiceContextAvailable(origin, {
     foreground,
     backgroundSupported: isLiveVoiceBackgroundServiceAvailable(),
-    activeServerId,
     serverOnline: originServer?.state === "online",
   });
   useEffect(() => {

@@ -22,7 +22,7 @@ export function LiveVoiceWorkspaceProvider({ children }: PropsWithChildren) {
   );
 
   return (
-    <MobileLiveVoiceProvider activeServerId={workspace.activeServer.id} host={host} servers={workspace.servers}>
+    <MobileLiveVoiceProvider host={host} servers={workspace.servers}>
       {children}
     </MobileLiveVoiceProvider>
   );

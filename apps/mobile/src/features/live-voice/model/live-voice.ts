@@ -42,7 +42,6 @@ export interface LiveVoiceStartActionIdentity {
 export interface LiveVoiceStartActionContext {
   mounted: boolean;
   foreground: boolean;
-  activeServerId: string;
   serverOnline: boolean;
   sessionPhase: MobileLiveVoicePhase;
   hostSessionActive: boolean;
@@ -64,7 +63,6 @@ export const EMPTY_LIVE_VOICE_STATE: MobileLiveVoiceState = {
 export interface MobileLiveVoiceContextAvailability {
   foreground: boolean;
   backgroundSupported: boolean;
-  activeServerId: string;
   serverOnline: boolean;
 }
 
@@ -72,12 +70,7 @@ export function isMobileLiveVoiceContextAvailable(
   origin: MobileLiveVoiceOrigin | null,
   context: MobileLiveVoiceContextAvailability,
 ): boolean {
-  return Boolean(
-    origin &&
-      (context.foreground || context.backgroundSupported) &&
-      context.activeServerId === origin.target.serverId &&
-      context.serverOnline,
-  );
+  return Boolean(origin && (context.foreground || context.backgroundSupported) && context.serverOnline);
 }
 
 export function isLiveVoiceBusy(state: Pick<MobileLiveVoiceState, "phase" | "hostSessionActive">): boolean {
@@ -131,7 +124,6 @@ export function isCurrentLiveVoiceStartAction(
     origin &&
       context.mounted &&
       context.foreground &&
-      context.activeServerId === request.serverId &&
       context.serverOnline &&
       context.sessionPhase === "connecting" &&
       !context.hostSessionActive &&

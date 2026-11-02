@@ -34,10 +34,11 @@ import { encodeTeamProtocolV1CurrentClientEvent } from "@openbot/contracts/team-
 import type { TeamProtocolV2Json } from "@openbot/contracts/team-protocol/v2";
 import { TEAM_PROTOCOL_V6 } from "@openbot/contracts/team-protocol/v6";
 import { decodeTeamProtocolV6CurrentEventPayload } from "@openbot/contracts/team-protocol/v6-webrtc-adapter";
+import { sourceText } from "@openbot/i18n/source";
 import { verifyEd25519Pem } from "@openbot/team-client/ed25519";
 import type { RemoteInvitePreview } from "@openbot/team-client/remote-directory";
 import { remoteHostFingerprint } from "@openbot/team-client/remote-directory";
-import type { RemoteFileUpload } from "@openbot/team-client/remote-peer";
+import { type RemoteFileUpload, remoteTeamRequestTimeoutMs } from "@openbot/team-client/remote-peer";
 import { Effect } from "effect";
 
 export interface LocalTailnetServer {
@@ -618,37 +619,48 @@ export class DirectTailnetTeamClient {
         ? JSON.stringify(sideRoute.request(route, body))
         : teamHttpCodec(protocol).encodeRequest(method, route, body, { preserveSemanticTags: true });
     }
-    const response = await this.#fetch(url, {
-      method,
-      headers,
-      ...(requestBody === undefined ? {} : { body: requestBody }),
-    });
-    const avatarResponse = method === "GET" && response.ok && isAgentAvatarPath(route);
-    // Attachments (including 206 byte-range responses) are streamed as raw bytes by the host.
-    // Parsing them as JSON yields the Android Unexpected end of input error and prevents both
-    // progressive video playback and the download action from receiving their expected envelope.
-    const attachmentResponse = method === "GET" && response.ok && isAttachmentDownloadPath(route);
-    const value =
-      response.status === 204
-        ? undefined
-        : avatarResponse || attachmentResponse
-          ? {
-              ...(attachmentResponse ? { name: attachmentDownloadName(response, route) } : {}),
-              mimeType: response.headers.get("Content-Type")?.split(";", 1)[0]?.trim() ?? "",
-              base64: bytesToBase64(new Uint8Array(await response.arrayBuffer())),
-            }
-          : await response.json();
-    const decoded =
-      value === undefined
-        ? undefined
-        : avatarResponse || attachmentResponse
-          ? value
-          : sideRoute
-            ? sideRoute.response(route, response.status, value)
-            : teamHttpCodec(protocol).decodeResponse(method, route, response.status, value);
-    if (!response.ok) throw new DirectTailnetHttpError(response.status);
-    onUploadProgress?.(1);
-    return decode(decoded);
+    const timeoutMs = remoteTeamRequestTimeoutMs(method, route);
+    const controller = timeoutMs === undefined ? null : new AbortController();
+    const timeout = controller ? setTimeout(() => controller.abort(), timeoutMs) : undefined;
+    try {
+      const response = await this.#fetch(url, {
+        method,
+        headers,
+        ...(requestBody === undefined ? {} : { body: requestBody }),
+        ...(controller ? { signal: controller.signal } : {}),
+      });
+      const avatarResponse = method === "GET" && response.ok && isAgentAvatarPath(route);
+      // Attachments (including 206 byte-range responses) are streamed as raw bytes by the host.
+      // Parsing them as JSON yields the Android Unexpected end of input error and prevents both
+      // progressive video playback and the download action from receiving their expected envelope.
+      const attachmentResponse = method === "GET" && response.ok && isAttachmentDownloadPath(route);
+      const value =
+        response.status === 204
+          ? undefined
+          : avatarResponse || attachmentResponse
+            ? {
+                ...(attachmentResponse ? { name: attachmentDownloadName(response, route) } : {}),
+                mimeType: response.headers.get("Content-Type")?.split(";", 1)[0]?.trim() ?? "",
+                base64: bytesToBase64(new Uint8Array(await response.arrayBuffer())),
+              }
+            : await response.json();
+      const decoded =
+        value === undefined
+          ? undefined
+          : avatarResponse || attachmentResponse
+            ? value
+            : sideRoute
+              ? sideRoute.response(route, response.status, value)
+              : teamHttpCodec(protocol).decodeResponse(method, route, response.status, value);
+      if (!response.ok) throw new DirectTailnetHttpError(response.status);
+      onUploadProgress?.(1);
+      return decode(decoded);
+    } catch (error) {
+      if (controller?.signal.aborted) throw new Error(sourceText("error.remote.desktopRequestTimeout"));
+      throw error;
+    } finally {
+      if (timeout !== undefined) clearTimeout(timeout);
+    }
   }
 
   openEvents(

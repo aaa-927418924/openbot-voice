@@ -31,7 +31,6 @@ describe("mobile Live Voice context availability", () => {
   const context = {
     foreground: false,
     backgroundSupported: true,
-    activeServerId: target.serverId,
     serverOnline: true,
   };
 
@@ -43,9 +42,9 @@ describe("mobile Live Voice context availability", () => {
     expect(isMobileLiveVoiceContextAvailable(origin, { ...context, backgroundSupported: false })).toBe(false);
   });
 
-  it("stops when the selected server changes or goes offline", () => {
-    expect(isMobileLiveVoiceContextAvailable(origin, { ...context, activeServerId: "server-b" })).toBe(false);
+  it("stops when its host goes offline", () => {
     expect(isMobileLiveVoiceContextAvailable(origin, { ...context, serverOnline: false })).toBe(false);
+    expect(isMobileLiveVoiceContextAvailable(origin, context)).toBe(true);
   });
 });
 
@@ -99,7 +98,6 @@ describe("mobile Live Voice conversation ownership", () => {
     const context = {
       mounted: true,
       foreground: true,
-      activeServerId: target.serverId,
       serverOnline: true,
       sessionPhase: "connecting" as const,
       hostSessionActive: false,
@@ -109,7 +107,6 @@ describe("mobile Live Voice conversation ownership", () => {
     expect(isCurrentLiveVoiceStartAction(origin, request, context)).toBe(true);
     expect(isCurrentLiveVoiceStartAction(origin, { ...request, clientSessionId: "old-session" }, context)).toBe(false);
     expect(isCurrentLiveVoiceStartAction(origin, request, { ...context, mounted: false })).toBe(false);
-    expect(isCurrentLiveVoiceStartAction(origin, request, { ...context, activeServerId: "other-server" })).toBe(false);
     expect(isCurrentLiveVoiceStartAction(origin, request, { ...context, foreground: false })).toBe(false);
     expect(isCurrentLiveVoiceStartAction(origin, request, { ...context, sessionPhase: "stopping" })).toBe(false);
 

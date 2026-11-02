@@ -493,6 +493,49 @@ describe("Android direct Tailscale pairing", () => {
     expect(compatibilityRequests.every((call) => call.headers.get("Content-Type") === null)).toBe(true);
   });
 
+  it("aborts a direct Tailnet remote desktop startup request at its deadline", async () => {
+    const host = await createHostFetch();
+    let aborted = false;
+    const fetcher = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      if (url.pathname === TEAM_API_ROUTES.remoteScreen.sessions)
+        return await new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => {
+              aborted = true;
+              reject(new Error("aborted"));
+            },
+            { once: true },
+          );
+        });
+      return host.fetcher(input, init);
+    });
+    const client = new DirectTailnetTeamClient(
+      {
+        hostId: serverId,
+        name: "Tailnet host",
+        logoKey: null,
+        apiUrl,
+        publicKey: "unused",
+        fingerprint: host.fingerprint,
+        sessionToken: "local-session-token",
+        membershipId: "member-id",
+        role: "member",
+      },
+      { appVersion: "1.1.0", fetch: fetcher, randomBytes },
+    );
+
+    await client.connect();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const opening = client.request("POST", TEAM_API_ROUTES.remoteScreen.sessions, (value) => value, {});
+    const rejected = expect(opening).rejects.toThrow("The desktop request timed out.");
+    await vi.advanceTimersByTimeAsync(180_000);
+
+    await rejected;
+    expect(aborted).toBe(true);
+  });
+
   it("rejects an event socket that closes before opening and records safe connection details", async () => {
     vi.stubGlobal("WebSocket", FakeTailnetSocket);
     FakeTailnetSocket.constructedUrl = null;

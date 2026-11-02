@@ -135,6 +135,7 @@ export function ChatView({
   const { t, errorMessage } = useText();
   const { respondToBrowserSecret, respondToBrowserTakeover, attachmentSupport } = useMobileWorkspace();
   const liveVoice = useMobileLiveVoice();
+  const liveVoiceCanStart = Boolean(liveVoiceTarget && liveVoice.canStart(liveVoiceTarget));
   const customTheme = useCustomTheme();
   const hasCustomBackground = customTheme.mode === "custom" && customTheme.imageUri !== null;
   const browserRequests = useBrowserRequests(target.serverId);
@@ -753,9 +754,11 @@ export function ChatView({
                       liveVoiceTarget && liveVoice.routesComposer(liveVoiceTarget) && liveVoice.state.phase !== "live",
                     )
                   }
-                  dictationEnabled={!liveVoiceTarget}
-                  liveVoiceAvailable={liveVoiceTarget ? liveVoice.canStart(liveVoiceTarget) : undefined}
-                  onStartLiveVoice={liveVoiceTarget ? () => liveVoice.start(liveVoiceTarget) : undefined}
+                  dictationEnabled={false}
+                  liveVoiceAvailable={liveVoiceCanStart}
+                  onStartLiveVoice={
+                    liveVoiceCanStart && liveVoiceTarget ? () => liveVoice.start(liveVoiceTarget) : undefined
+                  }
                   sending={sending || Boolean(pendingMessage)}
                   attachments={attachments}
                   draft={draft}
