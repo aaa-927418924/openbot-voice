@@ -93,25 +93,48 @@ export function useMenuMotion(options: { waitForPlacement?: boolean } = {}): (el
   let panel: HTMLElement | undefined;
   let place: Node | null = null;
   let placementObserver: MutationObserver | undefined;
+  let placementFrame: number | undefined;
   onCleanup(() => {
     placementObserver?.disconnect();
+    if (placementFrame !== undefined) cancelAnimationFrame(placementFrame);
     if (panel && motionAllowed(panel)) leave(panel, place);
   });
   return (element) => {
     panel = element;
     if (options.waitForPlacement) {
       const positioner = positionerOf(element);
-      const isPlaced = () => Boolean(positioner?.style.transform.startsWith("translate3d("));
-      if (positioner && !isPlaced()) {
+      if (positioner) {
         element.dataset.menuPositionPending = "";
         placementObserver?.disconnect();
-        placementObserver = new MutationObserver(() => {
-          if (!isPlaced()) return;
-          delete element.dataset.menuPositionPending;
-          placementObserver?.disconnect();
-          placementObserver = undefined;
-        });
+        let previousTransform: string | null = null;
+        let stableFrames = 0;
+        const checkPlacement = () => {
+          placementFrame = undefined;
+          if (!element.isConnected || !positioner.isConnected) return;
+          const transform = positioner.style.transform;
+          if (!transform.startsWith("translate3d(")) {
+            previousTransform = null;
+            stableFrames = 0;
+          } else if (transform === previousTransform) {
+            stableFrames += 1;
+          } else {
+            previousTransform = transform;
+            stableFrames = 0;
+          }
+          if (stableFrames >= 2) {
+            delete element.dataset.menuPositionPending;
+            placementObserver?.disconnect();
+            placementObserver = undefined;
+            return;
+          }
+          placementFrame = requestAnimationFrame(checkPlacement);
+        };
+        const schedulePlacementCheck = () => {
+          if (placementFrame === undefined) placementFrame = requestAnimationFrame(checkPlacement);
+        };
+        placementObserver = new MutationObserver(schedulePlacementCheck);
         placementObserver.observe(positioner, { attributes: true, attributeFilter: ["style"] });
+        schedulePlacementCheck();
       }
     }
     if (!motionAllowed(element)) return;

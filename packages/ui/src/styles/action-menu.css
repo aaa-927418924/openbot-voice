@@ -272,14 +272,12 @@
 @keyframes ui-menu-in {
   from {
     opacity: 0;
-    transform: scale(0.95);
   }
 }
 
 @keyframes ui-menu-out {
   to {
     opacity: 0;
-    transform: scale(0.95);
   }
 }
 

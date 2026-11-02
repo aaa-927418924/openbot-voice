@@ -1987,6 +1987,7 @@ export async function createApplicationServices({
           logoKey: identity.logoVersion,
           membershipId,
           role: "owner" as const,
+          ...(cloudHostMode ? { origin: "cloud" as const } : {}),
         };
       },
       selfHostedApiOrigin: selfHostedApiOrigin(centralAuthApiUrl),

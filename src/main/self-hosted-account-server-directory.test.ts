@@ -59,20 +59,24 @@ describe("SelfHostedAccountServerDirectory owner visibility", () => {
     await expect(
       directory.setServerVisibleWithOwnerProof(accountId, proof(true, registration), tampered),
     ).rejects.toBeInstanceOf(AccountServerDirectoryError);
+    const cloudRegistration = { ...registration, origin: "cloud" as const };
+    await expect(
+      directory.setServerVisibleWithOwnerProof(accountId, proof(true, registration), cloudRegistration),
+    ).rejects.toBeInstanceOf(AccountServerDirectoryError);
     expect(await directory.list(accountId)).toEqual([]);
 
-    await directory.setServerVisibleWithOwnerProof(accountId, proof(true, registration), registration);
+    await directory.setServerVisibleWithOwnerProof(accountId, proof(true, cloudRegistration), cloudRegistration);
     expect(await directory.list(accountId)).toMatchObject([
-      { hostId, name: registration.name, apiUrl: registration.apiUrl, role: "member" },
+      { hostId, name: registration.name, apiUrl: registration.apiUrl, role: "member", origin: "cloud" },
     ]);
 
     await directory.removeMembership(accountId, hostId);
     await expect(
-      directory.setServerVisibleWithOwnerProof(accountId, proof(false, registration), registration),
+      directory.setServerVisibleWithOwnerProof(accountId, proof(false, cloudRegistration), cloudRegistration),
     ).rejects.toMatchObject({ status: 404 });
     expect(await directory.list(accountId)).toEqual([]);
 
-    await directory.setServerVisibleWithOwnerProof(accountId, proof(true, registration), registration);
+    await directory.setServerVisibleWithOwnerProof(accountId, proof(true, cloudRegistration), cloudRegistration);
     expect(await directory.list(accountId)).toHaveLength(1);
   });
 

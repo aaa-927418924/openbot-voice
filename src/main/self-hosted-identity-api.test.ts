@@ -415,6 +415,7 @@ describe("SelfHostedIdentityApiServer", () => {
           logoKey: null,
           membershipId: "owner-membership",
           role: "owner",
+          origin: "cloud",
         }),
       });
       expect(registration.status).toBe(200);
@@ -425,6 +426,7 @@ describe("SelfHostedIdentityApiServer", () => {
             apiUrl: "http://100.100.10.2:43123",
             isOwner: true,
             role: "owner",
+            origin: "cloud",
           },
         ],
       });
@@ -446,7 +448,7 @@ describe("SelfHostedIdentityApiServer", () => {
           role: "owner",
         }),
       });
-      expect(await rename.json()).toMatchObject({ servers: [{ name: "Renamed host" }] });
+      expect(await rename.json()).toMatchObject({ servers: [{ name: "Renamed host", origin: "cloud" }] });
 
       const otherAccount = await Effect.runPromise(
         authority.registerAccount({

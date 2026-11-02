@@ -13,7 +13,7 @@ export function accountServerVisibilityPayload(
   proof: Pick<AccountServerVisibilityProof, "hostId" | "visible" | "nonce">,
   registration?: Pick<
     AccountServerRegistration,
-    "hostId" | "name" | "apiUrl" | "fingerprint" | "publicKey" | "logoKey" | "membershipId"
+    "hostId" | "name" | "apiUrl" | "fingerprint" | "publicKey" | "logoKey" | "membershipId" | "origin"
   >,
 ): string {
   const visibility = `OpenBot account server visibility v1\n${accountId}\n${proof.hostId}\n${proof.visible ? "visible" : "hidden"}\n${proof.nonce}`;
@@ -26,6 +26,10 @@ export function accountServerVisibilityPayload(
     registration.publicKey,
     registration.logoKey,
     registration.membershipId,
+    // Keep the v1 signed payload byte-for-byte compatible with older hosts when the marker is
+    // absent. New Cloud hosts bind the origin marker to the same owner proof as the rest of the
+    // registration metadata.
+    ...(registration.origin === undefined ? [] : [registration.origin]),
   ])}`;
 }
 
