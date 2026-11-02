@@ -1559,6 +1559,83 @@ describe.sequential("AgentService: providers", () => {
     expect(service.listAgents().some((candidate) => candidate.id === agent.id)).toBe(false);
   });
 
+  it("returns from a pending Live Voice stop without waiting for provider setup", async () => {
+    let pauseAccountRead = false;
+    let providerStartPaused = false;
+    let signalAccountRead!: () => void;
+    const accountReadStarted = new Promise<void>((resolve) => {
+      signalAccountRead = resolve;
+    });
+    let releaseAccountRead!: () => void;
+    const accountReadGate = new Promise<void>((resolve) => {
+      releaseAccountRead = resolve;
+    });
+    const liveClient = new FakeLiveVoiceClient(false, async (method) => {
+      if (!pauseAccountRead || method !== "account/read") return;
+      providerStartPaused = true;
+      signalAccountRead();
+      await accountReadGate;
+      providerStartPaused = false;
+    });
+    const { service: agentService } = await startService(root, {
+      preferredProvider: "codex",
+      client: () => liveClient,
+    });
+    service = agentService;
+    await runCauseEffect(service.sendMessage({ agentId: "chief", text: "Create the Codex thread." }));
+    await waitForQueue(service, "chief", (queue) =>
+      queue.deliveries.every((delivery) => delivery.status === "completed"),
+    );
+    const agent = service.listAgents().find((candidate) => candidate.id === "chief");
+    if (!agent?.threadId) throw new Error("The Codex thread was not created.");
+
+    const sessionId = randomUUID();
+    pauseAccountRead = true;
+    const starting = runCauseEffect(
+      service.startLiveVoice({
+        agentId: agent.id,
+        threadId: agent.threadId,
+        clientSessionId: sessionId,
+        sdpOffer: "offer",
+      }),
+    ).then(
+      () => true,
+      () => false,
+    );
+    let stopReturned = false;
+    const stopping = runCauseEffect(
+      service.stopLiveVoice({ agentId: agent.id, threadId: agent.threadId, sessionId }),
+    ).then(() => {
+      stopReturned = true;
+    });
+
+    try {
+      await accountReadStarted;
+      await waitFor(() => stopReturned);
+      expect(providerStartPaused).toBe(true);
+      expect(liveClient.liveRequests.map((request) => request.method)).not.toContain("thread/realtime/start");
+    } finally {
+      pauseAccountRead = false;
+      releaseAccountRead();
+    }
+
+    const [startResult] = await Promise.all([starting, stopping]);
+    expect(startResult).toBe(false);
+    expect(liveClient.liveRequests.map((request) => request.method)).not.toContain("thread/realtime/start");
+
+    const nextSession = await runCauseEffect(
+      service.startLiveVoice({
+        agentId: agent.id,
+        threadId: agent.threadId,
+        clientSessionId: randomUUID(),
+        sdpOffer: "next-offer",
+      }),
+    );
+    await runCauseEffect(
+      service.stopLiveVoice({ agentId: agent.id, threadId: agent.threadId, sessionId: nextSession.sessionId }),
+    );
+  });
+
   it("cancels and waits for a pending Live Voice start before deleting agent data", async () => {
     let pauseAccountRead = false;
     let providerStartPaused = false;
@@ -1889,7 +1966,7 @@ describe.sequential("AgentService: providers", () => {
     const original = service.listAgents().find((agent) => agent.id === "chief");
     const originalSession = store.activeProviderSession("chief")?.externalSessionId;
     if (!original || !originalSession) throw new Error("The original session did not start.");
-    await runCauseEffect(service.stop());
+    await await runCauseEffect(service.stop());
     const directory = join(store.database.userDataPath, "provider-toolsets");
     const [manifest] = await readdir(directory);
     if (!manifest) throw new Error("The session tool manifest was not saved.");
@@ -1899,7 +1976,7 @@ describe.sequential("AgentService: providers", () => {
     service = await startService();
     await runCauseEffect(service.sendMessage({ agentId: "chief", text: "Group my researchers." }));
     await waitForQueue(service, "chief", (queue) => queue.deliveries.some((delivery) => delivery.status === "failed"));
-    await runCauseEffect(service.stop());
+    await await runCauseEffect(service.stop());
     rejectTurn = false;
     service = await startService();
     await runCauseEffect(service.sendMessage({ agentId: "chief", text: "Try grouping them again." }));

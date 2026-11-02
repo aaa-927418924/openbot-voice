@@ -1484,13 +1484,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     ) {
       pending.cancelled = true;
       const pendingSession = this.#liveVoiceSessions.get(input.agentId);
-      const stop =
-        pendingSession?.sessionId === input.sessionId
-          ? pendingSession.adapter
-              .stop(pendingSession.providerThreadId)
-              .pipe(Effect.tap(() => Effect.sync(() => pendingSession.finish("closed"))))
-          : Effect.void;
-      yield* stop.pipe(Effect.onExit(() => Deferred.await(pending.completed)));
+      if (pendingSession?.sessionId === input.sessionId) {
+        yield* pendingSession.adapter
+          .stop(pendingSession.providerThreadId)
+          .pipe(Effect.tap(() => Effect.sync(() => pendingSession.finish("closed"))));
+      }
+      // If provider/client preparation has not registered a session yet, `cancelled` is enough:
+      // startup checks it after every awaited setup operation. Do not hold this HTTP response open
+      // until that unrelated provider operation finishes; clients have a short stop deadline.
+      // Agent deletion is the exception: it must wait before removing the thread and its data.
+      if (this.#removal.deleting().has(input.agentId)) yield* Deferred.await(pending.completed);
       return;
     }
     const session = this.#liveVoiceSessions.get(input.agentId);

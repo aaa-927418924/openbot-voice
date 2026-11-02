@@ -260,8 +260,11 @@ const FIRST_COMPATIBILITY_REQUEST_TIMEOUT_MS = 10_000;
 const REQUEST_TIMEOUT_MS = 10 * 60_000 + 30_000;
 /** Remote desktop startup can include a host screen-capture prompt, but must not wait forever. */
 export const REMOTE_DESKTOP_SESSION_START_REQUEST_TIMEOUT_MS = 180_000;
-const LIVE_VOICE_START_REQUEST_TIMEOUT_MS = 45_000;
-const LIVE_VOICE_STOP_REQUEST_TIMEOUT_MS = 10_000;
+// Must outlast the mobile controller's 65-second host-start deadline, so it can send the
+// authoritative cancellation instead of racing the request transport timeout.
+const LIVE_VOICE_START_REQUEST_TIMEOUT_MS = 75_000;
+// Codex stop can wait for the provider's close event after the stop RPC is accepted.
+const LIVE_VOICE_STOP_REQUEST_TIMEOUT_MS = 50_000;
 const LIVE_VOICE_TEXT_REQUEST_TIMEOUT_MS = 30_000;
 
 /** A voice setup or teardown should not leave the mobile UI waiting for the general RPC deadline. */

@@ -590,6 +590,7 @@ describe("browser remote peer recovery", () => {
       },
     });
     await network.connect();
+    let startSettled = false;
     const start = network.runtime.execute({
       id: "live-voice-start",
       type: "request",
@@ -597,14 +598,19 @@ describe("browser remote peer recovery", () => {
       path: LIVE_VOICE_ROUTES.start,
       body: { agentId: "agent", threadId: "thread", clientSessionId: "session", sdpOffer: "offer" },
     });
+    void start.then(() => {
+      startSettled = true;
+    });
     await requested.promise;
 
     await vi.advanceTimersByTimeAsync(45_000);
+    expect(startSettled).toBe(false);
+    await vi.advanceTimersByTimeAsync(30_000);
     await expect(start).resolves.toMatchObject({ ok: false, error: "The desktop request timed out." });
     expect(network.updates.at(-1)).toMatchObject({ state: "online" });
-    expect(remoteTeamRequestTimeoutMs("POST", LIVE_VOICE_ROUTES.start)).toBe(45_000);
-    expect(remoteTeamRequestTimeoutMs("POST", LIVE_VOICE_CHANNEL_START_ROUTE)).toBe(45_000);
-    expect(remoteTeamRequestTimeoutMs("POST", LIVE_VOICE_ROUTES.stop)).toBe(10_000);
+    expect(remoteTeamRequestTimeoutMs("POST", LIVE_VOICE_ROUTES.start)).toBe(75_000);
+    expect(remoteTeamRequestTimeoutMs("POST", LIVE_VOICE_CHANNEL_START_ROUTE)).toBe(75_000);
+    expect(remoteTeamRequestTimeoutMs("POST", LIVE_VOICE_ROUTES.stop)).toBe(50_000);
     expect(remoteTeamRequestTimeoutMs("POST", LIVE_VOICE_ROUTES.sendText)).toBe(30_000);
     expect(remoteTeamRequestTimeoutMs("POST", TEAM_API_ROUTES.remoteScreen.sessions)).toBe(
       REMOTE_DESKTOP_SESSION_START_REQUEST_TIMEOUT_MS,
