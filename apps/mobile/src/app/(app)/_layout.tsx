@@ -107,7 +107,7 @@ function AuthenticatedStack() {
           <Stack.Screen
             name="chat/[agentId]"
             options={{
-              animation: "slide_from_right",
+              animation: isAndroid ? "none" : "slide_from_right",
               contentStyle: { backgroundColor: customBackground ? "transparent" : background },
               fullScreenGestureEnabled: false,
               gestureEnabled: true,

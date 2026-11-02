@@ -61,20 +61,22 @@ export function WorkspaceFrame(props: WorkspaceFrameProps) {
   );
   const customTheme = () => (props.theme?.mode === "custom" && props.theme.imageDataUrl ? props.theme : null);
 
-  createEffect(() => {
-    const theme = customTheme();
-    const body = document.body;
-    body.classList.toggle("app-custom-theme", theme !== null);
-    if (theme) {
-      body.style.setProperty("--workspace-theme-image", `url("${theme.imageDataUrl}")`);
-      body.style.setProperty("--workspace-theme-blur", `${theme.blur}px`);
-      body.style.setProperty("--workspace-theme-opacity", String(theme.opacity / 100));
-    } else {
-      body.style.removeProperty("--workspace-theme-image");
-      body.style.removeProperty("--workspace-theme-blur");
-      body.style.removeProperty("--workspace-theme-opacity");
-    }
-  });
+  createEffect(
+    () => customTheme(),
+    (theme) => {
+      const body = document.body;
+      body.classList.toggle("app-custom-theme", theme !== null);
+      if (theme) {
+        body.style.setProperty("--workspace-theme-image", `url("${theme.imageDataUrl}")`);
+        body.style.setProperty("--workspace-theme-blur", `${theme.blur}px`);
+        body.style.setProperty("--workspace-theme-opacity", String(theme.opacity / 100));
+      } else {
+        body.style.removeProperty("--workspace-theme-image");
+        body.style.removeProperty("--workspace-theme-blur");
+        body.style.removeProperty("--workspace-theme-opacity");
+      }
+    },
+  );
 
   onCleanup(() => {
     document.body.classList.remove("app-custom-theme");
