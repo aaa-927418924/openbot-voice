@@ -49,7 +49,11 @@ body::after {
 }
 
 body.app-custom-theme::before {
-  background: var(--openbot-transparent);
+  background: var(--workspace-theme-header-surface);
+}
+
+body.app-custom-theme {
+  --workspace-theme-header-surface: color-mix(in srgb, var(--openbot-bg-glass) 72%, var(--workspace-theme-accent) 28%);
 }
 
 body.app-custom-theme::after {

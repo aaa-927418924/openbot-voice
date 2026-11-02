@@ -48,6 +48,13 @@
   display: none;
 }
 
+.settings-theme-color-input {
+  width: var(--openbot-control-lg);
+  height: var(--openbot-control-md);
+  padding: var(--openbot-space-1);
+  cursor: pointer;
+}
+
 .settings-theme-preview {
   min-height: 132px;
   margin: 0 var(--openbot-space-4) var(--openbot-space-3);
@@ -69,11 +76,23 @@
 
 .app-frame-custom-theme {
   --openbot-bg-canvas: var(--openbot-bg-canvas-clear);
-  --openbot-bg-native-sidebar: var(--openbot-bg-glass);
-  --openbot-bg-sidebar: var(--openbot-bg-glass);
-  --openbot-bg-surface: color-mix(in srgb, var(--openbot-bg-native-canvas) 52%, var(--openbot-transparent));
-  --openbot-bg-surface-raised: color-mix(in srgb, var(--openbot-bg-native-canvas) 62%, var(--openbot-transparent));
-  --openbot-bg-control: color-mix(in srgb, var(--openbot-bg-native-canvas) 62%, var(--openbot-transparent));
+  --openbot-bg-native-sidebar: var(--workspace-theme-header-surface);
+  --openbot-bg-sidebar: var(--workspace-theme-header-surface);
+  --openbot-bg-surface: color-mix(
+    in srgb,
+    color-mix(in srgb, var(--openbot-bg-native-canvas) 52%, var(--openbot-transparent)) 76%,
+    var(--workspace-theme-accent) 24%
+  );
+  --openbot-bg-surface-raised: color-mix(
+    in srgb,
+    color-mix(in srgb, var(--openbot-bg-native-canvas) 62%, var(--openbot-transparent)) 76%,
+    var(--workspace-theme-accent) 24%
+  );
+  --openbot-bg-control: color-mix(
+    in srgb,
+    color-mix(in srgb, var(--openbot-bg-native-canvas) 62%, var(--openbot-transparent)) 76%,
+    var(--workspace-theme-accent) 24%
+  );
   isolation: isolate;
   background: transparent;
 }

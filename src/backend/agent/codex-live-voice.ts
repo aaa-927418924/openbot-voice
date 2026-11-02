@@ -1,6 +1,6 @@
 import { type CodexLiveVoice, DEFAULT_CODEX_LIVE_VOICE } from "@openbot/contracts/ipc-live-voice";
 import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
-import { Deferred, Effect, Exit } from "effect";
+import { Deferred, Effect } from "effect";
 import type { AgentClient } from "../agent-client";
 import { AppServerError } from "../app-server-client";
 import { decodeRecordResponse, decodeTurnResponse } from "../protocol";
@@ -69,6 +69,7 @@ interface SignalState {
   listener?: (notification: { method: string; params: unknown }) => void;
   exitListener?: (error: Error) => void;
   stopped: boolean;
+  stopping?: Deferred.Deferred<void, ProviderClientOperationError>;
 }
 
 /** Translates the tagged Codex app-server realtime notifications for one thread. */
@@ -225,23 +226,31 @@ export class CodexLiveVoiceAdapter {
   readonly stop = Effect.fn("CodexLiveVoiceAdapter.stop")(function* (this: CodexLiveVoiceAdapter, threadId: string) {
     const session = this.#sessions.get(threadId);
     if (!session) return;
-    if (session.stopped) throw new Error("A Codex Live stop request is already in progress.");
+    if (session.stopping) return yield* Deferred.await(session.stopping);
+    const stopping = Deferred.makeUnsafe<void, ProviderClientOperationError>();
+    session.stopping = stopping;
     session.stopped = true;
     Deferred.doneUnsafe(session.answer, Effect.succeed(null));
-    yield* this.#client.request("thread/realtime/stop", { threadId }, decodeRecordResponse, START_TIMEOUT_MS).pipe(
-      Effect.onExit((exit) =>
+    const stop = Effect.gen({ self: this }, function* () {
+      yield* this.#client.request("thread/realtime/stop", { threadId }, decodeRecordResponse, START_TIMEOUT_MS);
+      const closed = yield* Deferred.await(session.closed).pipe(
+        Effect.timeoutOrElse({ duration: ANSWER_TIMEOUT_MS, orElse: () => Effect.succeed(false) }),
+      );
+      if (!closed)
+        return yield* Effect.fail(
+          providerFailure(new Error("Codex Live did not confirm that its realtime session closed.")),
+        );
+    });
+    yield* stop.pipe(
+      Effect.tap(() => Effect.sync(() => Deferred.doneUnsafe(stopping, Effect.succeed(undefined)))),
+      Effect.tapError((error) =>
         Effect.sync(() => {
-          if (Exit.isFailure(exit)) session.stopped = false;
+          if (this.#sessions.get(threadId) === session) session.stopped = false;
+          if (session.stopping === stopping) session.stopping = undefined;
+          Deferred.doneUnsafe(stopping, Effect.fail(error));
         }),
       ),
     );
-    const closed = yield* Deferred.await(session.closed).pipe(
-      Effect.timeoutOrElse({ duration: ANSWER_TIMEOUT_MS, orElse: () => Effect.succeed(false) }),
-    );
-    if (!closed) {
-      session.stopped = false;
-      throw new Error("Codex Live did not confirm that its realtime session closed.");
-    }
   }, Effect.uninterruptible).bind(this);
 
   /** Closes local realtime state when the owning provider process stops without a close event. */

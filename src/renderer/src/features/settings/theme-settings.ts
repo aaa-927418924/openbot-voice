@@ -5,6 +5,7 @@ export type DesktopThemeSettings = {
   imageDataUrl: string | null;
   blur: number;
   opacity: number;
+  accentColor: string;
 };
 
 const STORAGE_KEY = "openbot.desktop.theme.v1";
@@ -14,6 +15,7 @@ export const DEFAULT_DESKTOP_THEME: DesktopThemeSettings = {
   imageDataUrl: null,
   blur: 8,
   opacity: 72,
+  accentColor: "#007cf7",
 };
 
 function bounded(value: unknown, min: number, max: number, fallback: number): number {
@@ -25,6 +27,10 @@ const storedThemeSchema = z.object({
   imageDataUrl: z.string().max(MAX_IMAGE_DATA_URL_LENGTH).nullable().optional(),
   blur: z.number().finite().optional(),
   opacity: z.number().finite().optional(),
+  accentColor: z
+    .string()
+    .regex(/^#[\da-f]{6}$/iu)
+    .optional(),
 });
 
 export function loadDesktopThemeSettings(): DesktopThemeSettings {
@@ -43,6 +49,7 @@ export function loadDesktopThemeSettings(): DesktopThemeSettings {
       imageDataUrl,
       blur: bounded(saved.blur, 0, 24, DEFAULT_DESKTOP_THEME.blur),
       opacity: bounded(saved.opacity, 10, 100, DEFAULT_DESKTOP_THEME.opacity),
+      accentColor: saved.accentColor ?? DEFAULT_DESKTOP_THEME.accentColor,
     };
   } catch {
     return DEFAULT_DESKTOP_THEME;

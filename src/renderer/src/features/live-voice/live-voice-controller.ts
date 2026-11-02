@@ -51,7 +51,9 @@ interface LiveVoiceSession {
   generation: number;
 }
 
-const START_TIMEOUT_MS = 30_000;
+const ICE_GATHERING_TIMEOUT_MS = 30_000;
+const HOST_START_TIMEOUT_MS = 65_000;
+const PEER_CONNECTION_TIMEOUT_MS = 30_000;
 const LAUNCH_ERROR_CLEAR_MS = 5_000;
 const IDLE_STATE: LiveVoiceState = {
   phase: "idle",
@@ -232,7 +234,7 @@ export function createLiveVoiceController(api: LiveVoiceApi | undefined, onState
       timer = window.setTimeout(() => {
         cleanup();
         reject(new Error("Live voice ICE gathering timed out."));
-      }, START_TIMEOUT_MS);
+      }, ICE_GATHERING_TIMEOUT_MS);
       const cancel = () => {
         cleanup();
         reject(new DOMException("ICE gathering was cancelled.", "AbortError"));
@@ -365,7 +367,7 @@ export function createLiveVoiceController(api: LiveVoiceApi | undefined, onState
       publish(session, "connecting");
       session.timer = window.setTimeout(() => {
         if (canContinue()) requestStop(session, "");
-      }, START_TIMEOUT_MS);
+      }, HOST_START_TIMEOUT_MS);
       const result = await api.start(
         {
           agentId: target.agentId,
@@ -392,7 +394,7 @@ export function createLiveVoiceController(api: LiveVoiceApi | undefined, onState
       session.timer = undefined;
       session.timer = window.setTimeout(() => {
         if (canContinue() && peer.connectionState !== "connected") requestStop(session, "");
-      }, START_TIMEOUT_MS);
+      }, PEER_CONNECTION_TIMEOUT_MS);
     } catch (error) {
       if (!isOwned()) {
         if (session.closedBeforeStartResolved && generation === session.generation && !active) {

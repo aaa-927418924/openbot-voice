@@ -44,6 +44,7 @@ let startDeferred:
   | undefined;
 
 beforeEach(() => {
+  tracks[0]?.stop.mockClear();
   vi.stubGlobal("Audio", TestAudio);
   vi.stubGlobal("RTCPeerConnection", TestPeer);
   Object.defineProperty(navigator, "mediaDevices", {
@@ -78,6 +79,22 @@ afterEach(() => {
 });
 
 describe("Live voice media lifecycle", () => {
+  it("does not cancel the host start request at the old local setup deadline", async () => {
+    vi.useFakeTimers();
+    startDeferred = { resolve: () => undefined };
+    const starting = controller.start(target);
+    await vi.waitFor(() => expect(api.start).toHaveBeenCalledOnce());
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(api.stop).not.toHaveBeenCalled();
+
+    const request = vi.mocked(api.start).mock.calls[0]?.[0];
+    if (!request) throw new Error("The host start request was not created.");
+    startDeferred.resolve({ kind: "started", sessionId: request.clientSessionId, sdpAnswer: "v=0\\r\\n" });
+    await starting;
+    expect(api.stop).not.toHaveBeenCalled();
+  });
+
   it("stops local media immediately and holds the session token until a late close event", async () => {
     startDeferred = { resolve: () => undefined };
     const starting = controller.start(target);

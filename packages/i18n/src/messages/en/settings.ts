@@ -21,6 +21,8 @@ export const messages = defineMessages("settings", {
   "settings.theme.background.blurLabel": "Background blur",
   "settings.theme.background.opacityDescription": "Adjust how strongly the image shows through.",
   "settings.theme.background.opacityLabel": "Background image opacity",
+  "settings.theme.accent.title": "Accent color",
+  "settings.theme.accent.description": "Tint translucent workspace surfaces and the title bar.",
   "settings.theme.saveFailed": "Could not save the theme on this device.",
   "settings.theme.imageFailed": "Could not use this image. Choose a different image.",
   "settings.logoColor.title": "Logo color",

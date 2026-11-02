@@ -31,8 +31,8 @@ type WorkspaceFrameProps = ParentProps<
 
 function workspaceThemeStyle(theme: DesktopThemeSettings | null): string {
   if (theme === null) return "";
-  const { imageDataUrl, blur, opacity } = theme;
-  return `--workspace-theme-image: url("${imageDataUrl}"); --workspace-theme-blur: ${blur}px; --workspace-theme-opacity: ${opacity / 100}`;
+  const { imageDataUrl, blur, opacity, accentColor } = theme;
+  return `--workspace-theme-image: url("${imageDataUrl}"); --workspace-theme-blur: ${blur}px; --workspace-theme-opacity: ${opacity / 100}; --workspace-theme-accent: ${accentColor}`;
 }
 
 /**
@@ -70,10 +70,12 @@ export function WorkspaceFrame(props: WorkspaceFrameProps) {
         body.style.setProperty("--workspace-theme-image", `url("${theme.imageDataUrl}")`);
         body.style.setProperty("--workspace-theme-blur", `${theme.blur}px`);
         body.style.setProperty("--workspace-theme-opacity", String(theme.opacity / 100));
+        body.style.setProperty("--workspace-theme-accent", theme.accentColor);
       } else {
         body.style.removeProperty("--workspace-theme-image");
         body.style.removeProperty("--workspace-theme-blur");
         body.style.removeProperty("--workspace-theme-opacity");
+        body.style.removeProperty("--workspace-theme-accent");
       }
     },
   );
@@ -83,6 +85,7 @@ export function WorkspaceFrame(props: WorkspaceFrameProps) {
     document.body.style.removeProperty("--workspace-theme-image");
     document.body.style.removeProperty("--workspace-theme-blur");
     document.body.style.removeProperty("--workspace-theme-opacity");
+    document.body.style.removeProperty("--workspace-theme-accent");
   });
 
   return (

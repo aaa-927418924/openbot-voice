@@ -105,6 +105,22 @@ describe("CodexLiveVoiceAdapter", () => {
     expect(stopped).toBe(true);
   });
 
+  it("shares one provider stop request between concurrent callers", async () => {
+    const client = new FakeClient();
+    const adapter = new CodexLiveVoiceAdapter({ client, onEvent: () => undefined });
+    await Effect.runPromise(adapter.start("thread-a", "offer-sdp", "maple"));
+
+    const firstStop = Effect.runPromise(adapter.stop("thread-a"));
+    await vi.waitFor(() => expect(client.requestCalls).toBe(2));
+    const secondStop = Effect.runPromise(adapter.stop("thread-a"));
+    await Promise.resolve();
+    expect(client.requestCalls).toBe(2);
+
+    client.emit("notification", { method: "thread/realtime/closed", params: { threadId: "thread-a" } });
+    await Promise.all([firstStop, secondStop]);
+    expect(adapter.isActive("thread-a")).toBe(false);
+  });
+
   it("closes local realtime state when the provider stops without a close notification", async () => {
     const client = new FakeClient();
     const events: CodexRealtimeEvent[] = [];

@@ -126,6 +126,39 @@ afterEach(() => {
 });
 
 describe("Live Voice WebRTC controller lifecycle", () => {
+  it("uses the host request deadline after local WebRTC setup", async () => {
+    installWebRtcStubs();
+    const hostStart = deferred<{ kind: "started"; response: { sessionId: string; sdpAnswer: string } }>();
+    const scheduledTimers = new Map<number, number>();
+    let nextTimerId = 0;
+    Object.assign(window, {
+      setTimeout: (_callback: () => void, delay: number) => {
+        const id = ++nextTimerId;
+        scheduledTimers.set(id, delay);
+        return id;
+      },
+      clearTimeout: (id: number) => scheduledTimers.delete(id),
+    });
+    const stopSession = vi.fn(async () => {});
+    const startSession = vi.fn(async () => await hostStart.promise);
+    const controller = createLiveVoiceWebController({
+      startSession,
+      stopSession,
+      sendText: vi.fn(async () => {}),
+      onState: vi.fn(async (_state: MobileLiveVoiceState) => {}),
+    });
+
+    const starting = controller.start(origin);
+    await vi.waitFor(() => expect(startSession).toHaveBeenCalledOnce());
+    expect([...scheduledTimers.values()]).toContain(65_000);
+
+    hostStart.resolve({ kind: "started", response: { sessionId: origin.sessionId, sdpAnswer: "answer" } });
+    await starting;
+    controller.stop();
+    await vi.waitFor(() => expect(stopSession).toHaveBeenCalledOnce());
+    controller.dispose();
+  });
+
   it("requests default audio and reports microphone failure details", async () => {
     installWebRtcStubs();
     const onDiagnostic = vi.fn(async () => {});

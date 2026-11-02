@@ -78,6 +78,22 @@ export function SettingsThemeTab(props: {
           <ItemGroup class="settings-modal-card">
             <Item class="settings-modal-row">
               <ItemContent>
+                <ItemTitle>{i18n.t("settings.theme.accent.title")}</ItemTitle>
+                <ItemDescription>{i18n.t("settings.theme.accent.description")}</ItemDescription>
+              </ItemContent>
+              <ItemActions>
+                <Input
+                  class="settings-theme-color-input"
+                  type="color"
+                  value={props.value.accentColor}
+                  aria-label={i18n.t("settings.theme.accent.title")}
+                  onInput={(event) => update({ accentColor: event.currentTarget.value })}
+                />
+              </ItemActions>
+            </Item>
+
+            <Item class="settings-modal-row">
+              <ItemContent>
                 <ItemTitle>{i18n.t("settings.theme.background.image")}</ItemTitle>
                 <ItemDescription>{i18n.t("settings.theme.background.imageDescription")}</ItemDescription>
               </ItemContent>

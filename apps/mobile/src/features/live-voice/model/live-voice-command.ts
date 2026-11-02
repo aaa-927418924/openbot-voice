@@ -16,7 +16,8 @@ export interface MobileLiveVoiceCommandResult {
 }
 
 export const MOBILE_LIVE_VOICE_COMMAND_TIMEOUTS_MS = {
-  start: 50_000,
+  // Allow local microphone/SDP setup plus the host's 60-second start request.
+  start: 100_000,
   stop: 15_000,
   "toggle-mute": 10_000,
   "resume-audio": 10_000,

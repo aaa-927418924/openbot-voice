@@ -1,7 +1,9 @@
 import type { LiveVoiceWireEvent } from "@openbot/contracts/team-protocol/live-voice-v1";
 import type { MobileLiveVoiceOrigin, MobileLiveVoiceState } from "./live-voice";
 
-const START_TIMEOUT_MS = 30_000;
+const LOCAL_SETUP_TIMEOUT_MS = 30_000;
+const HOST_START_TIMEOUT_MS = 65_000;
+const PEER_CONNECTION_TIMEOUT_MS = 30_000;
 const LEVEL_SAMPLE_MS = 100;
 
 export interface LiveVoiceStartRequest {
@@ -320,14 +322,13 @@ export function createLiveVoiceWebController(actions: LiveVoiceWebActions) {
     report(session, "startup", "started");
     publish(session, "connecting", false);
     const isCurrent = () => !disposed && active === session && !session.cancelled;
-    // Cover microphone permission, SDP creation, ICE gathering and the host request. Previously
-    // this deadline started only after all local media setup had completed.
+    // Bound local permission and WebRTC setup separately from the host's provider startup.
     session.startTimer = window.setTimeout(() => {
       if (isCurrent()) {
         report(session, session.currentStep, "timeout");
         void requestStop(session, "unavailable");
       }
-    }, START_TIMEOUT_MS);
+    }, LOCAL_SETUP_TIMEOUT_MS);
     try {
       report(session, "microphone", "waiting");
       if (!navigator.mediaDevices?.getUserMedia)
@@ -427,6 +428,13 @@ export function createLiveVoiceWebController(actions: LiveVoiceWebActions) {
       session.startRequested = true;
       publish(session, "connecting", hostMayBeActive(session));
       report(session, "host-request", "started");
+      if (session.startTimer !== undefined) window.clearTimeout(session.startTimer);
+      session.startTimer = window.setTimeout(() => {
+        if (isCurrent()) {
+          report(session, "host-request", "timeout");
+          void requestStop(session, "unavailable");
+        }
+      }, HOST_START_TIMEOUT_MS);
       const outcome = await actions.startSession({
         serverId: origin.target.serverId,
         agentId: origin.target.agentId,
@@ -475,7 +483,7 @@ export function createLiveVoiceWebController(actions: LiveVoiceWebActions) {
       session.startTimer = undefined;
       session.connectedTimer = window.setTimeout(() => {
         if (isCurrent() && peer.connectionState !== "connected") void requestStop(session, "unavailable");
-      }, START_TIMEOUT_MS);
+      }, PEER_CONNECTION_TIMEOUT_MS);
     } catch (error) {
       if (active !== session || disposed) return;
       const details = describeVoiceError(error);
@@ -583,7 +591,7 @@ async function waitForIce(peer: RTCPeerConnection): Promise<void> {
     timer = window.setTimeout(() => {
       cleanup();
       reject(new Error("Live voice ICE gathering timed out."));
-    }, START_TIMEOUT_MS);
+    }, LOCAL_SETUP_TIMEOUT_MS);
     peer.addEventListener("icegatheringstatechange", onChange);
   });
 }

@@ -20,6 +20,8 @@ export const messages = {
   "settings.theme.background.blurLabel": "背景のぼかし",
   "settings.theme.background.opacityDescription": "背景画像の見え方を調整します。",
   "settings.theme.background.opacityLabel": "背景画像の透明度",
+  "settings.theme.accent.title": "アクセントカラー",
+  "settings.theme.accent.description": "ワークスペースの半透明な面とタイトルバーに色を重ねます。",
   "settings.theme.saveFailed": "この端末にテーマを保存できませんでした。",
   "settings.theme.imageFailed": "この画像を使えませんでした。別の画像を選んでください。",
   "settings.logoColor.title": "ロゴの色",
