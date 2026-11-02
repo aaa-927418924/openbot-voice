@@ -46,12 +46,24 @@
   grid-column: 1 / -1;
 }
 
+.attachment-video-expand-button {
+  position: absolute;
+  z-index: 1;
+  inset-block-start: var(--openbot-space-2);
+  inset-inline-end: var(--openbot-space-2);
+  border: 1px solid var(--openbot-border);
+  background: var(--openbot-bg-surface-raised);
+  color: var(--openbot-text-primary);
+}
+
 .message-video-preview-dialog {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  width: min(1200px, 100%);
+  width: min(1200px, calc(100vw - var(--openbot-space-6) * 2));
+  max-width: calc(100vw - var(--openbot-space-6) * 2);
   height: min(900px, calc(100dvh - var(--openbot-space-6) * 2));
+  max-height: calc(100dvh - var(--openbot-space-6) * 2);
 }
 
 .message-video-preview-dialog-body {

@@ -1,6 +1,6 @@
 import { playableMediaKind } from "@openbot/contracts/attachment-files";
 import { type AttachmentSummary, canPreviewAttachment } from "@openbot/contracts/ipc";
-import { Button, Dialog, Download, Spinner, X } from "@openbot/ui";
+import { Button, Dialog, Download, Maximize2, Spinner, X } from "@openbot/ui";
 import { createSignal, createUniqueId, For, onCleanup, Show } from "solid-js";
 import { useText } from "../../text";
 import { AnchoredTooltip } from "./AnchoredTooltip";
@@ -89,20 +89,14 @@ export function AttachmentCards(props: {
         <For each={props.attachments}>
           {(attachment) => {
             let inlineVideo: HTMLVideoElement | undefined;
-            const handleNativeExpand = () => {
-              if (!inlineVideo || document.fullscreenElement !== inlineVideo) return;
+            const expandVideo = () => {
+              if (!inlineVideo) return;
               const wasPlaying = !inlineVideo.paused;
               const currentTime = inlineVideo.currentTime;
               inlineVideo.pause();
-              const state = { attachment, currentTime, wasPlaying };
-              void document
-                .exitFullscreen()
-                .catch(() => undefined)
-                .then(() => setExpandedVideo(state));
+              setExpandedVideo({ attachment, currentTime, wasPlaying });
             };
-            document.addEventListener("fullscreenchange", handleNativeExpand);
             onCleanup(() => {
-              document.removeEventListener("fullscreenchange", handleNativeExpand);
               if (videoElements.get(attachment.id) === inlineVideo) videoElements.delete(attachment.id);
             });
             return (
@@ -176,12 +170,25 @@ export function AttachmentCards(props: {
                         class="message-video-preview"
                         aria-label={t("attachment.preview", { name: attachment.name })}
                         controls
+                        controlslist="nofullscreen"
                         playsinline
                         preload="metadata"
                         src={attachment.previewUrl ?? ""}
                       >
                         <track kind="captions" />
                       </video>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        type="button"
+                        class="attachment-video-expand-button"
+                        aria-label={t("chat.preview.expandLabel")}
+                        title={t("chat.preview.expandLabel")}
+                        data-cuelume-tap="expand"
+                        onClick={expandVideo}
+                      >
+                        <Maximize2 aria-hidden="true" />
+                      </Button>
                     </div>
                     <div class="attachment-video-metadata">
                       <span class="attachment-video-copy">

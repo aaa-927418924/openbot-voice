@@ -1,5 +1,5 @@
 import type { AttachmentSummary } from "@openbot/contracts/ipc";
-import { render, screen, waitFor } from "@solidjs/testing-library";
+import { fireEvent, render, screen } from "@solidjs/testing-library";
 import type { JSX } from "@solidjs/web";
 import { afterEach, expect, it, vi } from "vitest";
 
@@ -33,7 +33,7 @@ vi.mock("@openbot/ui", () => {
     ),
     Title: (props: { class?: string; children?: JSX.Element }) => <h2 class={props.class}>{props.children}</h2>,
   };
-  return { Button, Dialog, Download: () => null, Spinner: () => null, X: () => null };
+  return { Button, Dialog, Download: () => null, Maximize2: () => null, Spinner: () => null, X: () => null };
 });
 vi.mock("../../text", () => ({
   useText: () => ({
@@ -59,39 +59,27 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it("uses the native video expand control to open the in-app preview", async () => {
-  const fullscreenElement = Object.getOwnPropertyDescriptor(document, "fullscreenElement");
-  const exitFullscreen = Object.getOwnPropertyDescriptor(document, "exitFullscreen");
+it("expands a video inside the app window without entering monitor fullscreen", async () => {
   const { container } = render(() => (
     <AttachmentCards attachments={[attachment]} onPreview={vi.fn()} onAction={vi.fn()} />
   ));
-  const video = container.querySelector("video");
-  expect(video).not.toBeNull();
-  if (!video) throw new Error("Inline MP4 preview was not rendered.");
+  const inlineVideo = container.querySelector("video");
+  expect(inlineVideo).not.toBeNull();
+  if (!inlineVideo) throw new Error("Inline MP4 preview was not rendered.");
 
   const pause = vi.fn();
-  Object.defineProperty(video, "paused", { configurable: true, value: false });
-  Object.defineProperty(video, "currentTime", { configurable: true, value: 12 });
-  video.pause = pause;
-  const exit = vi.fn(async () => {
-    Object.defineProperty(document, "fullscreenElement", { configurable: true, value: null });
-    document.dispatchEvent(new Event("fullscreenchange"));
-  });
-  Object.defineProperty(document, "fullscreenElement", { configurable: true, value: video });
-  Object.defineProperty(document, "exitFullscreen", { configurable: true, value: exit });
-  document.dispatchEvent(new Event("fullscreenchange"));
+  Object.defineProperty(inlineVideo, "paused", { configurable: true, value: false });
+  Object.defineProperty(inlineVideo, "currentTime", { configurable: true, value: 12 });
+  inlineVideo.pause = pause;
 
-  await waitFor(() => expect(screen.getByRole("dialog")).toBeTruthy());
-  expect(video).toHaveAttribute("controls");
-  expect(video).not.toHaveAttribute("controlslist");
-  expect(exit).toHaveBeenCalledOnce();
+  await fireEvent.click(screen.getByRole("button", { name: "chat.preview.expandLabel" }));
+
+  expect(inlineVideo).toHaveAttribute("controls");
+  expect(inlineVideo).toHaveAttribute("controlslist", "nofullscreen");
   expect(pause).toHaveBeenCalledOnce();
-  expect(screen.queryByRole("button", { name: "chat.preview.expandLabel" })).toBeNull();
+  expect(screen.getByRole("dialog")).toBeTruthy();
   expect(screen.getByRole("heading", { name: "clip.mp4" })).toBeTruthy();
-  expect(screen.getAllByLabelText("attachment.preview:clip.mp4")).toHaveLength(2);
-
-  if (fullscreenElement) Object.defineProperty(document, "fullscreenElement", fullscreenElement);
-  else Reflect.deleteProperty(document, "fullscreenElement");
-  if (exitFullscreen) Object.defineProperty(document, "exitFullscreen", exitFullscreen);
-  else Reflect.deleteProperty(document, "exitFullscreen");
+  const previews = screen.getAllByLabelText("attachment.preview:clip.mp4");
+  expect(previews).toHaveLength(2);
+  expect(previews[1]).toHaveAttribute("controlslist", "nofullscreen");
 });

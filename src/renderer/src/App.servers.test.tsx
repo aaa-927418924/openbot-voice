@@ -883,6 +883,7 @@ describe("OpenBot connected desktop shell", () => {
       expect(window.openbot.remoteDesktop.connect).not.toHaveBeenCalled();
       expect(screen.queryByTitle("Sunshine remote desktop")).not.toBeInTheDocument();
       const openButton = screen.getByRole("button", { name: "Open remote control" });
+      openButton.focus();
       await fireEvent.click(openButton);
 
       const remoteDesktop = await screen.findByRole("main", { name: "Remote control" });
@@ -890,6 +891,7 @@ describe("OpenBot connected desktop shell", () => {
       if (!appFrame) throw new Error("App frame is missing.");
       expect(appFrame.inert).toBe(true);
       expect(appFrame).toHaveAttribute("aria-hidden", "true");
+      expect(openButton).not.toHaveFocus();
       await waitFor(() => expect(window.openbot.remoteDesktop.connect).toHaveBeenCalledWith({ serverId: "remote-1" }));
 
       if (!remoteDesktopAvailable) {

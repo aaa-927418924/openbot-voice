@@ -198,6 +198,9 @@ const RemoteDesktop = createSimpleContext({
       }
 
       remoteDesktopRestoreTarget = trigger;
+      // Remove focus from inside the frame before making it inert. Chromium warns about, and can
+      // retain, a focused descendant when the accessibility tree hides its ancestor.
+      trigger.blur();
       setRemoteDesktopWorkspaceServerId(serverId);
       setRemoteDesktopWorkspaceVisible(true);
       clearRemoteDesktopConnectionError();
