@@ -3,11 +3,12 @@ import { router, useGlobalSearchParams, useSegments } from "expo-router";
 import { Stack } from "expo-router/stack";
 import { useThemeColor } from "heroui-native/hooks";
 import { useEffect, useRef, useState } from "react";
-import { StyleSheet, TextInput, View } from "react-native";
+import { Platform, StyleSheet, TextInput, View } from "react-native";
 import { useCSSVariable } from "uniwind";
 import { AgentPinTransitionProvider } from "@/features/agents/components/agent-pin-transition";
 import { ChatNavigationGateContext } from "@/features/agents/components/chat-link-pressable";
 import { createChatNavigationGate } from "@/features/agents/model/chat-navigation-gate";
+import { chatScreenAnimation } from "@/features/agents/model/chat-screen-animation";
 import { useMobileSession } from "@/features/auth/context/mobile-session-context";
 import { MermaidRendererHost } from "@/features/chat/components/mermaid-renderer-host";
 import { MessageActionsProvider } from "@/features/chat/context/message-actions-context";
@@ -107,7 +108,7 @@ function AuthenticatedStack() {
           <Stack.Screen
             name="chat/[agentId]"
             options={{
-              animation: isAndroid ? "none" : "slide_from_right",
+              animation: chatScreenAnimation(Platform.OS),
               contentStyle: { backgroundColor: customBackground ? "transparent" : background },
               fullScreenGestureEnabled: false,
               gestureEnabled: true,

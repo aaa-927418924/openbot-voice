@@ -1,5 +1,6 @@
 import type { SidebarLayoutSnapshot } from "@openbot/contracts/ipc";
 import { type Href, router, Stack } from "expo-router";
+import { useHeaderHeight } from "expo-router/react-navigation";
 import { Button, Typography } from "heroui-native";
 import { useThemeColor } from "heroui-native/hooks";
 import { Bot, Layers3, Plus, Search, WifiOff } from "lucide-react-native";
@@ -164,6 +165,7 @@ function openFromMenu(href: Href): void {
 export function ConnectedScreen() {
   const reportContentReady = useContext(SplashContentReadyContext);
   const { t, sourceText } = useText();
+  const headerHeight = useHeaderHeight();
   const { isLoaderPresent } = useAppLoadingOverlay();
   const { openDrawer } = useAppDrawer();
   const {
@@ -277,7 +279,8 @@ export function ConnectedScreen() {
           removeClippedSubviews={false}
           className={hasCustomBackground ? "flex-1 bg-transparent" : "flex-1 bg-background"}
           alwaysBounceVertical={false}
-          contentContainerClassName={`${isAndroid ? "pt-4 " : ""}${items.length > 0 ? "pb-safe-offset-4" : "grow pb-safe-offset-4"}`}
+          contentContainerClassName={items.length > 0 ? "pb-safe-offset-4" : "grow pb-safe-offset-4"}
+          contentContainerStyle={isAndroid ? { paddingTop: (hasCustomBackground ? headerHeight : 0) + 16 } : undefined}
           // Keep the native header inset even when short content cannot scroll or bounce.
           contentInsetAdjustmentBehavior="always"
           data={items}
