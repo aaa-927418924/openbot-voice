@@ -360,10 +360,25 @@ export function MobileLiveVoiceProvider({
     try {
       return { kind: "started", response: await hostRef.current.startLiveVoice(input) };
     } catch (error) {
-      return { kind: isMobileLiveVoiceStartRejectedError(error) ? "rejected" : "uncertain" };
+      const rejected = isMobileLiveVoiceStartRejectedError(error);
+      const status = rejected ? error.status : readHttpStatus(error);
+      supportLog.add(
+        "warn",
+        "connection",
+        `Live Voice host start ${rejected ? "rejected" : "uncertain"}${status ? ` (HTTP ${status})` : ""}`,
+      );
+      return { kind: rejected ? "rejected" : "uncertain" };
     }
   }, []);
-  const stopSession = useCallback((input: LiveVoiceStopRequest) => hostRef.current.stopLiveVoice(input), []);
+  const stopSession = useCallback(async (input: LiveVoiceStopRequest) => {
+    try {
+      await hostRef.current.stopLiveVoice(input);
+    } catch (error) {
+      const status = readHttpStatus(error);
+      supportLog.add("warn", "connection", `Live Voice host stop failed${status ? ` (HTTP ${status})` : ""}`);
+      throw error;
+    }
+  }, []);
   const sendSessionText = useCallback(
     (input: LiveVoiceSendTextRequest) => hostRef.current.sendLiveVoiceText(input),
     [],
@@ -478,6 +493,20 @@ export function MobileLiveVoiceProvider({
       </View>
     </MobileLiveVoiceContext.Provider>
   );
+}
+
+function readHttpStatus(error: unknown): number | undefined {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "status" in error &&
+    typeof error.status === "number" &&
+    Number.isInteger(error.status) &&
+    error.status >= 100 &&
+    error.status <= 599
+  )
+    return error.status;
+  return undefined;
 }
 
 export function useMobileLiveVoice(): MobileLiveVoiceContextValue {

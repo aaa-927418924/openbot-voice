@@ -769,6 +769,15 @@ describe.sequential("AgentService: providers", () => {
     await runCauseEffect(
       agentService.stopLiveVoice({ agentId: agent.id, threadId: agent.threadId, sessionId: started.sessionId }),
     );
+    const stopRequestsAfterClose = liveClient.liveRequests.filter(
+      (request) => request.method === "thread/realtime/stop",
+    ).length;
+    await runCauseEffect(
+      agentService.stopLiveVoice({ agentId: agent.id, threadId: agent.threadId, sessionId: started.sessionId }),
+    );
+    expect(liveClient.liveRequests.filter((request) => request.method === "thread/realtime/stop")).toHaveLength(
+      stopRequestsAfterClose,
+    );
 
     const afterStop = await runCauseEffect(agentService.readConversation(agent.id));
     expect(afterStop.activeTurnId).toBe(turnId);

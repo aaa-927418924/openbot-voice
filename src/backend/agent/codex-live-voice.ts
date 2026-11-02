@@ -134,6 +134,13 @@ export class CodexLiveVoiceAdapter {
           break;
         case "thread/realtime/error":
           Deferred.doneUnsafe(session.answer, Effect.succeed(null));
+          // A backend rejection before the provider accepts a realtime session has nothing to
+          // stop. Keep accepted calls alive until `closed` so their media lease can be cleaned up.
+          if (!session.answerReceived && !session.realtimeSessionId) {
+            session.stopped = true;
+            Deferred.doneUnsafe(session.closed, Effect.succeed(true));
+            cleanup();
+          }
           this.#onEvent({
             type: "error",
             threadId,

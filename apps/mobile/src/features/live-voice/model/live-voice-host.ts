@@ -16,7 +16,7 @@ export interface MobileLiveVoiceHost {
 
 /** A completed HTTP refusal proves that the host did not accept a realtime session lease. */
 export class MobileLiveVoiceStartRejectedError extends Error {
-  constructor() {
+  constructor(readonly status?: number) {
     super("Live Voice start was refused.");
     this.name = "MobileLiveVoiceStartRejectedError";
   }

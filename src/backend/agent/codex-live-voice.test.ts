@@ -14,6 +14,7 @@ class FakeClient extends EventEmitter implements AgentClient {
   requestCalls = 0;
   readonly requests: Array<{ method: string; params: unknown }> = [];
   startFailure: ProviderClientOperationError | undefined;
+  realtimeError: string | undefined;
   request<T>(
     method: string,
     params: unknown,
@@ -39,14 +40,21 @@ class FakeClient extends EventEmitter implements AgentClient {
           realtimeStartInstructions: expect.stringContaining("available Codex tools"),
           transport: { type: "webrtc", sdp: "offer-sdp" },
         });
-        this.emit("notification", {
-          method: "thread/realtime/started",
-          params: { threadId: "thread-a", realtimeSessionId: "realtime-a" },
-        });
-        this.emit("notification", {
-          method: "thread/realtime/sdp",
-          params: { threadId: "thread-a", sdp: "answer-sdp" },
-        });
+        if (this.realtimeError) {
+          this.emit("notification", {
+            method: "thread/realtime/error",
+            params: { threadId: "thread-a", message: this.realtimeError },
+          });
+        } else {
+          this.emit("notification", {
+            method: "thread/realtime/started",
+            params: { threadId: "thread-a", realtimeSessionId: "realtime-a" },
+          });
+          this.emit("notification", {
+            method: "thread/realtime/sdp",
+            params: { threadId: "thread-a", sdp: "answer-sdp" },
+          });
+        }
       }
       return decoder(method === "turn/start" ? { turn: { id: "turn-a", status: "inProgress" } } : {});
     });
@@ -103,6 +111,27 @@ describe("CodexLiveVoiceAdapter", () => {
     await stopping;
     expect(adapter.isActive("thread-a")).toBe(false);
     expect(stopped).toBe(true);
+  });
+
+  it("cleans up a realtime start rejected before the provider accepts a session", async () => {
+    const client = new FakeClient();
+    client.realtimeError = "This conversation or runtime cannot use Live audio.";
+    const events: CodexRealtimeEvent[] = [];
+    const adapter = new CodexLiveVoiceAdapter({ client, onEvent: (event) => events.push(event) });
+
+    await expect(Effect.runPromise(adapter.start("thread-a", "offer-sdp", "maple"))).rejects.toMatchObject({
+      cause: expect.objectContaining({ message: "Codex Live did not return an SDP answer." }),
+    });
+    expect(adapter.isActive("thread-a")).toBe(false);
+    expect(events).toEqual([
+      {
+        type: "error",
+        threadId: "thread-a",
+        message: "This conversation or runtime cannot use Live audio.",
+      },
+    ]);
+    await Effect.runPromise(adapter.stop("thread-a"));
+    expect(client.requests.map(({ method }) => method)).toEqual(["thread/realtime/start"]);
   });
 
   it("shares one provider stop request between concurrent callers", async () => {

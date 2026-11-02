@@ -1321,7 +1321,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
           );
         } catch (error) {
           if (error instanceof RemoteTeamHttpError && isDefinitiveLiveVoiceStartRefusalStatus(error.status)) {
-            throw new MobileLiveVoiceStartRejectedError();
+            throw new MobileLiveVoiceStartRejectedError(error.status);
           }
           throw error;
         }

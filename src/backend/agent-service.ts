@@ -1293,28 +1293,48 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     input: LiveVoiceStartInput,
     channelActor?: { id: string; name: string },
   ) {
-    if (this.#removal.deleting().has(input.agentId))
+    if (this.#removal.deleting().has(input.agentId)) {
+      logger.warn("Codex Live voice start was refused.", { stage: "validation", reason: "agent-deleting" });
       throw new LiveVoiceRefusedError(sourceText("error.liveVoice.unavailable"));
+    }
     const agent = this.#store.list().find((candidate) => candidate.id === input.agentId);
-    if (!agent || agent.threadId !== input.threadId || agent.provider !== "codex")
+    if (!agent || agent.threadId !== input.threadId || agent.provider !== "codex") {
+      logger.warn("Codex Live voice start was refused.", {
+        stage: "validation",
+        reason: "conversation-or-provider-mismatch",
+      });
       throw new LiveVoiceRefusedError(sourceText("error.liveVoice.unavailable"));
+    }
     if (input.channelId) {
       const channel = this.channels.store.get(input.channelId);
-      if (channel.archived || channel.members.length !== 1 || channel.members[0]?.agentId !== agent.id)
+      if (channel.archived || channel.members.length !== 1 || channel.members[0]?.agentId !== agent.id) {
+        logger.warn("Codex Live voice start was refused.", {
+          stage: "validation",
+          reason: "channel-target-mismatch",
+        });
         throw new LiveVoiceRefusedError(sourceText("error.liveVoice.unavailable"));
+      }
     }
     if (
       this.#liveVoiceSessions.size > 0 ||
       this.#pendingLiveVoiceStart ||
       this.#usedLiveVoiceSessionIds.has(input.clientSessionId)
-    )
+    ) {
+      logger.warn("Codex Live voice start was refused.", {
+        stage: "validation",
+        reason: "host-busy-or-duplicate-session",
+      });
       throw new LiveVoiceRefusedError(sourceText("error.liveVoice.busy"));
+    }
     const executionThreadId = input.channelId
       ? this.channels.store.context(input.channelId, agent.id).threadId
       : undefined;
     const voiceThreadId = executionThreadId ?? input.threadId;
     const releaseLease = this.#drain.acquireVoiceLease(agent.id, voiceThreadId);
-    if (!releaseLease) throw new LiveVoiceRefusedError(sourceText("error.liveVoice.busy"));
+    if (!releaseLease) {
+      logger.warn("Codex Live voice start was refused.", { stage: "validation", reason: "conversation-busy" });
+      throw new LiveVoiceRefusedError(sourceText("error.liveVoice.busy"));
+    }
     const reservation: LiveVoiceStartReservation = {
       agentId: agent.id,
       threadId: input.threadId,
@@ -1333,6 +1353,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     let session: LiveVoiceSession | undefined;
     let adapter: CodexLiveVoiceAdapter | undefined;
+    let startupStage = "provider-client";
     const finish = (session: LiveVoiceSession, status: "closed" | "error") => {
       if (this.#liveVoiceSessions.get(session.agentId) !== session) return;
       this.#liveVoiceSessions.delete(session.agentId);
@@ -1363,6 +1384,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         throw new LiveVoiceRefusedError(sourceText("error.liveVoice.unavailable"));
       // Read the official account mode from the running host client. The provider-runtime cache can
       // be stale when the Cloud host and visible OpenBot GUI use separate app profiles.
+      startupStage = "account-check";
       const account = yield* client.request("account/read", { refreshToken: false }, decodeAccountReadResult, 5_000);
       if (account.account?.type !== "chatgpt")
         throw new LiveVoiceRefusedError(sourceText("error.liveVoice.accountRequired"));
@@ -1374,6 +1396,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const savedThreadId = voiceThreadId;
       const savedSession = this.#store.database.activeProviderSession(savedThreadId, "codex");
       const savedClient = savedSession ? this.#conversation.loadedClientFor(savedSession.externalSessionId) : undefined;
+      startupStage = "thread-prepare";
       const providerThreadId = yield* this.#threads.ensureThread(agent, client, executionThreadId);
       if (reservation.cancelled) throw new LiveVoiceRefusedError(sourceText("error.liveVoice.unavailable"));
       if (savedSession?.externalSessionId === providerThreadId && savedClient === client)
@@ -1386,7 +1409,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         onEvent: (event) => {
           if (!session || this.#liveVoiceSessions.get(agent.id) !== session) return;
           if (event.type === "closed") finish(session, "closed");
-          if (event.type === "error")
+          if (event.type === "error") {
+            logger.warn("Codex Live voice provider reported a realtime error.", {
+              stage: "realtime-event",
+              reason: liveVoiceProviderFailureReason(event.message),
+            });
             this.emit("liveVoice", {
               agentId: session.agentId,
               threadId: session.threadId,
@@ -1394,6 +1421,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
               status: "error",
               message: sourceText("error.liveVoice.unavailable"),
             });
+          }
           if (event.type === "item") {
             rememberLiveVoiceTranscript(session, event.item);
             if (session.startedAt === null) session.pendingTranscriptItems.push(event.item);
@@ -1425,6 +1453,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         sessionId: session.sessionId,
         status: "starting",
       });
+      startupStage = "realtime-start";
       const answer = yield* liveAdapter.start(providerThreadId, input.sdpOffer, DEFAULT_CODEX_LIVE_VOICE);
       if (this.#liveVoiceSessions.get(agent.id) !== session)
         throw new LiveVoiceRefusedError(sourceText("error.liveVoice.unavailable"));
@@ -1441,6 +1470,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return { sessionId: session.sessionId, sdpAnswer: answer.sdp } satisfies LiveVoiceStartResult;
     });
     return yield* start.pipe(
+      Effect.tapError((error) =>
+        Effect.sync(() =>
+          logger.warn("Codex Live voice startup failed.", {
+            stage: startupStage,
+            reason: liveVoiceFailureReason(error),
+          }),
+        ),
+      ),
       Effect.onExit((exit) =>
         Exit.isFailure(exit)
           ? Effect.gen({ self: this }, function* () {
@@ -1497,7 +1534,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return;
     }
     const session = this.#liveVoiceSessions.get(input.agentId);
-    if (!session || session.threadId !== input.threadId || session.sessionId !== input.sessionId)
+    // Cleanup is safe to repeat: a rejected start can ask the host to stop a lease that was never
+    // created, and that must not replace the original start failure with a second error.
+    if (!session) return;
+    if (session.threadId !== input.threadId || session.sessionId !== input.sessionId)
       throw new LiveVoiceRefusedError(sourceText("error.liveVoice.unavailable"));
     yield* session.adapter.stop(session.providerThreadId).pipe(
       Effect.tap(() =>
@@ -3655,6 +3695,48 @@ export class AgentLifecycleFailed extends Schema.TaggedError<AgentLifecycleFaile
 
 function lifecycleStep<A>(operation: string, run: () => A): Effect.Effect<A, AgentLifecycleFailed> {
   return Effect.try({ try: run, catch: (cause) => new AgentLifecycleFailed({ operation, cause }) });
+}
+
+type LiveVoiceFailureReason =
+  | "account-required"
+  | "busy"
+  | "refused"
+  | "provider-auth-rejected"
+  | "model-rejected"
+  | "provider-rate-limited"
+  | "runtime-unavailable"
+  | "provider-rejected"
+  | "provider-timeout"
+  | "provider-operation-failed"
+  | "internal-failure";
+
+function liveVoiceFailureReason(error: unknown): LiveVoiceFailureReason {
+  if (error instanceof LiveVoiceRefusedError) {
+    if (error.message === sourceText("error.liveVoice.accountRequired")) return "account-required";
+    if (error.message === sourceText("error.liveVoice.busy")) return "busy";
+    return "refused";
+  }
+  if (error instanceof ProviderClientOperationError) {
+    if (error.cause instanceof AppServerError) return liveVoiceProviderFailureReason(error.cause.message);
+    if (error.cause instanceof Error && error.cause.name === "RequestTimeoutError") return "provider-timeout";
+    return "provider-operation-failed";
+  }
+  return "internal-failure";
+}
+
+function liveVoiceProviderFailureReason(message: string) {
+  const normalized = message.toLowerCase();
+  if (/(no_matching_rule|unauthorized|\b401\b)/.test(normalized)) return "provider-auth-rejected";
+  if (/(session\.model|model.{0,40}(not allowed|not found|unsupported)|model_not_found)/.test(normalized))
+    return "model-rejected";
+  if (/(\b429\b|rate.?limit|high demand)/.test(normalized)) return "provider-rate-limited";
+  if (
+    /(cannot use.{0,30}live|live.{0,30}(unavailable|not supported)|runtime.{0,30}(unavailable|unsupported))/.test(
+      normalized,
+    )
+  )
+    return "runtime-unavailable";
+  return "provider-rejected";
 }
 
 function liveVoiceConversationMessageId(providerItemId: string): string {
