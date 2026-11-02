@@ -1,39 +1,10 @@
 import type { AttachmentSummary } from "@openbot/contracts/ipc";
 import { fireEvent, render, screen } from "@solidjs/testing-library";
-import type { JSX } from "@solidjs/web";
 import { afterEach, expect, it, vi } from "vitest";
 
-vi.mock("@openbot/ui", () => {
-  const Button = (props: {
-    children?: JSX.Element;
-    type?: "button" | "submit" | "reset";
-    class?: string;
-    "aria-label"?: string;
-    title?: string;
-    onClick?: JSX.EventHandlerUnion<HTMLButtonElement, MouseEvent>;
-  }) => (
-    <button
-      type={props.type}
-      class={props.class}
-      aria-label={props["aria-label"]}
-      title={props.title}
-      onClick={props.onClick}
-    >
-      {props.children}
-    </button>
-  );
-  const Dialog = {
-    Root: (props: { open: boolean; children?: JSX.Element }) => (props.open ? <div>{props.children}</div> : null),
-    Portal: (props: { children?: JSX.Element }) => <>{props.children}</>,
-    Overlay: (props: { class?: string; children?: JSX.Element }) => <div class={props.class}>{props.children}</div>,
-    Content: (props: { class?: string; children?: JSX.Element }) => (
-      <section role="dialog" class={props.class}>
-        {props.children}
-      </section>
-    ),
-    Title: (props: { class?: string; children?: JSX.Element }) => <h2 class={props.class}>{props.children}</h2>,
-  };
-  return { Button, Dialog, Download: () => null, Maximize2: () => null, Spinner: () => null, X: () => null };
+vi.mock("@openbot/ui", async (importOriginal) => {
+  const ui = await importOriginal<typeof import("@openbot/ui")>();
+  return { ...ui, Download: () => null, Maximize2: () => null, Spinner: () => null, X: () => null };
 });
 vi.mock("../../text", () => ({
   useText: () => ({
