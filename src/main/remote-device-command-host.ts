@@ -20,7 +20,8 @@ import { Effect, Result, Schema, Semaphore } from "effect";
 import { writeJsonFileAtomically } from "../backend/atomic-json-file";
 import { isMissingFileError } from "../backend/file-errors";
 import type { CuaDriverRuntime } from "./cua-driver-runtime";
-import { PreferenceFileFailure, readPreferenceFile } from "./preference-file";
+import { readPreferenceFile } from "./preference-file";
+import { remoteCommandRequiresAutoReview } from "./remote-device-command-risk";
 
 const MAX_COMMAND_RUNTIME_MS = 45_000;
 const MAX_COMMAND_ARGUMENTS = 64;
@@ -200,7 +201,7 @@ export class RemoteDeviceCommandHost implements DeviceCommandTargetService {
         : candidate.name === input.executable,
     );
     if (!grantedExecutable) return yield* new RemoteDeviceCommandHostError("permission");
-    if (classifyHighRiskCommand(input.executable, input.args)) {
+    if (remoteCommandRequiresAutoReview(input.executable, input.args)) {
       return yield* new RemoteDeviceCommandHostError("review");
     }
 
@@ -283,8 +284,8 @@ export class RemoteDeviceCommandHost implements DeviceCommandTargetService {
   ): Effect.fn.Return<DeviceCommandPolicyFile, RemoteDeviceCommandHostError> {
     const loaded = yield* Effect.result(readPreferenceFile(this.#path, decodePolicyFile));
     if (Result.isSuccess(loaded)) return loaded.success;
-    const failure = loaded.failure.cause;
-    if (failure instanceof PreferenceFileFailure && isMissingFileError(failure.cause)) {
+    const failure = loaded.failure;
+    if (failure._tag === "PreferenceFileFailure" && isMissingFileError(failure.cause)) {
       return { version: POLICY_VERSION, agents: {} };
     }
     return yield* new RemoteDeviceCommandHostError("storage", failure);
@@ -477,114 +478,6 @@ async function verifyGrantedExecutable(value: string, platform: NodeJS.Platform)
   if (!samePath || !(await stat(resolved)).isFile()) throw new Error("The granted executable changed.");
   await access(resolved, platform === "win32" ? constants.F_OK : constants.X_OK);
   return resolved;
-}
-
-/** A deterministic AutoReview gate. It blocks known dangerous operations before a process starts. */
-function classifyHighRiskCommand(executable: string, args: readonly string[]): boolean {
-  const command = [executable, ...args].join(" ").toLowerCase().replaceAll("\\", "/").replace(/\s+/gu, " ");
-  const executableName = basename(executable)
-    .toLowerCase()
-    .replace(/\.exe$/u, "");
-  const normalizedArgs = args.map((argument) => argument.trim().toLowerCase());
-  const codeRunners = new Set([
-    "bash",
-    "sh",
-    "zsh",
-    "fish",
-    "cmd",
-    "powershell",
-    "pwsh",
-    "python",
-    "python2",
-    "python3",
-    "node",
-    "bun",
-    "ruby",
-    "perl",
-    "php",
-    "lua",
-    "awk",
-    "gawk",
-    "mawk",
-    "wscript",
-    "cscript",
-    "npx",
-  ]);
-  const isCodeRunner =
-    codeRunners.has(executableName) || /^python\d*(?:\.\d+)*$/u.test(executableName) || executableName === "pythonw";
-  // A script runner can turn nearly any argument into code. Only permit its harmless identity
-  // options; filenames and inline-evaluation switches are blocked without trying to parse a script.
-  const informationalOptions = new Set(["--help", "-h", "--version", "-version", "-v", "/?", "-?"]);
-  if (isCodeRunner && !(normalizedArgs.length === 1 && informationalOptions.has(normalizedArgs[0] ?? ""))) return true;
-  if (
-    ["env", "nohup", "timeout", "nice", "setsid", "xargs", "busybox"].includes(executableName) &&
-    !(normalizedArgs.length === 1 && informationalOptions.has(normalizedArgs[0] ?? ""))
-  ) {
-    return true;
-  }
-  if (
-    executableName === "git" &&
-    (args.some((argument) => argument === "-c" || /^-c.+/u.test(argument) || argument === "--config-env") ||
-      normalizedArgs.some((argument) => argument.startsWith("--exec-path")))
-  ) {
-    return true;
-  }
-  if (executableName === "git" && normalizedArgs[0] === "config") {
-    const readOnlyConfigOptions = new Set([
-      "--get",
-      "--get-all",
-      "--get-regexp",
-      "--get-urlmatch",
-      "--list",
-      "-l",
-      "--show-origin",
-      "--show-scope",
-    ]);
-    if (!readOnlyConfigOptions.has(normalizedArgs[1] ?? "") && normalizedArgs.length > 2) return true;
-  }
-  if (
-    ["npm", "npx", "pnpm", "yarn", "pip", "pip3", "gem", "cargo", "make", "gmake", "msbuild"].includes(
-      executableName,
-    ) &&
-    normalizedArgs.some((argument) => ["run", "exec", "install", "add", "build", "test"].includes(argument))
-  ) {
-    return true;
-  }
-  if (
-    [
-      "ssh",
-      "scp",
-      "sftp",
-      "plink",
-      "pscp",
-      "wsl",
-      "docker",
-      "podman",
-      "kubectl",
-      "psexec",
-      "winrs",
-      "rundll32",
-      "regsvr32",
-      "mshta",
-    ].includes(executableName)
-  ) {
-    return true;
-  }
-  const patterns = [
-    /\b(rm|unlink|del|erase|remove-item|rmdir|rd|shred|truncate)\b/u,
-    /\bgit\s+(?:clean\b|reset\s+--hard\b|checkout\s+--(?:\s|$)|restore\b|rm\b)/u,
-    /\bgit\s+push\b[^\n]*(?:--force(?:-with-lease)?\b|--delete\b)/u,
-    /\b(mkfs(?:\.[a-z0-9]+)?|wipefs|diskpart|format-volume|format\s+[a-z]:|fdisk|parted)\b/u,
-    /\bdd\s+[^\n]*\bof=/u,
-    /\b(shutdown|reboot|poweroff|stop-computer|restart-computer)\b/u,
-    /\b(reg\s+delete|regedit\s+\/s|takeown\b|icacls\b[^\n]*\/reset)\b/u,
-    /\b(chmod|chown)\s+-(?:[^ ]*R|[^ ]*r)\b/u,
-    /\b(sudo|runas)\b/u,
-    /\b(taskkill|kill|killall|pkill)\b/u,
-    /\bfind\b[^\n]*\s(?:-delete|-exec(?:dir)?)\b/u,
-    /\b(systemctl|service|sc)\b[^\n]*\b(stop|disable|mask|restart|kill|delete|config)\b/u,
-  ];
-  return patterns.some((pattern) => pattern.test(command));
 }
 
 function runProcess(

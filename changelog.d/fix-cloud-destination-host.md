@@ -5,3 +5,4 @@
 ### Changed
 
 - Remote commands use an explicit executable and arguments, a fixed executable path, an allowed working directory, bounded runtime and output, and target-side rules that block known high-risk operations. These controls do not provide an operating-system sandbox.
+- An unconfigured target now reports its default-deny grants instead of disappearing from discovery. Members may use an agent's existing grant, while only admins can change grants. AutoReview also blocks destructive sync and mirror options such as `rsync --delete`, `robocopy /MIR`, and `rclone sync`.

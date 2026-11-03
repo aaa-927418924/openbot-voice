@@ -15,7 +15,7 @@ export interface DeviceCommandRouteDependencies {
 
 /**
  * The device that receives a command is the only place that stores and checks its grant. Every
- * operation requires an authenticated administrator, and the service checks the per-agent grant.
+ * operation needs an authenticated member; changing a grant needs an administrator.
  */
 export async function routeDeviceCommands(
   context: TeamApiRequestContext,
@@ -35,7 +35,9 @@ export async function routeDeviceCommands(
     throw new HttpError(404, sourceText("error.team.routeNotFound"));
   }
   if (!deviceCommands) throw new HttpError(503, sourceText("error.team.requestFailed"));
-  if (member.role === "member") throw new HttpError(403, sourceText("error.team.adminRequired"));
+  if (route === DEVICE_COMMAND_ROUTES.updatePermissions && member.role === "member") {
+    throw new HttpError(403, sourceText("error.team.adminRequired"));
+  }
 
   try {
     if (method === "GET" && route === DEVICE_COMMAND_ROUTES.info) {

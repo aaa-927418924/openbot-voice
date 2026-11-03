@@ -1,5 +1,22 @@
 import type { ServerConnectionState } from "./ipc-team-host";
 import type { DynamicRecord } from "./runtime-values";
+import { isString } from "./runtime-values";
+
+export function isRemoteDeviceCommandIdentifier(value: unknown): value is string {
+  return isString(value) && value.length > 0 && value.length <= 128 && /^[A-Za-z0-9:_-]+$/u.test(value);
+}
+
+export function isRemoteDeviceCommandStringList(
+  value: unknown,
+  maximumCount: number,
+  maximumLength: number,
+): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.length <= maximumCount &&
+    value.every((item) => isString(item) && item.length > 0 && item.length <= maximumLength)
+  );
+}
 
 /** A server host that can accept explicitly granted commands from a coordinator agent. */
 export interface RemoteDeviceCommandTarget {
