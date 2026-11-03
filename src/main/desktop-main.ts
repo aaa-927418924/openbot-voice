@@ -1218,7 +1218,8 @@ if (!hasSingleInstanceLock) {
         stopDirectoryWatch();
         stopDirectoryWatch = watchRemoteHostDirectory({
           isActive: () =>
-            Boolean(windowHolder.current?.isFocused()) &&
+            // The Cloud host must learn about joins from other devices while its window is hidden.
+            (cloudHostMode || Boolean(windowHolder.current?.isFocused())) &&
             (built.localOnlyNetworking
               ? built.selfHostedDesktopAccount.isSignedIn
               : built.centralAuth.getState().status === "signed_in"),

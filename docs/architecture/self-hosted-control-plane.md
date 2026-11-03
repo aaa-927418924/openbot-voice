@@ -37,6 +37,11 @@ bounded output. The target performs a deterministic high-risk check before launc
 reuses the existing CUA driver and its separate background cursor; it does not take over the user's
 system cursor.
 
+The Cloud host keeps its self-hosted account directory in sync while its window is hidden. This lets
+another signed-in device add or join a host without opening the Cloud host GUI. Account membership
+and host identity still come from the self-hosted account authority; each device keeps its own
+connection credentials and local data.
+
 These allowlists and risk checks are application controls, not an operating-system sandbox. A
 permitted process still runs as the OpenBot user and may access other files or resources that user
 can reach. Do not describe this feature as isolation from the target computer. An OS-level sandbox or

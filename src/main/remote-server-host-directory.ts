@@ -29,7 +29,8 @@ import type { StoredRemoteServer } from "./remote-server-stored-shape";
 import type { RemoteWorkflowError } from "./remote-service-effects";
 import { fingerprint } from "./team-store";
 
-/** Cross-device joins have no local transport event. Only poll while the user can see the app. */
+/** Cross-device joins have no local transport event. Callers decide whether polling follows window
+ * focus. */
 export function watchRemoteHostDirectory(options: {
   isActive(): boolean;
   refresh(): Effect.Effect<void, RemoteWorkflowError>;
