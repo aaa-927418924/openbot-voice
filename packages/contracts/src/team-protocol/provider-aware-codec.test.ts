@@ -110,6 +110,18 @@ describe("provider-aware base codecs", () => {
     }
   });
 
+  it("accepts compatibility responses with more than 64 advertised capabilities", () => {
+    const response = {
+      appVersion: "0.30.0",
+      origin: "cloud",
+      protocol: { minimum: 1, maximum: 6 },
+      capabilities: Array.from({ length: 65 }, (_, index) => `capability-${index}`),
+    };
+    for (const protocol of protocols) {
+      expect(protocol.decodeResponse("GET", "/v1/compatibility", 200, response)).toEqual(response);
+    }
+  });
+
   for (const protocol of protocols) {
     it(`accepts exactly the protocol ${protocol.version} providers, auth kinds and model ids`, () => {
       const { decodeEvent, decodeRequest, decodeResponse } = protocol;

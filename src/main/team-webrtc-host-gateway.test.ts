@@ -11,6 +11,7 @@ import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import {
   AGENT_LIVE_VOICE_SETTINGS_CAPABILITY,
   TEAM_AGENT_ACTIVITY_CAPABILITY,
+  TEAM_CURRENT_CAPABILITIES,
   TEAM_MODEL_SCOPED_USAGE_CAPABILITY,
 } from "@openbot/contracts/team-protocol/current";
 import { decodeTeamProtocolV1ClientEvent } from "@openbot/contracts/team-protocol/v1";
@@ -98,6 +99,7 @@ describe("TeamWebRtcHostGateway", () => {
     > = [];
     const unreadState = { unreadCount: 1, firstUnreadMessageId: "reply-1", throughMessageId: null };
     const localRequests: Array<{ path: string; protocol: string }> = [];
+    const receivedCapabilityHeaders: string[] = [];
     const scopedUsage = {
       limits: [
         {
@@ -112,6 +114,7 @@ describe("TeamWebRtcHostGateway", () => {
         path: request.url ?? "",
         protocol: String(request.headers["openbot-protocol-version"] ?? ""),
       });
+      receivedCapabilityHeaders.push(String(request.headers["openbot-capabilities"] ?? ""));
       if (request.url === "/v1/attachments/file-1") {
         response.writeHead(200, {
           "content-type": "application/json",
@@ -451,6 +454,24 @@ describe("TeamWebRtcHostGateway", () => {
       result: { status: 200, body: opencodeAgents },
     });
     expect(localRequests).toContainEqual({ path: "/v1/agents", protocol: "4" });
+    bridge.emit(
+      "data",
+      "peer-1",
+      "rpc",
+      encodeTeamProtocolV2Frame({
+        version: 2,
+        type: "request",
+        requestId: "full-capability-list",
+        operation: "http.request",
+        payload: {
+          method: "GET",
+          path: "/v1/agents",
+          body: null,
+          capabilities: [...TEAM_CURRENT_CAPABILITIES],
+        },
+      }),
+    );
+    await vi.waitFor(() => expect(receivedCapabilityHeaders).toContain(TEAM_CURRENT_CAPABILITIES.join(",")));
     bridge.emit(
       "data",
       "peer-1",

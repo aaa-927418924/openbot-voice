@@ -185,6 +185,21 @@ describe("Team protocol v1", () => {
     ).toThrow("Invalid Team API compatibility response");
   });
 
+  it("preserves a full capability list that exceeds the old 64 item cutoff", () => {
+    const capabilities = Array.from({ length: 65 }, (_, index) => `capability-${index}`);
+    const response = {
+      appVersion: "0.30.0",
+      origin: "cloud",
+      protocol: { minimum: 1, maximum: 6 },
+      capabilities,
+    };
+
+    expect(decodeTeamProtocolSupportV1(response).capabilities).toEqual(capabilities);
+    expect(JSON.parse(encodeTeamProtocolV1CurrentHttpResponse("GET", "/v1/compatibility", 200, response))).toEqual(
+      response,
+    );
+  });
+
   it("distinguishes unknown events from malformed known events", () => {
     expect(decodeTeamProtocolV1Event({ type: "future-optional-event", payload: true })).toEqual({
       kind: "unknown",

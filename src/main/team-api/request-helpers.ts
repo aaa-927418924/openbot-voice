@@ -32,6 +32,7 @@ import {
   type UpdateAgentInput,
 } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isBoolean, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
+import { TEAM_PROTOCOL_CAPABILITY_LIMIT } from "@openbot/contracts/team-protocol/capability-limits";
 import {
   AGENT_LIVE_VOICE_SETTINGS_CAPABILITY,
   isTeamCurrentCapability,
@@ -57,7 +58,7 @@ export function requestCapabilities(request: IncomingMessage): Set<string> {
   const value = Array.isArray(header) ? header.join(",") : header;
   if (!value || value.length > 4_096) return new Set();
   const capabilities = value.split(",").map((capability) => capability.trim());
-  if (capabilities.length > 64) return new Set();
+  if (capabilities.length > TEAM_PROTOCOL_CAPABILITY_LIMIT) return new Set();
   return new Set(capabilities.filter(isTeamCurrentCapability));
 }
 

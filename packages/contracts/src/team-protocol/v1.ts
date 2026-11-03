@@ -1,4 +1,5 @@
 import { type DynamicRecord, isBoolean, isDynamicRecord, isNumber, isString } from "../runtime-values";
+import { TEAM_PROTOCOL_CAPABILITY_LIMIT } from "./capability-limits";
 
 export const TEAM_PROTOCOL_V1 = 1;
 export const TEAM_PROTOCOL_VERSION_HEADER = "OpenBot-Protocol-Version";
@@ -1000,7 +1001,7 @@ export function decodeTeamProtocolSupportV1(value: unknown): TeamProtocolSupport
     !isProtocolVersion(protocol.maximum) ||
     protocol.minimum > protocol.maximum ||
     !Array.isArray(value.capabilities) ||
-    value.capabilities.length > 64 ||
+    value.capabilities.length > TEAM_PROTOCOL_CAPABILITY_LIMIT ||
     !value.capabilities.every(isCapability) ||
     !(value.origin === undefined || value.origin === "cloud")
   ) {

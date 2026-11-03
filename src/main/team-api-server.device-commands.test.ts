@@ -1,5 +1,6 @@
 import type { RemoteDeviceCommandPermission } from "@openbot/contracts/ipc";
-import { DEVICE_COMMAND_ROUTES, DEVICE_COMMANDS_CAPABILITY } from "@openbot/contracts/team-protocol/device-commands-v1";
+import { TEAM_CURRENT_CAPABILITIES } from "@openbot/contracts/team-protocol/current";
+import { DEVICE_COMMAND_ROUTES } from "@openbot/contracts/team-protocol/device-commands-v1";
 import { Effect } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createTeamApiFixture, stopTeamApiFixtures, type TeamApiOptions } from "./team-api-server-test-harness";
@@ -43,7 +44,7 @@ describe("Team API device commands", () => {
     const headers = (token: string) => ({
       Authorization: `Bearer ${token}`,
       "OpenBot-Protocol-Version": "3",
-      "OpenBot-Capabilities": DEVICE_COMMANDS_CAPABILITY,
+      "OpenBot-Capabilities": TEAM_CURRENT_CAPABILITIES.join(","),
       "Content-Type": "application/json",
     });
 

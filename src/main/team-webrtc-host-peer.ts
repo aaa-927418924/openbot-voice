@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import { browserViewStreamSessionId } from "@openbot/contracts/team-protocol/browser-view-v1";
+import { TEAM_PROTOCOL_CAPABILITY_LIMIT } from "@openbot/contracts/team-protocol/capability-limits";
 import {
   AGENT_LIVE_VOICE_SETTINGS_CAPABILITY,
   supportsTeamSemanticTags,
@@ -998,7 +999,9 @@ function isHttpRequest(value: TeamProtocolV2Json): value is TeamProtocolV2Json &
     value.path.length <= 2_048 &&
     Object.hasOwn(value, "body") &&
     (value.capabilities === undefined ||
-      (Array.isArray(value.capabilities) && value.capabilities.length <= 64 && value.capabilities.every(isString))) &&
+      (Array.isArray(value.capabilities) &&
+        value.capabilities.length <= TEAM_PROTOCOL_CAPABILITY_LIMIT &&
+        value.capabilities.every(isString))) &&
     (value.bodyTransferId === undefined || isString(value.bodyTransferId)) &&
     (value.contentType === undefined || isString(value.contentType))
   );
