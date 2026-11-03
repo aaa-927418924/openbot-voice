@@ -119,6 +119,7 @@ let sidebarSupported = false;
 let hostAdminSupported = false;
 let conversationHistorySupported = false;
 let identityFailure: Error | null = null;
+let compatibilityOrigin: "cloud" | null = null;
 let initialConversationReads: Record<
   string,
   { unreadCount: number; firstUnreadMessageId: string | null; throughMessageId: string | null }
@@ -179,6 +180,7 @@ vi.mock("../components/remote-team-transport", () => ({
           if (path === TEAM_API_ROUTES.compatibility)
             return decode({
               appVersion: "test",
+              ...(compatibilityOrigin ? { origin: compatibilityOrigin } : {}),
               protocol: { minimum: 3, maximum: 3 },
               capabilities: [
                 ...(sidebarSupported ? ["sidebar-layout"] : []),
@@ -254,6 +256,7 @@ afterEach(async () => {
   hostAdminSupported = false;
   conversationHistorySupported = false;
   identityFailure = null;
+  compatibilityOrigin = null;
   initialConversationReads = {};
   pendingConversationRead = null;
   pendingConversationReadsRequest = null;
@@ -660,6 +663,37 @@ it("selects an account-listed server when this device has no local pairing", asy
   await vi.waitFor(() => expect(current.serverDirectoryState).toBe("ready"));
   expect(current.servers.map((server) => server.id)).toEqual([remoteEntry.hostId]);
   expect(current.activeServer.id).toBe(remoteEntry.hostId);
+});
+
+it("marks a legacy account-directory server as Cloud when the connected host reports its origin", async () => {
+  session.localOnly = true;
+  compatibilityOrigin = "cloud";
+  const remoteEntry: AccountServerDirectoryEntry = {
+    hostId: "cloud-host",
+    name: "OpenBot Cloud",
+    logoKey: null,
+    apiUrl: "http://100.100.10.4:43123/",
+    publicKey: "cloud-key",
+    fingerprint: remoteHostFingerprint("cloud-key"),
+    membershipId: "cloud-membership",
+    role: "member",
+    isOwner: false,
+  };
+  accountDirectory.list.mockResolvedValue([remoteEntry]);
+
+  await mountWorkspace();
+
+  await vi.waitFor(() =>
+    expect(current.servers[0]).toMatchObject({
+      id: remoteEntry.hostId,
+      origin: "cloud",
+      accountServer: { origin: "cloud" },
+    }),
+  );
+  expect(accountDirectory.register).toHaveBeenCalledWith(
+    session,
+    expect.objectContaining({ hostId: remoteEntry.hostId, origin: "cloud" }),
+  );
 });
 
 function addLegacyLocalTailnetServer(accountId: string | null = null) {

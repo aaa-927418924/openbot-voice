@@ -40,6 +40,7 @@ export function remoteServerSummaries(
     },
     ...servers.map((server) => {
       const status = statusFor(server.id);
+      const origin = server.origin ?? status.compatibility?.origin;
       return {
         id: server.id,
         notificationsMuted: false,
@@ -53,7 +54,7 @@ export function remoteServerSummaries(
         apiUrl: server.transport === "webrtc-v2" ? null : server.apiUrl,
         remoteDesktopAvailable: server.remoteDesktopAvailable ?? false,
         logoUrl: server.logoVersion ? remoteServerLogoUrl(server.id, server.logoVersion) : null,
-        ...(server.origin === undefined ? {} : { origin: server.origin }),
+        ...(origin === "cloud" ? { origin } : {}),
         role: server.role,
         active: activeServerId === server.id,
         ...(server.memberLimit === undefined ? {} : { memberLimit: server.memberLimit }),

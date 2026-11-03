@@ -1721,6 +1721,7 @@ export async function createApplicationServices({
       centralAuth.updateRemoteHostLogo(hostId, image, version).pipe(toRemoteWorkflowError),
     localDevelopmentHost: developmentRemoteRole === "host",
     localOnlyNetworking,
+    ...(cloudHostMode ? { serverOrigin: "cloud" as const } : {}),
     ...(cloudHostMode ? { tailnetPort: readOpenBotCloudHostPort() } : {}),
     logDirectory: join(app.getPath("userData"), "logs", "remote"),
     removeLegacyRemoteDesktopCredential: () =>

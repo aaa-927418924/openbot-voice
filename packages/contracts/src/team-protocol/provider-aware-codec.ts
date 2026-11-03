@@ -1047,6 +1047,8 @@ export function isTeamProtocolProviderAwareCapability(value: string): value is T
 
 export interface TeamProtocolSupportProviderAware {
   appVersion: string;
+  /** Stable, host-reported origin marker for UI labeling; absent on non-Cloud and older hosts. */
+  origin?: "cloud";
   protocol: {
     minimum: number;
     maximum: number;
@@ -1066,12 +1068,14 @@ export function decodeTeamProtocolSupportProviderAware(value: unknown): TeamProt
     protocol.minimum > protocol.maximum ||
     !Array.isArray(value.capabilities) ||
     value.capabilities.length > 64 ||
-    !value.capabilities.every(isCapability)
+    !value.capabilities.every(isCapability) ||
+    !(value.origin === undefined || value.origin === "cloud")
   ) {
     throw new Error("Invalid Team API compatibility response.");
   }
   return {
     appVersion: value.appVersion,
+    ...(value.origin === "cloud" ? { origin: "cloud" as const } : {}),
     protocol: { minimum: protocol.minimum, maximum: protocol.maximum },
     capabilities: [...new Set(value.capabilities)],
   };
@@ -1276,7 +1280,7 @@ const TEAM_PROTOCOL_ProviderAware_HTTP_REQUEST_KEYS = {
 } as const satisfies Partial<Record<TeamProtocolProviderAwareHttpRoute, readonly string[]>>;
 
 const TEAM_PROTOCOL_ProviderAware_HTTP_RESPONSE_KEYS = {
-  "GET compatibility": ["appVersion", "protocol", "capabilities"],
+  "GET compatibility": ["appVersion", "origin", "protocol", "capabilities"],
   "GET identity": [
     "serverId",
     "serverName",
@@ -1589,13 +1593,14 @@ function projectTeamProtocolProviderAwareError(
   }
   if (projected.host !== undefined) {
     if (!isDynamicRecord(projected.host)) throw new Error("Invalid Team protocol v1 HTTP error response.");
-    const host = projectProviderAwareObject(projected.host, ["appVersion", "protocol", "capabilities"]);
+    const host = projectProviderAwareObject(projected.host, ["appVersion", "origin", "protocol", "capabilities"]);
     if (isDynamicRecord(host.protocol))
       host.protocol = projectProviderAwareObject(host.protocol, ["minimum", "maximum"]);
     try {
       const decoded = decodeTeamProtocolSupportProviderAware(host);
       projected.host = {
         appVersion: decoded.appVersion,
+        ...(decoded.origin ? { origin: decoded.origin } : {}),
         protocol: { minimum: decoded.protocol.minimum, maximum: decoded.protocol.maximum },
         capabilities: decoded.capabilities,
       };

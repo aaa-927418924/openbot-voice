@@ -93,15 +93,24 @@ describe("TeamApiServer compatibility", () => {
     const { start } = await createTeamApiFixture("compatibility");
     const { base } = await start({
       appVersion: "0.4.0",
+      serverOrigin: "cloud",
     });
 
     const compatibility = await fetch(`${base}/v1/compatibility`);
     expect(compatibility.status).toBe(200);
     await expect(compatibility.json()).resolves.toMatchObject({
       appVersion: "0.4.0",
+      origin: "cloud",
       protocol: { minimum: 1, maximum: 6 },
       capabilities: expect.arrayContaining(["browser-control", "remote-desktop", TEAM_SEMANTIC_TAGS_CAPABILITY]),
     });
+
+    for (const protocol of [1, 2, 3, 4, 5, 6]) {
+      const negotiated = await fetch(`${base}/v1/compatibility`, {
+        headers: { [TEAM_PROTOCOL_VERSION_HEADER]: String(protocol) },
+      });
+      await expect(negotiated.json()).resolves.toMatchObject({ origin: "cloud" });
+    }
 
     const missing = await fetch(`${base}/v1/identity`);
     expect(missing.status).toBe(426);

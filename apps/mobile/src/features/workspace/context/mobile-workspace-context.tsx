@@ -132,6 +132,7 @@ import {
   loginTailnetAccountServer,
   pairTailnetInvite,
   parseTailnetMemberDeviceLink,
+  refreshTailnetServerOrigin,
 } from "@/features/workspace/model/local-tailnet";
 import {
   readLocalTailnetServers,
@@ -225,6 +226,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
   serversRef.current = servers;
   const localTailnetHosts = useRef(new Map<string, LocalTailnetServer>());
   const accountDirectoryHosts = useRef(new Map<string, AccountServerDirectoryEntry>());
+  const tailnetOriginRefreshes = useRef(new Set<string>());
   const [sidebarByServer, setSidebarByServer] = useState<
     Record<string, { layout: SidebarLayoutSnapshot | null; error: string | null }>
   >({});
@@ -343,6 +345,10 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
             publicKey: previous?.publicKey ?? host.devicePublicKey,
             membershipId: host.membershipId,
             role: host.role,
+            ...(accountDirectoryHosts.current.get(host.hostId)?.origin === "cloud" ||
+            localTailnetHosts.current.get(host.hostId)?.origin === "cloud"
+              ? { origin: "cloud" as const }
+              : {}),
             ...(accountDirectoryHosts.current.has(host.hostId)
               ? { accountServer: accountDirectoryHosts.current.get(host.hostId) }
               : {}),
@@ -414,6 +420,31 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
                     accountDirectoryHosts.current.clear();
                     const unclaimedHosts = deviceHosts.filter((host) => host.accountId === undefined);
                     localTailnetHosts.current = new Map(unclaimedHosts.map((host) => [host.hostId, host]));
+                    for (const host of unclaimedHosts) {
+                      if (host.origin === "cloud" || tailnetOriginRefreshes.current.has(host.hostId)) continue;
+                      tailnetOriginRefreshes.current.add(host.hostId);
+                      void refreshTailnetServerOrigin(host, {
+                        appVersion: mobileAppVersion(),
+                        randomBytes: (size) => Crypto.getRandomBytes(size),
+                        fetch,
+                      })
+                        .then(async (updated) => {
+                          if (updated.origin !== "cloud") return;
+                          await saveLocalTailnetServer(updated);
+                          if (generation !== directoryGeneration.current) return;
+                          const updatedHosts = new Map(localTailnetHosts.current);
+                          updatedHosts.set(updated.hostId, updated);
+                          localTailnetHosts.current = updatedHosts;
+                          setServers((current) =>
+                            current.map((server) =>
+                              server.id === updated.hostId ? { ...server, tailnet: updated } : server,
+                            ),
+                          );
+                        })
+                        .catch(() => {
+                          tailnetOriginRefreshes.current.delete(host.hostId);
+                        });
+                    }
                     return unclaimedHosts.map((host) => ({
                       hostId: host.hostId,
                       name: host.name,
@@ -790,6 +821,53 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
       context.stage = "compatibility";
       const compatibility = await client.request("GET", TEAM_API_ROUTES.compatibility, decodeTeamProtocolSupportV1);
       if (!context.isCurrent()) return;
+      if (compatibility.origin === "cloud") {
+        const directoryHost = accountDirectoryHosts.current.get(serverId);
+        const updatedDirectoryHost =
+          directoryHost?.origin === "cloud"
+            ? directoryHost
+            : directoryHost
+              ? { ...directoryHost, origin: "cloud" as const }
+              : undefined;
+        if (updatedDirectoryHost) accountDirectoryHosts.current.set(serverId, updatedDirectoryHost);
+
+        const pairedHost = localTailnetHosts.current.get(serverId);
+        const updatedPairedHost =
+          pairedHost?.origin === "cloud"
+            ? pairedHost
+            : pairedHost
+              ? { ...pairedHost, origin: "cloud" as const }
+              : undefined;
+        if (updatedPairedHost) {
+          localTailnetHosts.current.set(serverId, updatedPairedHost);
+          void saveLocalTailnetServer(updatedPairedHost).catch(() => undefined);
+        }
+
+        setServers((current) =>
+          current.map((server) =>
+            server.id === serverId
+              ? {
+                  ...server,
+                  origin: "cloud",
+                  ...(updatedDirectoryHost ? { accountServer: updatedDirectoryHost } : {}),
+                  ...(updatedPairedHost ? { tailnet: updatedPairedHost } : {}),
+                }
+              : server,
+          ),
+        );
+
+        if (session.localOnly && session.sessionToken) {
+          const registration = updatedPairedHost
+            ? accountServerRegistration(updatedPairedHost)
+            : updatedDirectoryHost
+              ? (() => {
+                  const { isOwner: _isOwner, ...entry } = updatedDirectoryHost;
+                  return entry;
+                })()
+              : undefined;
+          if (registration) void registerAccountServer(session, registration).catch(() => undefined);
+        }
+      }
       supportLog.add(
         "info",
         "connection",
@@ -881,6 +959,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
       channelStore,
       applySidebarLayout,
       applyConversationReads,
+      session,
     ],
   );
 

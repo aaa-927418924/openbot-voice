@@ -1390,6 +1390,7 @@ export class TeamApiServer {
   #protocolSupport(): TeamProtocolSupportV1 {
     return {
       appVersion: this.#options.appVersion ?? "0.0.0",
+      ...(this.#options.serverOrigin ? { origin: this.#options.serverOrigin } : {}),
       protocol: { minimum: TEAM_PROTOCOL_V1, maximum: TEAM_PROTOCOL_V6 },
       capabilities: TEAM_CURRENT_CAPABILITIES.filter((capability) => {
         if (capability === "channel-chats-v1" || capability === CHANNEL_DELETE_CAPABILITY)

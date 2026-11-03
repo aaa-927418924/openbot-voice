@@ -203,6 +203,7 @@ export class RemoteServerConnections {
       const compatibility = {
         ...checkingCompatibility(this.#appVersion),
         hostAppVersion: outcome.hostSupport.appVersion,
+        ...(outcome.hostSupport.origin ? { origin: outcome.hostSupport.origin } : {}),
         hostProtocol: outcome.hostSupport.protocol,
         capabilities: outcome.hostSupport.capabilities,
       };
@@ -251,6 +252,7 @@ function sameCompatibility(left: ServerCompatibility | null, right: ServerCompat
     left != null &&
     left.localAppVersion === right.localAppVersion &&
     left.hostAppVersion === right.hostAppVersion &&
+    left.origin === right.origin &&
     left.negotiatedProtocol === right.negotiatedProtocol &&
     left.localProtocol.minimum === right.localProtocol.minimum &&
     left.localProtocol.maximum === right.localProtocol.maximum &&

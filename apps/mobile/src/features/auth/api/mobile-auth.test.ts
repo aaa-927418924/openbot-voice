@@ -462,6 +462,7 @@ describe("Mobile Connect redemption", () => {
       logoKey: null,
       membershipId: "owner-member-id",
       role: "owner" as const,
+      origin: "cloud" as const,
       sessionToken: "team-device-secret",
     };
     const directoryEntry = {
@@ -471,6 +472,7 @@ describe("Mobile Connect redemption", () => {
       fingerprint: pairedHost.fingerprint,
       publicKey: pairedHost.publicKey,
       logoKey: pairedHost.logoKey,
+      origin: pairedHost.origin,
       membershipId: pairedHost.membershipId,
       role: "owner" as const,
       isOwner: true,

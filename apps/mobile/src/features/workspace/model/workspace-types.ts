@@ -67,6 +67,8 @@ export interface MobileServer {
   publicKey: string;
   membershipId: string;
   role: "owner" | "admin" | "member";
+  /** Confirmed by the host's compatibility response, including for older directory records. */
+  origin?: "cloud";
   /** Public server metadata from the signed-in account directory, before this device has a token. */
   accountServer?: AccountServerDirectoryEntry;
   /** The active members that the host's plan allows. Absent when the account server gave none. */

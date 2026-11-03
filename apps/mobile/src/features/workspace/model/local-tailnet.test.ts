@@ -29,6 +29,7 @@ import {
   pairTailnetInvite,
   parseTailnetInvite,
   previewTailnetInvite,
+  refreshTailnetServerOrigin,
 } from "./local-tailnet";
 
 const serverId = "00000000-0000-4000-8000-0000000000a1";
@@ -96,7 +97,7 @@ function toBase64Url(value: Uint8Array): string {
   return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
 }
 
-async function createHostFetch() {
+async function createHostFetch(options: { origin?: "cloud" } = {}) {
   const hostIdentity = await Effect.runPromise(createEd25519Identity(() => new Uint8Array(32).fill(19)));
   const publicKeyPem = hostIdentity.publicKeyPem;
   const fingerprint = remoteHostFingerprint(publicKeyPem);
@@ -111,6 +112,7 @@ async function createHostFetch() {
     if (url.pathname === TEAM_API_ROUTES.compatibility)
       return Response.json({
         appVersion: "0.30.0",
+        ...(options.origin ? { origin: options.origin } : {}),
         protocol: { minimum: 1, maximum: 6 },
         capabilities: [TEAM_MEMBER_DEVICE_LINK_CAPABILITY],
       });
@@ -265,6 +267,22 @@ describe("Android direct Tailscale pairing", () => {
       expect(call.headers.get(TEAM_PROTOCOL_VERSION_HEADER)).toBe("6");
       expect(call.headers.get(TEAM_CAPABILITIES_HEADER)).toBeTruthy();
     }
+  });
+
+  it("preserves the host-reported Cloud origin on new and existing pairings", async () => {
+    const host = await createHostFetch({ origin: "cloud" });
+    const linked = await pairTailnetInvite(inviteUrl(host.fingerprint), {
+      appVersion: "1.1.0",
+      fetch: host.fetcher,
+      randomBytes,
+    });
+    expect(linked.origin).toBe("cloud");
+
+    const existing = { ...linked };
+    delete existing.origin;
+    await expect(
+      refreshTailnetServerOrigin(existing, { appVersion: "1.1.0", fetch: host.fetcher, randomBytes }),
+    ).resolves.toMatchObject({ origin: "cloud" });
   });
 
   it("joins an invited Team server with the canonical account ticket from the Tailscale identity host", async () => {

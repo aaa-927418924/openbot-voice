@@ -151,6 +151,10 @@ export function ServerDrawerContent({
     const remoteIndex = visibleRemoteIds.indexOf(serverItem.id);
     const { canMoveUp, canMoveDown } = serverMoveAccessibility(visibleRemoteIds, serverItem.id);
     const serverLabel = serverKindLabel(serverItem, t);
+    const isCloud =
+      serverItem.origin === "cloud" ||
+      serverItem.accountServer?.origin === "cloud" ||
+      serverItem.tailnet?.origin === "cloud";
     const accessibilityActions = [
       ...(editing
         ? []
@@ -168,7 +172,7 @@ export function ServerDrawerContent({
         key={serverItem.id}
         accessibilityRole="button"
         accessibilityState={{ selected }}
-        accessibilityLabel={`${serverItem.name}, ${serverItem.accountServer?.origin === "cloud" ? t("mobile.server.drawer.cloud") : serverLabel}, ${serverStatusLabel(serverItem, t)}`}
+        accessibilityLabel={`${serverItem.name}, ${isCloud ? t("mobile.server.drawer.cloud") : serverLabel}, ${serverStatusLabel(serverItem, t)}`}
         accessibilityActions={accessibilityActions}
         onAccessibilityAction={(event) => {
           const action = event.nativeEvent.actionName;
@@ -189,9 +193,7 @@ export function ServerDrawerContent({
         <ServerAvatar server={serverItem} />
         <View className="min-w-0 flex-1">
           <View className="min-w-0 flex-row items-center gap-1.5">
-            {serverItem.accountServer?.origin === "cloud" ? (
-              <Cloud size={14} color={mutedColor} accessible={false} />
-            ) : null}
+            {isCloud ? <Cloud size={14} color={mutedColor} accessible={false} /> : null}
             <Typography.Paragraph
               weight="medium"
               className={`min-w-0 flex-1 ${serverItem.state === "online" ? "" : "text-text-secondary"}`}

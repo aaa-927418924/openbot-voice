@@ -350,11 +350,13 @@ function serverHostRestart(value: unknown): NonNullable<ServerSummary["hostResta
 
 function serverCompatibility(value: unknown): ServerCompatibility {
   const compatibility = decodeRecord(value, "server compatibility");
-  const { capabilities, hostProtocol } = compatibility;
+  const { capabilities, hostProtocol, origin } = compatibility;
   if (!Array.isArray(capabilities) || !capabilities.every(isString)) throw new Error("Invalid capabilities.");
+  if (origin !== undefined && origin !== "cloud") throw new Error("Invalid origin.");
   return {
     localAppVersion: requiredString(compatibility, "localAppVersion"),
     hostAppVersion: nullableString(compatibility, "hostAppVersion"),
+    ...(origin === "cloud" ? { origin } : {}),
     localProtocol: protocolRange(compatibility.localProtocol),
     hostProtocol: hostProtocol === null ? null : protocolRange(hostProtocol),
     negotiatedProtocol: nullableNumber(compatibility, "negotiatedProtocol"),

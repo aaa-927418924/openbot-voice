@@ -273,6 +273,8 @@ export interface TeamApiOptions {
   serverMigration?: TeamApiServerMigration;
   admin?: TeamApiAdmin;
   appVersion?: string;
+  /** Set only by OpenBot Cloud hosts so direct clients can label the server independently of its name. */
+  serverOrigin?: "cloud";
   store: TeamStore;
   agents: TeamApiAgents;
   skills?: Pick<SkillMarketplaceService, "listInstalledForChatTags">;

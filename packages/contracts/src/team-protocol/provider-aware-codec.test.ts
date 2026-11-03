@@ -98,6 +98,18 @@ describe("provider-aware base codecs", () => {
     }
   });
 
+  it("preserves the optional Cloud origin marker in compatibility responses", () => {
+    const response = {
+      appVersion: "0.30.0",
+      origin: "cloud",
+      protocol: { minimum: 1, maximum: 6 },
+      capabilities: ["remote-desktop"],
+    };
+    for (const protocol of protocols) {
+      expect(protocol.decodeResponse("GET", "/v1/compatibility", 200, response)).toEqual(response);
+    }
+  });
+
   for (const protocol of protocols) {
     it(`accepts exactly the protocol ${protocol.version} providers, auth kinds and model ids`, () => {
       const { decodeEvent, decodeRequest, decodeResponse } = protocol;

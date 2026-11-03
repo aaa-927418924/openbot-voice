@@ -206,6 +206,7 @@ export function negotiatedCompatibility(
   return {
     localAppVersion: localAppVersion ?? "0.0.0",
     hostAppVersion: host.appVersion,
+    ...(host.origin ? { origin: host.origin } : {}),
     localProtocol: LOCAL_TEAM_PROTOCOL,
     hostProtocol: host.protocol,
     negotiatedProtocol,
@@ -219,6 +220,7 @@ export function webRtcCompatibility(localAppVersion: string | null, host: TeamPr
   return {
     localAppVersion: localAppVersion ?? "0.0.0",
     hostAppVersion: host.appVersion,
+    ...(host.origin ? { origin: host.origin } : {}),
     localProtocol: LOCAL_TEAM_PROTOCOL,
     hostProtocol: { minimum: 2, maximum: 2 },
     negotiatedProtocol: 2,

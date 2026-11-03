@@ -51,6 +51,8 @@ export interface LocalTailnetServer {
   sessionToken: string;
   membershipId: string;
   role: "owner" | "admin" | "member";
+  /** Supplied by the connected host's protocol metadata, independent of its display name. */
+  origin?: "cloud";
   /** Account that confirmed this device-only Team session. */
   accountId?: string;
 }
@@ -74,6 +76,7 @@ export function accountServerRegistration(server: LocalTailnetServer): AccountSe
     logoKey: server.logoKey,
     membershipId: server.membershipId,
     role: server.role,
+    ...(server.origin === "cloud" ? { origin: "cloud" as const } : {}),
   };
 }
 
@@ -329,7 +332,12 @@ export async function loginTailnetAccountServer(
     fingerprint: server.fingerprint,
     token: "",
   };
-  const { protocol, proof } = await verifyTailnetIdentity(invite, options.appVersion, fetcher, options.randomBytes);
+  const { protocol, proof, support } = await verifyTailnetIdentity(
+    invite,
+    options.appVersion,
+    fetcher,
+    options.randomBytes,
+  );
   if (proof.publicKey !== server.publicKey) throw new Error("The Tailscale host identity could not be verified.");
 
   const ticketResponse = await fetcher(new URL("/v1/team-auth/ticket", options.identitySession.apiUrl), {
@@ -363,8 +371,31 @@ export async function loginTailnetAccountServer(
     sessionToken: joined.sessionToken,
     membershipId: joined.membershipId,
     role: joined.role,
+    ...(support.origin === "cloud" ? { origin: "cloud" as const } : {}),
     ...(options.accountId ? { accountId: options.accountId } : {}),
   };
+}
+
+/** Refresh the host-origin marker for existing device-only pairings after the protocol adds it. */
+export async function refreshTailnetServerOrigin(
+  server: LocalTailnetServer,
+  options: { appVersion: string; fetch?: TailnetFetch; randomBytes: TailnetRandomBytes },
+): Promise<LocalTailnetServer> {
+  if (server.origin === "cloud") return server;
+  const invite: InviteLinkPayload = {
+    apiUrl: server.apiUrl,
+    serverId: server.hostId,
+    fingerprint: server.fingerprint,
+    token: "",
+  };
+  const { proof, support } = await verifyTailnetIdentity(
+    invite,
+    options.appVersion,
+    options.fetch ?? fetch,
+    options.randomBytes,
+  );
+  if (proof.publicKey !== server.publicKey) throw new Error("The Tailscale host identity could not be verified.");
+  return support.origin === "cloud" ? { ...server, origin: "cloud" } : server;
 }
 
 async function verifyTailnetIdentity(
@@ -541,6 +572,7 @@ export async function pairTailnetInvite(
     sessionToken: joined.sessionToken,
     membershipId: joined.membershipId,
     role: joined.role,
+    ...(support.origin === "cloud" ? { origin: "cloud" as const } : {}),
     ...(options.accountId ? { accountId: options.accountId } : {}),
   };
 }

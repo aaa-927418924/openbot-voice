@@ -20,6 +20,7 @@ export function decodeLocalTailnetServers(value: unknown): LocalTailnetServer[] 
       !isString(entry.fingerprint) ||
       !isString(entry.sessionToken) ||
       !isString(entry.membershipId) ||
+      !(entry.origin === undefined || entry.origin === "cloud") ||
       !(
         entry.accountId === undefined ||
         (isString(entry.accountId) && entry.accountId.length > 0 && entry.accountId.length <= 128)
@@ -42,6 +43,7 @@ export function decodeLocalTailnetServers(value: unknown): LocalTailnetServer[] 
       sessionToken: entry.sessionToken,
       membershipId: entry.membershipId,
       role: entry.role,
+      ...(entry.origin === "cloud" ? { origin: "cloud" as const } : {}),
       ...(isString(entry.accountId) ? { accountId: entry.accountId } : {}),
     };
   });

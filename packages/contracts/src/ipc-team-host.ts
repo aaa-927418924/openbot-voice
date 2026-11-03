@@ -26,6 +26,8 @@ export interface ServerConnectionIssue {
 export interface ServerCompatibility {
   localAppVersion: string;
   hostAppVersion: string | null;
+  /** Host-reported origin marker for Cloud server labeling. */
+  origin?: "cloud";
   localProtocol: { minimum: number; maximum: number };
   hostProtocol: { minimum: number; maximum: number } | null;
   negotiatedProtocol: number | null;

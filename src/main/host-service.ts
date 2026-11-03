@@ -80,6 +80,7 @@ interface HostServiceOptions {
   agentImport?: ForwardedApiOptions["agentImport"];
   admin?: ForwardedApiOptions["admin"];
   appVersion: string;
+  serverOrigin?: ForwardedApiOptions["serverOrigin"];
   store: TeamStore;
   agents: ForwardedApiOptions["agents"] & Pick<AgentService, "adoptConversationReads" | "searchConversationFiles">;
   skills: NonNullable<ForwardedApiOptions["skills"]>;
@@ -294,6 +295,7 @@ export class HostService extends EventEmitter<HostEvents> {
       : undefined;
     this.#api = new TeamApiServer({
       appVersion: options.appVersion,
+      serverOrigin: options.serverOrigin,
       bindToTailnet: options.localOnlyNetworking ?? false,
       tailnetPort: options.tailnetPort,
       store: options.store,

@@ -145,10 +145,18 @@ describe("Team protocol v1", () => {
   it("decodes bounded compatibility metadata and finds the highest common version", () => {
     const support = decodeTeamProtocolSupportV1({
       appVersion: "0.4.0",
+      origin: "cloud",
       protocol: { minimum: 1, maximum: 3 },
       capabilities: ["browser-control", "browser-control", "hosted-site-event-markers", "remote-desktop"],
     });
 
+    expect(support.origin).toBe("cloud");
+    expect(JSON.parse(encodeTeamProtocolV1CurrentHttpResponse("GET", "/v1/compatibility", 200, support))).toEqual({
+      appVersion: "0.4.0",
+      origin: "cloud",
+      protocol: { minimum: 1, maximum: 3 },
+      capabilities: ["browser-control", "hosted-site-event-markers", "remote-desktop"],
+    });
     expect(support.capabilities).toEqual(["browser-control", "hosted-site-event-markers", "remote-desktop"]);
     expect(highestCommonTeamProtocol({ minimum: 1, maximum: 2 }, support.protocol)).toBe(2);
     expect(highestCommonTeamProtocol({ minimum: 4, maximum: 4 }, support.protocol)).toBeNull();

@@ -68,6 +68,7 @@ function decodePendingAccountServerChange(value: unknown): PendingAccountServerC
         fingerprint: server.fingerprint,
         publicKey: server.publicKey,
         logoKey: server.logoKey,
+        ...(server.origin === "cloud" ? { origin: "cloud" as const } : {}),
         membershipId: server.membershipId,
         role: server.role,
       },
@@ -139,6 +140,7 @@ function accountServerRegistrationForHost(host: LocalTailnetServer): AccountServ
     fingerprint: host.fingerprint,
     publicKey: host.publicKey,
     logoKey: host.logoKey,
+    ...(host.origin === "cloud" ? { origin: "cloud" as const } : {}),
     membershipId: host.membershipId,
     role: host.role,
   };
