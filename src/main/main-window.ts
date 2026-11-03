@@ -20,7 +20,7 @@ import {
   type MacPermissionId,
 } from "@openbot/contracts/ipc";
 import type { AppTranslate } from "@openbot/i18n";
-import { createOpenBotLogger } from "@openbot/logging";
+import { createOpenBotLogger, redactText } from "@openbot/logging";
 import { app, BrowserWindow, clipboard, type Display, Menu, type Point, type Rectangle, screen } from "electron";
 import type { AgentService } from "../backend/agent-service";
 import type { BrowserHost } from "../backend/browser-host";
@@ -131,6 +131,7 @@ export function createMainWindowController({
 
   function createWindow(): BrowserWindow {
     let inspectElementModifierPressed = false;
+    const reportedRendererErrors = new Set<string>();
     const cursor = screen.getCursorScreenPoint();
     const bounds = resolveMainWindowBounds(
       currentMainWindowBounds(),
@@ -314,6 +315,30 @@ export function createMainWindowController({
     });
     window.webContents.on("will-navigate", (event, targetUrl) => {
       if (!isTrustedRendererUrl(targetUrl)) event.preventDefault();
+    });
+    window.webContents.on("did-fail-load", (_event, errorCode, errorDescription, _validatedURL, isMainFrame) => {
+      if (!isMainFrame || errorCode === -3) return;
+      logger.error("Main renderer navigation failed.", {
+        errorCode,
+        errorDescription: redactText(errorDescription).slice(0, 300),
+      });
+    });
+    window.webContents.on("render-process-gone", (_event, details) => {
+      logger.error("Main renderer process exited unexpectedly.", {
+        reason: details.reason,
+        exitCode: details.exitCode,
+      });
+    });
+    window.webContents.on("console-message", (_event, level, _message, line, sourceId) => {
+      if (level < 2 || !sourceId.startsWith("openbot-app://app/")) return;
+      const source = sourceId.split("?")[0] ?? sourceId;
+      const key = `${source}:${line}`;
+      if (reportedRendererErrors.has(key) || reportedRendererErrors.size >= 100) return;
+      reportedRendererErrors.add(key);
+      logger.error("Main renderer reported a console error.", {
+        source: source.slice(0, 300),
+        line,
+      });
     });
     window.webContents.on("did-finish-load", () => {
       const services = getServices();

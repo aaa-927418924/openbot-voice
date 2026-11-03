@@ -5,10 +5,50 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="dark" />
     <title>OpenBot</title>
+    <style>
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        background: #0b0d0e;
+        color: #f2f2f2;
+        font: 14px system-ui, sans-serif;
+      }
+      #startup-fallback {
+        position: fixed;
+        inset: 0;
+        z-index: 1;
+        display: grid;
+        align-content: center;
+        justify-items: center;
+        gap: 12px;
+        padding: 24px;
+        text-align: center;
+      }
+      #startup-fallback[hidden] {
+        display: none;
+      }
+      #startup-fallback button {
+        min-height: 36px;
+        padding: 0 16px;
+        border: 1px solid #444;
+        border-radius: 8px;
+        background: #222;
+        color: inherit;
+        font: inherit;
+      }
+    </style>
   </head>
   <body>
     <noscript>OpenBot requires JavaScript to run.</noscript>
+    <main id="startup-fallback" role="status" aria-live="polite">
+      <strong>OpenBot を起動しています…</strong>
+      <span id="startup-fallback-detail">画面の読み込みを待っています。</span>
+      <button id="startup-fallback-retry" type="button" hidden>再読み込み</button>
+    </main>
     <div id="root"></div>
+    <script src="/startup-fallback.js"></script>
     <script type="module" src="/src/index.tsx"></script>
   </body>
 </html>

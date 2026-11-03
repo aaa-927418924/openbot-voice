@@ -23,3 +23,4 @@ startActionSounds();
 // which does not wait for a dynamic import, and `App` would subscribe after it. The helper windows
 // load `helper.html` instead.
 render(() => <App />, root);
+window.dispatchEvent(new Event("openbot:renderer-ready"));

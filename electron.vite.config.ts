@@ -42,6 +42,7 @@ export default defineConfig({
   },
   renderer: {
     plugins: [solidPlugin(), tailwindcss({ optimize: false })],
+    publicDir: resolve("src/renderer/public"),
     optimizeDeps: {
       include: ["@norbert_bodziony/bloub"],
     },
