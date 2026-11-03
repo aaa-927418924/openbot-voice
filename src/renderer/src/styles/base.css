@@ -66,6 +66,12 @@ body.app-custom-theme::before {
   background: var(--workspace-theme-header-surface);
 }
 
+body.app-custom-theme.app-window-controls::before {
+  /* The caption strip sits above the app frame. Keep the same 28% theme-accent tint while letting
+     the shared, blurred custom-theme image behind body::after remain visible through it. */
+  background: color-mix(in srgb, var(--workspace-theme-accent) 28%, transparent);
+}
+
 body.app-custom-theme {
   --workspace-theme-header-surface: color-mix(in srgb, var(--openbot-bg-glass) 72%, var(--workspace-theme-accent) 28%);
 }

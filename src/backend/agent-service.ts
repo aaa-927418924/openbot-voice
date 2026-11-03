@@ -1385,7 +1385,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       // Read the official account mode from the running host client. The provider-runtime cache can
       // be stale when the Cloud host and visible OpenBot GUI use separate app profiles.
       startupStage = "account-check";
-      const account = yield* client.request("account/read", { refreshToken: false }, decodeAccountReadResult, 5_000);
+      const account = yield* client
+        .request("account/read", { refreshToken: false }, decodeAccountReadResult, 5_000)
+        .pipe(
+          Effect.catch((error) =>
+            liveVoiceFailureReason(error) === "provider-auth-rejected"
+              ? Effect.die(new LiveVoiceRefusedError(sourceText("error.liveVoice.accountRequired")))
+              : Effect.fail(error),
+          ),
+        );
       if (account.account?.type !== "chatgpt")
         throw new LiveVoiceRefusedError(sourceText("error.liveVoice.accountRequired"));
       if (reservation.cancelled) throw new LiveVoiceRefusedError(sourceText("error.liveVoice.unavailable"));
@@ -3719,14 +3727,20 @@ function liveVoiceFailureReason(error: unknown): LiveVoiceFailureReason {
   if (error instanceof ProviderClientOperationError) {
     if (error.cause instanceof AppServerError) return liveVoiceProviderFailureReason(error.cause.message);
     if (error.cause instanceof Error && error.cause.name === "RequestTimeoutError") return "provider-timeout";
+    if (error.cause instanceof Error && isLiveVoiceAccountRequiredMessage(error.cause.message))
+      return "provider-auth-rejected";
     return "provider-operation-failed";
   }
   return "internal-failure";
 }
 
+function isLiveVoiceAccountRequiredMessage(message: string): boolean {
+  return /(connect chatgpt to continue|no_matching_rule|unauthorized|\b401\b)/i.test(message);
+}
+
 function liveVoiceProviderFailureReason(message: string) {
   const normalized = message.toLowerCase();
-  if (/(no_matching_rule|unauthorized|\b401\b)/.test(normalized)) return "provider-auth-rejected";
+  if (isLiveVoiceAccountRequiredMessage(normalized)) return "provider-auth-rejected";
   if (/(session\.model|model.{0,40}(not allowed|not found|unsupported)|model_not_found)/.test(normalized))
     return "model-rejected";
   if (/(\b429\b|rate.?limit|high demand)/.test(normalized)) return "provider-rate-limited";

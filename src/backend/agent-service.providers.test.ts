@@ -854,6 +854,52 @@ describe.sequential("AgentService: providers", () => {
     expect(messages.some((message) => message.itemType?.startsWith("live-voice-session-"))).toBe(false);
   });
 
+  it("reports a Codex sign-in refusal when the host account request says to connect ChatGPT", async () => {
+    let rejectAccountRead = false;
+    const liveClient = new FakeLiveVoiceClient(false, async (method) => {
+      if (rejectAccountRead && method === "account/read") {
+        throw new AppServerError("Connect ChatGPT to continue.", -32000);
+      }
+    });
+    const { service: agentService } = await startService(root, {
+      preferredProvider: "codex",
+      client: () => liveClient,
+    });
+    service = agentService;
+    await runCauseEffect(service.sendMessage({ agentId: "chief", text: "Create the Codex thread." }));
+    await waitForQueue(service, "chief", (queue) =>
+      queue.deliveries.every((delivery) => delivery.status === "completed"),
+    );
+    const agent = service.listAgents().find((candidate) => candidate.id === "chief");
+    if (!agent?.threadId) throw new Error("The Codex thread was not created.");
+
+    rejectAccountRead = true;
+    await expect(
+      runCauseEffect(
+        service.startLiveVoice({
+          agentId: agent.id,
+          threadId: agent.threadId,
+          clientSessionId: randomUUID(),
+          sdpOffer: "offer-sdp",
+        }),
+      ),
+    ).rejects.toThrow(sourceText("error.liveVoice.accountRequired"));
+    expect(liveClient.liveRequestOrder).not.toContain("thread/realtime/start");
+
+    rejectAccountRead = false;
+    const started = await runCauseEffect(
+      service.startLiveVoice({
+        agentId: agent.id,
+        threadId: agent.threadId,
+        clientSessionId: randomUUID(),
+        sdpOffer: "next-offer-sdp",
+      }),
+    );
+    await runCauseEffect(
+      service.stopLiveVoice({ agentId: agent.id, threadId: agent.threadId, sessionId: started.sessionId }),
+    );
+  });
+
   it("resumes the saved provider thread before the first Live voice start after host restart", async () => {
     const liveClient = new FakeLiveVoiceClient(false);
     const { service: agentService } = await startService(root, {
