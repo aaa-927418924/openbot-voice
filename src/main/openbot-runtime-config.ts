@@ -10,6 +10,11 @@ export function isOpenBotCloudHost(
   return platform === "linux" && environment.OPENBOT_CLOUD_HOST === "1";
 }
 
+/** The cloud host is headless by default, but can show its own GUI when explicitly requested. */
+export function shouldStartOpenBotCloudHostHidden(environment: NodeJS.ProcessEnv = process.env): boolean {
+  return isOpenBotCloudHost(environment) && environment.OPENBOT_CLOUD_HOST_SHOW_UI !== "1";
+}
+
 /** Keeps the portable agent/workspace tree separate from the Electron profile and from `~/OpenBot`. */
 export function resolveOpenBotDataRoot(
   homePath = homedir(),

@@ -77,6 +77,7 @@ export interface MainWindowContext {
   statePath: string;
   appIconPath: string;
   startHidden: boolean;
+  hideOnClose: boolean;
   developmentProfile: string | null;
   developmentRemoteRole: "host" | "client" | null;
   developmentTestClientEnabled: boolean;
@@ -108,6 +109,7 @@ export function createMainWindowController({
   statePath,
   appIconPath,
   startHidden,
+  hideOnClose,
   developmentProfile,
   developmentRemoteRole,
   developmentTestClientEnabled,
@@ -210,7 +212,7 @@ export function createMainWindowController({
     });
     window.on("close", (event) => {
       rememberMainWindowBounds(window.getNormalBounds());
-      if (shouldHideMainWindowOnClose(process.platform, isQuitting(), startHidden)) {
+      if (shouldHideMainWindowOnClose(process.platform, isQuitting(), hideOnClose)) {
         // The hidden renderer owns the cross-host Dynamic Island coordinator and must outlive its visible window.
         event.preventDefault();
         window.hide();

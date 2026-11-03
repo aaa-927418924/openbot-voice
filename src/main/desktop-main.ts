@@ -90,7 +90,11 @@ import {
   showMainWindow,
 } from "./main-window";
 import { ensureMacApplicationPresence, secondLaunchResponse } from "./main-window-state";
-import { isOpenBotCloudHost, resolveOpenBotDataRoot } from "./openbot-runtime-config";
+import {
+  isOpenBotCloudHost,
+  resolveOpenBotDataRoot,
+  shouldStartOpenBotCloudHostHidden,
+} from "./openbot-runtime-config";
 import { watchRemoteHostDirectory } from "./remote-server-host-directory";
 import { createRendererForwarders } from "./renderer-forwarders";
 import { sendToRenderer } from "./renderer-ipc";
@@ -325,7 +329,8 @@ const windows = createMainWindowController({
   holder: windowHolder,
   statePath: join(app.getPath("userData"), MAIN_WINDOW_STATE_FILE),
   appIconPath,
-  startHidden: cloudHostMode,
+  startHidden: shouldStartOpenBotCloudHostHidden(),
+  hideOnClose: cloudHostMode,
   developmentProfile,
   developmentRemoteRole,
   developmentTestClientEnabled,

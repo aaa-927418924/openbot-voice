@@ -42,9 +42,9 @@ export function presentMainWindow(
 export function shouldHideMainWindowOnClose(
   platform: NodeJS.Platform,
   quitting: boolean,
-  startHidden = false,
+  hideOnClose = false,
 ): boolean {
-  return !quitting && (startHidden || platform === "darwin" || platform === "win32");
+  return !quitting && (hideOnClose || platform === "darwin" || platform === "win32");
 }
 
 export interface SecondLaunchState {
