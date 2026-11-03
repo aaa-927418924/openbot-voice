@@ -11,9 +11,12 @@ export function WindowControls() {
   const { t } = useText();
   const isWindows = () => platform.appInfo()?.platform === "win32";
 
-  createEffect(() => {
-    document.body.classList.toggle("app-window-controls", isWindows());
-  });
+  createEffect(
+    () => isWindows(),
+    (windows) => {
+      document.body.classList.toggle("app-window-controls", windows);
+    },
+  );
   onCleanup(() => document.body.classList.remove("app-window-controls"));
 
   const control = (action: MainWindowControlAction) => {
