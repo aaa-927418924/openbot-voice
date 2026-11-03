@@ -186,6 +186,34 @@ describe("Live voice media lifecycle", () => {
     expect(states.at(-1)).toMatchObject({ phase: "connecting", hostSessionActive: true });
   });
 
+  it("waits for the host start refusal before cleaning up an early error event", async () => {
+    let resolveStart: ((result: Awaited<ReturnType<LiveVoiceApi["start"]>>) => void) | undefined;
+    api.start = vi.fn<LiveVoiceApi["start"]>(() => new Promise((resolve) => (resolveStart = resolve)));
+    const starting = controller.start(target);
+    await vi.waitFor(() => expect(api.start).toHaveBeenCalledOnce());
+    const request = vi.mocked(api.start).mock.calls[0]?.[0];
+    if (!request) throw new Error("The host start request was not created.");
+
+    emitEvent?.({
+      ...stopPayload,
+      sessionId: request.clientSessionId,
+      status: "error",
+      message: "Codex Live audio is unavailable.",
+    });
+    expect(api.stop).not.toHaveBeenCalled();
+    expect(states.at(-1)).toMatchObject({ phase: "connecting", hostSessionActive: true });
+
+    resolveStart?.({ kind: "refused", message: "This runtime cannot use Live audio." });
+    await starting;
+
+    expect(api.stop).not.toHaveBeenCalled();
+    expect(states.at(-1)).toMatchObject({
+      phase: "error",
+      hostSessionActive: false,
+      error: "Codex Live audio is unavailable.",
+    });
+  });
+
   it("keeps an ambiguous start failure active until the host confirms stop", async () => {
     vi.useFakeTimers();
     api.start = vi.fn<LiveVoiceApi["start"]>(async () => {

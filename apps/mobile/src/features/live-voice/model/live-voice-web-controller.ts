@@ -472,6 +472,10 @@ export function createLiveVoiceWebController(actions: LiveVoiceWebActions) {
         return;
       }
       if (result.sessionId !== origin.sessionId) throw new Error("Live voice session identity changed.");
+      if (session.failureAfterStop) {
+        void requestStop(session, session.failureAfterStop);
+        return;
+      }
       report(session, "remote-description", "waiting");
       await peer.setRemoteDescription({ type: "answer", sdp: result.sdpAnswer });
       report(session, "remote-description", "ready");
@@ -559,6 +563,13 @@ export function createLiveVoiceWebController(actions: LiveVoiceWebActions) {
       return;
     }
     session.error = "unavailable";
+    // Host-side provider errors can arrive over the event stream before the start POST resolves.
+    // Do not send stop until that in-flight start has established whether a lease exists.
+    if (!session.startResultKnown) {
+      session.failureAfterStop ??= "unavailable";
+      report(session, "host-request", "failed");
+      return;
+    }
     void requestStop(session, "unavailable");
   };
 

@@ -361,7 +361,17 @@ export function createLiveVoiceController(api: LiveVoiceApi | undefined, onState
           finish(session, session.startFailure ? "error" : "idle", session.startFailure);
           return;
         }
-        if (event.status === "error") requestStop(session, event.message ?? "");
+        if (event.status === "error") {
+          const message = event.message ?? "";
+          // The host can publish its startup failure before the start request returns. Stopping
+          // while that request is still preparing can race the provider's own cleanup and leave
+          // the renderer holding a false active-session state after the host has refused it.
+          if (!session.startResolved) {
+            session.startFailure = message;
+            return;
+          }
+          requestStop(session, message);
+        }
       });
       session.startRequested = true;
       publish(session, "connecting");
@@ -380,7 +390,7 @@ export function createLiveVoiceController(api: LiveVoiceApi | undefined, onState
       );
       session.startResolved = true;
       if (result.kind === "refused") {
-        if (canContinue()) finish(session, "error", result.message);
+        if (canContinue()) finish(session, "error", session.startFailure || result.message);
         else if (session.closedBeforeStartResolved && generation === session.generation && !active) {
           setState({ ...IDLE_STATE, phase: "error", error: result.message });
         }
@@ -388,6 +398,10 @@ export function createLiveVoiceController(api: LiveVoiceApi | undefined, onState
       }
       if (!canContinue()) return;
       if (result.sessionId !== session.id) throw new Error("Live voice session identity changed.");
+      if (session.startFailure) {
+        requestStop(session, session.startFailure);
+        return;
+      }
       await peer.setRemoteDescription({ type: "answer", sdp: result.sdpAnswer });
       if (!canContinue()) return;
       if (session.timer !== undefined) window.clearTimeout(session.timer);

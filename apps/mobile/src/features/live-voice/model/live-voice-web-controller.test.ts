@@ -418,6 +418,46 @@ describe("Live Voice WebRTC controller lifecycle", () => {
     );
   });
 
+  it("waits for a definitive start refusal before stopping an early host error", async () => {
+    installWebRtcStubs();
+    const startOutcome = deferred<{ kind: "rejected" }>();
+    const stopSession = vi.fn(async () => {});
+    const onState = vi.fn(async (_state: MobileLiveVoiceState) => {});
+    const controller = createLiveVoiceWebController({
+      startSession: vi.fn(async () => await startOutcome.promise),
+      stopSession,
+      sendText: vi.fn(async () => {}),
+      onState,
+    });
+
+    const starting = controller.start(origin);
+    await vi.waitFor(() => expect(FakePeer.instances).toHaveLength(1));
+    await vi.waitFor(() => expect(onState.mock.calls.some(([state]) => state.phase === "connecting")).toBe(true));
+    controller.handleHostEvent({
+      type: "live-voice",
+      agentId: origin.target.agentId,
+      threadId: origin.target.threadId,
+      sessionId: origin.sessionId,
+      status: "error",
+      message: "Codex Live audio is unavailable.",
+    });
+
+    expect(stopSession).not.toHaveBeenCalled();
+    startOutcome.resolve({ kind: "rejected" });
+    await starting;
+
+    expect(stopSession).not.toHaveBeenCalled();
+    await vi.waitFor(() =>
+      expect(onState.mock.calls.at(-1)?.[0]).toMatchObject({
+        phase: "error",
+        hostSessionActive: false,
+        error: "unavailable",
+      }),
+    );
+    await controller.start(origin);
+    controller.dispose();
+  });
+
   it("keeps typed input disabled until the WebRTC connection is live", async () => {
     installWebRtcStubs();
     const sendText = vi.fn(async () => {});
