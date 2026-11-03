@@ -6,10 +6,38 @@
   display: flex;
   width: 138px;
   height: 32px;
+  isolation: isolate;
+  background: transparent;
   -webkit-app-region: no-drag;
 }
 
+.native-window-controls::before {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  content: "";
+  pointer-events: none;
+}
+
+body.app-custom-theme.app-window-controls .native-window-controls::before {
+  background-color: var(--openbot-bg-native-canvas);
+  background-image:
+    linear-gradient(
+      color-mix(in srgb, var(--workspace-theme-accent) 28%, transparent),
+      color-mix(in srgb, var(--workspace-theme-accent) 28%, transparent)
+    ),
+    var(--workspace-theme-image);
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
+  background-attachment: fixed;
+  filter: blur(var(--workspace-theme-blur, 8px));
+  opacity: var(--workspace-theme-opacity, 0.72);
+}
+
 .native-window-controls button {
+  position: relative;
+  z-index: 1;
   display: grid;
   flex: 1 1 46px;
   place-items: center;

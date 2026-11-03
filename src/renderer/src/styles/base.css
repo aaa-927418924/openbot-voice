@@ -67,9 +67,21 @@ body.app-custom-theme::before {
 }
 
 body.app-custom-theme.app-window-controls::before {
-  /* The caption strip sits above the app frame. Keep the same 28% theme-accent tint while letting
-     the shared, blurred custom-theme image behind body::after remain visible through it. */
-  background: color-mix(in srgb, var(--workspace-theme-accent) 28%, transparent);
+  /* Draw the theme in the caption strip itself. Windows' frameless window backing can stay opaque,
+     so relying on transparency to reveal body::after leaves this area in the native dark colour. */
+  background-color: var(--openbot-bg-native-canvas);
+  background-image:
+    linear-gradient(
+      color-mix(in srgb, var(--workspace-theme-accent) 28%, transparent),
+      color-mix(in srgb, var(--workspace-theme-accent) 28%, transparent)
+    ),
+    var(--workspace-theme-image);
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
+  background-attachment: fixed;
+  filter: blur(var(--workspace-theme-blur, 8px));
+  opacity: var(--workspace-theme-opacity, 0.72);
 }
 
 body.app-custom-theme {
