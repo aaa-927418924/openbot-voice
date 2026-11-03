@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 // while it loads, so an empty stand-in is enough to reach the destination table.
 vi.mock("electron", () => ({ app: {}, dialog: {}, shell: {} }));
 
-const { EXTERNAL_DESTINATIONS } = await import("./app-handlers");
+const { applyMainWindowControl, EXTERNAL_DESTINATIONS } = await import("./app-handlers");
 const { parseExternalDestination } = await import("./app-inputs");
 
 describe("external destinations", () => {
@@ -30,5 +30,41 @@ describe("external destinations", () => {
     expect(parseExternalDestination("opencode-auth")).toBe("opencode-auth");
     expect(() => parseExternalDestination("https://opencode.ai/auth")).toThrowError("Unknown external destination.");
     expect(() => parseExternalDestination("opencode-login")).toThrowError("Unknown external destination.");
+  });
+});
+
+describe("custom Windows window controls", () => {
+  const target = () => ({
+    close: vi.fn(),
+    isDestroyed: vi.fn(() => false),
+    isMaximized: vi.fn(() => false),
+    maximize: vi.fn(),
+    minimize: vi.fn(),
+    unmaximize: vi.fn(),
+  });
+
+  it("minimizes and closes the current window", () => {
+    const window = target();
+    applyMainWindowControl(window, "minimize");
+    applyMainWindowControl(window, "close");
+
+    expect(window.minimize).toHaveBeenCalledOnce();
+    expect(window.close).toHaveBeenCalledOnce();
+  });
+
+  it("toggles between maximized and restored states", () => {
+    const window = target();
+    applyMainWindowControl(window, "toggle-maximize");
+    expect(window.maximize).toHaveBeenCalledOnce();
+    window.isMaximized.mockReturnValue(true);
+    applyMainWindowControl(window, "toggle-maximize");
+    expect(window.unmaximize).toHaveBeenCalledOnce();
+  });
+
+  it("does not control a destroyed window", () => {
+    const window = target();
+    window.isDestroyed.mockReturnValue(true);
+    applyMainWindowControl(window, "close");
+    expect(window.close).not.toHaveBeenCalled();
   });
 });

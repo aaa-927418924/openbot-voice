@@ -122,7 +122,7 @@ export function WorkspaceFrame(props: WorkspaceFrameProps) {
         body.style.removeProperty("--workspace-theme-accent");
       }
       const appInfo = platform.appInfo();
-      if (appInfo?.platform === "win32" || appInfo?.platform === "linux") {
+      if (appInfo?.platform === "linux") {
         const overlay = titleBarOverlayTheme();
         if (overlay) void window.openbot.setTitleBarOverlayTheme(overlay).catch(() => undefined);
       }
@@ -136,7 +136,7 @@ export function WorkspaceFrame(props: WorkspaceFrameProps) {
     document.body.style.removeProperty("--workspace-theme-opacity");
     document.body.style.removeProperty("--workspace-theme-accent");
     const appInfo = platform.appInfo();
-    if (appInfo?.platform === "win32" || appInfo?.platform === "linux") {
+    if (appInfo?.platform === "linux") {
       const overlay = titleBarOverlayTheme();
       if (overlay) void window.openbot.setTitleBarOverlayTheme(overlay).catch(() => undefined);
     }

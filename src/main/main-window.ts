@@ -156,12 +156,14 @@ export function createMainWindowController({
       // both of those rows. The setup window below uses the same offsets.
       ...(process.platform === "darwin"
         ? { titleBarStyle: "hidden" as const, trafficLightPosition: { x: 12, y: 13 } }
-        : process.platform === "win32" || process.platform === "linux"
-          ? {
-              titleBarStyle: "hidden" as const,
-              titleBarOverlay: { color: "#141414", symbolColor: "#f2f2f2", height: 32 },
-            }
-          : {}),
+        : process.platform === "win32"
+          ? { frame: false, thickFrame: true }
+          : process.platform === "linux"
+            ? {
+                titleBarStyle: "hidden" as const,
+                titleBarOverlay: { color: "#141414", symbolColor: "#f2f2f2", height: 32 },
+              }
+            : {}),
       webPreferences: {
         preload: join(__dirname, "../preload/index.cjs"),
         contextIsolation: true,

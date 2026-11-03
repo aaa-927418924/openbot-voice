@@ -2,7 +2,11 @@
   position: fixed;
   inset-inline-end: max(var(--openbot-space-6), env(safe-area-inset-right, 0px));
   /* Sit below the native titlebar and shared conversation/model-picker header. */
-  inset-block-start: calc(env(titlebar-area-height, 0px) + var(--left-header-height, 38px) + var(--openbot-space-3));
+  inset-block-start: calc(
+    var(--openbot-titlebar-area-height, env(titlebar-area-height, 0px)) +
+    var(--left-header-height, 38px) +
+    var(--openbot-space-3)
+  );
   z-index: calc(var(--openbot-layer-dropdown) - 1);
 }
 

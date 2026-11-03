@@ -23,9 +23,18 @@ html body {
 #root {
   position: absolute;
   z-index: 1;
-  inset: env(titlebar-area-height, 0px) 0 0;
+  inset: var(--openbot-titlebar-area-height, env(titlebar-area-height, 0px)) 0 0;
   min-width: 0;
   overflow: hidden;
+}
+
+body.app-window-controls #root {
+  z-index: 3;
+  inset-block-start: var(--openbot-titlebar-area-height);
+}
+
+body.app-window-controls {
+  --openbot-titlebar-area-height: 32px;
 }
 
 body::before {
@@ -34,10 +43,15 @@ body::before {
   top: 0;
   left: 0;
   width: env(titlebar-area-width, 100vw);
-  height: env(titlebar-area-height, 0px);
+  height: var(--openbot-titlebar-area-height, env(titlebar-area-height, 0px));
   content: "";
   background: var(--openbot-bg-native-canvas);
   -webkit-app-region: drag;
+}
+
+body.app-window-controls::before {
+  z-index: 2;
+  height: var(--openbot-titlebar-area-height);
 }
 
 body::after {

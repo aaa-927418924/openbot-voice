@@ -11,6 +11,7 @@ import {
   type ExternalDestination,
   GROK_BOT_EXPORT_URL,
   type LocalHostSettings,
+  type MainWindowControlAction,
 } from "@openbot/contracts/ipc";
 import { sourceText } from "@openbot/i18n/source";
 import { app, type BrowserWindow, shell } from "electron";
@@ -38,6 +39,7 @@ import {
   parseApprovalAutomation,
   parseBusyMessageModePreference,
   parseExternalDestination,
+  parseMainWindowControlAction,
   parseSetLocalHostSettings,
   parseSetup,
   parseTitleBarOverlayTheme,
@@ -67,6 +69,27 @@ export const EXTERNAL_DESTINATIONS: Record<ExternalDestination, string> = {
   "hosted-server-contact": HOSTED_SERVER_CONTACT_URL,
   "mac-screen-recording": MAC_PERMISSION_URLS["screen-recording"],
 };
+
+type MainWindowControlTarget = Pick<
+  BrowserWindow,
+  "close" | "isDestroyed" | "isMaximized" | "maximize" | "minimize" | "unmaximize"
+>;
+
+export function applyMainWindowControl(window: MainWindowControlTarget | null, action: MainWindowControlAction): void {
+  if (!window || window.isDestroyed()) return;
+  switch (action) {
+    case "minimize":
+      window.minimize();
+      return;
+    case "toggle-maximize":
+      if (window.isMaximized()) window.unmaximize();
+      else window.maximize();
+      return;
+    case "close":
+      window.close();
+      return;
+  }
+}
 
 import { runCauseEffect } from "../../backend/effect-boundary";
 import type { TraceFile } from "../trace-file";
@@ -178,8 +201,12 @@ export function appIpcHandlers({
       getLocalHostSettings: handler(getLocalHostSettings),
       setLocalHostSettings: payloadHandler(parseSetLocalHostSettings, (parsed) => setLocalHostSettings(parsed.enabled)),
       setTitleBarOverlayTheme: payloadHandler(parseTitleBarOverlayTheme, ({ color, symbolColor }) => {
-        if (process.platform !== "win32" && process.platform !== "linux") return;
+        if (process.platform !== "linux") return;
         getMainWindow()?.setTitleBarOverlay({ color, symbolColor, height: 32 });
+      }),
+      controlMainWindow: payloadHandler(parseMainWindowControlAction, (action) => {
+        if (process.platform !== "win32") return;
+        applyMainWindowControl(getMainWindow(), action);
       }),
       saveSetup: payloadHandler(parseSetup, async (input): Promise<AppSetupState> => {
         const previous = await runCauseEffect(readSetupState(setupFile));

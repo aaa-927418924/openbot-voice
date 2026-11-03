@@ -10,6 +10,7 @@ import type { SoundFeedbackChoice } from "./features/settings/sound-feedback";
 import { StartupSplash } from "./features/startup/StartupSplash";
 import { AccountLogin, InitialSetup, OnboardingFlow, SelfHostedAccountLogin } from "./lazy-views";
 import { usePlatform } from "./platform";
+import { WindowControls } from "./WindowControls";
 import { WorkspaceShell } from "./WorkspaceShell";
 
 /** The placeholder every lazy view below falls back to while its code loads. */
@@ -148,6 +149,7 @@ export function AppAccessGate() {
           onExited={() => setSplashShown(false)}
         />
       </Show>
+      <WindowControls />
     </>
   );
 }

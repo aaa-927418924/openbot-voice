@@ -1,0 +1,45 @@
+.native-window-controls {
+  position: fixed;
+  z-index: 2147483647;
+  top: 0;
+  right: 0;
+  display: flex;
+  width: 138px;
+  height: 32px;
+  -webkit-app-region: no-drag;
+}
+
+.native-window-controls button {
+  display: grid;
+  flex: 1 1 46px;
+  place-items: center;
+  min-width: 0;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--openbot-text-primary);
+  cursor: default;
+  -webkit-app-region: no-drag;
+}
+
+.native-window-controls button:hover {
+  background: var(--openbot-bg-control-hover);
+}
+
+.native-window-controls button:focus-visible {
+  outline: 2px solid var(--openbot-accent);
+  outline-offset: -2px;
+}
+
+.native-window-controls button svg {
+  width: 12px;
+  height: 12px;
+  stroke-width: 1.7;
+}
+
+.native-window-controls .native-window-controls-close:hover {
+  background: var(--openbot-danger);
+  color: var(--openbot-text-primary);
+}

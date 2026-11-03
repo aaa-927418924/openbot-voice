@@ -58,6 +58,7 @@
 @import "@openbot/ui/styles/reference-chip.css";
 @import "@openbot/ui/skill-preview.css";
 @import "./features/settings/custom-theme.css";
+@import "./styles/window-controls.css";
 
 @source "../../../packages/ui/src";
 

@@ -5,6 +5,9 @@ export const messages = defineMessages("window", {
   "window.localHostTitle": "OpenBot Local Host",
   "window.localClientTitle": "OpenBot Local Client",
   "window.computerUsePermissionTitle": "Turn on Computer Use",
+  "window.controls.minimize": "Minimize window",
+  "window.controls.maximizeRestore": "Maximize or restore window",
+  "window.controls.close": "Close window",
   "window.tray.open": "Open OpenBot",
   "window.tray.quit": "Quit OpenBot",
 });

@@ -6,6 +6,9 @@ export const messages = {
   "window.localHostTitle": "OpenBot ローカルホスト",
   "window.localClientTitle": "OpenBot ローカルクライアント",
   "window.computerUsePermissionTitle": "Computer Use をオンにする",
+  "window.controls.minimize": "ウィンドウを最小化",
+  "window.controls.maximizeRestore": "ウィンドウを最大化または元に戻す",
+  "window.controls.close": "ウィンドウを閉じる",
   "window.tray.open": "OpenBotを開く",
   "window.tray.quit": "OpenBotを終了",
 } as const satisfies PartialTranslation<typeof source>;

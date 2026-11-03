@@ -12,6 +12,7 @@ import type {
   InstallMarketplaceAgentInput,
   InstallSkillInput,
   MacPermissionId,
+  MainWindowControlAction,
   MarketplaceAgentQuery,
   MarketplaceSkillQuery,
   NotificationPreference,
@@ -44,6 +45,7 @@ import {
   isDynamicIslandInteractive,
   isDynamicIslandPreference,
   isDynamicIslandPresentation,
+  isMainWindowControlAction,
   isSetApprovalAutomationInput,
   isSetLocalHostSettingsInput,
   isSetTitleBarOverlayThemeInput,
@@ -111,6 +113,11 @@ export function parseSetLocalHostSettings(input: unknown): SetLocalHostSettingsI
 
 export function parseTitleBarOverlayTheme(input: unknown): SetTitleBarOverlayThemeInput {
   if (!isSetTitleBarOverlayThemeInput(input)) throw new Error("Title bar colors are invalid.");
+  return input;
+}
+
+export function parseMainWindowControlAction(input: unknown): MainWindowControlAction {
+  if (!isMainWindowControlAction(input)) throw new Error("A main window control action is required.");
   return input;
 }
 
