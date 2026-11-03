@@ -4,6 +4,7 @@ import {
   readOpenBotCloudHostPort,
   resolveOpenBotDataRoot,
   shouldStartOpenBotCloudHostHidden,
+  supportsUserManagedLocalHost,
 } from "./openbot-runtime-config";
 
 describe("OpenBot cloud-host runtime configuration", () => {
@@ -17,6 +18,12 @@ describe("OpenBot cloud-host runtime configuration", () => {
     expect(shouldStartOpenBotCloudHostHidden({ OPENBOT_CLOUD_HOST: "1" })).toBe(true);
     expect(shouldStartOpenBotCloudHostHidden({ OPENBOT_CLOUD_HOST: "1", OPENBOT_CLOUD_HOST_SHOW_UI: "1" })).toBe(false);
     expect(shouldStartOpenBotCloudHostHidden({ OPENBOT_CLOUD_HOST_SHOW_UI: "1" })).toBe(false);
+  });
+
+  it("does not let onboarding or settings disable the Cloud host itself", () => {
+    expect(supportsUserManagedLocalHost(true, true)).toBe(false);
+    expect(supportsUserManagedLocalHost(true, false)).toBe(true);
+    expect(supportsUserManagedLocalHost(false, false)).toBe(false);
   });
 
   it("keeps an alternate data root outside the regular local server root", () => {

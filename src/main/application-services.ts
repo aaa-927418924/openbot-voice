@@ -155,7 +155,12 @@ import { MessagingCredentialStore } from "./messaging-credential-store";
 import { NotificationPreferenceStore } from "./notification-preference-store";
 import { OnePasswordConnectorService } from "./onepassword-connector-service";
 import { OnePasswordConnectorStore } from "./onepassword-connector-store";
-import { isOpenBotCloudHost, readOpenBotCloudHostPort, resolveOpenBotDataRoot } from "./openbot-runtime-config";
+import {
+  isOpenBotCloudHost,
+  readOpenBotCloudHostPort,
+  resolveOpenBotDataRoot,
+  supportsUserManagedLocalHost,
+} from "./openbot-runtime-config";
 import { ProviderCredentialStore } from "./provider-credential-store";
 import { createProviderDetection, type ProviderDetection } from "./provider-detection";
 import { PROVIDER_DETECTION_SETTINGS_FILE, ProviderDetectionSettingsStore } from "./provider-detection-settings-store";
@@ -626,6 +631,7 @@ export async function createApplicationServices({
   // Fork builds run as a private Tailscale host by default. Hosted-server installs and the
   // explicit development-account harness retain their existing account-directory behavior.
   const localOnlyNetworking = !hostedServer && !serverModeEnvironment && developmentRemoteRole === null;
+  const localHostSettingsSupported = supportsUserManagedLocalHost(localOnlyNetworking, cloudHostMode);
   const setupFile = join(app.getPath("userData"), SETUP_FILE);
   const setupState = await runCauseEffect(readSetupState(setupFile));
   const localHostPreference = new LocalServerPreferenceStore(
@@ -634,6 +640,8 @@ export async function createApplicationServices({
   // New installs do not create a server by default. Existing completed installs keep their
   // historical default when the preference file is missing; an explicit saved choice wins.
   await localHostPreference.initialize(setupState.completed || cloudHostMode);
+  // A stale preference must not keep the Cloud host offline after a previous setup attempt.
+  if (cloudHostMode && !localHostPreference.enabled) await localHostPreference.setEnabled(true);
   let localHostRetry: { start: () => Promise<HostStatus | null>; stop: () => Promise<void> } | null = null;
   const selfHostedDesktopAccount = new SelfHostedDesktopAccountManager({
     path: join(app.getPath("userData"), "self-hosted-desktop-account-v1.json"),
@@ -2386,9 +2394,9 @@ export async function createApplicationServices({
     selfHostedIdentityAuthority,
     selfHostedIdentityApi,
     ensureLocalHost,
-    getLocalHostSettings: () => ({ supported: localOnlyNetworking, enabled: localHostPreference.enabled }),
+    getLocalHostSettings: () => ({ supported: localHostSettingsSupported, enabled: localHostPreference.enabled }),
     setLocalHostSettings: async (enabled) => {
-      if (!localOnlyNetworking) return { supported: false, enabled: false };
+      if (!localHostSettingsSupported) return { supported: false, enabled: localHostPreference.enabled };
       // An enabled preference is a desired state, not proof that HostService is still running.
       // Re-run the enable path even when the toggle already reads on, so users can recover a host
       // stopped by a transient startup or account-directory failure.
