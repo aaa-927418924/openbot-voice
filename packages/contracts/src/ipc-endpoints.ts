@@ -178,6 +178,12 @@ import type {
   UpdateCustomProviderInput,
 } from "./ipc-custom-providers";
 import type {
+  RemoteDeviceCommandPermission,
+  RemoteDeviceCommandTarget,
+  RemoteDeviceCommandTargetInput,
+  UpdateRemoteDeviceCommandTargetInput,
+} from "./ipc-device-commands";
+import type {
   DynamicIslandAction,
   DynamicIslandGeometry,
   DynamicIslandPreference,
@@ -554,6 +560,15 @@ export const IPC_ENDPOINTS = {
     startPermissionAppDrag: request<undefined, void>()("computer-use:start-permission-app-drag"),
     revealPermissionApp: request<undefined, void>()("computer-use:reveal-permission-app"),
     highlightPlacement: event<ComputerUseHighlightPlacement>()("computer-use:highlight-placement"),
+  },
+  deviceCommands: {
+    listTargets: request<undefined, RemoteDeviceCommandTarget[]>()("device-commands:list-targets"),
+    getPermission: request<RemoteDeviceCommandTargetInput, RemoteDeviceCommandPermission>()(
+      "device-commands:get-permission",
+    ),
+    updatePermission: request<UpdateRemoteDeviceCommandTargetInput, RemoteDeviceCommandPermission>()(
+      "device-commands:update-permission",
+    ),
   },
   skills: {
     localList: request<undefined, MarketplaceSkillDetail[]>()("skills:local-list"),
@@ -1095,6 +1110,7 @@ export const IPC_GROUP_PATHS = {
   voice: "voice",
   dynamicIsland: "dynamicIsland",
   computerUse: "computerUse",
+  deviceCommands: "deviceCommands",
   skills: "skills",
   customProviders: "customProviders",
   providerDetection: "providerDetection",

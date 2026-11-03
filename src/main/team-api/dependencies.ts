@@ -40,6 +40,7 @@ import type { BrowserViewGateway } from "../browser-view-gateway";
 import type { HostedSiteDesktopService } from "../hosted-site-service";
 import type { McpToolRuntimePreparation } from "../ipc/mcp-server-handlers";
 import type { LiveActivityPushService } from "../live-activity-push";
+import type { DeviceCommandTargetService } from "../remote-device-command-host";
 import type { RemoteScreenGateway } from "../remote-screen-gateway";
 import type { ServerMigrationSnapshotManifest } from "../server-migration-snapshot";
 import type { ServerMigrationTransferService } from "../server-migration-transfer";
@@ -283,6 +284,8 @@ export interface TeamApiOptions {
   browser: TeamApiBrowser;
   browserView?: TeamApiBrowserView;
   remoteScreen?: TeamApiRemoteScreen;
+  /** Target-local permissions and execution for explicitly granted remote device operations. */
+  deviceCommands?: DeviceCommandTargetService;
   redeemCentralTicket?: (
     ticket: string,
     serverId: string,

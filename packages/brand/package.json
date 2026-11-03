@@ -13,7 +13,8 @@
     "./article-gradient": "./src/article-gradient.ts",
     "./file-reference": "./src/file-reference.ts",
     "./app-logo-shape": "./src/app-logo-shape.ts",
-    "./provider-logo-shape": "./src/provider-logo-shape.ts"
+    "./provider-logo-shape": "./src/provider-logo-shape.ts",
+    "./server-gradient-logo": "./src/server-gradient-logo.ts"
   },
   "scripts": {
     "typecheck": "bun ../../node_modules/typescript/bin/tsc --noEmit -p tsconfig.json",

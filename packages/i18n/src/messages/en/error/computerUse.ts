@@ -12,4 +12,10 @@ export const messages = defineMessages("error.computerUse", {
   "error.computerUse.socketDirectoryOtherOwner": "The Computer Use socket directory {path} belongs to another user.",
   "error.computerUse.socketDirectoryShared": "The Computer Use socket directory {path} is open to other users.",
   "error.computerUse.socketNotReady": "It did not accept a connection in {seconds} seconds. {reason}",
+  "error.computerUse.remoteDevicePermission":
+    "This agent does not have permission for this operation on the target device.",
+  "error.computerUse.remoteCommandBlocked":
+    "AutoReview blocked this high-risk remote command. Do not retry it or try another command to bypass the block.",
+  "error.computerUse.remoteCommandInvalid": "The remote command request is invalid.",
+  "error.computerUse.remoteOperationUnavailable": "The remote device operation is unavailable.",
 });

@@ -552,6 +552,18 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
       // subscribes to a stream that never carries anything.
       onHighlightPlacement: () => () => undefined,
     },
+    deviceCommands: {
+      listTargets: async () => [],
+      getPermission: async ({ agentId }) => ({
+        agentId,
+        commandsEnabled: false,
+        computerUseEnabled: false,
+        allowedExecutables: [],
+        allowedDirectories: [],
+        updatedAt: null,
+      }),
+      updatePermission: async ({ permission }) => ({ ...permission, updatedAt: new Date().toISOString() }),
+    },
     openExternal: async () => undefined,
     connectProvider: async () => clone(agentStatus),
     updateProviderCli: async () => clone(agentStatus),

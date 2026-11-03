@@ -15,4 +15,9 @@ export const messages = {
   "error.computerUse.socketDirectoryShared":
     "Computer Use のソケットディレクトリ {path} は他のユーザーに公開されています。",
   "error.computerUse.socketNotReady": "{seconds} 秒以内に接続を受け付けませんでした。{reason}",
+  "error.computerUse.remoteDevicePermission": "このエージェントには対象デバイスでの操作権限がありません。",
+  "error.computerUse.remoteCommandBlocked":
+    "AutoReview が危険度の高いリモートコマンドをブロックしました。再試行したり、別のコマンドで回避したりしないでください。",
+  "error.computerUse.remoteCommandInvalid": "リモートコマンドの内容が無効です。",
+  "error.computerUse.remoteOperationUnavailable": "リモートデバイス操作を利用できません。",
 } as const satisfies PartialTranslation<typeof source>;

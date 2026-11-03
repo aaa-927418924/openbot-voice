@@ -27,6 +27,88 @@
   margin-top: var(--openbot-space-3);
 }
 
+.remote-device-commands-settings {
+  margin-top: var(--openbot-space-6);
+}
+
+.remote-device-commands-settings .ui-settings-section {
+  display: grid;
+  gap: var(--openbot-space-3);
+}
+
+.remote-device-commands-selectors {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--openbot-space-3);
+}
+
+.remote-device-commands-select-field,
+.remote-device-commands-field {
+  min-width: 0;
+  display: grid;
+  gap: var(--openbot-space-1-5);
+  color: var(--openbot-text-secondary);
+  font-size: var(--openbot-text-sm);
+}
+
+.remote-device-commands-select-field > span,
+.remote-device-commands-field > span {
+  font-weight: var(--openbot-weight-medium);
+}
+
+.remote-device-commands-select-field .ui-select {
+  width: 100%;
+}
+
+.remote-device-commands-fields {
+  display: grid;
+  gap: var(--openbot-space-3);
+}
+
+.remote-device-commands-field > small {
+  color: var(--openbot-text-muted);
+  font-size: var(--openbot-text-sm);
+  line-height: var(--openbot-leading-sm);
+}
+
+.remote-device-commands-field .ui-textarea {
+  width: 100%;
+  resize: vertical;
+}
+
+.remote-device-commands-permissions > .ui-switch-field {
+  width: 100%;
+  justify-content: space-between;
+  padding: var(--openbot-space-3) var(--openbot-space-4);
+}
+
+.remote-device-commands-message,
+.remote-device-commands-warning {
+  margin: 0;
+  color: var(--openbot-text-muted);
+  font-size: var(--openbot-text-sm);
+  line-height: var(--openbot-leading-sm);
+}
+
+.remote-device-commands-message[role="alert"] {
+  color: var(--openbot-danger);
+}
+
+.remote-device-commands-success {
+  color: var(--openbot-success-text);
+}
+
+.remote-device-commands-warning {
+  padding: var(--openbot-space-3);
+  border-radius: var(--openbot-radius-md);
+  background: var(--openbot-bg-control);
+}
+
+.remote-device-commands-save {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .computer-use-settings > .computer-use-alert:first-child,
 .computer-use-compact > .computer-use-alert:first-child {
   margin-top: 0;
@@ -121,6 +203,10 @@
 }
 
 @media (max-width: 640px) {
+  .remote-device-commands-selectors {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .computer-use-row.ui-item {
     align-items: flex-start;
   }

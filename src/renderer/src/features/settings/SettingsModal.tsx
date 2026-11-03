@@ -25,6 +25,7 @@ import { createSettingsProfileStore } from "@openbot/ui/features/settings/stores
 import { createEffect, createSignal, Show, untrack } from "solid-js";
 import { useI18n } from "../../i18n-context";
 import { ComputerUseSetup } from "../computer-use/ComputerUseSetup";
+import { RemoteDeviceCommandsSetup } from "../computer-use/RemoteDeviceCommandsSetup";
 import { SettingsDynamicIslandTab } from "./SettingsDynamicIslandTab";
 import { SettingsGeneralTab } from "./SettingsGeneralTab";
 import { SettingsThemeTab } from "./SettingsThemeTab";
@@ -230,6 +231,7 @@ export function SettingsModal(props: SettingsModalProps) {
 
         <Tabs.Content value="computer-use" class="settings-modal-tab-panel" data-tab="computer-use">
           <ComputerUseSetup variant="settings" />
+          <RemoteDeviceCommandsSetup />
         </Tabs.Content>
 
         <Tabs.Content value="profile" class="settings-modal-tab-panel" data-tab="profile">

@@ -1,11 +1,11 @@
+import { serverGradientLogoProfile } from "@openbot/brand/server-gradient-logo";
 import MaskedView from "@react-native-masked-view/masked-view";
 import { useQuery } from "@tanstack/react-query";
 import { Image } from "expo-image";
-import { Typography } from "heroui-native";
 import { Monitor } from "lucide-react-native";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { View } from "react-native";
-import Svg, { Path } from "react-native-svg";
+import Svg, { Defs, Ellipse, Path, RadialGradient, Rect, Stop } from "react-native-svg";
 import { useCSSVariable } from "uniwind";
 import { thumbnailColor } from "@/features/agents/components/bloub-avatar";
 import { getBloubAvatarColor } from "@/features/agents/model/bloub-activity";
@@ -27,17 +27,53 @@ function cutoutPath(size: number): string {
   return `M0 0H${size}V${size}H0Z M${center - radius} ${center}a${radius} ${radius} 0 1 0 ${radius * 2} 0a${radius} ${radius} 0 1 0 ${-radius * 2} 0Z`;
 }
 
-function serverInitials(name: string): string {
-  const words = name
-    .trim()
-    .split(/[\s_-]+/u)
-    .filter(Boolean);
-  const initials = words.length > 1 ? `${words[0]?.[0] ?? ""}${words[1]?.[0] ?? ""}` : (words[0]?.slice(0, 2) ?? "");
-  return initials.toUpperCase() || "S";
+function ServerGradientFallback({ seed, size }: { seed: string; size: number }) {
+  const profile = serverGradientLogoProfile(seed);
+  const gradientPrefix = useId().replace(/[^a-zA-Z0-9_-]/gu, "");
+  return (
+    <Svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+      <Rect width={size} height={size} fill={profile.colors[0]} />
+      <Defs>
+        {profile.blobs.map((blob) => {
+          const id = `${gradientPrefix}-server-gradient-${blob.color.slice(1)}`;
+          return (
+            <RadialGradient
+              key={id}
+              id={id}
+              gradientUnits="userSpaceOnUse"
+              cx={(blob.x * size) / 100}
+              cy={(blob.y * size) / 100}
+              fx={(blob.x * size) / 100}
+              fy={(blob.y * size) / 100}
+              rx={(blob.width * size) / 100}
+              ry={(blob.height * size) / 100}
+            >
+              <Stop offset="0%" stopColor={blob.color} />
+              <Stop offset={`${blob.solidStop}%`} stopColor={blob.color} />
+              <Stop offset={`${blob.fadeStop}%`} stopColor={blob.color} stopOpacity="0" />
+            </RadialGradient>
+          );
+        })}
+      </Defs>
+      {profile.blobs
+        .slice()
+        .reverse()
+        .map((blob) => (
+          <Ellipse
+            key={`${gradientPrefix}-blob-${blob.color.slice(1)}`}
+            cx={(blob.x * size) / 100}
+            cy={(blob.y * size) / 100}
+            rx={(blob.width * size) / 100}
+            ry={(blob.height * size) / 100}
+            fill={`url(#${gradientPrefix}-server-gradient-${blob.color.slice(1)})`}
+          />
+        ))}
+    </Svg>
+  );
 }
 
 /**
- * A squircle with the server logo, or with initials in the agent avatar palette, and a dot for the
+ * A squircle with the server logo, or a generated server gradient, and a dot for the
  * connection state. `logoUri` replaces the saved logo with a draft; `null` shows no logo.
  * `showStatus={false}` leaves out the dot and the dimming, for a place that shows the logo only.
  */
@@ -97,9 +133,7 @@ export function ServerAvatar({
       {server.kind === "local" ? (
         <Monitor color={INK} size={size * 0.42} strokeWidth={2} />
       ) : (
-        <Typography weight="semibold" style={{ color: INK, fontSize: size * 0.32, lineHeight: size * 0.42 }}>
-          {serverInitials(server.name)}
-        </Typography>
+        <ServerGradientFallback seed={server.id} size={size} />
       )}
       {logo && !logoFailed ? (
         <Image

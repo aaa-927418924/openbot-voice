@@ -39,4 +39,34 @@ export const messages = defineMessages("computerUse", {
   "computerUse.help.revealFailed": "The application could not be shown in Finder.",
   "computerUse.help.dragFailed": "The application could not be dragged.",
   "computerUse.highlight.working": "OpenBot is working in {title}",
+  "computerUse.remote.title": "Other devices",
+  "computerUse.remote.description":
+    "Grant each agent command access or Computer Use on a connected Windows or Linux OpenBot server.",
+  "computerUse.remote.refresh": "Refresh devices",
+  "computerUse.remote.agent": "Agent",
+  "computerUse.remote.device": "Target device",
+  "computerUse.remote.empty.agents": "This server has no agents yet.",
+  "computerUse.remote.empty.targets": "No remote Windows or Linux OpenBot servers are available.",
+  "computerUse.remote.deviceOffline": "Connect the target device to edit its permissions.",
+  "computerUse.remote.computerUseUnavailable": "Computer Use is not ready on this target device.",
+  "computerUse.remote.loading": "Loading this agent’s permissions…",
+  "computerUse.remote.commands.title": "Allow command execution",
+  "computerUse.remote.commands.description":
+    "Let this agent run approved programs on the target device. A rule-based AutoReview on the target blocks known high-risk commands before they start.",
+  "computerUse.remote.computerUse.title": "Allow Computer Use",
+  "computerUse.remote.computerUse.description":
+    "Let this agent use the target device’s screen tools. This is separate from command execution.",
+  "computerUse.remote.executables.title": "Allowed executable names",
+  "computerUse.remote.executables.description":
+    "Enter one exact executable name per line. OpenBot resolves and fixes its path on the target when you save. Leave empty to allow no command.",
+  "computerUse.remote.directories.title": "Allowed working directories",
+  "computerUse.remote.directories.description":
+    "Enter one target-device directory per line. Leave empty to allow no command.",
+  "computerUse.remote.allowlistNotice":
+    "These lists add an OpenBot permission check. They do not isolate a program from the rest of the target device.",
+  "computerUse.remote.save": "Save permissions",
+  "computerUse.remote.saved": "Permissions saved on the target device.",
+  "computerUse.remote.error.load": "OpenBot could not load remote devices.",
+  "computerUse.remote.error.permission": "OpenBot could not read this target’s permissions.",
+  "computerUse.remote.error.save": "OpenBot could not save permissions on the target device.",
 });

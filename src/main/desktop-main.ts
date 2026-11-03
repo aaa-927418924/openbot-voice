@@ -55,6 +55,7 @@ import { computerUseIpcHandlers } from "./ipc/computer-use-handlers";
 import { customAgentIpcHandlers } from "./ipc/custom-agent-handlers";
 import { customProviderIpcHandlers } from "./ipc/custom-provider-handlers";
 import { registerIpcGroups } from "./ipc/define-ipc-group";
+import { deviceCommandIpcHandlers } from "./ipc/device-command-handlers";
 import { dynamicIslandIpcHandlers } from "./ipc/dynamic-island-handlers";
 import { githubConnectorIpcHandlers } from "./ipc/github-connector-handlers";
 import { hostAdminIpcHandlers } from "./ipc/host-admin-handlers";
@@ -465,6 +466,7 @@ function registerIpcHandlers({
   host,
   remoteDesktop,
   remoteServers,
+  remoteDeviceCommandClient,
   serverMigration,
   centralAuth,
   selfHostedDesktopAccount,
@@ -535,6 +537,7 @@ function registerIpcHandlers({
       trace,
     }),
     ...dynamicIslandIpcHandlers({ dynamicIsland }),
+    ...deviceCommandIpcHandlers(remoteDeviceCommandClient),
     ...computerUseIpcHandlers({
       cuaDriver,
       openExternal: (url) => shell.openExternal(url),

@@ -146,6 +146,7 @@ import { ProfileSave, toProfileSaveFailed } from "./agent/profile-save";
 import { isPlanLimitDiagnostic } from "./agent/provider-diagnostics";
 import { type AgentClientFactory, ProviderRuntime, toProviderOperationFailed } from "./agent/provider-runtime";
 import { QueueControls } from "./agent/queue-controls";
+import type { RemoteDeviceCommandToolClient } from "./agent/remote-device-tools";
 import { type RoutineMutationOptions, RoutineScheduler, toRoutineOperationFailed } from "./agent/routine-scheduler";
 import { buildRuntimeSnapshot } from "./agent/runtime-snapshot";
 import type { AgentSidebar } from "./agent/sidebar-tools";
@@ -310,6 +311,8 @@ export interface AgentServiceOptions {
    */
   credentials?: ProviderClientContext;
   localSkillTools?: () => LocalSkillTools;
+  /** The account-connected remote target service, set after remote-server initialization. */
+  remoteDeviceCommands?: () => RemoteDeviceCommandToolClient | null;
   /**
    * Whose approvals are answered without asking. The main process owns the preference, because it
    * is a property of this computer and never crosses the Team API. Omitted, every approval asks.
@@ -1132,6 +1135,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       tables: this.#tables,
       sidebarLayout: this.#sidebarLayout,
       localSkillTools: this.#localSkillTools,
+      remoteDeviceCommands: options.remoteDeviceCommands,
       approvalAutomation: options.approvalAutomation,
       hooks: {
         listAgents: () => this.listAgents(),

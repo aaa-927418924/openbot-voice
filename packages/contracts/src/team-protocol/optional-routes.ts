@@ -10,6 +10,7 @@ import { AGENT_UPDATE_CODECS } from "./agent-update-v1";
 import { CHANNEL_HISTORY_DELETE_CODECS } from "./channel-history-delete-v1";
 import { CONTEXT_RESET_CODECS } from "./context-reset-v1";
 import { CONVERSATION_HISTORY_DELETE_CODECS } from "./conversation-history-delete-v1";
+import { DEVICE_COMMAND_CODECS } from "./device-commands-v1";
 import { HOST_ADMIN_CODECS } from "./host-admin-v1";
 import { HOST_UPDATE_CODECS } from "./host-update-v1";
 import { HOSTED_SITES_CODECS } from "./hosted-sites-v1";
@@ -51,6 +52,7 @@ const CODECS: ReadonlyMap<string, OptionalRouteCodec> = new Map([
   ...LIVE_VOICE_CHANNEL_CODECS,
   ...HOSTED_SITES_CODECS,
   ...WORKSPACE_DIRECTORY_CODECS,
+  ...DEVICE_COMMAND_CODECS,
   ...SERVER_MIGRATION_CODECS,
 ]);
 

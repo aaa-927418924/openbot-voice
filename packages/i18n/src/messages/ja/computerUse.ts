@@ -40,4 +40,34 @@ export const messages = {
   "computerUse.help.revealFailed": "アプリケーションを Finder に表示できませんでした。",
   "computerUse.help.dragFailed": "アプリケーションをドラッグできませんでした。",
   "computerUse.highlight.working": "OpenBot が {title} で作業しています",
+  "computerUse.remote.title": "他のデバイス",
+  "computerUse.remote.description":
+    "接続中の Windows / Linux OpenBot サーバーで、エージェントごとにコマンド実行と Computer Use を許可します。",
+  "computerUse.remote.refresh": "デバイスを更新",
+  "computerUse.remote.agent": "エージェント",
+  "computerUse.remote.device": "操作対象デバイス",
+  "computerUse.remote.empty.agents": "このサーバーにエージェントがいません。",
+  "computerUse.remote.empty.targets": "利用できる Windows / Linux のリモート OpenBot サーバーがありません。",
+  "computerUse.remote.deviceOffline": "権限を編集するには、対象デバイスを接続してください。",
+  "computerUse.remote.computerUseUnavailable": "対象デバイスで Computer Use を利用できません。",
+  "computerUse.remote.loading": "このエージェントの権限を読み込んでいます…",
+  "computerUse.remote.commands.title": "コマンド実行を許可",
+  "computerUse.remote.commands.description":
+    "対象デバイスで許可したプログラムを実行します。対象側のルールベース AutoReview が既知の危険なコマンドを起動前にブロックします。",
+  "computerUse.remote.computerUse.title": "Computer Use を許可",
+  "computerUse.remote.computerUse.description":
+    "対象デバイスの画面操作ツールを許可します。コマンド実行とは別の設定です。",
+  "computerUse.remote.executables.title": "許可する実行ファイル名",
+  "computerUse.remote.executables.description":
+    "正確な実行ファイル名を1行に1つ入力します。保存時に対象デバイス上の実際のパスを固定します。空欄ではコマンドを許可しません。",
+  "computerUse.remote.directories.title": "許可する作業ディレクトリ",
+  "computerUse.remote.directories.description":
+    "対象デバイス上のディレクトリを1行に1つ入力します。空欄ではコマンドを許可しません。",
+  "computerUse.remote.allowlistNotice":
+    "これらのリストは OpenBot の追加の権限チェックです。実行ファイルを対象デバイス内の他のデータから隔離するものではありません。",
+  "computerUse.remote.save": "権限を保存",
+  "computerUse.remote.saved": "対象デバイスに権限を保存しました。",
+  "computerUse.remote.error.load": "リモートデバイスを読み込めませんでした。",
+  "computerUse.remote.error.permission": "対象デバイスの権限を読み込めませんでした。",
+  "computerUse.remote.error.save": "対象デバイスに権限を保存できませんでした。",
 } as const satisfies PartialTranslation<typeof source>;

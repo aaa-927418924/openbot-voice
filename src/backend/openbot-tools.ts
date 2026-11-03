@@ -8,6 +8,7 @@ import {
   readAgentToolSchema,
   updateProfileToolSchema,
 } from "./agent/profile-tools";
+import { REMOTE_DEVICE_TOOL_DEFINITIONS } from "./agent/remote-device-tools";
 import {
   assignAgentSectionToolSchema,
   createSectionToolSchema,
@@ -29,6 +30,7 @@ export const OPENBOT_TOOL_DEFINITIONS: readonly OpenBotToolDefinition[] = [
   ...CHANNEL_TOOL_DEFINITIONS,
   ...DATA_TOOL_DEFINITIONS,
   ...LOCAL_SKILL_TOOL_DEFINITIONS,
+  ...REMOTE_DEVICE_TOOL_DEFINITIONS,
   {
     name: "list_sites",
     description:

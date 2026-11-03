@@ -60,6 +60,7 @@ import {
   readAgentToolSchema,
   updateProfileToolSchema,
 } from "./profile-tools";
+import { callRemoteDeviceTool, isRemoteDeviceTool, type RemoteDeviceCommandToolClient } from "./remote-device-tools";
 import type { RoutineScheduler } from "./routine-scheduler";
 import { type OpenBotToolResponse, openBotToolFailure, openBotToolResult } from "./routine-tools";
 import { type AgentSidebar, handleSidebarTool } from "./sidebar-tools";
@@ -111,6 +112,7 @@ export interface OpenBotToolRouterOptions {
   tables: AgentTables | null;
   sidebarLayout: AgentSidebar | null;
   localSkillTools?: () => LocalSkillTools;
+  remoteDeviceCommands?: () => RemoteDeviceCommandToolClient | null;
   approvalAutomation?: ApprovalAutomationPolicy;
   hooks: OpenBotToolRouterHooks;
 }
@@ -139,6 +141,7 @@ export class OpenBotToolRouter {
   readonly #tables: AgentTables | null;
   readonly #sidebarLayout: AgentSidebar | null;
   readonly #localSkillTools?: () => LocalSkillTools;
+  readonly #remoteDeviceCommands?: () => RemoteDeviceCommandToolClient | null;
   readonly #approvalAutomation: ApprovalAutomationPolicy;
   readonly #hooks: OpenBotToolRouterHooks;
   readonly #interruptTool: AgentInterruptTool;
@@ -160,6 +163,7 @@ export class OpenBotToolRouter {
     this.#tables = options.tables;
     this.#sidebarLayout = options.sidebarLayout;
     this.#localSkillTools = options.localSkillTools;
+    this.#remoteDeviceCommands = options.remoteDeviceCommands;
     this.#approvalAutomation = options.approvalAutomation ?? NO_APPROVAL_AUTOMATION;
     this.#hooks = options.hooks;
     this.#interruptTool = new AgentInterruptTool({
@@ -402,6 +406,12 @@ export class OpenBotToolRouter {
   ) {
     const senderAgentId = this.#conversation.agentForThread(params.threadId);
     if (!senderAgentId) throw new Error("The sending OpenBot agent is unknown.");
+
+    if (isRemoteDeviceTool(params.tool)) {
+      return yield* Effect.promise(() =>
+        callRemoteDeviceTool(params.tool, params.arguments, senderAgentId, this.#remoteDeviceCommands?.() ?? null),
+      );
+    }
 
     if (LOCAL_SKILL_TOOL_DEFINITIONS.some((tool) => tool.name === params.tool)) {
       const reportFailure = (error: unknown) =>

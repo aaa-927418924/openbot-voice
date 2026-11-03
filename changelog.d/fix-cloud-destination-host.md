@@ -1,7 +1,7 @@
-### Fixed
+### Added
 
-- Live Voice startup no longer cancels a host request before the host's request deadline. Concurrent cleanup now shares one Codex stop request.
-- Custom desktop themes can set an accent tint for translucent surfaces. The title bar uses the same tint and strength as the workspace header.
-- Windows and Linux window controls now use the custom theme's titlebar tint and a contrasting symbol color.
-- Live Voice startup errors before SDP acceptance now clean up the unstarted session instead of failing a second time during stop. Support logs record safe failure stages, categories, and HTTP refusal codes.
-- Cloud server menus show a separate cloud icon before the server name. The Cloud host advertises its origin through compatibility metadata, so existing desktop and Android direct pairings can identify it without changing the stored server name.
+- Windows and Linux OpenBot hosts can now receive command requests from another OpenBot agent. Each target stores separate per-agent grants for command execution and optional background Computer Use; both are off by default. Android chats can use the same coordinator tools.
+
+### Changed
+
+- Remote commands use an explicit executable and arguments, a fixed executable path, an allowed working directory, bounded runtime and output, and target-side rules that block known high-risk operations. These controls do not provide an operating-system sandbox.

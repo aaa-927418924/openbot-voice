@@ -170,6 +170,8 @@ import { ProviderRuntimeManager, providerRuntimeRoot, runtimeTarget } from "./pr
 import { RemoteDesktopManager } from "./remote-desktop-manager";
 import { resolveRemoteDesktopRuntime } from "./remote-desktop-runtime-artifact";
 import { loadOrCreateRemoteDesktopCredentials } from "./remote-desktop-secret-store";
+import { RemoteDeviceCommandClient } from "./remote-device-command-client";
+import { RemoteDeviceCommandHost } from "./remote-device-command-host";
 import { appendRemoteDiagnosticLog } from "./remote-diagnostics";
 import { decodeVoid } from "./remote-host-decoding";
 import { RemoteServerManager } from "./remote-server-manager";
@@ -376,6 +378,7 @@ export interface ApplicationServices {
   host: HostService;
   remoteDesktop: RemoteDesktopManager;
   remoteServers: RemoteServerManager;
+  remoteDeviceCommandClient: RemoteDeviceCommandClient;
   /** The source side of a local-to-server migration. Null on a server-mode destination host. */
   serverMigration: ServerMigrationSourceService | null;
   centralAuth: CentralAuthManager;
@@ -594,6 +597,9 @@ export async function createApplicationServices({
   // critical actions drive are built hundreds of lines below. A single named local rather than
   // two lazy getters, so the gap is visible and bounded.
   let criticalActionTargets: { agents: AgentService; remoteServers: RemoteServerManager } | null = null;
+  // The agent service is constructed before the remote directory. Resolve this callback only when
+  // a tool runs, after the manager has been initialized below.
+  let remoteDeviceCommandClient: RemoteDeviceCommandClient | null = null;
   const dynamicIsland = new DynamicIslandWindowController({
     platform: process.platform,
     preferencePath: join(app.getPath("userData"), DYNAMIC_ISLAND_PREFERENCE_FILE),
@@ -1201,6 +1207,7 @@ export async function createApplicationServices({
     },
     passwordVault: onePasswordConnector,
     localSkillTools: () => localSkillTools(skills),
+    remoteDeviceCommands: () => remoteDeviceCommandClient,
     approvalAutomation,
     busyMessageMode: () => busyMessageMode.get().mode,
     deleteWithRevokedApproval: (agentId, remove) =>
@@ -1669,6 +1676,19 @@ export async function createApplicationServices({
     hostedSites,
     // Present, so the host advertises `agent-import-v1`. Any member can import.
     agentImport,
+    // Each Windows/Linux target owns its default-deny policy in this profile. This works in both
+    // desktop and server mode, so a headless Cloud host can control other registered devices.
+    ...(process.platform === "win32" || process.platform === "linux"
+      ? {
+          deviceCommands: new RemoteDeviceCommandHost({
+            userDataPath: app.getPath("userData"),
+            getServerId: () => teamStore.getIdentity()?.serverId ?? null,
+            getServerName: () => teamStore.getIdentity()?.serverName ?? "",
+            cuaDriver,
+            platform: process.platform,
+          }),
+        }
+      : {}),
     // Present on a Linux host. It advertises `server-migration-v1`.
     serverMigration: serverMigrationDestination?.migration,
     // Each member present advertises its admin capability. Every admin route requires an owner or admin.
@@ -2047,6 +2067,7 @@ export async function createApplicationServices({
   teamWebRtcBridge.on("accountServersChanged", () => void Effect.runPromise(remoteServers.invalidateDirectory()));
   teardown.push(TEARDOWN_ORDER.remoteServers, "the remote servers", () => runCauseEffect(remoteServers.stop()));
   await runCauseEffect(remoteServers.initialize());
+  remoteDeviceCommandClient = new RemoteDeviceCommandClient(remoteServers);
   criticalActionTargets = { agents: service, remoteServers };
   const serverMigration =
     !serverModeEnvironment && !cloudHostMode && (process.platform === "win32" || process.platform === "linux")
@@ -2390,6 +2411,7 @@ export async function createApplicationServices({
     host,
     remoteDesktop,
     remoteServers,
+    remoteDeviceCommandClient,
     centralAuth,
     selfHostedDesktopAccount,
     selfHostedIdentityAuthority,
