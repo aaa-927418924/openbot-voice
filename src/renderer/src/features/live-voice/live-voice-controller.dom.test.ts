@@ -11,6 +11,7 @@ class TestAudio {
 }
 
 class TestPeer extends EventTarget {
+  static instances: TestPeer[] = [];
   connectionState: RTCPeerConnectionState = "new";
   iceGatheringState: RTCIceGatheringState = "complete";
   localDescription: { sdp: string } | null = null;
@@ -23,6 +24,10 @@ class TestPeer extends EventTarget {
   readonly setRemoteDescription = vi.fn(async () => undefined);
   ontrack: ((event: RTCTrackEvent) => void) | null = null;
   onconnectionstatechange: (() => void) | null = null;
+  constructor() {
+    super();
+    TestPeer.instances.push(this);
+  }
 }
 
 const target = { agentId: "agent-1", threadId: "thread-1", serverId: "local" };
@@ -39,7 +44,7 @@ let api: LiveVoiceApi;
 let controller: ReturnType<typeof createLiveVoiceController>;
 let startDeferred:
   | {
-      resolve: (value: { kind: "started"; sessionId: string; sdpAnswer: string }) => void;
+      resolve: (value: Awaited<ReturnType<LiveVoiceApi["start"]>>) => void;
     }
   | undefined;
 
@@ -53,6 +58,7 @@ beforeEach(() => {
   });
   emitEvent = undefined;
   states = [];
+  TestPeer.instances = [];
   startDeferred = undefined;
   api = {
     start: vi.fn<LiveVoiceApi["start"]>(async (input) => {
@@ -212,6 +218,26 @@ describe("Live voice media lifecycle", () => {
       hostSessionActive: false,
       error: "Codex Live audio is unavailable.",
     });
+  });
+
+  it("waits for the host start refusal before stopping after an early WebRTC failure", async () => {
+    startDeferred = { resolve: () => undefined };
+    const starting = controller.start(target);
+    await vi.waitFor(() => expect(api.start).toHaveBeenCalledOnce());
+    const peer = TestPeer.instances[0];
+    if (!peer) throw new Error("The WebRTC peer was not created.");
+
+    peer.connectionState = "failed";
+    peer.onconnectionstatechange?.();
+
+    expect(api.stop).not.toHaveBeenCalled();
+    expect(tracks[0]?.stop).toHaveBeenCalledOnce();
+
+    startDeferred.resolve({ kind: "refused", message: "This runtime cannot use Live audio." });
+    await starting;
+
+    expect(api.stop).not.toHaveBeenCalled();
+    expect(states.at(-1)).toMatchObject({ phase: "error", hostSessionActive: false });
   });
 
   it("keeps an ambiguous start failure active until the host confirms stop", async () => {

@@ -458,6 +458,36 @@ describe("Live Voice WebRTC controller lifecycle", () => {
     controller.dispose();
   });
 
+  it("waits for a definitive start refusal before stopping after an early WebRTC failure", async () => {
+    installWebRtcStubs();
+    const startOutcome = deferred<{ kind: "rejected" }>();
+    const stopSession = vi.fn(async () => {});
+    const onState = vi.fn(async (_state: MobileLiveVoiceState) => {});
+    const controller = createLiveVoiceWebController({
+      startSession: vi.fn(async () => await startOutcome.promise),
+      stopSession,
+      sendText: vi.fn(async () => {}),
+      onState,
+    });
+
+    const starting = controller.start(origin);
+    await vi.waitFor(() => expect(FakePeer.instances).toHaveLength(1));
+    const peer = FakePeer.instances[0];
+    if (!peer) throw new Error("The WebRTC peer was not created.");
+    peer.connectionState = "failed";
+    peer.onconnectionstatechange?.();
+
+    expect(stopSession).not.toHaveBeenCalled();
+    startOutcome.resolve({ kind: "rejected" });
+    await starting;
+
+    expect(stopSession).not.toHaveBeenCalled();
+    await vi.waitFor(() =>
+      expect(onState.mock.calls.at(-1)?.[0]).toMatchObject({ phase: "error", hostSessionActive: false }),
+    );
+    controller.dispose();
+  });
+
   it("keeps typed input disabled until the WebRTC connection is live", async () => {
     installWebRtcStubs();
     const sendText = vi.fn(async () => {});

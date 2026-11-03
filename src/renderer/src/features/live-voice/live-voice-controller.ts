@@ -117,9 +117,11 @@ export function createLiveVoiceController(api: LiveVoiceApi | undefined, onState
     });
   }
 
-  function closeMedia(session: LiveVoiceSession): void {
-    if (session.timer !== undefined) window.clearTimeout(session.timer);
-    session.timer = undefined;
+  function closeMedia(session: LiveVoiceSession, preserveStartTimer = false): void {
+    if (session.timer !== undefined && !preserveStartTimer) {
+      window.clearTimeout(session.timer);
+      session.timer = undefined;
+    }
     session.cancelIceWait?.();
     session.cancelIceWait = undefined;
     if (session.peer) {
@@ -171,7 +173,19 @@ export function createLiveVoiceController(api: LiveVoiceApi | undefined, onState
     setState({ ...IDLE_STATE, phase, error });
   }
 
-  function requestStop(session: LiveVoiceSession, error = session.error, microphoneBlocked = false): void {
+  function requestStop(
+    session: LiveVoiceSession,
+    error = session.error,
+    microphoneBlocked = false,
+    deferUntilStartResolved = false,
+  ): void {
+    if (deferUntilStartResolved && session.startRequested && !session.startResolved) {
+      session.startFailure ??= error;
+      session.error = session.startFailure;
+      closeMedia(session, true);
+      publish(session, "connecting", { audioBlocked: false, microphoneBlocked });
+      return;
+    }
     session.cancelled = true;
     session.error = error;
     closeMedia(session);
@@ -337,7 +351,7 @@ export function createLiveVoiceController(api: LiveVoiceApi | undefined, onState
           return;
         }
         if (["failed", "disconnected", "closed"].includes(peer.connectionState)) {
-          requestStop(session, "");
+          requestStop(session, "unavailable", false, true);
         }
       };
       const offer = await peer.createOffer();
@@ -367,7 +381,7 @@ export function createLiveVoiceController(api: LiveVoiceApi | undefined, onState
           // while that request is still preparing can race the provider's own cleanup and leave
           // the renderer holding a false active-session state after the host has refused it.
           if (!session.startResolved) {
-            session.startFailure = message;
+            requestStop(session, message || "unavailable", false, true);
             return;
           }
           requestStop(session, message);
@@ -389,6 +403,8 @@ export function createLiveVoiceController(api: LiveVoiceApi | undefined, onState
         target.serverId,
       );
       session.startResolved = true;
+      if (session.timer !== undefined) window.clearTimeout(session.timer);
+      session.timer = undefined;
       if (result.kind === "refused") {
         if (canContinue()) finish(session, "error", session.startFailure || result.message);
         else if (session.closedBeforeStartResolved && generation === session.generation && !active) {
@@ -407,7 +423,7 @@ export function createLiveVoiceController(api: LiveVoiceApi | undefined, onState
       if (session.timer !== undefined) window.clearTimeout(session.timer);
       session.timer = undefined;
       session.timer = window.setTimeout(() => {
-        if (canContinue() && peer.connectionState !== "connected") requestStop(session, "");
+        if (canContinue() && peer.connectionState !== "connected") requestStop(session, "unavailable");
       }, PEER_CONNECTION_TIMEOUT_MS);
     } catch (error) {
       if (!isOwned()) {

@@ -184,12 +184,12 @@ export function createLiveVoiceWebController(actions: LiveVoiceWebActions) {
     queueState(state, sample);
   };
 
-  const closeMedia = (session: ActiveVoiceSession) => {
+  const closeMedia = (session: ActiveVoiceSession, preserveStartTimer = false) => {
     if (session.sampleTimer !== undefined) window.clearInterval(session.sampleTimer);
-    if (session.startTimer !== undefined) window.clearTimeout(session.startTimer);
+    if (session.startTimer !== undefined && !preserveStartTimer) window.clearTimeout(session.startTimer);
     if (session.connectedTimer !== undefined) window.clearTimeout(session.connectedTimer);
     session.sampleTimer = undefined;
-    session.startTimer = undefined;
+    if (!preserveStartTimer) session.startTimer = undefined;
     session.connectedTimer = undefined;
     if (session.peer) {
       session.peer.ontrack = null;
@@ -220,7 +220,18 @@ export function createLiveVoiceWebController(actions: LiveVoiceWebActions) {
     publish(session, phase, false);
   };
 
-  const requestStop = (session: ActiveVoiceSession, errorAfterStop?: string): Promise<boolean> => {
+  const requestStop = (
+    session: ActiveVoiceSession,
+    errorAfterStop?: string,
+    deferUntilStartResult = false,
+  ): Promise<boolean> => {
+    if (deferUntilStartResult && session.startRequested && !session.startResultKnown) {
+      session.failureAfterStop ??= errorAfterStop;
+      session.error = session.failureAfterStop;
+      closeMedia(session, true);
+      publish(session, "connecting", hostMayBeActive(session));
+      return Promise.resolve(false);
+    }
     session.cancelled = true;
     session.failureAfterStop ??= errorAfterStop;
     closeMedia(session);
@@ -408,7 +419,7 @@ export function createLiveVoiceWebController(actions: LiveVoiceWebActions) {
           publish(session, "live", true);
         } else if (["failed", "disconnected", "closed"].includes(peer.connectionState)) {
           report(session, "peer", peer.connectionState === "disconnected" ? "disconnected" : "failed");
-          void requestStop(session, "unavailable");
+          void requestStop(session, "unavailable", true);
         }
       };
 
@@ -444,6 +455,8 @@ export function createLiveVoiceWebController(actions: LiveVoiceWebActions) {
         sdpOffer,
       });
       session.startResultKnown = true;
+      if (session.startTimer !== undefined) window.clearTimeout(session.startTimer);
+      session.startTimer = undefined;
       if (outcome.kind === "rejected") {
         report(session, "host-request", "rejected");
         session.hostAccepted = false;
@@ -562,12 +575,11 @@ export function createLiveVoiceWebController(actions: LiveVoiceWebActions) {
       finish(session, "idle");
       return;
     }
-    session.error = "unavailable";
     // Host-side provider errors can arrive over the event stream before the start POST resolves.
     // Do not send stop until that in-flight start has established whether a lease exists.
     if (!session.startResultKnown) {
-      session.failureAfterStop ??= "unavailable";
       report(session, "host-request", "failed");
+      void requestStop(session, "unavailable", true);
       return;
     }
     void requestStop(session, "unavailable");
