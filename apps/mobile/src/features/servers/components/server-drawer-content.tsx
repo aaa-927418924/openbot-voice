@@ -189,6 +189,9 @@ export function ServerDrawerContent({
         <ServerAvatar server={serverItem} />
         <View className="min-w-0 flex-1">
           <View className="min-w-0 flex-row items-center gap-1.5">
+            {serverItem.accountServer?.origin === "cloud" ? (
+              <Cloud size={14} color={mutedColor} accessible={false} />
+            ) : null}
             <Typography.Paragraph
               weight="medium"
               className={`min-w-0 flex-1 ${serverItem.state === "online" ? "" : "text-text-secondary"}`}
@@ -196,9 +199,6 @@ export function ServerDrawerContent({
             >
               {serverItem.name}
             </Typography.Paragraph>
-            {serverItem.accountServer?.origin === "cloud" ? (
-              <Cloud size={14} color={mutedColor} accessible={false} />
-            ) : null}
           </View>
           <Typography.Paragraph
             type="body-xs"

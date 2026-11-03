@@ -171,10 +171,10 @@ export function ServerMenu(props: ServerMenuProps) {
               );
             }}
           </For>
-          <SwapLabel class="sidebar-server-name-label" text={props.serverName} from={shownBefore?.name} />
           <Show when={activeServer()?.origin === "cloud"}>
             <Cloud class="sidebar-server-cloud" aria-hidden="true" />
           </Show>
+          <SwapLabel class="sidebar-server-name-label" text={props.serverName} from={shownBefore?.name} />
           <Show when={activeSleep()}>
             {(sleep) => <Moon class="sidebar-server-name-sleep" data-state={sleep()} aria-hidden="true" />}
           </Show>
@@ -223,10 +223,10 @@ export function ServerMenu(props: ServerMenuProps) {
                       <span class="server-menu-mark" aria-hidden="true">
                         <ServerMark server={server()} />
                       </span>
-                      <span class="server-menu-name">{server().name}</span>
                       <Show when={server().origin === "cloud"}>
                         <Cloud class="server-menu-cloud" aria-hidden="true" />
                       </Show>
+                      <span class="server-menu-name">{server().name}</span>
                       <ServerSleepDot server={server()} class="server-menu-sleep" />
                       <Show when={server().notificationsMuted}>
                         <BellOff class="server-menu-muted size-3" aria-hidden="true" />
