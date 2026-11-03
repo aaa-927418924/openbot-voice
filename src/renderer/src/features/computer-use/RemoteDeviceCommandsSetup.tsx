@@ -30,6 +30,8 @@ interface RemoteDeviceCommandsState {
   directoriesText: string;
   loading: boolean;
   loadingPermission: boolean;
+  localHostSettings: { supported: boolean; enabled: boolean } | null;
+  savingLocalHost: boolean;
   saving: boolean;
   error: string | null;
   notice: string | null;
@@ -73,6 +75,8 @@ export function RemoteDeviceCommandsSetup() {
     directoriesText: "",
     loading: true,
     loadingPermission: false,
+    localHostSettings: null,
+    savingLocalHost: false,
     saving: false,
     error: null,
     notice: null,
@@ -84,21 +88,28 @@ export function RemoteDeviceCommandsSetup() {
   const selectedAgent = () => state.agents.find((agent) => agent.id === state.agentId) ?? null;
   const selectedTarget = () => state.targets.find((target) => target.serverId === state.serverId) ?? null;
   const patchState = (patch: Partial<RemoteDeviceCommandsState>) => setState((current) => ({ ...current, ...patch }));
-  async function loadDevices(): Promise<void> {
+  async function loadDevices(preferLocalTarget = false): Promise<void> {
     patchState({ loading: true, error: null });
     try {
-      const [agents, targets] = await Promise.all([
+      const [agents, targets, localHostSettings] = await Promise.all([
         remoteDeviceCommandsPort().listAgents(),
         remoteDeviceCommandsPort().deviceCommands.listTargets(),
+        remoteDeviceCommandsPort().getLocalHostSettings(),
       ]);
       if (disposed) return;
-      patchState({ agents, targets });
+      patchState({ agents, targets, localHostSettings });
       setState((current) => ({
         ...current,
         agentId: agents.some((agent) => agent.id === current.agentId) ? current.agentId : (agents[0]?.id ?? ""),
-        serverId: targets.some((target) => target.serverId === current.serverId && target.state === "online")
-          ? current.serverId
-          : (targets.find((target) => target.state === "online")?.serverId ?? ""),
+        serverId:
+          !preferLocalTarget &&
+          targets.some(
+            (target) => target.serverId === current.serverId && (target.state === "online" || target.isLocal),
+          )
+            ? current.serverId
+            : (targets.find((target) => target.isLocal)?.serverId ??
+              targets.find((target) => target.state === "online")?.serverId ??
+              ""),
       }));
     } catch (cause) {
       if (!disposed) patchState({ error: errorMessage(cause, t("computerUse.remote.error.load")) });
@@ -107,9 +118,26 @@ export function RemoteDeviceCommandsSetup() {
     }
   }
 
+  async function setLocalHostEnabled(enabled: boolean): Promise<void> {
+    if (state.savingLocalHost) return;
+    patchState({ savingLocalHost: true, error: null, notice: null });
+    try {
+      const localHostSettings = await remoteDeviceCommandsPort().setLocalHostSettings({ enabled });
+      if (disposed) return;
+      patchState({ localHostSettings });
+      await loadDevices(enabled);
+    } catch (cause) {
+      if (!disposed) patchState({ error: errorMessage(cause, t("computerUse.remote.error.localServer")) });
+    } finally {
+      if (!disposed) patchState({ savingLocalHost: false });
+    }
+  }
+
+  const canEditSelectedTarget = () => selectedTarget()?.isLocal === true || selectedTarget()?.state === "online";
+
   async function loadPermission(serverId: string, agentId: string): Promise<void> {
     patchState({ permission: null, executablesText: "", directoriesText: "", notice: null });
-    if (!serverId || !agentId || selectedTarget()?.state !== "online") {
+    if (!serverId || !agentId || !canEditSelectedTarget()) {
       patchState({ loadingPermission: false });
       return;
     }
@@ -142,7 +170,7 @@ export function RemoteDeviceCommandsSetup() {
     const target = selectedTarget();
     const agent = selectedAgent();
     const permission = state.permission;
-    if (target?.state !== "online" || !agent || !permission || state.saving) return;
+    if (!target || (!target.isLocal && target.state !== "online") || !agent || !permission || state.saving) return;
     patchState({ saving: true, error: null, notice: null });
     try {
       const saved = await remoteDeviceCommandsPort().deviceCommands.updatePermission({
@@ -205,6 +233,31 @@ export function RemoteDeviceCommandsSetup() {
             {state.notice}
           </p>
         </Show>
+        <Show when={state.localHostSettings?.supported}>
+          <ItemGroup class="settings-modal-card remote-device-commands-local-host">
+            <SwitchField
+              checked={state.localHostSettings?.enabled === true}
+              disabled={state.savingLocalHost}
+              onChange={(enabled) => void setLocalHostEnabled(enabled)}
+              label={t("computerUse.remote.localServer.title")}
+              description={t("computerUse.remote.localServer.description")}
+            />
+            <Show when={state.localHostSettings?.enabled}>
+              <div class="remote-device-commands-save">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  loading={state.savingLocalHost}
+                  disabled={state.savingLocalHost}
+                  onClick={() => void setLocalHostEnabled(true)}
+                >
+                  {t("computerUse.remote.localServer.reconnect")}
+                </Button>
+              </div>
+            </Show>
+          </ItemGroup>
+        </Show>
         <Show when={!state.loading && state.error === null && state.agents.length === 0}>
           <p class="remote-device-commands-message">{t("computerUse.remote.empty.agents")}</p>
         </Show>
@@ -237,25 +290,37 @@ export function RemoteDeviceCommandsSetup() {
                 value={selectedTarget() ?? undefined}
                 optionValue="serverId"
                 optionTextValue="name"
-                optionDisabled={(target) => target.state !== "online"}
+                optionDisabled={(target) => !target.isLocal && target.state !== "online"}
                 onOpenChange={onSelectOpen}
                 onChange={(target) => target && patchState({ serverId: target.serverId })}
                 itemComponent={(item) => (
                   <SelectItem item={item.item}>
-                    {item.item.rawValue.name} · {t(SERVER_STATE_KEYS[item.item.rawValue.state])}
+                    {item.item.rawValue.isLocal
+                      ? t("computerUse.remote.thisComputer", { name: item.item.rawValue.name })
+                      : `${item.item.rawValue.name} · ${t(SERVER_STATE_KEYS[item.item.rawValue.state])}`}
                   </SelectItem>
                 )}
               >
                 <SelectTrigger size="sm" aria-label={t("computerUse.remote.device")}>
-                  <SelectValue<RemoteDeviceCommandTarget>>{(option) => option.selectedOption()?.name}</SelectValue>
+                  <SelectValue<RemoteDeviceCommandTarget>>
+                    {(option) => {
+                      const target = option.selectedOption();
+                      return target?.isLocal
+                        ? t("computerUse.remote.thisComputer", { name: target.name })
+                        : target?.name;
+                    }}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent mount={selectMount()} />
               </Select>
             </div>
           </div>
 
-          <Show when={selectedTarget()?.state !== "online"}>
+          <Show when={selectedTarget()?.isLocal === false && selectedTarget()?.state !== "online"}>
             <p class="remote-device-commands-message">{t("computerUse.remote.deviceOffline")}</p>
+          </Show>
+          <Show when={selectedTarget()?.isLocal === true && state.localHostSettings?.enabled === false}>
+            <p class="remote-device-commands-message">{t("computerUse.remote.localServer.disabledNotice")}</p>
           </Show>
           <Show when={selectedTarget()?.state === "online" && selectedTarget()?.computerUseAvailable !== true}>
             <p class="remote-device-commands-message">{t("computerUse.remote.computerUseUnavailable")}</p>
@@ -273,7 +338,7 @@ export function RemoteDeviceCommandsSetup() {
                 <ItemGroup class="settings-modal-card remote-device-commands-permissions">
                   <SwitchField
                     checked={permission().commandsEnabled}
-                    disabled={state.loadingPermission || state.saving || selectedTarget()?.state !== "online"}
+                    disabled={state.loadingPermission || state.saving || !canEditSelectedTarget()}
                     onChange={(commandsEnabled) => patchState({ permission: { ...permission(), commandsEnabled } })}
                     label={t("computerUse.remote.commands.title")}
                     description={t("computerUse.remote.commands.description")}
@@ -283,7 +348,7 @@ export function RemoteDeviceCommandsSetup() {
                     disabled={
                       state.loadingPermission ||
                       state.saving ||
-                      selectedTarget()?.state !== "online" ||
+                      !canEditSelectedTarget() ||
                       (selectedTarget()?.computerUseAvailable !== true && !permission().computerUseEnabled)
                     }
                     onChange={(computerUseEnabled) =>
@@ -300,7 +365,7 @@ export function RemoteDeviceCommandsSetup() {
                     <Textarea
                       rows={3}
                       value={state.executablesText}
-                      disabled={state.loadingPermission || state.saving || selectedTarget()?.state !== "online"}
+                      disabled={state.loadingPermission || state.saving || !canEditSelectedTarget()}
                       aria-label={t("computerUse.remote.executables.title")}
                       onValueChange={(value) => patchState({ executablesText: value })}
                     />
@@ -311,7 +376,7 @@ export function RemoteDeviceCommandsSetup() {
                     <Textarea
                       rows={3}
                       value={state.directoriesText}
-                      disabled={state.loadingPermission || state.saving || selectedTarget()?.state !== "online"}
+                      disabled={state.loadingPermission || state.saving || !canEditSelectedTarget()}
                       aria-label={t("computerUse.remote.directories.title")}
                       onValueChange={(value) => patchState({ directoriesText: value })}
                     />
@@ -323,7 +388,7 @@ export function RemoteDeviceCommandsSetup() {
                     type="button"
                     size="sm"
                     loading={state.saving}
-                    disabled={state.loadingPermission || selectedTarget()?.state !== "online"}
+                    disabled={state.loadingPermission || !canEditSelectedTarget()}
                     onClick={() => void savePermission()}
                   >
                     {t("computerUse.remote.save")}

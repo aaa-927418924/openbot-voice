@@ -42,12 +42,22 @@ export const messages = {
   "computerUse.highlight.working": "OpenBot が {title} で作業しています",
   "computerUse.remote.title": "他のデバイス",
   "computerUse.remote.description":
-    "接続中の Windows / Linux OpenBot サーバーで、エージェントごとにコマンド実行と Computer Use を許可します。",
+    "権限は操作対象デバイスに保存されます。Windows / Linux PCをCloudエージェントから操作するには、そのPCのローカルサーバーを有効にして同じアカウントへ公開し、対象に「このPC」を選んでください。",
   "computerUse.remote.refresh": "デバイスを更新",
   "computerUse.remote.agent": "エージェント",
   "computerUse.remote.device": "操作対象デバイス",
   "computerUse.remote.empty.agents": "このサーバーにエージェントがいません。",
-  "computerUse.remote.empty.targets": "利用できる Windows / Linux のリモート OpenBot サーバーがありません。",
+  "computerUse.remote.empty.targets":
+    "操作対象デバイスがありません。対象PCでOpenBotのローカルサーバーを有効にし、同じアカウントへ公開してください。",
+  "computerUse.remote.thisComputer": "このPC（{name}）",
+  "computerUse.remote.localServer.title": "このPCを同じアカウントの他デバイスに公開",
+  "computerUse.remote.localServer.description":
+    "オンにするとこのPCでローカルOpenBotサーバーを起動し、サインイン中のアカウントに公開します。Cloudエージェントから操作する間はオンにしてください。",
+  "computerUse.remote.localServer.reconnect": "共有状態を更新",
+  "computerUse.remote.localServer.disabledNotice":
+    "権限はこのPCに保存できますが、共有をオンにするまで他デバイスからは見えません。",
+  "computerUse.remote.error.localServer":
+    "このPCのOpenBotサーバーを共有できませんでした。サインインと接続状態を確認してください。",
   "computerUse.remote.deviceOffline": "権限を編集するには、対象デバイスを接続してください。",
   "computerUse.remote.computerUseUnavailable": "対象デバイスで Computer Use を利用できません。",
   "computerUse.remote.loading": "このエージェントの権限を読み込んでいます…",

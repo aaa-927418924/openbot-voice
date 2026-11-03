@@ -9,11 +9,13 @@ import type {
   RemoteDeviceComputerUseContentItem,
   RemoteDeviceComputerUseResult,
   RemoteDeviceComputerUseTool,
+  ServerConnectionState,
   UpdateRemoteDeviceCommandTargetInput,
 } from "@openbot/contracts/ipc";
 import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { DEVICE_COMMAND_ROUTES, DEVICE_COMMANDS_CAPABILITY } from "@openbot/contracts/team-protocol/device-commands-v1";
 import { runCauseEffect } from "../backend/effect-boundary";
+import type { DeviceCommandTargetService } from "./remote-device-command-host";
 import type { ResponseDecoder } from "./remote-host-decoding";
 import type { RemoteServerManager } from "./remote-server-manager";
 
@@ -24,6 +26,11 @@ interface DeviceCommandTargetInfo {
   name: string;
   platform: "windows" | "linux";
   computerUseAvailable: boolean;
+}
+
+export interface LocalDeviceCommandTargetOptions {
+  service: Pick<DeviceCommandTargetService, "info" | "getPermission" | "updatePermission">;
+  getState: () => ServerConnectionState;
 }
 
 function decodeTargetInfo(value: unknown): DeviceCommandTargetInfo {
@@ -148,12 +155,21 @@ function stringList(value: unknown, maximumCount: number, maximumLength: number)
 /** Routes owner-controlled device policies and agent operations to registered Windows/Linux hosts. */
 export class RemoteDeviceCommandClient {
   readonly #servers: RemoteRequestOptions;
+  readonly #localTarget: LocalDeviceCommandTargetOptions | null;
 
-  constructor(servers: RemoteRequestOptions) {
+  constructor(servers: RemoteRequestOptions, localTarget: LocalDeviceCommandTargetOptions | null = null) {
     this.#servers = servers;
+    this.#localTarget = localTarget;
   }
 
   async listTargets(): Promise<RemoteDeviceCommandTarget[]> {
+    const localTarget = await this.#localTargetInfo();
+    const result: RemoteDeviceCommandTarget[] = localTarget ? [localTarget] : [];
+    result.push(...(await this.#listRemoteTargets()));
+    return result;
+  }
+
+  async #listRemoteTargets(): Promise<RemoteDeviceCommandTarget[]> {
     const result: RemoteDeviceCommandTarget[] = [];
     for (const server of this.#servers.list()) {
       if (
@@ -165,7 +181,7 @@ export class RemoteDeviceCommandClient {
       }
       try {
         const info = await this.#request(server.id, DEVICE_COMMAND_ROUTES.info, decodeTargetInfo);
-        result.push({ ...info, state: server.state });
+        result.push({ ...info, state: server.state, isLocal: false });
       } catch {
         // A server can disconnect between the summary and this request. Keep the rest of the list usable.
       }
@@ -175,10 +191,17 @@ export class RemoteDeviceCommandClient {
 
   async listTargetsForAgent(agentId: string): Promise<RemoteDeviceCommandAgentTarget[]> {
     const result: RemoteDeviceCommandAgentTarget[] = [];
-    for (const target of await this.listTargets()) {
+    for (const target of await this.#listRemoteTargets()) {
       try {
-        const permission = await this.getPermission({ serverId: target.serverId, agentId });
-        result.push({ ...target, permission });
+        const permission = await this.#getRemotePermission({ serverId: target.serverId, agentId });
+        result.push({
+          serverId: target.serverId,
+          name: target.name,
+          platform: target.platform,
+          state: target.state,
+          computerUseAvailable: target.computerUseAvailable,
+          permission,
+        });
       } catch {
         // The caller still sees targets whose policy can be read. No denied grant is inferred as enabled.
       }
@@ -186,16 +209,52 @@ export class RemoteDeviceCommandClient {
     return result;
   }
 
-  getPermission(input: RemoteDeviceCommandTargetInput): Promise<RemoteDeviceCommandPermission> {
-    const path = `${DEVICE_COMMAND_ROUTES.permissions}?agentId=${encodeURIComponent(input.agentId)}`;
-    return this.#request(input.serverId, path, decodePermission);
+  async getPermission(input: RemoteDeviceCommandTargetInput): Promise<RemoteDeviceCommandPermission> {
+    const localTarget = this.#localTarget;
+    if (localTarget && (await this.#isLocalTarget(input.serverId))) {
+      return runCauseEffect(localTarget.service.getPermission(input.agentId));
+    }
+    return this.#getRemotePermission(input);
   }
 
-  updatePermission(input: UpdateRemoteDeviceCommandTargetInput): Promise<RemoteDeviceCommandPermission> {
+  async updatePermission(input: UpdateRemoteDeviceCommandTargetInput): Promise<RemoteDeviceCommandPermission> {
+    const localTarget = this.#localTarget;
+    if (localTarget && (await this.#isLocalTarget(input.serverId))) {
+      const { permission } = input;
+      return runCauseEffect(
+        localTarget.service.updatePermission({
+          agentId: permission.agentId,
+          commandsEnabled: permission.commandsEnabled,
+          computerUseEnabled: permission.computerUseEnabled,
+          allowedExecutables: permission.allowedExecutables,
+          allowedDirectories: permission.allowedDirectories,
+        }),
+      );
+    }
     return this.#request(input.serverId, DEVICE_COMMAND_ROUTES.updatePermissions, decodePermission, {
       method: "POST",
       body: input.permission,
     });
+  }
+
+  async #localTargetInfo(): Promise<RemoteDeviceCommandTarget | null> {
+    if (!this.#localTarget) return null;
+    try {
+      const info = await runCauseEffect(this.#localTarget.service.info());
+      return { ...info, state: this.#localTarget.getState(), isLocal: true };
+    } catch {
+      // A local identity is not guaranteed before the user creates a local server.
+      return null;
+    }
+  }
+
+  async #isLocalTarget(serverId: string): Promise<boolean> {
+    return (await this.#localTargetInfo())?.serverId === serverId;
+  }
+
+  #getRemotePermission(input: RemoteDeviceCommandTargetInput): Promise<RemoteDeviceCommandPermission> {
+    const path = `${DEVICE_COMMAND_ROUTES.permissions}?agentId=${encodeURIComponent(input.agentId)}`;
+    return this.#request(input.serverId, path, decodePermission);
   }
 
   run(input: RemoteDeviceCommandInput & { serverId: string }): Promise<RemoteDeviceCommandResult> {

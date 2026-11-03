@@ -25,10 +25,12 @@ export interface RemoteDeviceCommandTarget {
   platform: "windows" | "linux";
   state: ServerConnectionState;
   computerUseAvailable: boolean;
+  /** True only for the local settings target. Local targets are never exposed to agents. */
+  isLocal: boolean;
 }
 
 /** Target metadata plus the current agent's permission, exposed to that agent's tool only. */
-export interface RemoteDeviceCommandAgentTarget extends RemoteDeviceCommandTarget {
+export interface RemoteDeviceCommandAgentTarget extends Omit<RemoteDeviceCommandTarget, "isLocal"> {
   permission: RemoteDeviceCommandPermission;
 }
 

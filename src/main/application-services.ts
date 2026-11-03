@@ -50,6 +50,7 @@ import type {
   HostStatus,
   LocalHostSettings,
   ProviderRuntimeSnapshot,
+  ServerConnectionState,
   ServerMigrationJobSnapshot,
   VoiceModelStatus,
 } from "@openbot/contracts/ipc";
@@ -1658,6 +1659,16 @@ export async function createApplicationServices({
           },
         })
       : null;
+  const deviceCommandHost =
+    process.platform === "win32" || process.platform === "linux"
+      ? new RemoteDeviceCommandHost({
+          userDataPath: app.getPath("userData"),
+          getServerId: () => teamStore.getIdentity()?.serverId ?? null,
+          getServerName: () => teamStore.getIdentity()?.serverName ?? "",
+          cuaDriver,
+          platform: process.platform,
+        })
+      : null;
   const host = new HostService({
     appVersion: app.getVersion(),
     store: teamStore,
@@ -1678,17 +1689,7 @@ export async function createApplicationServices({
     agentImport,
     // Each Windows/Linux target owns its default-deny policy in this profile. This works in both
     // desktop and server mode, so a headless Cloud host can control other registered devices.
-    ...(process.platform === "win32" || process.platform === "linux"
-      ? {
-          deviceCommands: new RemoteDeviceCommandHost({
-            userDataPath: app.getPath("userData"),
-            getServerId: () => teamStore.getIdentity()?.serverId ?? null,
-            getServerName: () => teamStore.getIdentity()?.serverName ?? "",
-            cuaDriver,
-            platform: process.platform,
-          }),
-        }
-      : {}),
+    ...(deviceCommandHost ? { deviceCommands: deviceCommandHost } : {}),
     // Present on a Linux host. It advertises `server-migration-v1`.
     serverMigration: serverMigrationDestination?.migration,
     // Each member present advertises its admin capability. Every admin route requires an owner or admin.
@@ -2067,7 +2068,22 @@ export async function createApplicationServices({
   teamWebRtcBridge.on("accountServersChanged", () => void Effect.runPromise(remoteServers.invalidateDirectory()));
   teardown.push(TEARDOWN_ORDER.remoteServers, "the remote servers", () => runCauseEffect(remoteServers.stop()));
   await runCauseEffect(remoteServers.initialize());
-  remoteDeviceCommandClient = new RemoteDeviceCommandClient(remoteServers);
+  remoteDeviceCommandClient = new RemoteDeviceCommandClient(
+    remoteServers,
+    localHostSettingsSupported && deviceCommandHost
+      ? {
+          service: deviceCommandHost,
+          getState: (): ServerConnectionState => {
+            if (!localHostPreference.enabled) return "offline";
+            const status = host.getStatus();
+            if (status.phase === "online") return status.apiOnline ? "online" : "connecting";
+            if (status.phase === "starting") return "connecting";
+            if (status.phase === "error") return "error";
+            return "offline";
+          },
+        }
+      : null,
+  );
   criticalActionTargets = { agents: service, remoteServers };
   const serverMigration =
     !serverModeEnvironment && !cloudHostMode && (process.platform === "win32" || process.platform === "linux")

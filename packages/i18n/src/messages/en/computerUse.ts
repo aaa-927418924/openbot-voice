@@ -41,12 +41,22 @@ export const messages = defineMessages("computerUse", {
   "computerUse.highlight.working": "OpenBot is working in {title}",
   "computerUse.remote.title": "Other devices",
   "computerUse.remote.description":
-    "Grant each agent command access or Computer Use on a connected Windows or Linux OpenBot server.",
+    "Permissions are stored on the target device. To let a Cloud agent operate a Windows or Linux PC, enable that PC’s local server, share it with the same account, and choose This computer as the target.",
   "computerUse.remote.refresh": "Refresh devices",
   "computerUse.remote.agent": "Agent",
   "computerUse.remote.device": "Target device",
   "computerUse.remote.empty.agents": "This server has no agents yet.",
-  "computerUse.remote.empty.targets": "No remote Windows or Linux OpenBot servers are available.",
+  "computerUse.remote.empty.targets":
+    "No target devices are available. Enable the local OpenBot server on the target PC and share it with the same account.",
+  "computerUse.remote.thisComputer": "This computer ({name})",
+  "computerUse.remote.localServer.title": "Share this PC with other devices on this account",
+  "computerUse.remote.localServer.description":
+    "Turn this on to start this PC’s local OpenBot server and share it with the signed-in account. Keep it on while Cloud agents need to operate this PC.",
+  "computerUse.remote.localServer.reconnect": "Refresh sharing",
+  "computerUse.remote.localServer.disabledNotice":
+    "You can save permissions on this PC, but other devices cannot see it until sharing is on.",
+  "computerUse.remote.error.localServer":
+    "OpenBot could not share this PC. Check account sign-in and connection status.",
   "computerUse.remote.deviceOffline": "Connect the target device to edit its permissions.",
   "computerUse.remote.computerUseUnavailable": "Computer Use is not ready on this target device.",
   "computerUse.remote.loading": "Loading this agent’s permissions…",

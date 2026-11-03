@@ -18,7 +18,8 @@ export function decodeRemoteDeviceCommandTargets(value: unknown): RemoteDeviceCo
       item.name.length > 128 ||
       (item.platform !== "windows" && item.platform !== "linux") ||
       !isOneOf(serverStates, item.state) ||
-      typeof item.computerUseAvailable !== "boolean"
+      typeof item.computerUseAvailable !== "boolean" ||
+      typeof item.isLocal !== "boolean"
     ) {
       throw new Error("Invalid remote device list response.");
     }
@@ -28,6 +29,7 @@ export function decodeRemoteDeviceCommandTargets(value: unknown): RemoteDeviceCo
       platform: item.platform,
       state: item.state,
       computerUseAvailable: item.computerUseAvailable,
+      isLocal: item.isLocal,
     };
   });
 }

@@ -39,7 +39,7 @@ export const REMOTE_DEVICE_TOOL_DEFINITIONS = [
   {
     name: "list_remote_devices",
     description:
-      "List online Windows/Linux OpenBot servers that you can operate, and your current per-device command and Computer Use grants. A grant is off unless the user enabled it in Settings.",
+      "List online Windows/Linux OpenBot servers that you can operate, and your current per-device command and Computer Use grants. A grant is off unless the user enabled it in Settings. If the list is empty, explain that the target PC must run and share its local OpenBot server with the same account; a permission saved on this Cloud host does not publish another PC.",
     shape: {},
   },
   {
