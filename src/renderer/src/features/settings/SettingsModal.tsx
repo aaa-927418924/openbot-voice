@@ -228,13 +228,21 @@ export function SettingsModal(props: SettingsModalProps) {
           </Tabs.Content>
         </Show>
 
-        <Tabs.Content value="computer-use" class="settings-modal-tab-panel" data-tab="computer-use">
-          {/* Windows and Linux have no OS permission rows. Reading their status starts the native
-              driver, so keep opening device settings from starting Computer Use as a side effect. */}
-          <Show when={props.appInfo?.platform === "darwin"}>
-            <ComputerUseSetup variant="settings" />
+        <Tabs.Content
+          value="computer-use"
+          forceMount
+          class="settings-modal-tab-panel"
+          data-tab="computer-use"
+          data-selected={activeTab() === "computer-use" ? "" : undefined}
+        >
+          <Show when={activeTab() === "computer-use"}>
+            {/* Windows and Linux have no OS permission rows. Reading their status starts the native
+                driver, so keep opening device settings from starting Computer Use as a side effect. */}
+            <Show when={props.appInfo?.platform === "darwin"}>
+              <ComputerUseSetup variant="settings" />
+            </Show>
+            <RemoteDeviceCommandsSetup />
           </Show>
-          <RemoteDeviceCommandsSetup />
         </Tabs.Content>
 
         <Tabs.Content value="profile" class="settings-modal-tab-panel" data-tab="profile">
