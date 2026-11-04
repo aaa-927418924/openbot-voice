@@ -11,6 +11,13 @@ import { spawnAgentDatabaseHost } from "./agent-database-host-process";
 import { LocalSkillLibrary } from "./local-skill-library";
 import { localSkillTools } from "./local-skill-tools";
 import { MAC_PERMISSION_URLS } from "./mac-permission-urls";
+import {
+  remoteDeviceDiagnosticsLogger,
+  remoteDeviceEndpointTag,
+  remoteDeviceFailureDetails,
+  remoteDeviceOperationId,
+  remoteDeviceTag,
+} from "./remote-device-diagnostics";
 import { RemoteWorkflowError, toRemoteWorkflowError } from "./remote-service-effects";
 
 /**
@@ -129,7 +136,7 @@ import { HostedServerStartRetry } from "./hosted-server-start-retry";
 import { HostedSiteDesktopService } from "./hosted-site-service";
 import { IdleRestart } from "./idle-restart";
 import { LanguageService } from "./language-service";
-import { canRegisterLocalHostForAccount } from "./local-host-account-registration";
+import { canRegisterHostForAccount } from "./local-host-account-registration";
 import { ensureLocalHostConfigured } from "./local-host-setup";
 import { localRoutineFeedDocument } from "./local-routine-calendar";
 import { LocalServerPreferenceStore } from "./local-server-preference-store";
@@ -1951,6 +1958,7 @@ export async function createApplicationServices({
   analytics.flushPending();
   const trace = new TraceFile({ directory: join(app.getPath("userData"), "logs") });
   teardown.push(TEARDOWN_ORDER.trace, "the trace file", () => Effect.runPromise(trace.close()));
+  let lastLocalRegistrationDiagnosticState: string | null = null;
   const remoteServers = new RemoteServerManager(
     join(app.getPath("userData"), REMOTE_SERVERS_FILE),
     safeStorageCipher("error.app.macSecureStorageUnavailable"),
@@ -2004,32 +2012,71 @@ export async function createApplicationServices({
       allowTailscaleApiUrl: localOnlyNetworking,
       localOnlyNetworking,
       isLocalServerEnabled: () => localHostPreference.enabled,
-      getLocalAccountServerRegistration: () => {
+      getLocalAccountServerRegistration: (operationId = remoteDeviceOperationId()) => {
         const account = selfHostedDesktopAccount.getState();
-        if (
-          !canRegisterLocalHostForAccount({
-            signedInAccountId: account.status === "signed_in" ? account.user.id : null,
-            ownerAccountId: teamStore.getOwnerAccountId(),
-            localHostEnabled: localHostPreference.enabled,
-          })
-        ) {
-          return null;
-        }
+        const accountId = account.status === "signed_in" ? account.user.id : null;
+        const ownerAccountId = teamStore.getOwnerAccountId();
+        const hostPublished = localHostPreference.enabled || deviceSharePreference.enabled;
+        const eligible = canRegisterHostForAccount({
+          signedInAccountId: accountId,
+          ownerAccountId,
+          hostPublished,
+        });
         const identity = teamStore.getIdentity();
         const status = getHostStatusForAccountDirectory?.();
         const membershipId = teamStore.getOwnerMemberId();
-        if (
-          !identity ||
-          !membershipId ||
-          !status ||
-          status.serverId !== identity.serverId ||
-          status.phase !== "online" ||
-          !status.apiOnline ||
-          !status.apiUrl ||
-          !isTailscaleApiUrl(status.apiUrl)
-        ) {
-          return null;
+        const endpointAllowed = Boolean(status?.apiUrl && isTailscaleApiUrl(status.apiUrl));
+        const hostOnline = Boolean(status?.phase === "online" && status.apiOnline);
+        const identityMatchesStatus = Boolean(identity && status?.serverId === identity.serverId);
+        const registrationReady = Boolean(
+          eligible &&
+            identity &&
+            membershipId &&
+            status &&
+            identityMatchesStatus &&
+            hostOnline &&
+            status.apiUrl &&
+            endpointAllowed,
+        );
+        const diagnosticState = JSON.stringify({
+          accountSignedIn: accountId !== null,
+          ownerAccountMatches: accountId !== null && accountId === ownerAccountId,
+          hostPublished,
+          regularLocalServerEnabled: localHostPreference.enabled,
+          deviceSharingEnabled: deviceSharePreference.enabled,
+          identityAvailable: identity !== null,
+          membershipAvailable: membershipId !== null,
+          hostStatusAvailable: status !== undefined,
+          hostOnline,
+          identityMatchesStatus,
+          endpointAllowed,
+          serverTag: identity ? remoteDeviceTag(identity.serverId) : null,
+          endpointTag: status?.apiUrl ? remoteDeviceEndpointTag(status.apiUrl) : null,
+          eligible,
+          registrationReady,
+        });
+        if (diagnosticState !== lastLocalRegistrationDiagnosticState) {
+          lastLocalRegistrationDiagnosticState = diagnosticState;
+          remoteDeviceDiagnosticsLogger.info("Remote device local registration eligibility checked.", {
+            operationId,
+            accountSignedIn: accountId !== null,
+            ownerAccountMatches: accountId !== null && accountId === ownerAccountId,
+            hostPublished,
+            regularLocalServerEnabled: localHostPreference.enabled,
+            deviceSharingEnabled: deviceSharePreference.enabled,
+            identityAvailable: identity !== null,
+            membershipAvailable: membershipId !== null,
+            hostStatusAvailable: status !== undefined,
+            hostOnline,
+            identityMatchesStatus,
+            endpointAllowed,
+            ...(identity ? { serverTag: remoteDeviceTag(identity.serverId) } : {}),
+            ...(status?.apiUrl ? { endpointTag: remoteDeviceEndpointTag(status.apiUrl) } : {}),
+            eligible,
+            registrationReady,
+          });
         }
+        if (!registrationReady || !identity || !membershipId || !status?.apiUrl) return null;
         return {
           hostId: identity.serverId,
           name: identity.serverName,
@@ -2039,6 +2086,7 @@ export async function createApplicationServices({
           logoKey: identity.logoVersion,
           membershipId,
           role: "owner" as const,
+          deviceOnly: deviceOnlyHost(),
           ...(cloudHostMode ? { origin: "cloud" as const } : {}),
         };
       },
@@ -2090,10 +2138,29 @@ export async function createApplicationServices({
   teamWebRtcBridge.on("accountServersChanged", () => void Effect.runPromise(remoteServers.invalidateDirectory()));
   teardown.push(TEARDOWN_ORDER.remoteServers, "the remote servers", () => runCauseEffect(remoteServers.stop()));
   await runCauseEffect(remoteServers.initialize());
+  const sharingHostId = teamStore.getIdentity()?.serverId;
+  remoteDeviceDiagnosticsLogger.info("Remote device sharing state loaded.", {
+    sharingEnabled: deviceSharePreference.enabled,
+    regularLocalServerEnabled: localHostPreference.enabled,
+    hostIdentityAvailable: sharingHostId !== undefined,
+    ...(sharingHostId ? { serverTag: remoteDeviceTag(sharingHostId) } : {}),
+  });
   const setRemoteDeviceShareSettings = async ({ enabled }: { enabled: boolean }) => {
+    const operationId = remoteDeviceOperationId();
     if (!localHostSettingsSupported || !deviceCommandHost) {
+      remoteDeviceDiagnosticsLogger.warn("Remote device sharing is unsupported on this host.", { operationId });
       return { supported: false, enabled: deviceSharePreference.enabled };
     }
+    const previousEnabled = deviceSharePreference.enabled;
+    const hostIdBeforeChange = teamStore.getIdentity()?.serverId;
+    let stage = "prepare_host";
+    remoteDeviceDiagnosticsLogger.info("Remote device sharing change started.", {
+      operationId,
+      requestedEnabled: enabled,
+      previousEnabled,
+      hostIdentityAvailable: hostIdBeforeChange !== undefined,
+      ...(hostIdBeforeChange ? { serverTag: remoteDeviceTag(hostIdBeforeChange) } : {}),
+    });
     const updateVisibility = async (
       hostId: string,
       visible: boolean,
@@ -2112,38 +2179,86 @@ export async function createApplicationServices({
       if (!proof) throw new Error(sourceText("error.team.visibilityOwnerRequired"));
       onRequestStarted?.();
       await Effect.runPromise(selfHostedDesktopAccount.setAccountServerVisibility(proof, registration ?? undefined));
+      remoteDeviceDiagnosticsLogger.info("Remote device account visibility updated.", {
+        operationId,
+        serverTag: remoteDeviceTag(hostId),
+        visible,
+        registrationProvided: registration !== null,
+      });
     };
 
-    const previousEnabled = deviceSharePreference.enabled;
-    const hostIdBeforeChange = teamStore.getIdentity()?.serverId;
     if (enabled) {
       let visibilityRequestStarted = false;
       try {
+        stage = "prepare_host";
         await ensureLocalHost();
         await deviceSharePreference.setEnabled(true);
+        stage = "start_host";
         const status = localHostRetry ? await localHostRetry.start() : await runCauseEffect(host.start());
+        remoteDeviceDiagnosticsLogger.info("Remote device host startup finished.", {
+          operationId,
+          phase: status?.phase ?? "unknown",
+          apiOnline: status?.apiOnline ?? false,
+        });
         if (status?.phase !== "online" || !status.apiOnline) {
           throw new Error(status?.message || sourceText("error.team.serverDirectoryUnavailable"));
         }
+        stage = "resolve_account_registration";
         const account = selfHostedDesktopAccount.signedInAccount;
         const hostId = teamStore.getIdentity()?.serverId;
+        remoteDeviceDiagnosticsLogger.info("Remote device sharing prerequisites checked.", {
+          operationId,
+          accountSignedIn: account !== null,
+          hostIdentityAvailable: hostId !== undefined,
+          accountDirectoryAvailable: !selfHostedIdentityApi || selfHostedAccountServerDirectory !== null,
+        });
         if (!account || !hostId) throw new Error("Sign in to share this PC.");
         if (selfHostedIdentityApi && !selfHostedAccountServerDirectory) {
           throw new Error(sourceText("error.team.serverDirectoryUnavailable"));
         }
         const registration = getLocalOwnerServerRegistration(account.id, true);
+        remoteDeviceDiagnosticsLogger.info("Remote device share registration checked.", {
+          operationId,
+          serverTag: remoteDeviceTag(hostId),
+          registrationAvailable: registration !== null,
+        });
         if (!registration) throw new Error(sourceText("error.team.visibilityOwnerRequired"));
+        stage = "publish_account_visibility";
         await updateVisibility(hostId, true, registration, () => {
           visibilityRequestStarted = true;
         });
-        await mirrorLocalServerVisibility(selfHostedAccountServerDirectory, hostId, true, (error) =>
-          logger.warn("Could not update the local server-directory mirror:", toLogValue(error)),
-        );
-        await runCauseEffect(remoteServers.localHostVisibilityChanged()).catch((error) =>
-          logger.warn("Could not refresh the local server list after enabling device sharing:", toLogValue(error)),
-        );
+        stage = "update_local_directory_mirror";
+        let localMirrorUpdated = true;
+        await mirrorLocalServerVisibility(selfHostedAccountServerDirectory, hostId, true, () => {
+          localMirrorUpdated = false;
+          remoteDeviceDiagnosticsLogger.warn("Remote device directory mirror update failed.", {
+            operationId,
+            serverTag: remoteDeviceTag(hostId),
+          });
+        });
+        stage = "refresh_remote_directory";
+        let remoteDirectoryRefreshSucceeded = true;
+        await runCauseEffect(remoteServers.localHostVisibilityChanged()).catch((error) => {
+          remoteDirectoryRefreshSucceeded = false;
+          remoteDeviceDiagnosticsLogger.warn("Remote device directory refresh failed.", {
+            operationId,
+            serverTag: remoteDeviceTag(hostId),
+            ...remoteDeviceFailureDetails(error),
+          });
+        });
+        remoteDeviceDiagnosticsLogger.info("Remote device sharing is enabled.", {
+          operationId,
+          serverTag: remoteDeviceTag(hostId),
+          localMirrorUpdated,
+          remoteDirectoryRefreshSucceeded,
+        });
       } catch (error) {
-        logger.error("Could not enable remote device sharing:", toLogValue(error));
+        remoteDeviceDiagnosticsLogger.error("Remote device sharing could not be enabled.", {
+          operationId,
+          stage,
+          ...(hostIdBeforeChange ? { serverTag: remoteDeviceTag(hostIdBeforeChange) } : {}),
+          ...remoteDeviceFailureDetails(error),
+        });
         if (!previousEnabled && !visibilityRequestStarted) {
           await deviceSharePreference.setEnabled(false).catch(() => undefined);
           if (!localHostPreference.enabled) {

@@ -121,6 +121,31 @@ agent keeps its workspace. With OpenCode, OpenBot adds a JSON copy of each drive
 to the result text, because OpenCode shows the model only the text. The copy leaves out the element
 list, because the tree in the text already names each element by its index.
 
+## The desktop app freezes
+
+The desktop app writes `openbot.log` to its user-data `logs` folder. It records redacted app log
+messages, renderer errors, and when the renderer stops responding or recovers. `trace.ndjson` in the
+same folder records IPC names, outcomes and durations without request payloads.
+
+On Windows, press **Win+R**, enter `%APPDATA%\OpenBot\logs`, and press **Enter**. You can open this
+folder while the app is frozen. After reproducing the freeze, attach `openbot.log` and `trace.ndjson`
+here; include `openbot.log.1` too if it exists. The files rotate, so collect them before using the
+app for a long time after the issue.
+
+## An agent cannot see a shared remote device
+
+Ask the agent once to list the remote devices, then collect `openbot.log` from both the computer
+running the agent and the computer that should be shared. The desktop log records whether the agent
+called the list tool, how many devices were candidates, which discovery stage completed, request
+status and duration, and a pseudonymous device tag that joins the two logs. It does not record chat
+messages, agent or device names, commands, file paths, or command/Computer Use grant values. It does
+record whether device sharing was enabled and published. The log is local to each computer and
+rotates to `openbot.log.1` at 1 MiB; attach both files if the rotated file exists.
+
+On Windows, press **Win+R**, enter `%APPDATA%\OpenBot\logs`, and press **Enter**. On Linux, find
+`openbot.log` under the running profile's `logs` directory. For the OpenBot Cloud profile on this
+host, it is `~/.local/share/OpenBotCloud/profile/logs`.
+
 ## A chat is missing after an update
 
 Do not follow the reset steps below. Your messages are stored in one SQLite file, nothing copies it

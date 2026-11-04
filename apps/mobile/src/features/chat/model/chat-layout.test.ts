@@ -156,10 +156,9 @@ describe("chat history window", () => {
     expect([97, Number.NaN].map(isNearChatHistoryStart)).toEqual([false, false]);
   });
 
-  it("loads older history only for a user scroll at the visible list start", () => {
+  it("loads older history for a user scroll at the start even while the list entrance animation is running", () => {
     const ready = {
       userInitiated: true,
-      historyVisible: true,
       canLoad: true,
       hasCachedOlder: false,
       olderError: false,
@@ -168,10 +167,9 @@ describe("chat history window", () => {
       shouldAutoLoadOlderChatHistory(96, ready),
       shouldAutoLoadOlderChatHistory(97, ready),
       shouldAutoLoadOlderChatHistory(0, { ...ready, userInitiated: false }),
-      shouldAutoLoadOlderChatHistory(0, { ...ready, historyVisible: false }),
       shouldAutoLoadOlderChatHistory(0, { ...ready, canLoad: false }),
       shouldAutoLoadOlderChatHistory(0, { ...ready, olderError: true }),
-    ]).toEqual([true, false, false, false, false, false]);
+    ]).toEqual([true, false, false, false, false]);
     expect(shouldAutoLoadOlderChatHistory(0, { ...ready, hasCachedOlder: true, olderError: true })).toBe(true);
   });
 });

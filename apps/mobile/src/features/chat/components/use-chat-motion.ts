@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Keyboard, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
+import {
+  Keyboard,
+  type LayoutChangeEvent,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
+  Platform,
+} from "react-native";
 import { useKeyboardHandler } from "react-native-keyboard-controller";
 import type Animated from "react-native-reanimated";
 import {
@@ -17,12 +23,15 @@ import {
 } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
 import {
+  ANDROID_CHAT_TAIL_GAP,
   type ChatLayout,
   chatBlankSpace,
   chatContentIsVisible,
   chatEndOffset,
   chatSendOffset,
 } from "../model/chat-layout";
+
+const MAX_CHAT_BLANK_SPACE = Platform.OS === "android" ? ANDROID_CHAT_TAIL_GAP : Number.POSITIVE_INFINITY;
 
 export function useChatMotion(
   header: number,
@@ -110,7 +119,7 @@ export function useChatMotion(
   const layout = useSharedValue<ChatLayout>({ viewport: 0, content: 0, header, tailY: 0, tailHeight: 0 });
   const composerHeight = useSharedValue(0);
   const blankSpace = useDerivedValue(() =>
-    lastUserId && layout.get().tailHeight > 0 ? chatBlankSpace(layout.get()) : 0,
+    lastUserId && layout.get().tailHeight > 0 ? chatBlankSpace(layout.get(), MAX_CHAT_BLANK_SPACE) : 0,
   );
   const scrollY = useSharedValue(0);
   const firstOffset = useSharedValue(0);
@@ -161,7 +170,7 @@ export function useChatMotion(
       if (!current.current.ready || !m.layout.viewport || !m.composer) return;
       if (current.current.lastUserId && (m.tailId !== current.current.lastUserId || !m.layout.tailHeight)) return;
       if (m.layout.content + 2 < m.layout.tailY + m.layout.tailHeight) return;
-      const floor = current.current.lastUserId ? chatBlankSpace(m.layout) : 0;
+      const floor = current.current.lastUserId ? chatBlankSpace(m.layout, MAX_CHAT_BLANK_SPACE) : 0;
       // Wait for the native inset commit; Android otherwise clamps to the old range.
       if (m.inset + 2 < Math.max(floor, m.composer)) return;
       const requiredInput = pendingRequiredInput.current;

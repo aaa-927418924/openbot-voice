@@ -57,6 +57,7 @@ import {
   TEAM_MEMBER_DEVICE_LINK_CAPABILITY,
   type TeamCurrentCapability,
 } from "@openbot/contracts/team-protocol/current";
+import { DEVICE_COMMANDS_V2_ROUTES } from "@openbot/contracts/team-protocol/device-commands-v2";
 import {
   HOST_RESTART_EVENT,
   type HostRestartEvent,
@@ -96,6 +97,13 @@ import { StoredStateFailure } from "../backend/stored-state-effects";
 import type { TeamChatStore } from "../backend/team-chat-store";
 import { LifecycleGate } from "./lifecycle-gate";
 import { listenLoopback } from "./listen-loopback";
+import {
+  isRemoteDeviceOperationId,
+  REMOTE_DEVICE_DIAGNOSTIC_OPERATION_HEADER,
+  remoteDeviceDiagnosticsLogger,
+  remoteDeviceOperationId,
+  remoteDeviceTag,
+} from "./remote-device-diagnostics";
 import { RemoteScreenError } from "./remote-screen-gateway";
 import { RemoteWorkflowError, remoteCall, toRemoteWorkflowError } from "./remote-service-effects";
 import { listenOnTailscale, tailnetUrl } from "./tailscale-network";
@@ -158,6 +166,24 @@ const RATE_LIMIT_CAPACITY = 10_000;
 const RUNTIME_SNAPSHOT_REQUEST_INTERVAL_MS = 1_000;
 const TEST_LEGACY_EVENT_PROTOCOL = "openbot-events";
 const TEST_LEGACY_SNAPSHOT_PROTOCOL = "openbot-events-v2";
+
+function isDeviceCommandV2Request(method: string, path: string): boolean {
+  if (!Object.values(DEVICE_COMMANDS_V2_ROUTES).some((route) => route === path)) return false;
+  const getRoutes = new Set<string>([
+    DEVICE_COMMANDS_V2_ROUTES.info,
+    DEVICE_COMMANDS_V2_ROUTES.policy,
+    DEVICE_COMMANDS_V2_ROUTES.computerUseTools,
+  ]);
+  return getRoutes.has(path) ? method === "GET" : method === "POST";
+}
+
+function deviceCommandRouteLabelForDiagnostics(path: string): string {
+  for (const [name, route] of Object.entries(DEVICE_COMMANDS_V2_ROUTES)) {
+    if (route === path) return name;
+  }
+  return "unknown_device_commands_route";
+}
+
 const requireModule = createRequire(import.meta.url);
 const webSockets: typeof Ws = requireModule(join(dirname(requireModule.resolve("ws/package.json")), "index.js"));
 
@@ -550,6 +576,25 @@ export class TeamApiServer {
         capabilities: requestCapabilities(request),
       });
 
+      const isDeviceCommandPath = url.pathname.startsWith("/v2/device-commands/");
+      const deviceOperationId = remoteDeviceOperationId(request.headers[REMOTE_DEVICE_DIAGNOSTIC_OPERATION_HEADER]);
+      if (isDeviceCommandPath) {
+        const identity = this.#options.store.getIdentity();
+        remoteDeviceDiagnosticsLogger.info("Remote device request reached the Team API ingress.", {
+          operationId: deviceOperationId,
+          route: deviceCommandRouteLabelForDiagnostics(url.pathname),
+          method,
+          deviceOnlyHost: this.#options.deviceOnly?.() ?? false,
+          protocol: requestProtocol(request),
+          hasDeviceCommandCapability: requestCapabilities(request).has(DEVICE_COMMANDS_V2_CAPABILITY),
+          authorizationPresent:
+            typeof request.headers.authorization === "string" && request.headers.authorization.length > 0,
+          operationIdHeaderPresent: request.headers[REMOTE_DEVICE_DIAGNOSTIC_OPERATION_HEADER] !== undefined,
+          operationIdHeaderValid: isRemoteDeviceOperationId(request.headers[REMOTE_DEVICE_DIAGNOSTIC_OPERATION_HEADER]),
+          ...(identity ? { serverTag: remoteDeviceTag(identity.serverId) } : {}),
+        });
+      }
+
       // Three gates, in this order, and the order is the whole point of writing them out.
       //
       // `compatibility` is above the protocol gate because it is the endpoint that tells an
@@ -567,9 +612,18 @@ export class TeamApiServer {
         this.#options.deviceOnly?.() &&
         !(
           (method === "GET" && url.pathname === TEAM_API_ROUTES.identity) ||
-          (method === "POST" && url.pathname === TEAM_API_ROUTES.auth.account)
+          (method === "POST" && url.pathname === TEAM_API_ROUTES.auth.account) ||
+          isDeviceCommandV2Request(method, url.pathname)
         )
       ) {
+        if (isDeviceCommandPath) {
+          remoteDeviceDiagnosticsLogger.warn("Remote device request rejected by the device-only route gate.", {
+            operationId: deviceOperationId,
+            route: deviceCommandRouteLabelForDiagnostics(url.pathname),
+            method,
+            status: 404,
+          });
+        }
         return this.#json(response, 404, { error: sourceText("error.team.routeNotFound") });
       }
 
@@ -579,7 +633,17 @@ export class TeamApiServer {
       }
 
       const protocolIssue = this.#protocolIssue(request);
-      if (protocolIssue) return this.#json(response, protocolIssue.status, protocolIssue.body);
+      if (protocolIssue) {
+        if (isDeviceCommandPath) {
+          remoteDeviceDiagnosticsLogger.warn("Remote device request rejected by protocol negotiation.", {
+            operationId: deviceOperationId,
+            route: deviceCommandRouteLabelForDiagnostics(url.pathname),
+            method,
+            status: protocolIssue.status,
+          });
+        }
+        return this.#json(response, protocolIssue.status, protocolIssue.body);
+      }
 
       // The six unauthenticated routes stay here rather than moving to a module of their own. They
       // sit astride the auth gate below, so a module holding them would need a context without a
@@ -710,6 +774,15 @@ export class TeamApiServer {
       const token = bearerToken(request.headers.authorization);
       const authenticated = token ? this.#options.store.authenticateSession(token) : null;
       if (!authenticated || !token) {
+        if (isDeviceCommandPath) {
+          remoteDeviceDiagnosticsLogger.warn("Remote device request rejected by Team API authentication.", {
+            operationId: deviceOperationId,
+            route: deviceCommandRouteLabelForDiagnostics(url.pathname),
+            method,
+            authorizationPresent: typeof request.headers.authorization === "string",
+            status: 401,
+          });
+        }
         return this.#json(response, 401, { error: sourceText("error.team.authenticationRequired") });
       }
       if (isClientUse(method, url.pathname)) this.#lastClientUseAt = Date.now();
@@ -717,6 +790,14 @@ export class TeamApiServer {
       if (this.#options.deviceOnly?.()) {
         if ((await routeDeviceCommandsV2(context, { deviceCommands: this.#options.deviceCommands })) === "handled")
           return;
+        if (isDeviceCommandPath) {
+          remoteDeviceDiagnosticsLogger.warn("Remote device request did not match a device-only route.", {
+            operationId: deviceOperationId,
+            route: deviceCommandRouteLabelForDiagnostics(url.pathname),
+            method,
+            status: 404,
+          });
+        }
         return this.#json(response, 404, { error: sourceText("error.team.routeNotFound") });
       }
       const hidden = this.#hiddenAgentIds(context.protocol, context.capabilities);
@@ -761,6 +842,14 @@ export class TeamApiServer {
       if ((await routeHostedSites(context, this.#options.hostedSites)) === "handled") return;
       if ((await routeDeviceCommandsV2(context, { deviceCommands: this.#options.deviceCommands })) === "handled")
         return;
+      if (isDeviceCommandPath) {
+        remoteDeviceDiagnosticsLogger.warn("Remote device request did not match a route.", {
+          operationId: deviceOperationId,
+          route: deviceCommandRouteLabelForDiagnostics(url.pathname),
+          method,
+          status: 404,
+        });
+      }
       if ((await routeAgentAdmin(context, this.#options.admin, hidden)) === "handled") return;
       if ((await routeSkillsAdmin(context, this.#options.admin, hidden)) === "handled") return;
       if ((await routeSharedTables(context, this.#options.admin)) === "handled") return;

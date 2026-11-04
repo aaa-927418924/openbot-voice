@@ -594,16 +594,21 @@ export class SelfHostedDesktopAccountManager {
           }
           if (!response.ok) {
             const code = isDynamicRecord(value) && isString(value.error) ? value.error : "unavailable";
+            const safeCode = /^[A-Za-z0-9_-]{1,80}$/u.test(code) ? code : "unknown";
             const message =
               response.status === 401
                 ? "メールアドレスまたはパスワード、ログイン状態を確認してください。"
                 : response.status === 409 && code === "email_taken"
                   ? "このメールアドレスは既に登録されています。"
-                  : response.status === 429
-                    ? "試行回数が多すぎます。少し待ってから再試行してください。"
-                    : response.status === 404
-                      ? "このサーバーはセルフホストアカウントログインに対応していません。"
-                      : "セルフホストアカウントサーバーに接続できません。";
+                  : response.status === 409 && code === "host_identity_conflict"
+                    ? "このPCの登録情報がアカウントサーバー上の情報と競合しています。アカウントサーバー側の登録状態を確認してください。"
+                    : response.status === 403 && code === "forbidden"
+                      ? "アカウントサーバーがこのPCの所有権署名を確認できませんでした。OpenBotとアカウントサーバーを同じ最新版に更新してください。"
+                      : response.status === 429
+                        ? "試行回数が多すぎます。少し待ってから再試行してください。"
+                        : response.status === 404
+                          ? "このサーバーはセルフホストアカウントログインに対応していません。"
+                          : `アカウントサーバーが要求を拒否しました（HTTP ${response.status}、${safeCode}）。`;
             throw new Error(message);
           }
           return value;

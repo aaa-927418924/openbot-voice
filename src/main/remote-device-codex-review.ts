@@ -1,6 +1,7 @@
 import { execFile, spawn } from "node:child_process";
 import type { RemoteDeviceCommandInput, RemoteDeviceCommandResult } from "@openbot/contracts/ipc";
 import { isDynamicRecord } from "@openbot/contracts/runtime-values";
+import { createOpenBotLogger } from "@openbot/logging";
 import type { CodexCliInfo } from "../backend/cli";
 import { cliSpawnTarget } from "../backend/cli";
 
@@ -8,9 +9,37 @@ const STATUS_TIMEOUT_MS = 12_000;
 const MAX_REVIEW_OUTPUT = 256_000;
 const COMMAND_TIMEOUT_MS = 180_000;
 const MAX_RESULT_OUTPUT = 30_000;
+const logger = createOpenBotLogger("remote-device-diagnostics");
+
+export type CodexAutoReviewUnavailableStage =
+  | "resolve_cli"
+  | "login_status"
+  | "login_status_timed_out"
+  | "login_status_failed"
+  | "not_logged_in"
+  | "exec_help"
+  | "exec_help_timed_out"
+  | "exec_help_output_exceeded"
+  | "exec_help_failed"
+  | "approve_option_unavailable"
+  | "command_output_exceeded"
+  | "command_result_unrecognized";
+
+interface RemoteCommandExecutionDiagnostics {
+  cliExitCode: number | null;
+  cliTimedOut: boolean;
+  stdoutBytes: number;
+  stderrBytes: number;
+  eventCount: number;
+  commandExecutionCount: number;
+  commandStatuses: string[];
+  commandOutputFieldPresent: boolean;
+  turnCompleted: boolean;
+  turnFailed: boolean;
+}
 
 export class CodexAutoReviewUnavailable extends Error {
-  constructor() {
+  constructor(readonly stage: CodexAutoReviewUnavailableStage) {
     super("Target Codex CLI AutoReview is unavailable or not signed in.");
     this.name = "CodexAutoReviewUnavailable";
   }
@@ -47,7 +76,7 @@ export class CodexAutoReview {
   async run(input: RemoteDeviceCommandInput): Promise<RemoteDeviceCommandResult> {
     const startedAt = Date.now();
     const cli = await this.#resolveCli().catch(() => {
-      throw new CodexAutoReviewUnavailable();
+      throw this.#unavailable("resolve_cli");
     });
     const env = this.#environment();
     const login = await runCli(
@@ -57,21 +86,22 @@ export class CodexAutoReview {
       this.#options.platform,
       STATUS_TIMEOUT_MS,
     ).catch(() => {
-      throw new CodexAutoReviewUnavailable();
+      throw this.#unavailable("login_status");
     });
-    if (login.outputExceeded || login.exitCode !== 0 || !isLoggedIn(login.stdout, login.stderr)) {
-      throw new CodexAutoReviewUnavailable();
-    }
+    if (login.timedOut) throw this.#unavailable("login_status_timed_out");
+    if (login.outputExceeded || login.exitCode !== 0) throw this.#unavailable("login_status_failed");
+    if (!isLoggedIn(login.stdout, login.stderr)) throw this.#unavailable("not_logged_in");
 
     const help = await runCli(cli.executable, ["exec", "--help"], env, this.#options.platform, STATUS_TIMEOUT_MS).catch(
       () => {
-        throw new CodexAutoReviewUnavailable();
+        throw this.#unavailable("exec_help");
       },
     );
     const helpText = `${help.stdout}\n${help.stderr}`;
-    const supported =
-      !help.outputExceeded && !help.timedOut && help.exitCode === 0 && helpText.includes("--approve-for-me");
-    if (!supported) throw new CodexAutoReviewUnavailable();
+    if (help.timedOut) throw this.#unavailable("exec_help_timed_out");
+    if (help.outputExceeded) throw this.#unavailable("exec_help_output_exceeded");
+    if (help.exitCode !== 0) throw this.#unavailable("exec_help_failed");
+    if (!helpText.includes("--approve-for-me")) throw this.#unavailable("approve_option_unavailable");
 
     const executable = input.executable.trim();
     if (
@@ -95,12 +125,9 @@ export class CodexAutoReview {
       "Command payload:",
       payload,
     ].join("\n");
-    if (help.timedOut) throw new CodexAutoReviewUnavailable();
     const args = [
       "exec",
       "--approve-for-me",
-      "--sandbox",
-      "workspace-write",
       "--cd",
       input.workingDirectory,
       "--json",
@@ -116,18 +143,27 @@ export class CodexAutoReview {
       COMMAND_TIMEOUT_MS,
       MAX_REVIEW_OUTPUT,
     );
-    if (result.outputExceeded) throw new CodexAutoReviewUnavailable();
+    if (result.outputExceeded) throw this.#unavailable("command_output_exceeded");
     const command = commandExecutionResult(result.stdout, Date.now() - startedAt);
-    if (!command) {
-      if (autoReviewDenied(result.stdout, result.stderr)) throw new CodexAutoReviewDenied();
-      throw new CodexAutoReviewUnavailable();
+    if (command?.kind === "declined" || autoReviewDenied(result.stdout, result.stderr)) {
+      logger.warn(
+        "Codex AutoReview declined the remote command.",
+        commandExecutionDiagnostics(result.stdout, result.stderr, result.exitCode, result.timedOut),
+      );
+      throw new CodexAutoReviewDenied();
     }
+    if (!command)
+      throw this.#unavailable(
+        "command_result_unrecognized",
+        commandExecutionDiagnostics(result.stdout, result.stderr, result.exitCode, result.timedOut),
+      );
+    const commandResult = command.result;
     return {
-      exitCode: command.exitCode,
-      stdout: command.stdout.slice(0, MAX_RESULT_OUTPUT),
-      stderr: command.stderr.slice(0, MAX_RESULT_OUTPUT),
-      durationMs: command.durationMs,
-      timedOut: command.timedOut || result.timedOut,
+      exitCode: commandResult.exitCode,
+      stdout: commandResult.stdout.slice(0, MAX_RESULT_OUTPUT),
+      stderr: commandResult.stderr.slice(0, MAX_RESULT_OUTPUT),
+      durationMs: commandResult.durationMs,
+      timedOut: commandResult.timedOut || result.timedOut,
     };
   }
 
@@ -163,6 +199,14 @@ export class CodexAutoReview {
 
   #resolveCli(): Promise<CodexCliInfo> {
     return this.#options.resolveCli();
+  }
+
+  #unavailable(
+    stage: CodexAutoReviewUnavailableStage,
+    details?: RemoteCommandExecutionDiagnostics,
+  ): CodexAutoReviewUnavailable {
+    logger.warn("Codex AutoReview could not run the remote command.", details ? { stage, ...details } : { stage });
+    return new CodexAutoReviewUnavailable(stage);
   }
 
   #environment(): NodeJS.ProcessEnv {
@@ -268,17 +312,18 @@ function killTree(child: ReturnType<typeof spawn>, platform: NodeJS.Platform): v
   }
 }
 
-function commandExecutionResult(
-  jsonl: string,
-  durationMs: number,
-): {
+type CommandExecutionResult = {
   exitCode: number | null;
   stdout: string;
   stderr: string;
   durationMs: number;
   timedOut: boolean;
-} | null {
-  const commands = new Map<string, { completed: unknown; failed: boolean }>();
+};
+
+type CommandExecutionParseResult = { kind: "declined" } | { kind: "result"; result: CommandExecutionResult };
+
+function commandExecutionResult(jsonl: string, durationMs: number): CommandExecutionParseResult | null {
+  const commands = new Map<string, { terminal: unknown; failed: boolean }>();
   for (const line of jsonl.split(/\r?\n/u)) {
     if (!line.trim()) continue;
     let event: unknown;
@@ -287,7 +332,7 @@ function commandExecutionResult(
     } catch {
       continue;
     }
-    if (!event || typeof event !== "object" || !("type" in event)) continue;
+    if (!isDynamicRecord(event)) continue;
     if (
       event.type !== "item.started" &&
       event.type !== "item.updated" &&
@@ -295,35 +340,94 @@ function commandExecutionResult(
       event.type !== "item.failed"
     )
       continue;
-    const item = "item" in event ? event.item : null;
-    if (!item || typeof item !== "object" || !("type" in item) || item.type !== "command_execution") continue;
-    if (!("id" in item) || typeof item.id !== "string" || item.id.length === 0) return null;
-    const entry: { completed: unknown; failed: boolean } = commands.get(item.id) ?? { completed: null, failed: false };
-    if (event.type === "item.completed") entry.completed = item;
+    const item = event.item;
+    if (!isDynamicRecord(item) || item.type !== "command_execution") continue;
+    if (typeof item.id !== "string" || item.id.length === 0) return null;
+    const entry: { terminal: unknown; failed: boolean } = commands.get(item.id) ?? { terminal: null, failed: false };
+    if (event.type === "item.completed" || event.type === "item.failed") entry.terminal = item;
     if (event.type === "item.failed") entry.failed = true;
     commands.set(item.id, entry);
   }
   if (commands.size !== 1) return null;
   const command = [...commands.values()][0];
-  if (!command || command.failed || !command.completed || typeof command.completed !== "object") return null;
-  if (!isDynamicRecord(command.completed)) return null;
-  const record = command.completed;
-  if (
-    !(record.exit_code === null || (typeof record.exit_code === "number" && Number.isSafeInteger(record.exit_code))) ||
-    typeof record.aggregated_output !== "string"
-  ) {
-    return null;
-  }
-  const output = record.aggregated_output.slice(0, MAX_RESULT_OUTPUT);
-  if (record.status !== "completed" && record.status !== "timed_out") return null;
-  const stdout = typeof record.stdout === "string" ? record.stdout : output;
+  if (!command?.terminal || !isDynamicRecord(command.terminal)) return null;
+  const record = command.terminal;
+  const status = command.failed ? "failed" : record.status;
+  if (status === "declined") return { kind: "declined" };
+  if (status !== "completed" && status !== "failed" && status !== "timed_out") return null;
+  const exitCode =
+    typeof record.exit_code === "number" && Number.isSafeInteger(record.exit_code)
+      ? record.exit_code
+      : status === "failed"
+        ? -1
+        : null;
+  const aggregatedOutput = typeof record.aggregated_output === "string" ? record.aggregated_output : "";
+  const stdout = typeof record.stdout === "string" ? record.stdout : aggregatedOutput;
   const stderr = typeof record.stderr === "string" ? record.stderr : "";
   return {
-    exitCode: record.exit_code,
-    stdout: stdout.slice(0, MAX_RESULT_OUTPUT),
-    stderr: stderr.slice(0, MAX_RESULT_OUTPUT),
-    durationMs,
-    timedOut: record.status === "timed_out",
+    kind: "result",
+    result: {
+      exitCode,
+      stdout: stdout.slice(0, MAX_RESULT_OUTPUT),
+      stderr: stderr.slice(0, MAX_RESULT_OUTPUT),
+      durationMs,
+      timedOut: status === "timed_out",
+    },
+  };
+}
+
+/** Record only event shape and bounded status values; never record command or CLI output text. */
+function commandExecutionDiagnostics(
+  stdout: string,
+  stderr: string,
+  cliExitCode: number | null,
+  cliTimedOut: boolean,
+): RemoteCommandExecutionDiagnostics {
+  const commandIds = new Set<string>();
+  const commandStatuses = new Set<string>();
+  let eventCount = 0;
+  let outputFieldPresent = false;
+  let turnCompleted = false;
+  let turnFailed = false;
+  for (const line of stdout.split(/\r?\n/u)) {
+    if (!line.trim()) continue;
+    let event: unknown;
+    try {
+      event = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (!isDynamicRecord(event) || typeof event.type !== "string") continue;
+    eventCount += 1;
+    if (event.type === "turn.completed") turnCompleted = true;
+    if (event.type === "turn.failed") turnFailed = true;
+    if (!event.type.startsWith("item.") || !isDynamicRecord(event.item)) continue;
+    const item = event.item;
+    if (item.type !== "command_execution") continue;
+    if (typeof item.id === "string") commandIds.add(item.id);
+    if (
+      typeof item.status === "string" &&
+      ["in_progress", "completed", "failed", "declined", "timed_out"].includes(item.status)
+    )
+      commandStatuses.add(item.status);
+    if (
+      typeof item.aggregated_output === "string" ||
+      typeof item.stdout === "string" ||
+      typeof item.stderr === "string"
+    )
+      outputFieldPresent = true;
+  }
+  return {
+    cliExitCode,
+    cliTimedOut,
+    stdoutBytes: Buffer.byteLength(stdout),
+    stderrBytes: Buffer.byteLength(stderr),
+    eventCount,
+    commandExecutionCount: commandIds.size,
+    commandStatuses: [...commandStatuses],
+    commandOutputFieldPresent: outputFieldPresent,
+    turnCompleted,
+    turnFailed,
   };
 }
 
@@ -336,6 +440,7 @@ function autoReviewDenied(stdout: string, stderr: string): boolean {
       if (isDynamicRecord(item)) {
         const status = "status" in item && typeof item.status === "string" ? item.status.toLowerCase() : "";
         const detail = JSON.stringify(item).toLowerCase();
+        if (item.type === "command_execution" && status === "declined") return true;
         if (
           (event.type === "item.failed" || status.includes("denied") || status.includes("declined")) &&
           /auto.?review|approval|permission|review/u.test(detail) &&

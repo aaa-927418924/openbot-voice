@@ -25,6 +25,8 @@ export interface RemoteTeamHost {
   devicePublicKey: string;
   membershipId: string;
   role: "owner" | "admin" | "member";
+  /** This account host exposes device operations only and must stay out of server pickers. */
+  deviceOnly?: true;
   /** The active members that the host's plan allows. An account server from before plans sends none. */
   memberLimit?: number;
 }
@@ -160,6 +162,7 @@ export class RemoteTeamDirectoryClient {
               !isString(candidate.name) ||
               (candidate.logoKey !== null && !isString(candidate.logoKey)) ||
               !isString(candidate.membershipId) ||
+              !(candidate.deviceOnly === undefined || typeof candidate.deviceOnly === "boolean") ||
               (candidate.role !== "owner" && candidate.role !== "admin" && candidate.role !== "member")
             ) {
               return yield* directoryFailure("A server record is invalid.");
@@ -177,6 +180,7 @@ export class RemoteTeamDirectoryClient {
                 devicePublicKey: pinnedKey ?? candidate.devicePublicKey,
                 membershipId: candidate.membershipId,
                 role: candidate.role,
+                ...(candidate.deviceOnly === true ? { deviceOnly: true as const } : {}),
                 ...(memberLimit === undefined ? {} : { memberLimit }),
               },
             ];

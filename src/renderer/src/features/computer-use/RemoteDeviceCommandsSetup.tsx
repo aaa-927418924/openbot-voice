@@ -1,26 +1,14 @@
-import type {
-  RemoteDeviceCommandPolicy,
-  RemoteDeviceCommandTarget,
-  ServerConnectionState,
-} from "@openbot/contracts/ipc";
-import {
-  Button,
-  ItemGroup,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-  SettingsSection,
-  SwitchField,
-} from "@openbot/ui";
+import type { RemoteDeviceCommandPolicy, RemoteDeviceCommandTarget } from "@openbot/contracts/ipc";
+import { Button, ItemGroup, SettingsSection, SwitchField } from "@openbot/ui";
+import { ProviderCodeLoginDialog, type ProviderCodeLoginState } from "@openbot/ui/components/ProviderCodeLoginDialog";
 import { useText } from "@openbot/ui/text";
-import { createEffect, createSignal, createStore, onCleanup, onSettled, Show } from "solid-js";
+import { createEffect, createStore, onCleanup, onSettled, Show } from "solid-js";
+import { appPort } from "../../app-port";
+import { providersPort } from "../../providers-port";
 import { remoteDeviceCommandsPort } from "./remote-device-commands-port";
 
 interface RemoteDeviceCommandsState {
-  targets: RemoteDeviceCommandTarget[];
-  serverId: string;
+  localTarget: RemoteDeviceCommandTarget | null;
   policy: RemoteDeviceCommandPolicy | null;
   loading: boolean;
   loadingPolicy: boolean;
@@ -29,28 +17,14 @@ interface RemoteDeviceCommandsState {
   savingPolicy: boolean;
   error: string | null;
   notice: string | null;
+  codexLogin: ProviderCodeLoginState | null;
+  signingInCodex: boolean;
 }
-
-const SERVER_STATE_KEYS: Record<
-  ServerConnectionState,
-  | "server.state.online"
-  | "server.state.connecting"
-  | "server.state.offline"
-  | "server.state.error"
-  | "server.state.incompatible"
-> = {
-  online: "server.state.online",
-  connecting: "server.state.connecting",
-  offline: "server.state.offline",
-  error: "server.state.error",
-  incompatible: "server.state.incompatible",
-};
 
 export function RemoteDeviceCommandsSetup() {
   const { t, errorMessage } = useText();
   const [state, setState] = createStore<RemoteDeviceCommandsState>({
-    targets: [],
-    serverId: "",
+    localTarget: null,
     policy: null,
     loading: true,
     loadingPolicy: false,
@@ -59,16 +33,20 @@ export function RemoteDeviceCommandsSetup() {
     savingPolicy: false,
     error: null,
     notice: null,
+    codexLogin: null,
+    signingInCodex: false,
   });
-  const [selectMount, setSelectMount] = createSignal<HTMLElement>();
-  let root: HTMLElement | undefined;
   let disposed = false;
+  let loginPoll: number | undefined;
+  let loginExpiry: number | undefined;
+  let loginNoticeTimeout: number | undefined;
+  let ownsCodexLogin = false;
+  let codexLoginGeneration = 0;
 
-  const selectedTarget = () => state.targets.find((target) => target.serverId === state.serverId) ?? null;
-  const canEditSelectedTarget = () => selectedTarget()?.isLocal === true || selectedTarget()?.state === "online";
+  const canEditLocalTarget = () => state.localTarget?.isLocal === true;
   const patchState = (patch: Partial<RemoteDeviceCommandsState>) => setState((current) => ({ ...current, ...patch }));
 
-  async function loadDevices(preferLocalTarget = false): Promise<void> {
+  async function loadDevices(): Promise<void> {
     patchState({ loading: true, error: null });
     try {
       const [targets, share] = await Promise.all([
@@ -76,19 +54,7 @@ export function RemoteDeviceCommandsSetup() {
         remoteDeviceCommandsPort().deviceCommands.getShareSettings(),
       ]);
       if (disposed) return;
-      patchState({ targets, share });
-      setState((current) => ({
-        ...current,
-        serverId:
-          !preferLocalTarget &&
-          targets.some(
-            (target) => target.serverId === current.serverId && (target.state === "online" || target.isLocal),
-          )
-            ? current.serverId
-            : (targets.find((target) => target.isLocal)?.serverId ??
-              targets.find((target) => target.state === "online")?.serverId ??
-              ""),
-      }));
+      patchState({ localTarget: targets.find((target) => target.isLocal) ?? null, share });
     } catch (cause) {
       if (!disposed) patchState({ error: errorMessage(cause, t("computerUse.remote.error.load")) });
     } finally {
@@ -96,31 +62,146 @@ export function RemoteDeviceCommandsSetup() {
     }
   }
 
-  async function loadPolicy(serverId: string): Promise<void> {
+  function clearCodexLoginTimers(): void {
+    if (loginPoll !== undefined) window.clearInterval(loginPoll);
+    if (loginExpiry !== undefined) window.clearTimeout(loginExpiry);
+    if (loginNoticeTimeout !== undefined) window.clearTimeout(loginNoticeTimeout);
+    loginPoll = undefined;
+    loginExpiry = undefined;
+    loginNoticeTimeout = undefined;
+  }
+
+  async function refreshAutoReviewStatus(): Promise<boolean> {
+    const targets = await remoteDeviceCommandsPort().deviceCommands.listTargets();
+    if (disposed) return false;
+    const localTarget = targets.find((target) => target.isLocal) ?? null;
+    patchState({ localTarget });
+    return localTarget?.autoReviewAvailable === true;
+  }
+
+  function finishCodexLogin(): void {
+    clearCodexLoginTimers();
+    ownsCodexLogin = false;
+    patchState({
+      codexLogin: { phase: "verifying" },
+      signingInCodex: false,
+      notice: t("computerUse.remote.autoReviewReady"),
+    });
+    loginNoticeTimeout = window.setTimeout(() => {
+      if (!disposed) patchState({ codexLogin: null });
+      loginNoticeTimeout = undefined;
+    }, 900);
+  }
+
+  async function checkCodexLogin(): Promise<void> {
+    if (!ownsCodexLogin || state.codexLogin?.phase !== "waiting") return;
+    try {
+      if (await refreshAutoReviewStatus()) finishCodexLogin();
+    } catch {
+      // Leave the code flow open. Its expiry message is more useful than a transient status read.
+    }
+  }
+
+  async function startCodexLogin(): Promise<void> {
+    if (state.signingInCodex || state.codexLogin) return;
+    const generation = ++codexLoginGeneration;
+    clearCodexLoginTimers();
+    patchState({ codexLogin: { phase: "starting" }, signingInCodex: true, error: null, notice: null });
+    try {
+      const started = await providersPort().startProviderCodeLogin("codex");
+      if (disposed || generation !== codexLoginGeneration) {
+        if (started.kind !== "connected")
+          void providersPort()
+            .cancelProviderCodeLogin("codex")
+            .catch(() => undefined);
+        return;
+      }
+      if (started.kind === "connected") {
+        ownsCodexLogin = false;
+        patchState({ codexLogin: null, signingInCodex: false });
+        await loadDevices();
+        return;
+      }
+      if (started.kind !== "code") throw new Error(t("computerUse.remote.signInUnsupported"));
+      ownsCodexLogin = true;
+      patchState({
+        codexLogin: {
+          phase: "waiting",
+          userCode: started.userCode,
+          verificationUrl: started.verificationUrl,
+          ...(started.verificationUrlComplete === undefined
+            ? {}
+            : { verificationUrlComplete: started.verificationUrlComplete }),
+          expiresAt: started.expiresAt,
+        },
+        signingInCodex: false,
+      });
+      loginPoll = window.setInterval(() => void checkCodexLogin(), 5_000);
+      loginExpiry = window.setTimeout(
+        () => {
+          if (loginPoll !== undefined) window.clearInterval(loginPoll);
+          loginPoll = undefined;
+          ownsCodexLogin = false;
+          if (!disposed) {
+            patchState({ codexLogin: null, error: t("computerUse.remote.signInExpired") });
+            void providersPort()
+              .cancelProviderCodeLogin("codex")
+              .catch(() => undefined);
+          }
+          loginExpiry = undefined;
+        },
+        Math.max(0, started.expiresAt - Date.now()),
+      );
+    } catch (cause) {
+      if (!disposed && generation === codexLoginGeneration) {
+        patchState({
+          codexLogin: null,
+          signingInCodex: false,
+          error: errorMessage(cause, t("computerUse.remote.signInError")),
+        });
+      }
+    }
+  }
+
+  function cancelCodexLogin(): void {
+    codexLoginGeneration += 1;
+    const shouldCancel = ownsCodexLogin || state.signingInCodex;
+    ownsCodexLogin = false;
+    clearCodexLoginTimers();
+    patchState({ codexLogin: null, signingInCodex: false });
+    if (shouldCancel)
+      void providersPort()
+        .cancelProviderCodeLogin("codex")
+        .catch(() => undefined);
+  }
+
+  async function loadPolicy(serverId: string | undefined): Promise<void> {
     patchState({ policy: null, notice: null });
-    const target = state.targets.find((candidate) => candidate.serverId === serverId);
-    if (!serverId || !target || (target.state !== "online" && !target.isLocal)) {
+    const target = state.localTarget;
+    if (!serverId || !target || target.serverId !== serverId || !target.isLocal) {
       patchState({ loadingPolicy: false });
       return;
     }
     patchState({ loadingPolicy: true, error: null });
     try {
       const policy = await remoteDeviceCommandsPort().deviceCommands.getPermission({ serverId });
-      if (disposed || state.serverId !== serverId) return;
+      if (disposed || state.localTarget?.serverId !== serverId) return;
       patchState({ policy });
     } catch (cause) {
-      if (!disposed && state.serverId === serverId) {
+      if (!disposed && state.localTarget?.serverId === serverId) {
         patchState({ error: errorMessage(cause, t("computerUse.remote.error.permission")) });
       }
     } finally {
-      if (!disposed && state.serverId === serverId) patchState({ loadingPolicy: false });
+      if (!disposed && state.localTarget?.serverId === serverId) patchState({ loadingPolicy: false });
     }
   }
 
-  createEffect(() => {
-    const serverId = state.serverId;
-    void loadPolicy(serverId);
-  });
+  createEffect(
+    () => state.localTarget?.serverId,
+    (serverId) => {
+      void loadPolicy(serverId);
+    },
+  );
 
   async function setShareEnabled(enabled: boolean): Promise<void> {
     if (state.savingShare) return;
@@ -129,7 +210,7 @@ export function RemoteDeviceCommandsSetup() {
       const share = await remoteDeviceCommandsPort().deviceCommands.setShareSettings({ enabled });
       if (disposed) return;
       patchState({ share });
-      await loadDevices(enabled);
+      await loadDevices();
     } catch (cause) {
       if (!disposed) patchState({ error: errorMessage(cause, t("computerUse.remote.error.share")) });
     } finally {
@@ -140,9 +221,9 @@ export function RemoteDeviceCommandsSetup() {
   async function updatePolicy(
     patch: Partial<Pick<RemoteDeviceCommandPolicy, "commandsEnabled" | "computerUseEnabled">>,
   ) {
-    const target = selectedTarget();
+    const target = state.localTarget;
     const current = state.policy;
-    if (!target || !current || !canEditSelectedTarget() || state.savingPolicy) return;
+    if (!target || !current || !canEditLocalTarget() || state.savingPolicy) return;
     patchState({ savingPolicy: true, error: null, notice: null });
     const next = { commandsEnabled: current.commandsEnabled, computerUseEnabled: current.computerUseEnabled, ...patch };
     try {
@@ -150,7 +231,7 @@ export function RemoteDeviceCommandsSetup() {
         serverId: target.serverId,
         policy: next,
       });
-      if (disposed || state.serverId !== target.serverId) return;
+      if (disposed || state.localTarget?.serverId !== target.serverId) return;
       patchState({ policy, notice: t("computerUse.remote.saved") });
     } catch (cause) {
       if (!disposed) patchState({ error: errorMessage(cause, t("computerUse.remote.error.save")) });
@@ -159,32 +240,22 @@ export function RemoteDeviceCommandsSetup() {
     }
   }
 
-  function onSelectOpen(open: boolean): void {
-    if (!open) return;
-    setSelectMount(root?.closest<HTMLElement>(".app-settings-modal-shell") ?? undefined);
-  }
-
   onSettled(() => void loadDevices());
   onCleanup(() => {
     disposed = true;
+    codexLoginGeneration += 1;
+    const shouldCancelCodexLogin = ownsCodexLogin || state.signingInCodex;
+    ownsCodexLogin = false;
+    clearCodexLoginTimers();
+    if (shouldCancelCodexLogin)
+      void providersPort()
+        .cancelProviderCodeLogin("codex")
+        .catch(() => undefined);
   });
 
   return (
-    <div
-      ref={(element) => {
-        root = element;
-      }}
-      class="computer-use-settings remote-device-commands-settings"
-    >
-      <SettingsSection
-        title={t("computerUse.remote.title")}
-        description={t("computerUse.remote.description")}
-        actions={
-          <Button type="button" size="sm" variant="outline" loading={state.loading} onClick={() => void loadDevices()}>
-            {t("computerUse.remote.refresh")}
-          </Button>
-        }
-      >
+    <div class="computer-use-settings remote-device-commands-settings">
+      <SettingsSection title={t("computerUse.remote.title")} description={t("computerUse.remote.description")}>
         <Show when={state.error}>
           <p class="remote-device-commands-message" role="alert">
             {state.error}
@@ -208,52 +279,25 @@ export function RemoteDeviceCommandsSetup() {
           </ItemGroup>
         </Show>
 
-        <Show when={!state.loading && state.error === null && state.targets.length === 0}>
-          <p class="remote-device-commands-message">{t("computerUse.remote.empty.targets")}</p>
+        <Show when={!state.loading && state.error === null && state.localTarget === null}>
+          <p class="remote-device-commands-message">{t("computerUse.remote.empty.local")}</p>
         </Show>
 
-        <Show when={state.targets.length > 0}>
-          <div class="remote-device-commands-selectors">
-            <div class="remote-device-commands-select-field">
-              <span>{t("computerUse.remote.device")}</span>
-              <Select<RemoteDeviceCommandTarget>
-                options={state.targets}
-                value={selectedTarget() ?? undefined}
-                optionValue="serverId"
-                optionTextValue="name"
-                optionDisabled={(target) => !target.isLocal && target.state !== "online"}
-                onOpenChange={onSelectOpen}
-                onChange={(target) => target && patchState({ serverId: target.serverId })}
-                itemComponent={(item) => (
-                  <SelectItem item={item.item}>
-                    {item.item.rawValue.isLocal
-                      ? t("computerUse.remote.thisComputer", { name: item.item.rawValue.name })
-                      : `${item.item.rawValue.name} · ${t(SERVER_STATE_KEYS[item.item.rawValue.state])}`}
-                  </SelectItem>
-                )}
-              >
-                <SelectTrigger size="sm" aria-label={t("computerUse.remote.device")}>
-                  <SelectValue<RemoteDeviceCommandTarget>>
-                    {(option) => {
-                      const target = option.selectedOption();
-                      return target?.isLocal
-                        ? t("computerUse.remote.thisComputer", { name: target.name })
-                        : target?.name;
-                    }}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent mount={selectMount()} />
-              </Select>
-            </div>
-          </div>
-
-          <Show when={selectedTarget()?.isLocal === false && selectedTarget()?.state !== "online"}>
-            <p class="remote-device-commands-message">{t("computerUse.remote.deviceOffline")}</p>
-          </Show>
-          <Show when={selectedTarget()?.autoReviewAvailable === false}>
+        <Show when={state.localTarget}>
+          <Show when={state.localTarget?.autoReviewAvailable !== true}>
             <p class="remote-device-commands-message">{t("computerUse.remote.autoReviewUnavailable")}</p>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={state.signingInCodex || state.codexLogin !== null}
+              onClick={() => void startCodexLogin()}
+            >
+              {state.signingInCodex || state.codexLogin !== null
+                ? t("computerUse.remote.signingInCodex")
+                : t("computerUse.remote.signInCodex")}
+            </Button>
           </Show>
-          <Show when={selectedTarget()?.state === "online" && selectedTarget()?.computerUseAvailable !== true}>
+          <Show when={state.localTarget?.computerUseAvailable !== true}>
             <p class="remote-device-commands-message">{t("computerUse.remote.computerUseUnavailable")}</p>
           </Show>
           <Show when={state.loadingPolicy}>
@@ -266,7 +310,7 @@ export function RemoteDeviceCommandsSetup() {
               <ItemGroup class="settings-modal-card remote-device-commands-permissions">
                 <SwitchField
                   checked={policy().commandsEnabled}
-                  disabled={state.loadingPolicy || state.savingPolicy || !canEditSelectedTarget()}
+                  disabled={state.loadingPolicy || state.savingPolicy || !canEditLocalTarget()}
                   onChange={(commandsEnabled) => void updatePolicy({ commandsEnabled })}
                   label={t("computerUse.remote.commands.title")}
                   description={t("computerUse.remote.commands.description")}
@@ -276,8 +320,8 @@ export function RemoteDeviceCommandsSetup() {
                   disabled={
                     state.loadingPolicy ||
                     state.savingPolicy ||
-                    !canEditSelectedTarget() ||
-                    (selectedTarget()?.computerUseAvailable !== true && !policy().computerUseEnabled)
+                    !canEditLocalTarget() ||
+                    (state.localTarget?.computerUseAvailable !== true && !policy().computerUseEnabled)
                   }
                   onChange={(computerUseEnabled) => void updatePolicy({ computerUseEnabled })}
                   label={t("computerUse.remote.computerUse.title")}
@@ -288,6 +332,17 @@ export function RemoteDeviceCommandsSetup() {
           </Show>
         </Show>
       </SettingsSection>
+      <Show when={state.codexLogin}>
+        {(login) => (
+          <ProviderCodeLoginDialog
+            open={true}
+            providerName="Codex CLI"
+            state={login()}
+            onOpenVerificationUrl={(url) => void appPort().openUrl(url)}
+            onCancel={cancelCodexLogin}
+          />
+        )}
+      </Show>
     </div>
   );
 }

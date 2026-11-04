@@ -1,27 +1,27 @@
 import { describe, expect, it } from "vitest";
-import { canRegisterLocalHostForAccount } from "./local-host-account-registration";
+import { canRegisterHostForAccount } from "./local-host-account-registration";
 
-describe("local host account registration", () => {
-  it("only publishes an enabled host under the account that owns it", () => {
+describe("host account registration", () => {
+  it("only publishes a shared host under the account that owns it", () => {
     expect(
-      canRegisterLocalHostForAccount({
+      canRegisterHostForAccount({
         signedInAccountId: "account-new",
         ownerAccountId: "account-old",
-        localHostEnabled: true,
+        hostPublished: true,
       }),
     ).toBe(false);
     expect(
-      canRegisterLocalHostForAccount({
+      canRegisterHostForAccount({
         signedInAccountId: "account-owner",
         ownerAccountId: "account-owner",
-        localHostEnabled: true,
+        hostPublished: true,
       }),
     ).toBe(true);
     expect(
-      canRegisterLocalHostForAccount({
+      canRegisterHostForAccount({
         signedInAccountId: "account-owner",
         ownerAccountId: "account-owner",
-        localHostEnabled: false,
+        hostPublished: false,
       }),
     ).toBe(false);
   });

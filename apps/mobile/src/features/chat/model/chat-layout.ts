@@ -6,10 +6,13 @@ export interface ChatLayout {
   tailHeight: number;
 }
 
+/** Android keeps only a small, non-scrollable tail gap below the latest chat item. */
+export const ANDROID_CHAT_TAIL_GAP = 32;
+
 /** Minimum native inset, including the space occupied by the composer/keyboard. */
-export function chatBlankSpace(layout: ChatLayout): number {
+export function chatBlankSpace(layout: ChatLayout, maxBlankSpace = Number.POSITIVE_INFINITY): number {
   "worklet";
-  return Math.max(0, layout.viewport - layout.header - layout.tailHeight);
+  return Math.min(maxBlankSpace, Math.max(0, layout.viewport - layout.header - layout.tailHeight));
 }
 
 export function chatEndOffset(layout: ChatLayout, inset: number): number {
@@ -41,7 +44,6 @@ export function shouldAutoLoadOlderChatHistory(
   offsetY: number,
   state: {
     userInitiated: boolean;
-    historyVisible: boolean;
     canLoad: boolean;
     hasCachedOlder: boolean;
     olderError: boolean;
@@ -50,7 +52,6 @@ export function shouldAutoLoadOlderChatHistory(
   "worklet";
   return (
     state.userInitiated &&
-    state.historyVisible &&
     state.canLoad &&
     (state.hasCachedOlder || !state.olderError) &&
     isNearChatHistoryStart(offsetY)

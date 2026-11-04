@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -12,6 +12,7 @@ import {
 } from "@openbot/contracts/ipc";
 import type { DynamicRecord } from "@openbot/contracts/runtime-values";
 import { sourceText } from "@openbot/i18n/source";
+import { createOpenBotLogger } from "@openbot/logging";
 import { Effect, Result, Schema } from "effect";
 import type { AgentClient, AgentProvider } from "../agent-client";
 import type { AgentStore } from "../agent-store";
@@ -58,6 +59,7 @@ import {
   type ProviderTurnSteps,
   renderTurnSteps,
 } from "./handoff-tool-steps";
+import { REMOTE_DEVICE_TOOL_DEFINITIONS } from "./remote-device-tools";
 import { isArchivedThreadError, isMissingProviderSessionError } from "./thread-items";
 import { codexSandboxConfig, codexSandboxMode, workspaceWritableRoots } from "./workspace-sandbox";
 
@@ -88,6 +90,12 @@ const HANDOFF_PRECEDENCE =
 const HANDOFF_SESSIONS_READ = 3;
 /** The provider switch waits for the capture, so its read is short. */
 const CAPTURE_READ_TIMEOUT_MS = 10_000;
+const remoteDeviceDiagnosticsLogger = createOpenBotLogger("remote-device-diagnostics");
+const remoteDeviceToolNames = REMOTE_DEVICE_TOOL_DEFINITIONS.map((tool) => tool.name);
+
+function diagnosticTag(value: string): string {
+  return createHash("sha256").update(value).digest("hex").slice(0, 16);
+}
 
 export interface ThreadLifecycleHooks {
   /** Keeps the `agent-service` logger (and its prefix) as the single writer. */
@@ -405,6 +413,14 @@ export class ThreadLifecycle {
     // The same single reading, so the manifest records the variables this session was started with.
     const environment = this.#agentEnvironment();
     const config = yield* this.codexConfigEffect(agent, client, mcpServers, disabled, toolRuntimes, environment);
+    const operationId = randomUUID();
+    remoteDeviceDiagnosticsLogger.info("Remote device tools configured for provider thread start.", {
+      operationId,
+      agentTag: diagnosticTag(agent.id),
+      provider: client.provider,
+      remoteToolNames: remoteDeviceToolNames,
+      configurationSource: "thread_start_dynamic_tools",
+    });
     const response = yield* client
       .request(
         "thread/start",
@@ -427,6 +443,12 @@ export class ThreadLifecycle {
       )
       .pipe(toThreadOperationFailed);
     const externalThreadId = response.thread.id;
+    remoteDeviceDiagnosticsLogger.info("Remote device provider thread started.", {
+      operationId,
+      agentTag: diagnosticTag(agent.id),
+      provider: client.provider,
+      providerThreadTag: diagnosticTag(externalThreadId),
+    });
     const prepared = yield* Effect.result(
       Effect.gen({ self: this }, function* () {
         if (client.provider === "codex") {
@@ -732,12 +754,34 @@ export class ThreadLifecycle {
     externalThreadId: string,
   ) {
     this.#conversation.bindThread(externalThreadId, agent.id);
+    const operationId = randomUUID();
+    remoteDeviceDiagnosticsLogger.info("Remote device tools configured for provider thread resume.", {
+      operationId,
+      agentTag: diagnosticTag(agent.id),
+      providerThreadTag: diagnosticTag(externalThreadId),
+      provider: client.provider,
+      remoteToolNames: remoteDeviceToolNames,
+      dynamicToolsSentInResumeRequest: client.provider !== "codex",
+      configurationSource: client.provider === "codex" ? "persisted_codex_session" : "thread_resume_dynamic_tools",
+    });
     const params = yield* this.threadParams(agent, client, externalThreadId);
     const resumed = yield* Effect.result(
       client.request("thread/resume", params, decodeRecordResponse).pipe(toThreadOperationFailed),
     );
+    remoteDeviceDiagnosticsLogger.info("Remote device provider thread resume completed.", {
+      operationId,
+      agentTag: diagnosticTag(agent.id),
+      providerThreadTag: diagnosticTag(externalThreadId),
+      provider: client.provider,
+      succeeded: Result.isSuccess(resumed),
+    });
     if (Result.isFailure(resumed)) {
       if (client.provider !== "codex" || !isArchivedThreadError(resumed.failure.cause)) return yield* resumed.failure;
+      remoteDeviceDiagnosticsLogger.warn("Remote device provider thread resume requires unarchive.", {
+        operationId,
+        providerThreadTag: diagnosticTag(externalThreadId),
+        provider: client.provider,
+      });
       yield* client
         .request("thread/unarchive", { threadId: externalThreadId }, decodeRecordResponse)
         .pipe(toThreadOperationFailed);

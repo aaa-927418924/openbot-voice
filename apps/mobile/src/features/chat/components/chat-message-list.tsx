@@ -29,7 +29,15 @@ import {
   useRef,
   useState,
 } from "react";
-import { AccessibilityInfo, type CellRendererProps, FlatList, Pressable, View, type ViewStyle } from "react-native";
+import {
+  AccessibilityInfo,
+  type CellRendererProps,
+  FlatList,
+  Platform,
+  Pressable,
+  View,
+  type ViewStyle,
+} from "react-native";
 import { KeyboardChatScrollView, type KeyboardChatScrollViewProps } from "react-native-keyboard-controller";
 import Animated, {
   Easing,
@@ -834,6 +842,17 @@ export function ChatMessageList({
     olderLoadPending.current = true;
     onLoadOlder();
   };
+  const loadOlderAtOffset = (offsetY: number, userInitiated: boolean) => {
+    if (
+      shouldAutoLoadOlderChatHistory(offsetY, {
+        userInitiated,
+        canLoad: canLoadOlder,
+        hasCachedOlder,
+        olderError,
+      })
+    )
+      loadPrevious(true);
+  };
   const actionHandlers = useRef({ onReply, onOpenActions, onSelectQuestion });
   actionHandlers.current = { onReply, onOpenActions, onSelectQuestion };
   const actions = useMemo<MessageRowShared["actions"]>(
@@ -1044,7 +1063,8 @@ export function ChatMessageList({
           contentInsetAdjustmentBehavior="never"
           keyboardDismissMode="interactive"
           keyboardShouldPersistTaps="handled"
-          alwaysBounceVertical
+          alwaysBounceVertical={Platform.OS === "ios"}
+          overScrollMode={Platform.OS === "android" ? "never" : undefined}
           onContentSizeChange={(width, height) => {
             motion.onContentSizeChange(width, height);
             seekLatest();
@@ -1055,20 +1075,14 @@ export function ChatMessageList({
           }}
           onScroll={(event) => {
             motion.onScroll(event);
-            if (
-              shouldAutoLoadOlderChatHistory(event.nativeEvent.contentOffset.y, {
-                userInitiated: historyScrollStarted.current,
-                historyVisible: motion.historyVisible,
-                canLoad: canLoadOlder,
-                hasCachedOlder,
-                olderError,
-              })
-            )
-              loadPrevious(true);
+            loadOlderAtOffset(event.nativeEvent.contentOffset.y, historyScrollStarted.current);
           }}
-          onScrollBeginDrag={() => {
+          onScrollBeginDrag={(event) => {
             historyScrollStarted.current = true;
             motion.onScrollBeginDrag();
+            // Short chats can have no scroll range, so RN may emit only the drag start at y=0.
+            // Check there as well as in onScroll to load the older page without a manual button.
+            loadOlderAtOffset(event.nativeEvent.contentOffset.y, true);
           }}
           onScrollEndDrag={motion.onScrollEndDrag}
           onMomentumScrollEnd={motion.onScrollEndDrag}

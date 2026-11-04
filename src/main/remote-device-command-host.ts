@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { constants } from "node:fs";
 import { access, realpath, stat } from "node:fs/promises";
+import { hostname } from "node:os";
 import { basename, delimiter, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { getDefaultEnvironment, StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -26,6 +27,7 @@ import { readPreferenceFile } from "./preference-file";
 import type { CodexAutoReview } from "./remote-device-codex-review";
 import { CodexAutoReviewDenied, CodexAutoReviewUnavailable } from "./remote-device-codex-review";
 import { remoteCommandRequiresAutoReview } from "./remote-device-command-risk";
+import { remoteDeviceDiagnosticsLogger as logger, remoteDeviceTag } from "./remote-device-diagnostics";
 
 const MAX_COMMAND_RUNTIME_MS = 45_000;
 const MAX_COMMAND_ARGUMENTS = 64;
@@ -117,10 +119,13 @@ export interface DeviceCommandTargetService {
 }
 
 export interface DeviceCommandTargetServiceV2 {
+  /** Returns a pseudonymous local log tag. It is never included in Team API responses. */
+  diagnosticTag?: () => string | null;
   infoV2: () => Effect.Effect<
     {
       serverId: string;
       name: string;
+      deviceName: string;
       platform: "windows" | "linux";
       computerUseAvailable: boolean;
       autoReviewAvailable: boolean;
@@ -168,12 +173,18 @@ export class RemoteDeviceCommandHost implements DeviceCommandTargetService, Devi
     this.#autoReview = options.autoReview ?? null;
   }
 
+  diagnosticTag(): string | null {
+    const serverId = this.#getServerId();
+    return serverId ? remoteDeviceTag(serverId) : null;
+  }
+
   readonly infoV2 = Effect.fn("RemoteDeviceCommandHost.infoV2")(function* (
     this: RemoteDeviceCommandHost,
   ): Effect.fn.Return<
     {
       serverId: string;
       name: string;
+      deviceName: string;
       platform: "windows" | "linux";
       computerUseAvailable: boolean;
       autoReviewAvailable: boolean;
@@ -185,7 +196,15 @@ export class RemoteDeviceCommandHost implements DeviceCommandTargetService, Devi
       try: () => this.#autoReview?.available() ?? Promise.resolve(false),
       catch: () => new RemoteDeviceCommandHostError("unavailable"),
     });
-    return { ...info, autoReviewAvailable };
+    const deviceName = hostname().trim().slice(0, 128);
+    logger.info("Remote device host information was served.", {
+      serverTag: remoteDeviceTag(info.serverId),
+      platform: info.platform,
+      deviceNameAvailable: deviceName.length > 0,
+      computerUseAvailable: info.computerUseAvailable,
+      autoReviewAvailable,
+    });
+    return { ...info, deviceName, autoReviewAvailable };
   });
 
   readonly getPolicy = Effect.fn("RemoteDeviceCommandHost.getPolicy")(function* (
@@ -251,7 +270,8 @@ export class RemoteDeviceCommandHost implements DeviceCommandTargetService, Devi
     });
     return yield* Effect.tryPromise({
       try: () =>
-        this.#autoReview?.run({ ...input, workingDirectory }) ?? Promise.reject(new CodexAutoReviewUnavailable()),
+        this.#autoReview?.run({ ...input, workingDirectory }) ??
+        Promise.reject(new CodexAutoReviewUnavailable("resolve_cli")),
       catch: (cause) =>
         new RemoteDeviceCommandHostError(
           cause instanceof CodexAutoReviewDenied

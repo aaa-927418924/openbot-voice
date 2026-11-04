@@ -51,13 +51,16 @@ export const DEVICE_COMMANDS_V2_CODECS: ReadonlyMap<string, OptionalRouteCodec> 
     DEVICE_COMMANDS_V2_ROUTES.info,
     adminRoute(
       fields({}),
-      fields({
-        serverId: identifier,
-        name: string(128),
-        platform: oneOf("windows", "linux"),
-        computerUseAvailable: boolean,
-        autoReviewAvailable: boolean,
-      }),
+      fields(
+        {
+          serverId: identifier,
+          name: string(128),
+          platform: oneOf("windows", "linux"),
+          computerUseAvailable: boolean,
+          autoReviewAvailable: boolean,
+        },
+        { deviceName: string(128) },
+      ),
     ),
   ],
   [DEVICE_COMMANDS_V2_ROUTES.policy, adminRoute(fields({}), policyResponse)],

@@ -105,6 +105,7 @@ function decodeAccountServer(value: unknown): AccountServerDirectoryEntry {
     remoteHostFingerprint(value.publicKey) !== value.fingerprint ||
     !(value.logoKey === null || isString(value.logoKey)) ||
     !(value.origin === undefined || value.origin === "cloud") ||
+    !(value.deviceOnly === undefined || value.deviceOnly === true) ||
     !isString(value.membershipId) ||
     (value.role !== "owner" && value.role !== "admin" && value.role !== "member") ||
     typeof value.isOwner !== "boolean"
@@ -119,6 +120,7 @@ function decodeAccountServer(value: unknown): AccountServerDirectoryEntry {
     publicKey: value.publicKey,
     logoKey: value.logoKey,
     ...(value.origin === undefined ? {} : { origin: value.origin }),
+    ...(value.deviceOnly === true ? { deviceOnly: true as const } : {}),
     membershipId: value.membershipId,
     role: value.role,
     isOwner: value.isOwner,

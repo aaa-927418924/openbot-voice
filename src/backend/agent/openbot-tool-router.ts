@@ -409,7 +409,13 @@ export class OpenBotToolRouter {
 
     if (isRemoteDeviceTool(params.tool)) {
       return yield* Effect.promise(() =>
-        callRemoteDeviceTool(params.tool, params.arguments, senderAgentId, this.#remoteDeviceCommands?.() ?? null),
+        callRemoteDeviceTool(
+          params.tool,
+          params.arguments,
+          senderAgentId,
+          this.#remoteDeviceCommands?.() ?? null,
+          params.turnId,
+        ),
       );
     }
 

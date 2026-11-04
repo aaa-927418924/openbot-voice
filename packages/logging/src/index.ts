@@ -476,7 +476,7 @@ export function teeLogLines(prefixes: readonly string[], sink: (line: string) =>
 
 function writeTees(prefix: string, line: string): void {
   for (const tee of tees) {
-    if (!tee.prefixes.has(prefix)) continue;
+    if (!tee.prefixes.has(prefix) && !tee.prefixes.has("*")) continue;
     try {
       tee.sink(line);
     } catch {

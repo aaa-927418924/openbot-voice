@@ -7,6 +7,7 @@ protocols:
 asar: true
 artifactName: ${productName}-${version}-${arch}.${ext}
 electronUpdaterCompatibility: ">=2.16"
+afterPack: scripts/after-pack.cjs
 electronFuses:
   resetAdHocDarwinSignature: true
   runAsNode: false

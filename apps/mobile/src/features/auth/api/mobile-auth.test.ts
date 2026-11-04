@@ -754,6 +754,25 @@ describe("account server directory sync", () => {
     );
   });
 
+  it("keeps device-only metadata so remote-operation hosts can be hidden from the server picker", async () => {
+    const publicKey = "public-key";
+    const deviceOnlyEntry = {
+      hostId: "11111111-1111-4111-8111-111111111111",
+      name: "Windows PC",
+      apiUrl: "http://100.100.10.2:43123",
+      fingerprint: remoteHostFingerprint(publicKey),
+      publicKey,
+      logoKey: null,
+      deviceOnly: true,
+      membershipId: "member-id",
+      role: "owner" as const,
+      isOwner: false,
+    };
+    native.fetch.mockResolvedValueOnce(Response.json({ servers: [deviceOnlyEntry] }));
+
+    await expect(listAccountServers(localIdentitySession)).resolves.toEqual([deviceOnlyEntry]);
+  });
+
   it("rejects malformed legacy import exclusions", async () => {
     native.fetch.mockResolvedValueOnce(Response.json({ excludedHostIds: ["valid-host", null] }));
     await expect(getLegacyAccountServerDirectoryExclusions(localIdentitySession)).rejects.toThrow(

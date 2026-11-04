@@ -25,6 +25,7 @@ import {
 } from "electron";
 import { runCauseEffect } from "../backend/effect-boundary";
 import { readAppVariant, resolveAppIconPath, resolveLogoColorIconPath } from "./app-icon";
+import { startApplicationLog } from "./application-log";
 import { type ApplicationServices, createApplicationServices } from "./application-services";
 import { addTailnetViewerOrigins } from "./content-security-policy";
 import { type DeepLink, findDeepLink, parseDeepLink } from "./deep-link-router";
@@ -183,6 +184,9 @@ if (commandLineUserDataDirectory) {
   );
 }
 app.setName("OpenBot");
+// Keep a local log of main-process errors and lifecycle events. Users can collect it from the
+// profile's logs directory even when the renderer is unresponsive and its menus cannot be used.
+startApplicationLog(join(app.getPath("userData"), "logs"));
 app.enableSandbox();
 if (process.platform === "win32") app.setAppUserModelId("app.openbot.desktop");
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
@@ -1129,6 +1133,12 @@ if (!hasSingleInstanceLock) {
           startHost: async () => {
             await built.ensureLocalHost();
             const status = await runCauseEffect(host.start());
+            logger.info("Tailscale host startup finished.", {
+              phase: status.phase,
+              apiOnline: status.apiOnline,
+              apiAddressAvailable: status.apiUrl !== null,
+              remoteDeviceSharingEnabled: built.remoteDeviceCommandClient.getShareSettings().enabled,
+            });
             if (status.phase === "online") {
               void runCauseEffect(remoteServers.syncAccountDirectory()).catch((error) =>
                 logger.warn("Unable to publish the local server to the account directory yet:", toLogValue(error)),
@@ -1140,7 +1150,13 @@ if (!hasSingleInstanceLock) {
             logger.warn("Unable to start the Tailscale-only OpenBot host; retrying:", toLogValue(error)),
         });
         built.setLocalHostRetry(localHostRetry);
-        if (built.getLocalHostSettings().enabled && built.selfHostedDesktopAccount.isSignedIn) {
+        const localHostEnabled = built.getLocalHostSettings().enabled;
+        const remoteDeviceSharingEnabled = built.remoteDeviceCommandClient.getShareSettings().enabled;
+        if ((localHostEnabled || remoteDeviceSharingEnabled) && built.selfHostedDesktopAccount.isSignedIn) {
+          logger.info("Starting the Tailscale host from saved settings.", {
+            localHostEnabled,
+            remoteDeviceSharingEnabled,
+          });
           void localHostRetry.start();
         }
         teardown.push(0, "Tailscale host start retry", () => localHostRetry.stop());

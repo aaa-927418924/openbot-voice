@@ -526,7 +526,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
                   if (!synced) {
                     // Use only memberships previously confirmed for this account. The secure local
                     // pairing cache is device-wide and may contain another signed-in account's token.
-                    const knownEntries = [...accountDirectoryHosts.current.values()];
+                    const knownEntries = [...accountDirectoryHosts.current.values()].filter((host) => !host.deviceOnly);
                     const knownById = new Map(knownEntries.map((entry) => [entry.hostId, entry]));
                     const pairedById = new Map(
                       deviceHosts
@@ -571,17 +571,19 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
                       .map((host) => [host.hostId, host]),
                   );
                   localTailnetHosts.current = pairedById;
-                  return synced.map((host) => {
-                    const local = pairedById.get(host.hostId);
-                    return {
-                      hostId: host.hostId,
-                      name: host.name,
-                      logoKey: host.logoKey,
-                      devicePublicKey: host.publicKey,
-                      membershipId: local?.membershipId ?? host.membershipId,
-                      role: accountServerRole(host, local?.role),
-                    };
-                  });
+                  return synced
+                    .filter((host) => !host.deviceOnly)
+                    .map((host) => {
+                      const local = pairedById.get(host.hostId);
+                      return {
+                        hostId: host.hostId,
+                        name: host.name,
+                        logoKey: host.logoKey,
+                        devicePublicKey: host.publicKey,
+                        membershipId: local?.membershipId ?? host.membershipId,
+                        role: accountServerRole(host, local?.role),
+                      };
+                    });
                 },
                 catch: (error) => new RemoteDirectoryError(500, error instanceof Error ? error.message : String(error)),
               });
@@ -612,10 +614,11 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
               ),
             );
             if (generation !== directoryGeneration.current) return;
-            installHosts(hosts);
+            const visibleHosts = hosts.filter((host) => !("deviceOnly" in host && host.deviceOnly));
+            installHosts(visibleHosts);
             if (session.localOnly) {
               setActiveServerId((current) =>
-                hosts.some((host) => host.hostId === current) ? current : (hosts[0]?.hostId ?? null),
+                visibleHosts.some((host) => host.hostId === current) ? current : (visibleHosts[0]?.hostId ?? null),
               );
             }
             setServerDirectoryState("ready");

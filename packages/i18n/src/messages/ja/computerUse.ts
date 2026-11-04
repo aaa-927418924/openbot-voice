@@ -40,32 +40,35 @@ export const messages = {
   "computerUse.help.revealFailed": "アプリケーションを Finder に表示できませんでした。",
   "computerUse.help.dragFailed": "アプリケーションをドラッグできませんでした。",
   "computerUse.highlight.working": "OpenBot が {title} で作業しています",
-  "computerUse.remote.title": "他のデバイス",
+  "computerUse.remote.title": "このPCの操作権限",
   "computerUse.remote.description":
-    "Windows / Linux PCを選びます。権限はすべてのエージェントとサーバーに適用されます。コマンドは対象PCのOpenBotでサインインしたCodex CLIから実行し、権限要求をAutoReviewで審査します。利用できない場合は拒否されます。",
-  "computerUse.remote.refresh": "デバイスを更新",
-  "computerUse.remote.device": "操作対象デバイス",
-  "computerUse.remote.empty.targets":
-    "操作対象デバイスがありません。操作したいWindows / Linux PCでリモートデバイス共有を有効にしてください。",
-  "computerUse.remote.thisComputer": "このPC（{name}）",
+    "このPCの権限だけを設定します。すべてのエージェントからの操作に適用されます。コマンドはこのPCのOpenBotにサインインしたCodex CLIでAutoReviewし、利用できない場合は拒否します。",
+  "computerUse.remote.refresh": "状態を更新",
+  "computerUse.remote.empty.local":
+    "このPCの操作情報がまだありません。リモートデバイス共有を有効にすると、このPCが操作対象として準備されます。",
   "computerUse.remote.share.title": "このPCをリモートデバイス操作に共有",
   "computerUse.remote.share.description":
     "通常のOpenBotサーバーとして有効にせず、このアカウントの他デバイスから操作できるようにします。",
   "computerUse.remote.error.share":
     "このPCを共有できませんでした。アカウントのサインインと接続状態を確認してください。",
-  "computerUse.remote.deviceOffline": "権限を編集するには、対象デバイスを接続してください。",
   "computerUse.remote.autoReviewUnavailable":
     "このPCのOpenBotでCodex CLIにサインインしてください。AutoReviewが使えるようになるまでコマンドは拒否されます。",
-  "computerUse.remote.computerUseUnavailable": "対象デバイスで Computer Use を利用できません。",
-  "computerUse.remote.loading": "デバイスの権限を読み込んでいます…",
+  "computerUse.remote.signInCodex": "Codex CLIにサインイン",
+  "computerUse.remote.signingInCodex": "Codex CLIのサインインを開始しています…",
+  "computerUse.remote.signInError": "Codex CLIのサインインを開始できませんでした。",
+  "computerUse.remote.signInExpired": "Codex CLIのサインインコードの期限が切れました。もう一度開始してください。",
+  "computerUse.remote.signInUnsupported": "Codex CLIのサインインを開始できませんでした。",
+  "computerUse.remote.autoReviewReady": "このPCでCodex CLIのサインインが完了し、AutoReviewを利用できます。",
+  "computerUse.remote.computerUseUnavailable": "このPCでは Computer Use を利用できません。",
+  "computerUse.remote.loading": "このPCの権限を読み込んでいます…",
   "computerUse.remote.commands.title": "コマンド実行を許可",
   "computerUse.remote.commands.description":
-    "このデバイスで全エージェントのコマンド実行を許可します。対象PCのOpenBotでサインインしたCodex CLIが実行し、権限要求はAutoReviewで審査します。利用できない場合はコマンドを拒否します。",
+    "このPCで全エージェントのコマンド実行を許可します。このPCのOpenBotでサインインしたCodex CLIが実行し、権限要求はAutoReviewで審査します。利用できない場合は拒否します。",
   "computerUse.remote.computerUse.title": "Computer Use を許可",
   "computerUse.remote.computerUse.description":
-    "このデバイスで全エージェントの画面操作ツールを許可します。コマンド実行とは別の設定です。",
-  "computerUse.remote.saved": "対象デバイスに権限を保存しました。",
-  "computerUse.remote.error.load": "リモートデバイスを読み込めませんでした。",
-  "computerUse.remote.error.permission": "対象デバイスの権限を読み込めませんでした。",
-  "computerUse.remote.error.save": "対象デバイスに権限を保存できませんでした。",
+    "このPCで全エージェントの画面操作ツールを許可します。コマンド実行とは別の設定です。",
+  "computerUse.remote.saved": "このPCに権限を保存しました。",
+  "computerUse.remote.error.load": "このPCの操作情報を読み込めませんでした。",
+  "computerUse.remote.error.permission": "このPCの権限を読み込めませんでした。",
+  "computerUse.remote.error.save": "このPCに権限を保存できませんでした。",
 } as const satisfies PartialTranslation<typeof source>;

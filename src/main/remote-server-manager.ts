@@ -105,6 +105,12 @@ import {
 import { decodeRemoteDesktopSetupFromHost, decodeRemoteDesktopTestFromHost } from "./remote-desktop-setup-decoding";
 import type { RemoteViewerDiagnosticEvent } from "./remote-desktop-support-log";
 import { decodeRemoteDesktopSession } from "./remote-device-decoding";
+import {
+  remoteDeviceDiagnosticsLogger,
+  remoteDeviceEndpointTag,
+  remoteDeviceOperationId,
+  remoteDeviceTag,
+} from "./remote-device-diagnostics";
 import { decodeVoid, type ResponseDecoder } from "./remote-host-decoding";
 import { type RemoteRequestInit, RemoteServerClient } from "./remote-server-client";
 import { RemoteServerConnections } from "./remote-server-connections";
@@ -247,7 +253,7 @@ interface RemoteServerManagerOptions {
   /** Whether this desktop publishes its Local host into the server list. */
   isLocalServerEnabled?: () => boolean;
   /** Metadata for this device's active, account-owned Local host, when it is ready to publish. */
-  getLocalAccountServerRegistration?: () => AccountServerRegistration | null;
+  getLocalAccountServerRegistration?: (operationId?: string) => AccountServerRegistration | null;
   /** The origin of the self-hosted account service that this app is configured to use. */
   selfHostedApiOrigin?: string | undefined;
   appVersion?: string;
@@ -362,7 +368,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   readonly #allowLocalDevelopmentInvites: boolean;
   readonly #localOnlyNetworking: boolean;
   readonly #isLocalServerEnabled: () => boolean;
-  readonly #getLocalAccountServerRegistration: () => AccountServerRegistration | null;
+  readonly #getLocalAccountServerRegistration: (operationId?: string) => AccountServerRegistration | null;
   readonly #inviteLinks: InviteLinkOptions;
   readonly #appVersion: string | null;
   #duplicateOperationIds = new Map<string, string>();
@@ -385,6 +391,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   /** A fresh ticket was permanently refused; wait for an explicit retry or a new join. */
   readonly #accountDirectoryReauthBlocked = new Set<string>();
   #lastEmittedSummary: string | null = null;
+  #lastRemoteDeviceDirectoryDiagnosticState: string | null = null;
   /** Coalesces and backs off fresh account-ticket adoption for directory-only host entries. */
   readonly #accountServerAdoptionInFlight = new Set<string>();
   readonly #accountServerAdoptionRetryAt = new Map<string, number>();
@@ -937,10 +944,19 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   /** Online remote hosts that may be targeted by device-operation settings and agent tools. */
-  listDeviceCommandServers(): Array<{ id: string; state: ServerConnectionState }> {
+  listDeviceCommandServers(): Array<{
+    id: string;
+    state: ServerConnectionState;
+    deviceOnly?: boolean;
+    transport?: "http" | "webrtc-v2";
+    endpointTag?: string | null;
+  }> {
     return this.#servers.servers.map((server) => ({
       id: server.id,
       state: this.#connections.stateFor(server.id) ?? "offline",
+      deviceOnly: server.deviceOnly === true,
+      transport: server.transport ?? "http",
+      endpointTag: remoteDeviceEndpointTag(server.apiUrl),
     }));
   }
 
@@ -988,21 +1004,69 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   readonly syncAccountDirectory = Effect.fn("RemoteManager.syncAccountDirectory")(
     function* (this: RemoteServerManager): Effect.fn.Return<ServerSummary[], RemoteWorkflowError, RemoteRequest> {
       const account = this.#centralAccount;
+      const operationId = remoteDeviceOperationId();
+      const accountDirectoryReady = Boolean(account.listAccountServers && account.registerAccountServer);
+      const selfHostedSignedIn = account.isSelfHostedSignedIn?.() ?? false;
       if (
         !this.#localOnlyNetworking ||
-        !account.isSelfHostedSignedIn?.() ||
+        !selfHostedSignedIn ||
         !account.listAccountServers ||
         !account.registerAccountServer
-      )
+      ) {
+        const skipState = JSON.stringify({
+          kind: "sync_skipped",
+          localOnlyNetworking: this.#localOnlyNetworking,
+          selfHostedSignedIn,
+          accountDirectoryReady,
+        });
+        if (skipState !== this.#lastRemoteDeviceDirectoryDiagnosticState) {
+          this.#lastRemoteDeviceDirectoryDiagnosticState = skipState;
+          remoteDeviceDiagnosticsLogger.info("Remote device account directory sync skipped.", {
+            operationId,
+            localOnlyNetworking: this.#localOnlyNetworking,
+            selfHostedSignedIn,
+            accountDirectoryReady,
+          });
+        }
         return this.list();
+      }
 
       const previousActive = this.#store.activeServerId;
       const previousUserSelectionRevision = this.#userSelectionRevision;
       let entries = yield* account.listAccountServers().pipe(toRemoteWorkflowError);
-      const localRegistration = this.#getLocalAccountServerRegistration();
+      const localRegistration = this.#getLocalAccountServerRegistration(operationId);
+      const logDirectory = (stage: "listed" | "refreshed") => {
+        const servers = entries.map((entry) => ({
+          serverTag: remoteDeviceTag(entry.hostId),
+          deviceOnly: entry.deviceOnly === true,
+          origin: entry.origin ?? "unknown",
+          endpointTag: remoteDeviceEndpointTag(entry.apiUrl),
+        }));
+        const localServerTag = localRegistration ? remoteDeviceTag(localRegistration.hostId) : null;
+        const diagnosticState = JSON.stringify({
+          kind: "directory",
+          servers,
+          localRegistrationAvailable: localRegistration !== null,
+          localServerTag,
+          localDeviceOnly: localRegistration?.deviceOnly === true,
+          localEndpointTag: localRegistration ? remoteDeviceEndpointTag(localRegistration.apiUrl) : null,
+        });
+        if (diagnosticState === this.#lastRemoteDeviceDirectoryDiagnosticState) return;
+        this.#lastRemoteDeviceDirectoryDiagnosticState = diagnosticState;
+        remoteDeviceDiagnosticsLogger.info("Remote device account directory received.", {
+          operationId,
+          stage,
+          serverCount: entries.length,
+          deviceOnlyCount: entries.filter((entry) => entry.deviceOnly === true).length,
+          servers,
+          localRegistrationAvailable: localRegistration !== null,
+          ...(localServerTag ? { localServerTag } : {}),
+        });
+      };
+      logDirectory("listed");
       if (localRegistration) {
         const existingLocalEntry = entries.find((entry) => entry.hostId === localRegistration.hostId);
-        if (
+        const registrationDiffers =
           !existingLocalEntry ||
           existingLocalEntry.name !== localRegistration.name ||
           existingLocalEntry.apiUrl !== localRegistration.apiUrl ||
@@ -1012,13 +1076,47 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
           existingLocalEntry.origin !== localRegistration.origin ||
           (existingLocalEntry.deviceOnly === true) !== (localRegistration.deviceOnly === true) ||
           existingLocalEntry.membershipId !== localRegistration.membershipId ||
-          existingLocalEntry.role !== localRegistration.role
-        ) {
+          existingLocalEntry.role !== localRegistration.role;
+        if (registrationDiffers) {
+          remoteDeviceDiagnosticsLogger.info("Remote device local registration compared.", {
+            operationId,
+            serverTag: remoteDeviceTag(localRegistration.hostId),
+            endpointTag: remoteDeviceEndpointTag(localRegistration.apiUrl),
+            existingEntryFound: existingLocalEntry !== undefined,
+            registrationDiffers,
+            ...(existingLocalEntry
+              ? {
+                  endpointMatches: existingLocalEntry.apiUrl === localRegistration.apiUrl,
+                  fingerprintMatches: existingLocalEntry.fingerprint === localRegistration.fingerprint,
+                  deviceOnlyMatches:
+                    (existingLocalEntry.deviceOnly === true) === (localRegistration.deviceOnly === true),
+                }
+              : {}),
+            deviceOnly: localRegistration.deviceOnly === true,
+          });
           // Local hosts used to be omitted from the shared directory. Publish the verified
           // identity before treating that directory as authoritative, and refresh metadata
           // after rename/address changes so other signed-in devices see the same server.
-          yield* account.registerAccountServer(localRegistration).pipe(toRemoteWorkflowError);
+          yield* account.registerAccountServer(localRegistration).pipe(
+            Effect.tapError(() =>
+              Effect.sync(() =>
+                remoteDeviceDiagnosticsLogger.warn("Remote device local registration failed.", {
+                  operationId,
+                  serverTag: remoteDeviceTag(localRegistration.hostId),
+                  endpointTag: remoteDeviceEndpointTag(localRegistration.apiUrl),
+                }),
+              ),
+            ),
+            toRemoteWorkflowError,
+          );
+          remoteDeviceDiagnosticsLogger.info("Remote device local registration published.", {
+            operationId,
+            serverTag: remoteDeviceTag(localRegistration.hostId),
+            endpointTag: remoteDeviceEndpointTag(localRegistration.apiUrl),
+            deviceOnly: localRegistration.deviceOnly === true,
+          });
           entries = yield* account.listAccountServers().pipe(toRemoteWorkflowError);
+          logDirectory("refreshed");
         }
       }
       // Old builds kept pairings only on each device. Import each device's old entries
@@ -1271,6 +1369,21 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   supportsCapability(serverId: string, capability: TeamCurrentCapability): boolean {
     return this.#connections.compatibilityFor(serverId)?.capabilities.includes(capability) ?? false;
   }
+
+  /** Refresh compatibility on demand when a tool needs a capability before the event stream is online. */
+  readonly ensureCapability = Effect.fn("RemoteManager.ensureCapability")(
+    function* (
+      this: RemoteServerManager,
+      serverId: string,
+      capability: TeamCurrentCapability,
+    ): Effect.fn.Return<boolean, RemoteWorkflowError, RemoteRequest> {
+      if (this.supportsCapability(serverId, capability)) return true;
+      const server = yield* remoteDecode(() => this.#servers.require(serverId));
+      const compatibility = yield* this.#client.ensureCompatibility(server, true);
+      return compatibility.capabilities.includes(capability);
+    },
+    (operation) => this.#owned(operation),
+  ).bind(this);
 
   readonly startEventConnections = Effect.fn("RemoteManager.startEventConnections")(function* (
     this: RemoteServerManager,

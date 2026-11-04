@@ -238,8 +238,8 @@
     "package:win:verify": "bun run package:win && bun run verify:package:win",
     "dist:mac": "bun run prepare:remote-desktop-runtime && bun run verify:remote-desktop-runtime && bun run prepare:cua-driver && bun run build && electron-builder --mac --config.mac.identity=null --config.mac.notarize=false",
     "dist:win": "bun scripts/prepare-remote-desktop-runtime.ts win32 x64 && bun run verify:remote-desktop-runtime --windows && bun scripts/install-cua-driver.ts win32 x64 && bun run build && electron-builder --win nsis --x64 --publish never",
-    "dist:linux": "bun scripts/prepare-remote-desktop-runtime.ts linux x64 && bun run verify:remote-desktop-runtime --linux && bun scripts/install-cua-driver.ts linux x64 && bun run build && electron-builder --linux AppImage --x64 --publish never",
-    "dist:linux:arm64": "bun scripts/install-cua-driver.ts linux arm64 && bun run build && electron-builder --linux AppImage --arm64 --publish never",
+    "dist:linux": "bun scripts/prepare-remote-desktop-runtime.ts linux x64 && bun run verify:remote-desktop-runtime --linux && bun scripts/install-cua-driver.ts linux x64 && bun run build && OPENBOT_APPIMAGE_FAKEROOT=1 fakeroot electron-builder --linux AppImage --x64 --publish never",
+    "dist:linux:arm64": "bun scripts/install-cua-driver.ts linux arm64 && bun run build && OPENBOT_APPIMAGE_FAKEROOT=1 fakeroot electron-builder --linux AppImage --arm64 --publish never",
     "dist:release": "bun run prepare:remote-desktop-runtime && bun run verify:remote-desktop-runtime && bun run prepare:cua-driver && bun run build && electron-builder --mac --publish never"
   },
   "dependencies": {

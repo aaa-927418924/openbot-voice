@@ -126,6 +126,8 @@ export interface RemoteRequestInit {
   method?: string;
   body?: unknown;
   timeoutMs?: number;
+  /** Local diagnostic correlation for device-command HTTP requests; never included in request bodies. */
+  diagnosticOperationId?: string;
 }
 
 /** `RemoteServerClient.request` as a plain function, for callers that need nothing else from it. */
@@ -187,8 +189,10 @@ export class RemoteServerClient {
             throw new Error(sourceText("error.team.liveVoiceUnsupported"));
           });
         }
+        const { diagnosticOperationId: _diagnosticOperationId, ...transportInit } = init;
+        void _diagnosticOperationId;
         const value = yield* this.#hostRequestEffect(server.id, path, {
-          ...init,
+          ...transportInit,
           preserveSemanticTags: supportsTeamSemanticTags(compatibility.capabilities),
           agentCreateModel: this.supportsAgentCreateModel(path, init, compatibility.capabilities),
           agentLiveVoiceSettings: this.supportsAgentLiveVoiceSettings(path, init, compatibility.capabilities),

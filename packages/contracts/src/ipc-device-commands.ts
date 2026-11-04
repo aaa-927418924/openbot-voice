@@ -33,7 +33,8 @@ export interface RemoteDeviceCommandTarget {
 
 /** Target metadata plus the current agent's permission, exposed to that agent's tool only. */
 export interface RemoteDeviceCommandAgentTarget extends Omit<RemoteDeviceCommandTarget, "isLocal"> {
-  policy: RemoteDeviceCommandPolicy;
+  /** Null means the device answered but its current grants could not be read. */
+  policy: RemoteDeviceCommandPolicy | null;
 }
 
 /** Device-wide permission state, stored and enforced by the target computer. */

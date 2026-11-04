@@ -26,6 +26,7 @@ import { decodeTeamProtocolV2Json, type TeamProtocolV2Json } from "@openbot/cont
 import { TEAM_PROTOCOL_V6 } from "@openbot/contracts/team-protocol/v6";
 import { sourceText } from "@openbot/i18n/source";
 import { Effect, Result, Schema } from "effect";
+import { isRemoteDeviceOperationId, REMOTE_DEVICE_DIAGNOSTIC_OPERATION_HEADER } from "./remote-device-diagnostics";
 import type { ResponseDecoder } from "./remote-host-decoding";
 import { RemoteProtocolError, RemoteRequestError } from "./remote-server-errors";
 
@@ -43,6 +44,8 @@ export interface RemoteJsonRequestOptions {
   agentLiveVoiceSettings?: boolean;
   teamChannelIdentityAdmin?: boolean;
   timeoutMs?: number;
+  /** Correlates local remote-device diagnostics across the Cloud client and target host. */
+  diagnosticOperationId?: string;
 }
 
 export const requestJson = Effect.fn("RemoteHttp.requestJson")(function* <T>(
@@ -83,6 +86,9 @@ export const requestJson = Effect.fn("RemoteHttp.requestJson")(function* <T>(
         ...(protocol ? { [TEAM_PROTOCOL_VERSION_HEADER]: String(protocol) } : {}),
         ...(options.appVersion ? { [TEAM_APP_VERSION_HEADER]: options.appVersion } : {}),
         ...(capabilities ? { [TEAM_CAPABILITIES_HEADER]: capabilities.join(",") } : {}),
+        ...(isRemoteDeviceOperationId(options.diagnosticOperationId)
+          ? { [REMOTE_DEVICE_DIAGNOSTIC_OPERATION_HEADER]: options.diagnosticOperationId }
+          : {}),
       },
       body:
         options.body === undefined

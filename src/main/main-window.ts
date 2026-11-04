@@ -329,7 +329,13 @@ export function createMainWindowController({
         exitCode: details.exitCode,
       });
     });
-    window.webContents.on("console-message", (_event, level, _message, line, sourceId) => {
+    window.webContents.on("unresponsive", () => {
+      logger.error("Main renderer became unresponsive.");
+    });
+    window.webContents.on("responsive", () => {
+      logger.info("Main renderer became responsive again.");
+    });
+    window.webContents.on("console-message", (_event, level, message, line, sourceId) => {
       if (level < 2 || !sourceId.startsWith("openbot-app://app/")) return;
       const source = sourceId.split("?")[0] ?? sourceId;
       const key = `${source}:${line}`;
@@ -338,6 +344,7 @@ export function createMainWindowController({
       logger.error("Main renderer reported a console error.", {
         source: source.slice(0, 300),
         line,
+        message: redactText(message).replace(/\s+/gu, " ").slice(0, 1_000),
       });
     });
     window.webContents.on("did-finish-load", () => {
