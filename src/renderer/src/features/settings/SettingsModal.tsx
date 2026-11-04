@@ -128,26 +128,19 @@ export function SettingsModal(props: SettingsModalProps) {
   const title = () => i18n.t(navItem(activeTab()).titleKey);
   const description = () => i18n.t(navItem(activeTab()).descriptionKey);
 
-  const tabsProps = {
-    get value() {
-      return activeTab();
-    },
-    onChange(value: string) {
-      if (
-        value === "general" ||
-        value === "theme" ||
-        (value === "dynamic-island" && isMac()) ||
-        value === "computer-use" ||
-        value === "profile" ||
-        value === "mobile-connect" ||
-        (value === "hosted-servers" && hostedServersShown())
-      ) {
-        setActiveTab(value);
-      }
-    },
-    orientation: "vertical" as const,
-    activationMode: "automatic" as const,
-  };
+  function onTabChange(value: string): void {
+    if (
+      value === "general" ||
+      value === "theme" ||
+      (value === "dynamic-island" && isMac()) ||
+      value === "computer-use" ||
+      value === "profile" ||
+      value === "mobile-connect" ||
+      (value === "hosted-servers" && hostedServersShown())
+    ) {
+      setActiveTab(value);
+    }
+  }
 
   function updateSetting<Key extends keyof GeneralSettingsValue>(key: Key, value: GeneralSettingsValue[Key]): void {
     props.onValueChange({ ...props.value, [key]: value });
@@ -158,7 +151,13 @@ export function SettingsModal(props: SettingsModalProps) {
   }
 
   return (
-    <Tabs.Root {...tabsProps} class="settings-modal-tabs-root">
+    <Tabs.Root
+      value={activeTab()}
+      onChange={onTabChange}
+      orientation="vertical"
+      activationMode="automatic"
+      class="settings-modal-tabs-root"
+    >
       <SettingsDialogShell
         class="app-settings-modal-shell"
         open={props.open}
