@@ -32,7 +32,7 @@ import {
   AGENT_PUBLISH_CAPABILITY,
   AGENT_UPDATE_CAPABILITY,
   CHANNEL_DELETE_CAPABILITY,
-  DEVICE_COMMANDS_CAPABILITY,
+  DEVICE_COMMANDS_V2_CAPABILITY,
   HOST_ADMIN_CAPABILITY,
   HOST_UPDATE_CAPABILITY,
   HOSTED_SITES_CAPABILITY,
@@ -130,7 +130,7 @@ import { routeBrowser } from "./team-api/route-browser";
 import { routeChannels } from "./team-api/route-channels";
 import { routeContextReset } from "./team-api/route-context-reset";
 import { routeConversationHistoryDelete } from "./team-api/route-conversation-history-delete";
-import { routeDeviceCommands } from "./team-api/route-device-commands";
+import { isDeviceCommandV2Service, routeDeviceCommandsV2 } from "./team-api/route-device-commands-v2";
 import { routeDirect } from "./team-api/route-direct";
 import { routeFiles } from "./team-api/route-files";
 import { routeHostAdmin } from "./team-api/route-host-admin";
@@ -175,6 +175,7 @@ interface EventClientState {
   snapshotResponsePending: boolean;
   snapshotRequestQueued: boolean;
   nextSnapshotRequestAt: number;
+  deviceOnly: boolean;
 }
 
 interface RateEntry {
@@ -265,13 +266,13 @@ export class TeamApiServer {
     this.#server = server;
     server.on("upgrade", (request, socket, head) => {
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
-      if (this.#options.remoteScreen?.handlesUpgrade(url)) {
+      if (!this.#options.deviceOnly?.() && this.#options.remoteScreen?.handlesUpgrade(url)) {
         this.#options.remoteScreen.handleUpgrade(request, socket, head, url);
         return;
       }
       // Like the remote screen, and above the token check for the same reason: a tunneled view
       // socket carries the WebRTC session this host opened it for rather than a member's token.
-      if (this.#options.browserView?.handlesUpgrade(url)) {
+      if (!this.#options.deviceOnly?.() && this.#options.browserView?.handlesUpgrade(url)) {
         this.#options.browserView.handleUpgrade(request, socket, head, url);
         return;
       }
@@ -562,7 +563,17 @@ export class TeamApiServer {
         return this.#json(response, 200, this.#protocolSupport());
       }
 
-      if (this.#options.remoteScreen?.handlesHttp(url)) {
+      if (
+        this.#options.deviceOnly?.() &&
+        !(
+          (method === "GET" && url.pathname === TEAM_API_ROUTES.identity) ||
+          (method === "POST" && url.pathname === TEAM_API_ROUTES.auth.account)
+        )
+      ) {
+        return this.#json(response, 404, { error: sourceText("error.team.routeNotFound") });
+      }
+
+      if (!this.#options.deviceOnly?.() && this.#options.remoteScreen?.handlesHttp(url)) {
         await runCauseEffect(this.#options.remoteScreen.handleHttp(request, response, url));
         return;
       }
@@ -703,6 +714,11 @@ export class TeamApiServer {
       }
       if (isClientUse(method, url.pathname)) this.#lastClientUseAt = Date.now();
       const context = this.#requestContext(request, response, url, token, authenticated);
+      if (this.#options.deviceOnly?.()) {
+        if ((await routeDeviceCommandsV2(context, { deviceCommands: this.#options.deviceCommands })) === "handled")
+          return;
+        return this.#json(response, 404, { error: sourceText("error.team.routeNotFound") });
+      }
       const hidden = this.#hiddenAgentIds(context.protocol, context.capabilities);
       // Every protocol gets the projection, also with no hidden agent: a provider status row, a
       // model or an auth state of a local-only provider can be in the response.
@@ -743,7 +759,8 @@ export class TeamApiServer {
         return;
       if ((await routeStorage(context, this.#options.storage)) === "handled") return;
       if ((await routeHostedSites(context, this.#options.hostedSites)) === "handled") return;
-      if ((await routeDeviceCommands(context, { deviceCommands: this.#options.deviceCommands })) === "handled") return;
+      if ((await routeDeviceCommandsV2(context, { deviceCommands: this.#options.deviceCommands })) === "handled")
+        return;
       if ((await routeAgentAdmin(context, this.#options.admin, hidden)) === "handled") return;
       if ((await routeSkillsAdmin(context, this.#options.admin, hidden)) === "handled") return;
       if ((await routeSharedTables(context, this.#options.admin)) === "handled") return;
@@ -902,9 +919,11 @@ export class TeamApiServer {
    * goes out as the optional `live-voice` event, so a client without the capability never sees it.
    */
   #broadcastAgentEvent(event: AgentEvent | LiveVoiceWireEvent): void {
+    if (this.#options.deviceOnly?.()) return;
     const filteredConversationPayloads = new Map<string, string>();
 
     for (const [client, connection] of this.#eventClients) {
+      if (connection.deviceOnly) continue;
       // An event this client's protocol cannot describe is skipped for this client only. Thrown
       // out of the loop, it would stop the event for every client after this one.
       const encodeEvent = (event: AgentEvent, options = {}) => {
@@ -1011,11 +1030,12 @@ export class TeamApiServer {
     supportsSnapshotTransport: boolean,
     acceptsCapabilityDeclaration: boolean,
   ): void {
+    const deviceOnly = this.#options.deviceOnly?.() === true;
     const connection: EventClientState = {
       token,
       memberId,
       capabilities: new Set(
-        acceptsCapabilityDeclaration
+        deviceOnly || acceptsCapabilityDeclaration
           ? []
           : TEAM_PROTOCOL_V1_CAPABILITIES.filter(
               (capability) =>
@@ -1025,7 +1045,7 @@ export class TeamApiServer {
                 (supportsSnapshotTransport || capability !== "agent-runtime-snapshots"),
             ),
       ),
-      includeConversationEvents: !supportsSnapshotTransport,
+      includeConversationEvents: !deviceOnly && !supportsSnapshotTransport,
       typingAgentId: null,
       typingTimer: null,
       directTypingRecipientId: null,
@@ -1033,6 +1053,7 @@ export class TeamApiServer {
       snapshotResponsePending: false,
       snapshotRequestQueued: false,
       nextSnapshotRequestAt: 0,
+      deviceOnly,
     };
     this.#eventClients.set(client, connection);
     client.on("error", () => {
@@ -1055,6 +1076,9 @@ export class TeamApiServer {
             : Buffer.from(data).toString("utf8");
         if (text.length > EVENT_PAYLOAD_LIMIT) throw new Error("Event payload is too large.");
         const event = decodeTeamProtocolV1CurrentClientEvent(JSON.parse(text));
+        if (this.#options.deviceOnly?.() && event.type !== "agent-event-scope") {
+          throw new Error("Only device-operation event scope is allowed.");
+        }
         if (event.type === "runtime-snapshot-request" && connection.capabilities.has("agent-runtime-snapshots")) {
           this.#sendRuntimeSnapshot(client, connection, true);
           return;
@@ -1064,14 +1088,21 @@ export class TeamApiServer {
             if (!event.capabilities) throw new Error("Invalid client capabilities.");
             const snapshotsWereEnabled = connection.capabilities.has("agent-runtime-snapshots");
             const restartWasSent = connection.capabilities.has(HOST_UPDATE_CAPABILITY);
-            connection.capabilities = new Set(event.capabilities.filter(isTeamCurrentCapability));
+            connection.deviceOnly = this.#options.deviceOnly?.() === true;
+            connection.capabilities = new Set(
+              event.capabilities.filter(
+                (capability) =>
+                  isTeamCurrentCapability(capability) &&
+                  (!connection.deviceOnly || capability === DEVICE_COMMANDS_V2_CAPABILITY),
+              ),
+            );
             if (connection.capabilities.has("agent-runtime-snapshots") && !snapshotsWereEnabled) {
               this.#sendRuntimeSnapshot(client, connection, false);
             }
             // A member that connects while a restart waits learns about it here, not at the next change.
             if (!restartWasSent && this.#hostRestart.state !== "none") this.#sendHostRestart(client, connection);
           }
-          connection.includeConversationEvents = event.includeConversations;
+          connection.includeConversationEvents = !connection.deviceOnly && event.includeConversations;
           return;
         }
         if (event.type === "team-direct-typing") {
@@ -1116,6 +1147,7 @@ export class TeamApiServer {
   }
 
   #sendRuntimeSnapshot(client: Ws.WebSocket, connection: EventClientState, rateLimited: boolean): void {
+    if (connection.deviceOnly) return;
     const now = this.#now();
     if (connection.snapshotResponsePending) {
       if (rateLimited) connection.snapshotRequestQueued = true;
@@ -1217,12 +1249,14 @@ export class TeamApiServer {
     this.#options.onPresence?.(snapshot);
     const event: TeamRealtimeEvent = { type: "team-presence", snapshot };
     for (const [client, connection] of this.#eventClients) {
+      if (connection.deviceOnly || this.#options.deviceOnly?.()) continue;
       const payload = this.#encodeProviderEvent(event, connection.capabilities);
       if (payload && client.readyState === webSockets.WebSocket.OPEN) client.send(payload);
     }
   }
 
   #publishDirectMessage(message: DirectMessage): void {
+    if (this.#options.deviceOnly?.()) return;
     const memberIds: [string, string] = [message.senderMemberId, message.recipientMemberId];
     const event: DirectMessageRealtimeEvent = {
       type: "team-direct-message",
@@ -1235,6 +1269,7 @@ export class TeamApiServer {
   }
 
   #publishDirectTyping(senderMemberId: string, recipientMemberId: string, typing: boolean): void {
+    if (this.#options.deviceOnly?.()) return;
     const event: DirectTypingRealtimeEvent = {
       type: "team-direct-typing",
       senderMemberId,
@@ -1249,10 +1284,12 @@ export class TeamApiServer {
   }
 
   #sendToMembers(memberIds: string[], event: TeamRealtimeEvent): void {
+    if (this.#options.deviceOnly?.()) return;
     const payload = encodeTeamProtocolV1CurrentEvent(event);
     if (!payload) return;
     for (const [client, connection] of this.#eventClients) {
       if (
+        !connection.deviceOnly &&
         connection.capabilities.has("direct-messages") &&
         memberIds.includes(connection.memberId) &&
         client.readyState === webSockets.WebSocket.OPEN
@@ -1396,6 +1433,8 @@ export class TeamApiServer {
       ...(this.#options.serverOrigin ? { origin: this.#options.serverOrigin } : {}),
       protocol: { minimum: TEAM_PROTOCOL_V1, maximum: TEAM_PROTOCOL_V6 },
       capabilities: TEAM_CURRENT_CAPABILITIES.filter((capability) => {
+        if (this.#options.deviceOnly?.())
+          return capability === DEVICE_COMMANDS_V2_CAPABILITY && isDeviceCommandV2Service(this.#options.deviceCommands);
         if (capability === "channel-chats-v1" || capability === CHANNEL_DELETE_CAPABILITY)
           return this.#options.channels !== undefined;
         // Advertised only when this host can serve it: a client that negotiated it gets a route,
@@ -1405,7 +1444,7 @@ export class TeamApiServer {
         if (capability === MCP_SERVERS_CAPABILITY) return this.#options.mcpServers !== undefined;
         if (capability === STORAGE_CAPABILITY) return this.#options.storage !== undefined;
         if (capability === HOSTED_SITES_CAPABILITY) return this.#options.hostedSites !== undefined;
-        if (capability === DEVICE_COMMANDS_CAPABILITY) return this.#options.deviceCommands !== undefined;
+        if (capability === DEVICE_COMMANDS_V2_CAPABILITY) return isDeviceCommandV2Service(this.#options.deviceCommands);
         if (capability === AGENT_ADMIN_CAPABILITY) return this.#options.admin?.agents !== undefined;
         if (capability === SKILLS_ADMIN_CAPABILITY) return this.#options.admin?.skills !== undefined;
         if (capability === SKILLS_EVENTS_CAPABILITY) return this.#options.skills !== undefined;

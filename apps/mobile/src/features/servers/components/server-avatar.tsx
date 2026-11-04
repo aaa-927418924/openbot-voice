@@ -10,8 +10,9 @@ import { useCSSVariable } from "uniwind";
 import { thumbnailColor } from "@/features/agents/components/bloub-avatar";
 import { getBloubAvatarColor } from "@/features/agents/model/bloub-activity";
 import { useMobileSession } from "@/features/auth/context/mobile-session-context";
-import { loadServerLogo } from "@/features/servers/model/server-logo";
+import { loadServerLogo as loadAccountServerLogo } from "@/features/servers/model/server-logo";
 import { DISCONNECTED_APPEARANCE } from "@/features/workspace/components/use-connection-appearance";
+import { useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
 import type { MobileServer } from "@/features/workspace/model/workspace-types";
 
 const INK = "rgba(0, 0, 0, 0.72)";
@@ -89,13 +90,16 @@ export function ServerAvatar({
   showStatus?: boolean;
 }) {
   const { session, sessionScope } = useMobileSession();
+  const { loadServerLogo } = useMobileWorkspace();
   const { logoKey } = server;
   const saved = useQuery({
     queryKey: ["server-logo", session?.apiUrl, session?.user.id, sessionScope, server.id, logoKey],
-    enabled: logoUri === undefined && Boolean(session && !session.localOnly && logoKey),
+    enabled: logoUri === undefined && Boolean(logoKey && (server.tailnet || (session && !session.localOnly))),
     queryFn: () => {
-      if (!session || !logoKey) throw new Error("The server logo is unavailable.");
-      return loadServerLogo(session, server.id, logoKey);
+      if (!logoKey) throw new Error("The server logo is unavailable.");
+      if (server.tailnet) return loadServerLogo(server.id, logoKey);
+      if (!session || session.localOnly) throw new Error("The server logo is unavailable.");
+      return loadAccountServerLogo(session, server.id, logoKey);
     },
     // The event that names a new logo can arrive before the host has uploaded it.
     retry: 4,

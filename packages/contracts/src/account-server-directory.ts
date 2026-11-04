@@ -13,7 +13,7 @@ export function accountServerVisibilityPayload(
   proof: Pick<AccountServerVisibilityProof, "hostId" | "visible" | "nonce">,
   registration?: Pick<
     AccountServerRegistration,
-    "hostId" | "name" | "apiUrl" | "fingerprint" | "publicKey" | "logoKey" | "membershipId" | "origin"
+    "hostId" | "name" | "apiUrl" | "fingerprint" | "publicKey" | "logoKey" | "membershipId" | "origin" | "deviceOnly"
   >,
 ): string {
   const visibility = `OpenBot account server visibility v1\n${accountId}\n${proof.hostId}\n${proof.visible ? "visible" : "hidden"}\n${proof.nonce}`;
@@ -30,6 +30,8 @@ export function accountServerVisibilityPayload(
     // absent. New Cloud hosts bind the origin marker to the same owner proof as the rest of the
     // registration metadata.
     ...(registration.origin === undefined ? [] : [registration.origin]),
+    // A device-only server is not a Team workspace. Keep old registrations byte-compatible.
+    ...(registration.deviceOnly === undefined ? [] : [registration.deviceOnly ? "device-only" : "device-only-clear"]),
   ])}`;
 }
 
@@ -48,10 +50,14 @@ export interface AccountServerDirectoryEntry {
   readonly isOwner: boolean;
   /** Set by the host's local account directory when it is running as the OpenBot Cloud host. */
   readonly origin?: "cloud";
+  /** This host exposes only device-operation endpoints and must not appear in the server picker. */
+  readonly deviceOnly?: boolean;
 }
 
 /** Device-independent fields only. Team session tokens remain in each device's secure storage. */
-export type AccountServerRegistration = Omit<AccountServerDirectoryEntry, "isOwner"> & {
+export type AccountServerRegistration = Omit<AccountServerDirectoryEntry, "isOwner" | "deviceOnly"> & {
+  /** `false` explicitly clears a previous device-only marker during owner metadata updates. */
+  readonly deviceOnly?: boolean;
   /** Internal migration hint; never confers access and is not returned by the directory. */
   readonly legacyImport?: boolean;
   /** Set only after an explicit invite/QR pairing to clear this account's leave tombstone. */

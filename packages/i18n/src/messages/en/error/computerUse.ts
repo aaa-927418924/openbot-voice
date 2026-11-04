@@ -17,5 +17,7 @@ export const messages = defineMessages("error.computerUse", {
   "error.computerUse.remoteCommandBlocked":
     "AutoReview blocked this high-risk remote command. Do not retry it or try another command to bypass the block.",
   "error.computerUse.remoteCommandInvalid": "The remote command request is invalid.",
+  "error.computerUse.remoteAutoReviewUnavailable":
+    "This command was refused because Codex CLI is not signed in through OpenBot or AutoReview is unavailable on the target PC.",
   "error.computerUse.remoteOperationUnavailable": "The remote device operation is unavailable.",
 });

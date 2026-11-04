@@ -163,6 +163,7 @@ export interface MobileWorkspaceContextValue extends MobileLiveVoiceHost {
   updateAgent: (input: UpdateAgentInput, serverId?: string) => Promise<void>;
   setAgentAvatar: (agentId: string, image: RemoteFileUpload | null, serverId: string) => Promise<void>;
   loadAgentAvatar: (agentId: string, avatarUrl: string, serverId: string) => Promise<string>;
+  loadServerLogo: (serverId: string, logoKey: string) => Promise<string>;
   deleteAgent: (agentId: string) => Promise<void>;
   duplicateAgent: (agentId: string) => Promise<void>;
   saveAgentMemory: (agentId: string, text: string, serverId: string, memoryId?: string) => Promise<void>;

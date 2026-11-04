@@ -178,9 +178,11 @@ import type {
   UpdateCustomProviderInput,
 } from "./ipc-custom-providers";
 import type {
-  RemoteDeviceCommandPermission,
+  RemoteDeviceCommandPolicy,
   RemoteDeviceCommandTarget,
   RemoteDeviceCommandTargetInput,
+  RemoteDeviceShareSettings,
+  SetRemoteDeviceShareSettingsInput,
   UpdateRemoteDeviceCommandTargetInput,
 } from "./ipc-device-commands";
 import type {
@@ -563,11 +565,15 @@ export const IPC_ENDPOINTS = {
   },
   deviceCommands: {
     listTargets: request<undefined, RemoteDeviceCommandTarget[]>()("device-commands:list-targets"),
-    getPermission: request<RemoteDeviceCommandTargetInput, RemoteDeviceCommandPermission>()(
+    getPermission: request<RemoteDeviceCommandTargetInput, RemoteDeviceCommandPolicy>()(
       "device-commands:get-permission",
     ),
-    updatePermission: request<UpdateRemoteDeviceCommandTargetInput, RemoteDeviceCommandPermission>()(
+    updatePermission: request<UpdateRemoteDeviceCommandTargetInput, RemoteDeviceCommandPolicy>()(
       "device-commands:update-permission",
+    ),
+    getShareSettings: request<undefined, RemoteDeviceShareSettings>()("device-commands:get-share-settings"),
+    setShareSettings: request<SetRemoteDeviceShareSettingsInput, RemoteDeviceShareSettings>()(
+      "device-commands:set-share-settings",
     ),
   },
   skills: {

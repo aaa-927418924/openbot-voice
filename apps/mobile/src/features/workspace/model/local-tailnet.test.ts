@@ -145,6 +145,10 @@ async function createHostFetch(options: { origin?: "cloud" } = {}) {
       return new Response(Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]), {
         headers: { "Content-Type": "image/png" },
       });
+    if (url.pathname === TEAM_API_ROUTES.team.logo)
+      return new Response(Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]), {
+        headers: { "Content-Type": "image/png" },
+      });
     if (url.pathname === TEAM_API_ROUTES.attachment("video-1")) {
       const range = url.searchParams.has("offset");
       return new Response(Uint8Array.from([0, 0, 0, range ? 2 : 1, 102, 116, 121, 112]), {
@@ -477,6 +481,13 @@ describe("Android direct Tailscale pairing", () => {
       client.request("GET", TEAM_API_ROUTES.agent.avatar("agent-1"), (value) => {
         if (typeof value !== "object" || value === null || !("mimeType" in value) || !("base64" in value))
           throw new Error("Invalid avatar response.");
+        return `data:${value.mimeType};base64,${value.base64}`;
+      }),
+    ).resolves.toBe("data:image/png;base64,iVBORw0KGgo=");
+    await expect(
+      client.request("GET", `${TEAM_API_ROUTES.team.logo}?v=logo-1`, (value) => {
+        if (typeof value !== "object" || value === null || !("mimeType" in value) || !("base64" in value))
+          throw new Error("Invalid logo response.");
         return `data:${value.mimeType};base64,${value.base64}`;
       }),
     ).resolves.toBe("data:image/png;base64,iVBORw0KGgo=");

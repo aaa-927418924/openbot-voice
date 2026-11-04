@@ -554,15 +554,14 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
     },
     deviceCommands: {
       listTargets: async () => [],
-      getPermission: async ({ agentId }) => ({
-        agentId,
+      getPermission: async () => ({
         commandsEnabled: false,
         computerUseEnabled: false,
-        allowedExecutables: [],
-        allowedDirectories: [],
         updatedAt: null,
       }),
-      updatePermission: async ({ permission }) => ({ ...permission, updatedAt: new Date().toISOString() }),
+      updatePermission: async ({ policy }) => ({ ...policy, updatedAt: new Date().toISOString() }),
+      getShareSettings: async () => ({ supported: false, enabled: false }),
+      setShareSettings: async () => ({ supported: false, enabled: false }),
     },
     openExternal: async () => undefined,
     connectProvider: async () => clone(agentStatus),

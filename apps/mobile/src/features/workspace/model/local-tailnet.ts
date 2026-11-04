@@ -274,6 +274,10 @@ function isAgentAvatarPath(path: string): boolean {
   return /^\/v1\/agents\/[^/]+\/avatar$/u.test(path);
 }
 
+function isTeamLogoPath(path: string): boolean {
+  return path === TEAM_API_ROUTES.team.logo;
+}
+
 export function parseTailnetInvite(value: string): InviteLinkPayload {
   const invite = parseInviteUrl(value, { allowTailscaleApiUrl: true });
   if (!isTailscaleApiUrl(invite.apiUrl)) throw new Error("Only Tailscale host invitations can be used in local mode.");
@@ -662,6 +666,7 @@ export class DirectTailnetTeamClient {
         ...(controller ? { signal: controller.signal } : {}),
       });
       const avatarResponse = method === "GET" && response.ok && isAgentAvatarPath(route);
+      const teamLogoResponse = method === "GET" && response.ok && isTeamLogoPath(route);
       // Attachments (including 206 byte-range responses) are streamed as raw bytes by the host.
       // Parsing them as JSON yields the Android Unexpected end of input error and prevents both
       // progressive video playback and the download action from receiving their expected envelope.
@@ -669,7 +674,7 @@ export class DirectTailnetTeamClient {
       const value =
         response.status === 204
           ? undefined
-          : avatarResponse || attachmentResponse
+          : avatarResponse || teamLogoResponse || attachmentResponse
             ? {
                 ...(attachmentResponse ? { name: attachmentDownloadName(response, route) } : {}),
                 mimeType: response.headers.get("Content-Type")?.split(";", 1)[0]?.trim() ?? "",
@@ -679,7 +684,7 @@ export class DirectTailnetTeamClient {
       const decoded =
         value === undefined
           ? undefined
-          : avatarResponse || attachmentResponse
+          : avatarResponse || teamLogoResponse || attachmentResponse
             ? value
             : sideRoute
               ? sideRoute.response(route, response.status, value)

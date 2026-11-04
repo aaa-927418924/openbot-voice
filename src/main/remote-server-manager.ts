@@ -44,6 +44,7 @@ import type {
   MarkDirectReadInput,
   RemoteDesktopSession,
   SendDirectMessageInput,
+  ServerConnectionState,
   ServerNotificationLevel,
   ServerSummary,
   SetTeamTypingInput,
@@ -181,10 +182,14 @@ class LocalTailnetRemoteServerDirectory implements RemoteServerDirectory {
   get activeServerId(): string {
     const activeServerId = this.#store.activeServerId;
     if (!this.#isLocalServerEnabled()) {
-      if (this.has(activeServerId)) return activeServerId;
-      return this.servers.find((server) => !this.#store.isHiddenHost(server.id))?.id ?? LOCAL_SERVER_ID;
+      if (this.has(activeServerId) && !this.find(activeServerId)?.deviceOnly) return activeServerId;
+      return (
+        this.servers.find((server) => !server.deviceOnly && !this.#store.isHiddenHost(server.id))?.id ?? LOCAL_SERVER_ID
+      );
     }
-    return activeServerId === LOCAL_SERVER_ID || this.has(activeServerId) ? activeServerId : LOCAL_SERVER_ID;
+    return activeServerId === LOCAL_SERVER_ID || (this.has(activeServerId) && !this.find(activeServerId)?.deviceOnly)
+      ? activeServerId
+      : LOCAL_SERVER_ID;
   }
 
   get servers(): readonly StoredRemoteServerView[] {
@@ -766,6 +771,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         remoteDesktopAvailable: false,
         logoVersion: identity.logoVersion,
         ...(entry.origin === undefined ? {} : { origin: entry.origin }),
+        ...(entry.deviceOnly === true ? { deviceOnly: true as const } : {}),
         role: result.member.role,
         ...(result.member.id ? { membershipId: result.member.id } : { membershipId: entry.membershipId }),
         ...(this.#centralAccount.getAccountId?.()
@@ -779,7 +785,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       // empty local-looking workspace while the real host is still unreachable.
       this.#connections.setState(stored.id, "connecting");
       this.#recordFreshServerSession(stored.id);
-      yield* this.#store.adopt(stored);
+      yield* this.#store.adopt(stored, { activate: !entry.deviceOnly });
       const remoteDesktopAvailable = yield* this.#client
         .probeRemoteDesktop(stored)
         .pipe(Effect.catch(() => Effect.succeed(false)));
@@ -917,15 +923,25 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       this.#servers.activeServerId,
       (serverId) => this.#connections.statusFor(serverId),
       this.#localMemberLimit,
-    ).map((server) => {
-      const mute = this.#store.muteState(server.id);
-      return {
-        ...server,
-        notificationsMuted: mute.muted,
-        notificationsMutedUntil: mute.mutedUntil,
-        notificationLevel: this.#store.notificationLevel(server.id),
-      };
-    });
+    )
+      .filter((server) => server.id === LOCAL_SERVER_ID || !this.#servers.find(server.id)?.deviceOnly)
+      .map((server) => {
+        const mute = this.#store.muteState(server.id);
+        return {
+          ...server,
+          notificationsMuted: mute.muted,
+          notificationsMutedUntil: mute.mutedUntil,
+          notificationLevel: this.#store.notificationLevel(server.id),
+        };
+      });
+  }
+
+  /** Online remote hosts that may be targeted by device-operation settings and agent tools. */
+  listDeviceCommandServers(): Array<{ id: string; state: ServerConnectionState }> {
+    return this.#servers.servers.map((server) => ({
+      id: server.id,
+      state: this.#connections.stateFor(server.id) ?? "offline",
+    }));
   }
 
   /**
@@ -994,6 +1010,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
           existingLocalEntry.publicKey !== localRegistration.publicKey ||
           existingLocalEntry.logoKey !== localRegistration.logoKey ||
           existingLocalEntry.origin !== localRegistration.origin ||
+          (existingLocalEntry.deviceOnly === true) !== (localRegistration.deviceOnly === true) ||
           existingLocalEntry.membershipId !== localRegistration.membershipId ||
           existingLocalEntry.role !== localRegistration.role
         ) {
@@ -1141,8 +1158,11 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         const existing = this.#store.find(entry.hostId);
         if (existing && (existing.fingerprint !== entry.fingerprint || existing.publicKey !== entry.publicKey))
           continue;
-        if (existing && existing.origin !== entry.origin) {
-          yield* this.#store.update(entry.hostId, { origin: entry.origin ?? null });
+        if (existing && (existing.origin !== entry.origin || existing.deviceOnly !== entry.deviceOnly)) {
+          yield* this.#store.update(entry.hostId, {
+            origin: entry.origin ?? null,
+            deviceOnly: entry.deviceOnly === true,
+          });
         }
         if (existing) {
           // A directory poll must not replace a valid per-device Team session. The account entry
@@ -1205,7 +1225,10 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       const active =
         preferredActive === LOCAL_SERVER_ID && this.#isLocalServerEnabled()
           ? LOCAL_SERVER_ID
-          : preferredActive !== null && preferredActive !== LOCAL_SERVER_ID && this.#servers.has(preferredActive)
+          : preferredActive !== null &&
+              preferredActive !== LOCAL_SERVER_ID &&
+              this.#servers.has(preferredActive) &&
+              !this.#servers.find(preferredActive)?.deviceOnly
             ? preferredActive
             : this.#servers.activeServerId;
       if (this.#store.activeServerId !== active) {
@@ -1266,7 +1289,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   readonly #selectEffect = Effect.fn("RemoteManager.select")(function* (this: RemoteServerManager, serverId: string) {
-    if (serverId !== LOCAL_SERVER_ID && !this.#servers.has(serverId))
+    if (serverId !== LOCAL_SERVER_ID && (!this.#servers.has(serverId) || this.#servers.find(serverId)?.deviceOnly))
       return yield* new RemoteWorkflowError({ cause: new Error(sourceText("error.remote.serverNotFound")) });
     const previousSelection = this.#store.selection;
     const previousUserSelectionIntent = this.#userSelectionIntent ?? previousSelection.activeServerId;
@@ -1345,7 +1368,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     ): Effect.fn.Return<ServerSummary[], RemoteWorkflowError, RemoteRequest> {
       let order = serverIds;
       if (this.#localOnlyNetworking) {
-        const visibleIds = new Set(this.#servers.servers.map((server) => server.id));
+        const visibleIds = new Set(
+          this.#servers.servers.filter((server) => !server.deviceOnly).map((server) => server.id),
+        );
         if (
           serverIds.length !== visibleIds.size ||
           new Set(serverIds).size !== visibleIds.size ||

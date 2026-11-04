@@ -412,6 +412,7 @@ it("instruments message commands without sending their contents or changing the 
     addRemoteServer: unexpected,
     setAgentAvatar: async () => {},
     loadAgentAvatar: async () => "",
+    loadServerLogo: async () => "",
     createAgent: unexpected,
     updateAgent: unexpected,
     deleteAgent: unexpected,

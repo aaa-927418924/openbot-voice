@@ -1,8 +1,8 @@
 import {
   isRemoteDeviceCommandIdentifier,
-  isRemoteDeviceCommandStringList,
-  type RemoteDeviceCommandPermission,
+  type RemoteDeviceCommandPolicy,
   type RemoteDeviceCommandTarget,
+  type RemoteDeviceShareSettings,
 } from "@openbot/contracts/ipc";
 import { isDynamicRecord, isOneOf, isString } from "@openbot/contracts/runtime-values";
 
@@ -19,6 +19,7 @@ export function decodeRemoteDeviceCommandTargets(value: unknown): RemoteDeviceCo
       (item.platform !== "windows" && item.platform !== "linux") ||
       !isOneOf(serverStates, item.state) ||
       typeof item.computerUseAvailable !== "boolean" ||
+      typeof item.autoReviewAvailable !== "boolean" ||
       typeof item.isLocal !== "boolean"
     ) {
       throw new Error("Invalid remote device list response.");
@@ -29,29 +30,31 @@ export function decodeRemoteDeviceCommandTargets(value: unknown): RemoteDeviceCo
       platform: item.platform,
       state: item.state,
       computerUseAvailable: item.computerUseAvailable,
+      autoReviewAvailable: item.autoReviewAvailable,
       isLocal: item.isLocal,
     };
   });
 }
 
-export function decodeRemoteDeviceCommandPermission(value: unknown): RemoteDeviceCommandPermission {
+export function decodeRemoteDeviceCommandPolicy(value: unknown): RemoteDeviceCommandPolicy {
   if (
     !isDynamicRecord(value) ||
-    !isRemoteDeviceCommandIdentifier(value.agentId) ||
     typeof value.commandsEnabled !== "boolean" ||
     typeof value.computerUseEnabled !== "boolean" ||
-    !isRemoteDeviceCommandStringList(value.allowedExecutables, 64, 128) ||
-    !isRemoteDeviceCommandStringList(value.allowedDirectories, 32, 4_096) ||
     (value.updatedAt !== null && !isString(value.updatedAt))
   ) {
-    throw new Error("Invalid remote device permission response.");
+    throw new Error("Invalid remote device policy response.");
   }
   return {
-    agentId: value.agentId,
     commandsEnabled: value.commandsEnabled,
     computerUseEnabled: value.computerUseEnabled,
-    allowedExecutables: [...value.allowedExecutables],
-    allowedDirectories: [...value.allowedDirectories],
     updatedAt: value.updatedAt,
   };
+}
+
+export function decodeRemoteDeviceShareSettings(value: unknown): RemoteDeviceShareSettings {
+  if (!isDynamicRecord(value) || typeof value.supported !== "boolean" || typeof value.enabled !== "boolean") {
+    throw new Error("Invalid remote device sharing settings.");
+  }
+  return { supported: value.supported, enabled: value.enabled };
 }

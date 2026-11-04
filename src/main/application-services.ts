@@ -66,6 +66,7 @@ import { toMcpGatewayFailed } from "../backend/agent/mcp-gateway";
 import { AgentLifecycleFailed, AgentService } from "../backend/agent-service";
 import { AgentStore } from "../backend/agent-store";
 import { BrowserHost } from "../backend/browser-host";
+import { resolveCodexCli } from "../backend/cli";
 import { CodexHome } from "../backend/codex-home";
 import { runCauseEffect } from "../backend/effect-boundary";
 import { MailboxStore } from "../backend/mailbox-store";
@@ -171,6 +172,7 @@ import { ProviderRuntimeManager, providerRuntimeRoot, runtimeTarget } from "./pr
 import { RemoteDesktopManager } from "./remote-desktop-manager";
 import { resolveRemoteDesktopRuntime } from "./remote-desktop-runtime-artifact";
 import { loadOrCreateRemoteDesktopCredentials } from "./remote-desktop-secret-store";
+import { CodexAutoReview } from "./remote-device-codex-review";
 import { RemoteDeviceCommandClient } from "./remote-device-command-client";
 import { RemoteDeviceCommandHost } from "./remote-device-command-host";
 import { appendRemoteDiagnosticLog } from "./remote-diagnostics";
@@ -644,11 +646,16 @@ export async function createApplicationServices({
   const localHostPreference = new LocalServerPreferenceStore(
     join(app.getPath("userData"), "local-server-preference-v1.json"),
   );
+  const deviceSharePreference = new LocalServerPreferenceStore(
+    join(app.getPath("userData"), "remote-device-share-preference-v1.json"),
+  );
   // New installs do not create a server by default. Existing completed installs keep their
   // historical default when the preference file is missing; an explicit saved choice wins.
   await localHostPreference.initialize(setupState.completed || cloudHostMode);
+  await deviceSharePreference.initialize(false);
   // A stale preference must not keep the Cloud host offline after a previous setup attempt.
   if (cloudHostMode && !localHostPreference.enabled) await localHostPreference.setEnabled(true);
+  const deviceOnlyHost = () => deviceSharePreference.enabled && !localHostPreference.enabled;
   let localHostRetry: { start: () => Promise<HostStatus | null>; stop: () => Promise<void> } | null = null;
   const selfHostedDesktopAccount = new SelfHostedDesktopAccountManager({
     path: join(app.getPath("userData"), "self-hosted-desktop-account-v1.json"),
@@ -1149,6 +1156,7 @@ export async function createApplicationServices({
     userDataPath: app.getPath("userData"),
     ...(cloudHostMode ? { codexHomeUserDataPath: join(app.getPath("appData"), app.getName()) } : {}),
   });
+  codexHome.ensure();
   const service: AgentService = new AgentService({
     store,
     mailbox,
@@ -1450,7 +1458,8 @@ export async function createApplicationServices({
     accountId: string,
     includeDisabled = false,
   ): AccountServerRegistration | null => {
-    if ((!includeDisabled && !localHostPreference.enabled) || accountId !== teamStore.getOwnerAccountId()) {
+    const hostPublished = localHostPreference.enabled || deviceSharePreference.enabled;
+    if ((!includeDisabled && !hostPublished) || accountId !== teamStore.getOwnerAccountId()) {
       return null;
     }
     const identity = teamStore.getIdentity();
@@ -1477,13 +1486,14 @@ export async function createApplicationServices({
       logoKey: identity.logoVersion,
       membershipId,
       role: "member",
+      deviceOnly: deviceOnlyHost(),
       ...(cloudHostMode ? { origin: "cloud" as const } : {}),
     };
   };
   let selfHostedIdentityReady = selfHostedIdentityAuthority !== null;
   if (
     localOnlyNetworking &&
-    localHostPreference.enabled &&
+    (localHostPreference.enabled || deviceSharePreference.enabled) &&
     selfHostedDesktopAccount.getState().status === "signed_in"
   ) {
     try {
@@ -1501,7 +1511,11 @@ export async function createApplicationServices({
       await serverDirectory.initialize();
       selfHostedAccountServerDirectory = serverDirectory;
       const localHostId = teamStore.getIdentity()?.serverId;
-      if (localHostId) await serverDirectory.setServerVisible(localHostId, localHostPreference.enabled);
+      if (localHostId)
+        await serverDirectory.setServerVisible(
+          localHostId,
+          localHostPreference.enabled || deviceSharePreference.enabled,
+        );
     } catch (error) {
       selfHostedIdentityReady = false;
       logger.error("The self-hosted account server directory could not initialize:", toLogValue(error));
@@ -1667,6 +1681,13 @@ export async function createApplicationServices({
           getServerName: () => teamStore.getIdentity()?.serverName ?? "",
           cuaDriver,
           platform: process.platform,
+          autoReview: new CodexAutoReview({
+            resolveCli: () =>
+              runCauseEffect(resolveCodexCli({ bundledExecutable: providerRuntimes.executablePath("codex") })),
+            codexHome: codexHome.path,
+            codexSqliteHome: codexHome.sqlitePath,
+            platform: process.platform,
+          }),
         })
       : null;
   const host = new HostService({
@@ -1690,6 +1711,7 @@ export async function createApplicationServices({
     // Each Windows/Linux target owns its default-deny policy in this profile. This works in both
     // desktop and server mode, so a headless Cloud host can control other registered devices.
     ...(deviceCommandHost ? { deviceCommands: deviceCommandHost } : {}),
+    deviceOnly: deviceOnlyHost,
     // Present on a Linux host. It advertises `server-migration-v1`.
     serverMigration: serverMigrationDestination?.migration,
     // Each member present advertises its admin capability. Every admin route requires an owner or admin.
@@ -2068,13 +2090,146 @@ export async function createApplicationServices({
   teamWebRtcBridge.on("accountServersChanged", () => void Effect.runPromise(remoteServers.invalidateDirectory()));
   teardown.push(TEARDOWN_ORDER.remoteServers, "the remote servers", () => runCauseEffect(remoteServers.stop()));
   await runCauseEffect(remoteServers.initialize());
+  const setRemoteDeviceShareSettings = async ({ enabled }: { enabled: boolean }) => {
+    if (!localHostSettingsSupported || !deviceCommandHost) {
+      return { supported: false, enabled: deviceSharePreference.enabled };
+    }
+    const updateVisibility = async (
+      hostId: string,
+      visible: boolean,
+      registration: AccountServerRegistration | null,
+      onRequestStarted?: () => void,
+    ) => {
+      const account = selfHostedDesktopAccount.signedInAccount;
+      if (!account) throw new Error("Sign in to share this PC.");
+      const proof = teamStore.getAccountServerVisibilityProof({
+        accountId: account.id,
+        hostId,
+        visible,
+        nonce: randomBytes(24).toString("base64url"),
+        ...(registration ? { registration } : {}),
+      });
+      if (!proof) throw new Error(sourceText("error.team.visibilityOwnerRequired"));
+      onRequestStarted?.();
+      await Effect.runPromise(selfHostedDesktopAccount.setAccountServerVisibility(proof, registration ?? undefined));
+    };
+
+    const previousEnabled = deviceSharePreference.enabled;
+    const hostIdBeforeChange = teamStore.getIdentity()?.serverId;
+    if (enabled) {
+      let visibilityRequestStarted = false;
+      try {
+        await ensureLocalHost();
+        await deviceSharePreference.setEnabled(true);
+        const status = localHostRetry ? await localHostRetry.start() : await runCauseEffect(host.start());
+        if (status?.phase !== "online" || !status.apiOnline) {
+          throw new Error(status?.message || sourceText("error.team.serverDirectoryUnavailable"));
+        }
+        const account = selfHostedDesktopAccount.signedInAccount;
+        const hostId = teamStore.getIdentity()?.serverId;
+        if (!account || !hostId) throw new Error("Sign in to share this PC.");
+        if (selfHostedIdentityApi && !selfHostedAccountServerDirectory) {
+          throw new Error(sourceText("error.team.serverDirectoryUnavailable"));
+        }
+        const registration = getLocalOwnerServerRegistration(account.id, true);
+        if (!registration) throw new Error(sourceText("error.team.visibilityOwnerRequired"));
+        await updateVisibility(hostId, true, registration, () => {
+          visibilityRequestStarted = true;
+        });
+        await mirrorLocalServerVisibility(selfHostedAccountServerDirectory, hostId, true, (error) =>
+          logger.warn("Could not update the local server-directory mirror:", toLogValue(error)),
+        );
+        await runCauseEffect(remoteServers.localHostVisibilityChanged()).catch((error) =>
+          logger.warn("Could not refresh the local server list after enabling device sharing:", toLogValue(error)),
+        );
+      } catch (error) {
+        logger.error("Could not enable remote device sharing:", toLogValue(error));
+        if (!previousEnabled && !visibilityRequestStarted) {
+          await deviceSharePreference.setEnabled(false).catch(() => undefined);
+          if (!localHostPreference.enabled) {
+            await localHostRetry?.stop();
+            await runCauseEffect(host.stop(false)).catch(() => undefined);
+          }
+          await runCauseEffect(remoteServers.localHostVisibilityChanged()).catch(() => undefined);
+        }
+        throw error;
+      }
+      return { supported: true, enabled: true };
+    }
+
+    if (localHostPreference.enabled) {
+      const account = selfHostedDesktopAccount.signedInAccount;
+      const hostId = teamStore.getIdentity()?.serverId;
+      if (!account || !hostId) throw new Error("Sign in to share this PC.");
+      let visibilityRequestStarted = false;
+      try {
+        await deviceSharePreference.setEnabled(false);
+        const registration = getLocalOwnerServerRegistration(account.id, true);
+        await updateVisibility(hostId, true, registration, () => {
+          visibilityRequestStarted = true;
+        });
+        await mirrorLocalServerVisibility(selfHostedAccountServerDirectory, hostId, true, (error) =>
+          logger.warn("Could not update the local server-directory mirror:", toLogValue(error)),
+        );
+        await runCauseEffect(remoteServers.localHostVisibilityChanged()).catch(() => undefined);
+      } catch (error) {
+        logger.error("Could not disable remote device sharing:", toLogValue(error));
+        if (previousEnabled && !visibilityRequestStarted) {
+          await deviceSharePreference.setEnabled(true).catch(() => undefined);
+        }
+        throw error;
+      }
+      return { supported: true, enabled: false };
+    }
+
+    if (!hostIdBeforeChange) {
+      await localHostRetry?.stop();
+      await runCauseEffect(host.stop(false));
+      await deviceSharePreference.setEnabled(false);
+      return { supported: true, enabled: false };
+    }
+    const account = selfHostedDesktopAccount.signedInAccount;
+    if (!account) throw new Error("Sign in to share this PC.");
+    const registration = getLocalOwnerServerRegistration(account.id, true);
+    try {
+      await localHostRetry?.stop();
+      await runCauseEffect(host.stop(false));
+      await deviceSharePreference.setEnabled(false);
+      await updateVisibility(hostIdBeforeChange, false, registration);
+      await mirrorLocalServerVisibility(selfHostedAccountServerDirectory, hostIdBeforeChange, false, (error) =>
+        logger.warn("Could not update the local server-directory mirror:", toLogValue(error)),
+      );
+      await runCauseEffect(remoteServers.localHostVisibilityChanged()).catch(() => undefined);
+    } catch (error) {
+      logger.error("Could not disable remote device sharing:", toLogValue(error));
+      if (previousEnabled) {
+        await deviceSharePreference.setEnabled(true).catch(() => undefined);
+        if (!localHostPreference.enabled) {
+          const restart = localHostRetry ? await localHostRetry.start().catch(() => null) : null;
+          const status = restart ?? (!localHostRetry ? await runCauseEffect(host.start()).catch(() => null) : null);
+          if (status?.phase !== "online" || !status.apiOnline) {
+            logger.warn("Remote device sharing remains enabled, but the host could not be restored after the failure.");
+          }
+        }
+        const restoreRegistration = registration ?? getLocalOwnerServerRegistration(account.id, true);
+        if (restoreRegistration) {
+          await updateVisibility(hostIdBeforeChange, true, restoreRegistration).catch((restoreError) =>
+            logger.warn("Could not restore remote device sharing visibility:", toLogValue(restoreError)),
+          );
+        }
+        await runCauseEffect(remoteServers.localHostVisibilityChanged()).catch(() => undefined);
+      }
+      throw error;
+    }
+    return { supported: true, enabled: false };
+  };
   remoteDeviceCommandClient = new RemoteDeviceCommandClient(
     remoteServers,
     localHostSettingsSupported && deviceCommandHost
       ? {
           service: deviceCommandHost,
           getState: (): ServerConnectionState => {
-            if (!localHostPreference.enabled) return "offline";
+            if (!localHostPreference.enabled && !deviceSharePreference.enabled) return "offline";
             const status = host.getStatus();
             if (status.phase === "online") return status.apiOnline ? "online" : "connecting";
             if (status.phase === "starting") return "connecting";
@@ -2083,6 +2238,13 @@ export async function createApplicationServices({
           },
         }
       : null,
+    {
+      get: () => ({
+        supported: localHostSettingsSupported && deviceCommandHost !== null,
+        enabled: deviceSharePreference.enabled,
+      }),
+      set: setRemoteDeviceShareSettings,
+    },
   );
   criticalActionTargets = { agents: service, remoteServers };
   const serverMigration =
@@ -2459,6 +2621,37 @@ export async function createApplicationServices({
         await Effect.runPromise(selfHostedDesktopAccount.setAccountServerVisibility(proof, registration ?? undefined));
       };
       if (!enabled) {
+        if (deviceSharePreference.enabled) {
+          const hostId = teamStore.getIdentity()?.serverId;
+          const previousPreference = localHostPreference.enabled;
+          let accountVisibilityUpdateStarted = false;
+          try {
+            await ensureLocalHost();
+            const status = localHostRetry ? await localHostRetry.start() : await runCauseEffect(host.start());
+            if (status?.phase !== "online" || !status.apiOnline) {
+              throw new Error(status?.message || sourceText("error.team.serverDirectoryUnavailable"));
+            }
+            const account = selfHostedDesktopAccount.signedInAccount;
+            const currentHostId = teamStore.getIdentity()?.serverId ?? hostId;
+            if (!account || !currentHostId) throw new Error("Sign in to manage the local server.");
+            await localHostPreference.setEnabled(false);
+            const registration = getLocalOwnerServerRegistration(account.id, true);
+            await updateAccountServerVisibility(currentHostId, true, registration, () => {
+              accountVisibilityUpdateStarted = true;
+            });
+            await mirrorLocalServerVisibility(selfHostedAccountServerDirectory, currentHostId, true, (error) =>
+              logger.warn("Could not update the local server-directory mirror:", toLogValue(error)),
+            );
+            await runCauseEffect(remoteServers.localHostVisibilityChanged()).catch(() => undefined);
+          } catch (error) {
+            logger.error("Could not switch this PC to device-only sharing:", toLogValue(error));
+            if (previousPreference && !accountVisibilityUpdateStarted) {
+              await localHostPreference.setEnabled(true).catch(() => undefined);
+            }
+            throw error;
+          }
+          return { supported: true, enabled: false };
+        }
         const previousPreference = localHostPreference.enabled;
         let accountVisibilityUpdateStarted = false;
         const hostId = teamStore.getIdentity()?.serverId;
@@ -2562,7 +2755,7 @@ export async function createApplicationServices({
       localHostRetry = retry;
     },
     startLocalHostAfterSignIn: () => {
-      if (!localOnlyNetworking || !localHostPreference.enabled) return;
+      if (!localOnlyNetworking || (!localHostPreference.enabled && !deviceSharePreference.enabled)) return;
       if (localHostRetry) {
         localHostRetry.start();
         return;

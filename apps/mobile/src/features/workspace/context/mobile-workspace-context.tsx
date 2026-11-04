@@ -1251,14 +1251,31 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
         if (conversationStore.get(event.agentId))
           void loadConversation(event.agentId, serverId, true).catch(() => undefined);
       } else if (event.type === "team-identity") {
-        // Account-directory logos are loaded from the cloud; local-only hosts use initials.
+        const server = serversRef.current.find((candidate) => candidate.id === serverId);
+        const tailnet = server?.tailnet
+          ? { ...server.tailnet, name: event.serverName, logoKey: event.logoVersion }
+          : undefined;
         setServers((current) =>
           current.map((server) =>
             server.id === serverId
-              ? { ...server, name: event.serverName, logoKey: session.localOnly ? null : event.logoVersion }
+              ? {
+                  ...server,
+                  name: event.serverName,
+                  logoKey: event.logoVersion,
+                  ...(tailnet ? { tailnet } : {}),
+                }
               : server,
           ),
         );
+        if (tailnet) {
+          void saveLocalTailnetServer(tailnet)
+            .then(() =>
+              session.sessionToken
+                ? registerAccountServer(session, accountServerRegistration(tailnet)).catch(() => undefined)
+                : undefined,
+            )
+            .catch(() => undefined);
+        }
       }
     },
     [
@@ -1272,11 +1289,9 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
       refreshConversationReads,
       readRefresh,
       queryClient,
-      session.apiUrl,
-      session.user.id,
+      session,
       sessionScope,
       applyConversationReads,
-      session.localOnly,
     ],
   );
 

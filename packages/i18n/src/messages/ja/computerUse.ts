@@ -42,40 +42,28 @@ export const messages = {
   "computerUse.highlight.working": "OpenBot が {title} で作業しています",
   "computerUse.remote.title": "他のデバイス",
   "computerUse.remote.description":
-    "権限は操作対象デバイスに保存されます。Windows / Linux PCをCloudエージェントから操作するには、そのPCのローカルサーバーを有効にして同じアカウントへ公開し、対象に「このPC」を選んでください。",
+    "Windows / Linux PCを選びます。権限はすべてのエージェントとサーバーに適用されます。コマンドは対象PCのOpenBotでサインインしたCodex CLIから実行し、権限要求をAutoReviewで審査します。利用できない場合は拒否されます。",
   "computerUse.remote.refresh": "デバイスを更新",
-  "computerUse.remote.agent": "エージェント",
   "computerUse.remote.device": "操作対象デバイス",
-  "computerUse.remote.empty.agents": "このサーバーにエージェントがいません。",
   "computerUse.remote.empty.targets":
-    "操作対象デバイスがありません。対象PCでOpenBotのローカルサーバーを有効にし、同じアカウントへ公開してください。",
+    "操作対象デバイスがありません。操作したいWindows / Linux PCでリモートデバイス共有を有効にしてください。",
   "computerUse.remote.thisComputer": "このPC（{name}）",
-  "computerUse.remote.localServer.title": "このPCを同じアカウントの他デバイスに公開",
-  "computerUse.remote.localServer.description":
-    "オンにするとこのPCでローカルOpenBotサーバーを起動し、サインイン中のアカウントに公開します。Cloudエージェントから操作する間はオンにしてください。",
-  "computerUse.remote.localServer.reconnect": "共有状態を更新",
-  "computerUse.remote.localServer.disabledNotice":
-    "権限はこのPCに保存できますが、共有をオンにするまで他デバイスからは見えません。",
-  "computerUse.remote.error.localServer":
-    "このPCのOpenBotサーバーを共有できませんでした。サインインと接続状態を確認してください。",
+  "computerUse.remote.share.title": "このPCをリモートデバイス操作に共有",
+  "computerUse.remote.share.description":
+    "通常のOpenBotサーバーとして有効にせず、このアカウントの他デバイスから操作できるようにします。",
+  "computerUse.remote.error.share":
+    "このPCを共有できませんでした。アカウントのサインインと接続状態を確認してください。",
   "computerUse.remote.deviceOffline": "権限を編集するには、対象デバイスを接続してください。",
+  "computerUse.remote.autoReviewUnavailable":
+    "このPCのOpenBotでCodex CLIにサインインしてください。AutoReviewが使えるようになるまでコマンドは拒否されます。",
   "computerUse.remote.computerUseUnavailable": "対象デバイスで Computer Use を利用できません。",
-  "computerUse.remote.loading": "このエージェントの権限を読み込んでいます…",
+  "computerUse.remote.loading": "デバイスの権限を読み込んでいます…",
   "computerUse.remote.commands.title": "コマンド実行を許可",
   "computerUse.remote.commands.description":
-    "対象デバイスで許可したプログラムを実行します。対象側のルールベース AutoReview が既知の危険なコマンドを起動前にブロックします。",
+    "このデバイスで全エージェントのコマンド実行を許可します。対象PCのOpenBotでサインインしたCodex CLIが実行し、権限要求はAutoReviewで審査します。利用できない場合はコマンドを拒否します。",
   "computerUse.remote.computerUse.title": "Computer Use を許可",
   "computerUse.remote.computerUse.description":
-    "対象デバイスの画面操作ツールを許可します。コマンド実行とは別の設定です。",
-  "computerUse.remote.executables.title": "許可する実行ファイル名",
-  "computerUse.remote.executables.description":
-    "正確な実行ファイル名を1行に1つ入力します。保存時に対象デバイス上の実際のパスを固定します。空欄ではコマンドを許可しません。",
-  "computerUse.remote.directories.title": "許可する作業ディレクトリ",
-  "computerUse.remote.directories.description":
-    "対象デバイス上のディレクトリを1行に1つ入力します。空欄ではコマンドを許可しません。",
-  "computerUse.remote.allowlistNotice":
-    "これらのリストは OpenBot の追加の権限チェックです。実行ファイルを対象デバイス内の他のデータから隔離するものではありません。",
-  "computerUse.remote.save": "権限を保存",
+    "このデバイスで全エージェントの画面操作ツールを許可します。コマンド実行とは別の設定です。",
   "computerUse.remote.saved": "対象デバイスに権限を保存しました。",
   "computerUse.remote.error.load": "リモートデバイスを読み込めませんでした。",
   "computerUse.remote.error.permission": "対象デバイスの権限を読み込めませんでした。",

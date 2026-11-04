@@ -188,6 +188,8 @@ vi.mock("../components/remote-team-transport", () => ({
                 ...(conversationHistorySupported ? [CONVERSATION_HISTORY_DELETE_CAPABILITY] : []),
               ],
             });
+          if (path.startsWith(`${TEAM_API_ROUTES.team.logo}?`))
+            return decode({ mimeType: "image/png", base64: "iVBORw0KGgo=" });
           if (path === TEAM_API_ROUTES.agents.all)
             return decode(
               emptyInitialAgentList
@@ -1061,5 +1063,28 @@ it("applies a name and logo change that another client made", async () => {
   await act(async () =>
     emit({ type: "team-identity", serverId: host.hostId, serverName: "Renamed", logoVersion: "logo-3" }),
   );
+  expect(current.servers[0]).toMatchObject({ name: "Renamed", logoKey: "logo-3" });
+});
+
+it("loads and saves a paired host's custom logo version in local-only mode", async () => {
+  session.apiUrl = "http://127.0.0.1/";
+  session.sessionToken = "";
+  session.localOnly = true;
+  addLegacyLocalTailnetServer(null);
+
+  await mountWorkspace();
+  await vi.waitFor(() => expect(current.serverDirectoryState).toBe("ready"));
+
+  await expect(current.loadServerLogo(host.hostId, "logo-3")).resolves.toBe("data:image/png;base64,iVBORw0KGgo=");
+  expect(sent).toContainEqual({ method: "GET", path: `${TEAM_API_ROUTES.team.logo}?v=logo-3`, body: undefined });
+
+  await act(async () =>
+    emit({ type: "team-identity", serverId: host.hostId, serverName: "Renamed", logoVersion: "logo-3" }),
+  );
+  await vi.waitFor(() => {
+    expect(JSON.parse(native.storage.get("openbot.mobile.local-tailnet.v1") ?? "[]")).toEqual(
+      expect.arrayContaining([expect.objectContaining({ hostId: host.hostId, logoKey: "logo-3" })]),
+    );
+  });
   expect(current.servers[0]).toMatchObject({ name: "Renamed", logoKey: "logo-3" });
 });

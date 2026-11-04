@@ -39,25 +39,25 @@ export const REMOTE_DEVICE_TOOL_DEFINITIONS = [
   {
     name: "list_remote_devices",
     description:
-      "List online Windows/Linux OpenBot servers that you can operate, and your current per-device command and Computer Use grants. A grant is off unless the user enabled it in Settings. If the list is empty, explain that the target PC must run and share its local OpenBot server with the same account; a permission saved on this Cloud host does not publish another PC.",
+      "List online Windows/Linux devices shared by this account, with their device-wide command and Computer Use permissions and whether the target Codex CLI AutoReview is ready. If empty, explain that the target PC must turn on remote device sharing in OpenBot Settings; it does not need to be a regular OpenBot server.",
     shape: {},
   },
   {
     name: "run_remote_command",
     description:
-      "Run one allowlisted executable on a named remote device without a shell. The target host checks its per-agent permission and blocks high-risk commands with AutoReview. Use only for the user's requested task. Never try to bypass a block or widen a grant.",
+      "Run one requested command on a named remote PC through the Codex CLI signed in through OpenBot on that PC. The target requires its device-wide command permission, uses AutoReview for permission requests, and refuses commands when Codex is signed out, AutoReview is unavailable, or review denies the action. Use only for the user's requested task; never retry a refused command with a workaround.",
     shape: runRemoteCommandSchema.shape,
   },
   {
     name: "list_remote_computer_use_tools",
     description:
-      "List the Computer Use tools exposed by one remote device. The target host rejects this unless the user enabled Computer Use for you on that device.",
+      "List Computer Use tools exposed by one remote device. The target rejects this unless the device-wide Computer Use permission is enabled.",
     shape: remoteComputerUseToolsSchema.shape,
   },
   {
     name: "remote_computer_use",
     description:
-      "Call one Computer Use tool on a named remote device. The target host checks its separate per-agent Computer Use grant. This operates in the background with the target's OpenBot driver and must not bypass user consent or policy blocks.",
+      "Call one Computer Use tool on a named remote device. The target checks its device-wide Computer Use permission. This operates with the target's OpenBot driver and must not bypass user consent or policy blocks.",
     shape: remoteComputerUseCallSchema.shape,
   },
 ] as const;
@@ -89,7 +89,7 @@ export async function callRemoteDeviceTool(
     }
     if (tool === "list_remote_computer_use_tools") {
       const input = remoteComputerUseToolsSchema.parse(args);
-      return success(await client.listComputerUseTools({ ...input, agentId }));
+      return success(await client.listComputerUseTools({ serverId: input.serverId }));
     }
     if (tool === "remote_computer_use") {
       const input = remoteComputerUseCallSchema.parse(args);

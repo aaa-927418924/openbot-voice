@@ -25,13 +25,36 @@ export interface RemoteDeviceCommandTarget {
   platform: "windows" | "linux";
   state: ServerConnectionState;
   computerUseAvailable: boolean;
+  /** The target has a signed-in Codex CLI with the AutoReview command path available. */
+  autoReviewAvailable: boolean;
   /** True only for the local settings target. Local targets are never exposed to agents. */
   isLocal: boolean;
 }
 
 /** Target metadata plus the current agent's permission, exposed to that agent's tool only. */
 export interface RemoteDeviceCommandAgentTarget extends Omit<RemoteDeviceCommandTarget, "isLocal"> {
-  permission: RemoteDeviceCommandPermission;
+  policy: RemoteDeviceCommandPolicy;
+}
+
+/** Device-wide permission state, stored and enforced by the target computer. */
+export interface RemoteDeviceCommandPolicy {
+  commandsEnabled: boolean;
+  computerUseEnabled: boolean;
+  updatedAt: string | null;
+}
+
+export interface UpdateRemoteDeviceCommandPolicyInput {
+  commandsEnabled: boolean;
+  computerUseEnabled: boolean;
+}
+
+export interface RemoteDeviceShareSettings {
+  supported: boolean;
+  enabled: boolean;
+}
+
+export interface SetRemoteDeviceShareSettingsInput {
+  enabled: boolean;
 }
 
 /** Per coordinator-agent permission stored and enforced on the target host. */
@@ -56,12 +79,11 @@ export interface UpdateRemoteDeviceCommandPermissionInput {
 
 export interface RemoteDeviceCommandTargetInput {
   serverId: string;
-  agentId: string;
 }
 
 export interface UpdateRemoteDeviceCommandTargetInput {
   serverId: string;
-  permission: UpdateRemoteDeviceCommandPermissionInput;
+  policy: UpdateRemoteDeviceCommandPolicyInput;
 }
 
 /** One direct process invocation. The target always uses shell:false and a bounded lifetime. */

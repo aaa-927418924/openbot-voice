@@ -138,7 +138,11 @@ import {
   decodeReadStates,
   decodeReceipt,
 } from "./conversation-decoding";
-import { decodeRemoteDeviceCommandPermission, decodeRemoteDeviceCommandTargets } from "./device-command-decoding";
+import {
+  decodeRemoteDeviceCommandPolicy,
+  decodeRemoteDeviceCommandTargets,
+  decodeRemoteDeviceShareSettings,
+} from "./device-command-decoding";
 import {
   decodeDynamicIslandAction,
   decodeDynamicIslandGeometry,
@@ -536,8 +540,10 @@ const openbotApi: OpenBotDesktopApi = {
   }),
   deviceCommands: bridgeGroup(IPC_ENDPOINTS.deviceCommands, {
     listTargets: decodeRemoteDeviceCommandTargets,
-    getPermission: decodeRemoteDeviceCommandPermission,
-    updatePermission: decodeRemoteDeviceCommandPermission,
+    getPermission: decodeRemoteDeviceCommandPolicy,
+    updatePermission: decodeRemoteDeviceCommandPolicy,
+    getShareSettings: decodeRemoteDeviceShareSettings,
+    setShareSettings: decodeRemoteDeviceShareSettings,
   }),
   providerRuntimes: bridgeGroup(IPC_ENDPOINTS.providerRuntimes, {
     getStatus: decodeProviderRuntimeSnapshot,

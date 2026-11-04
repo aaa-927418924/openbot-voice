@@ -65,6 +65,7 @@ export interface RemoteServerPatch {
   logoVersion?: string | null;
   /** Set to null to clear an account-directory origin marker. */
   origin?: "cloud" | null;
+  deviceOnly?: boolean | null;
   remoteDesktopAvailable?: boolean;
   /** Set to null to clear an explicit account rejoin that has been confirmed. */
   pendingAccountRejoinId?: string | null;
@@ -239,10 +240,11 @@ export class RemoteServerStore implements RemoteServerDirectory {
   readonly adopt = Effect.fn("RemoteStore.adopt")(function* (
     this: RemoteServerStore,
     server: StoredRemoteServer,
+    options: { activate?: boolean } = {},
   ): Effect.fn.Return<void, RemoteWorkflowError> {
     this.#forgetUnreadable(server.id);
     this.#state.servers = [...this.#state.servers.filter((candidate) => candidate.id !== server.id), server];
-    this.setActiveServerId(server.id);
+    if (options.activate !== false) this.setActiveServerId(server.id);
     yield* this.persist();
   });
 
@@ -267,6 +269,7 @@ export class RemoteServerStore implements RemoteServerDirectory {
       logoVersion: entry.logoKey,
       role: entry.role,
       ...(entry.origin === undefined ? {} : { origin: entry.origin }),
+      ...(entry.deviceOnly === true ? { deviceOnly: true as const } : {}),
       membershipId: entry.membershipId,
       accountId,
       pendingAccountAuthentication: true,
@@ -291,12 +294,17 @@ export class RemoteServerStore implements RemoteServerDirectory {
       accountSignInRetryAccountId,
       accountSignInRetryReason,
       origin,
+      deviceOnly,
       ...fields
     } = patch;
     const updated: StoredRemoteServer = { ...current, ...fields };
     if ("origin" in patch) {
       if (origin === "cloud") updated.origin = origin;
       else delete updated.origin;
+    }
+    if ("deviceOnly" in patch) {
+      if (deviceOnly === true) updated.deviceOnly = true;
+      else delete updated.deviceOnly;
     }
     if ("pendingAccountRejoinId" in patch) {
       if (pendingAccountRejoinId) updated.pendingAccountRejoinId = pendingAccountRejoinId;

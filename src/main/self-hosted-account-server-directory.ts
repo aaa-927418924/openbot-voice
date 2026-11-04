@@ -36,6 +36,7 @@ interface StoredServer {
   readonly publicKey: string;
   readonly logoKey: string | null;
   readonly origin?: "cloud";
+  readonly deviceOnly?: true;
 }
 
 interface StoredMembership {
@@ -79,7 +80,7 @@ function validRole(value: unknown): value is TeamRole {
   return value === "owner" || value === "admin" || value === "member";
 }
 
-function decodeServer(value: unknown): StoredServer {
+function decodeServer(value: unknown, allowDeviceOnlyClear = false): StoredServer {
   if (
     !isDynamicRecord(value) ||
     !validId(value.hostId) ||
@@ -93,7 +94,12 @@ function decodeServer(value: unknown): StoredServer {
     value.publicKey.length > 8192 ||
     remoteHostFingerprint(value.publicKey) !== value.fingerprint ||
     !(value.logoKey === null || (isString(value.logoKey) && value.logoKey.length <= 256)) ||
-    !(value.origin === undefined || value.origin === "cloud")
+    !(value.origin === undefined || value.origin === "cloud") ||
+    !(
+      value.deviceOnly === undefined ||
+      value.deviceOnly === true ||
+      (allowDeviceOnlyClear && value.deviceOnly === false)
+    )
   ) {
     throw new Error("The account server directory is invalid.");
   }
@@ -105,6 +111,7 @@ function decodeServer(value: unknown): StoredServer {
     publicKey: value.publicKey,
     logoKey: value.logoKey,
     ...(value.origin === undefined ? {} : { origin: value.origin }),
+    ...(value.deviceOnly === true ? { deviceOnly: true as const } : {}),
   };
 }
 
@@ -164,7 +171,7 @@ function decodeDirectory(value: unknown): DirectoryFile {
   ) {
     throw new Error("The account server directory is invalid.");
   }
-  const servers = value.servers.map(decodeServer);
+  const servers = value.servers.map((server) => decodeServer(server));
   const memberships = value.memberships.map(decodeMembership);
   const serverIds = new Set(servers.map((server) => server.hostId));
   const membershipIds = new Set(memberships.map(({ accountId, hostId }) => `${accountId}\0${hostId}`));
@@ -186,13 +193,14 @@ function decodeRegistration(value: unknown): AccountServerRegistration {
     !validId(value.membershipId) ||
     !validRole(value.role) ||
     (value.legacyImport !== undefined && typeof value.legacyImport !== "boolean") ||
-    (value.rejoin !== undefined && typeof value.rejoin !== "boolean")
+    (value.rejoin !== undefined && typeof value.rejoin !== "boolean") ||
+    (value.deviceOnly !== undefined && typeof value.deviceOnly !== "boolean")
   ) {
     throw new AccountServerDirectoryError(400, "invalid_request");
   }
   let server: StoredServer;
   try {
-    server = decodeServer(value);
+    server = decodeServer(value, true);
   } catch {
     throw new AccountServerDirectoryError(400, "invalid_request");
   }
@@ -206,6 +214,7 @@ function decodeRegistration(value: unknown): AccountServerRegistration {
     membershipId: value.membershipId,
     role: value.role,
     ...(server.origin === undefined ? {} : { origin: server.origin }),
+    ...(value.deviceOnly === undefined ? {} : { deviceOnly: value.deviceOnly }),
     ...(value.legacyImport === true ? { legacyImport: true } : {}),
     ...(value.rejoin === true ? { rejoin: true } : {}),
   };
@@ -286,6 +295,7 @@ export class SelfHostedAccountServerDirectory {
                 publicKey: server.publicKey,
                 logoKey: server.logoKey,
                 ...(server.origin === undefined ? {} : { origin: server.origin }),
+                ...(server.deviceOnly === true ? { deviceOnly: true as const } : {}),
                 membershipId: membership.membershipId,
                 role: membership.role,
                 // The synced directory is not an authority for Team server permissions.
@@ -336,7 +346,7 @@ export class SelfHostedAccountServerDirectory {
       ) {
         throw new AccountServerDirectoryError(409, "host_identity_conflict");
       }
-      const server: StoredServer = existing
+      const serverBase: StoredServer = existing
         ? {
             ...existing,
             name: registration.name,
@@ -351,7 +361,14 @@ export class SelfHostedAccountServerDirectory {
             publicKey: registration.publicKey,
             logoKey: registration.logoKey,
             ...(registration.origin === undefined ? {} : { origin: registration.origin }),
+            ...(registration.deviceOnly === true ? { deviceOnly: true as const } : {}),
           };
+      const server: StoredServer =
+        registration.deviceOnly === false
+          ? (({ deviceOnly: _deviceOnly, ...withoutDeviceOnly }) => withoutDeviceOnly)(serverBase)
+          : registration.deviceOnly === true
+            ? { ...serverBase, deviceOnly: true }
+            : serverBase;
       const membership: StoredMembership = {
         accountId,
         hostId: registration.hostId,
@@ -416,6 +433,7 @@ export class SelfHostedAccountServerDirectory {
             ? {}
             : { origin: existing.origin }
           : { origin: registration.origin }),
+        ...(registration.deviceOnly === true ? { deviceOnly: true as const } : {}),
       };
       const membership: StoredMembership = {
         accountId,
@@ -433,6 +451,7 @@ export class SelfHostedAccountServerDirectory {
         existing.apiUrl === server.apiUrl &&
         existing.logoKey === server.logoKey &&
         existing.origin === server.origin &&
+        existing.deviceOnly === server.deviceOnly &&
         existingMembership?.membershipId === membership.membershipId &&
         existingMembership.role === membership.role
       ) {

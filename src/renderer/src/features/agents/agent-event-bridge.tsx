@@ -151,10 +151,14 @@ export function AgentEventBridge() {
         return;
       case "queue-changed":
         queueSnapshotRequests.set(event.snapshot.agentId, (queueSnapshotRequests.get(event.snapshot.agentId) ?? 0) + 1);
-        setQueues((current) => ({
-          ...current,
-          [event.snapshot.agentId]: event.snapshot,
-        }));
+        {
+          const completedTurnId = completedTurnByAgent.get(event.snapshot.agentId);
+          const snapshot = completedTurnId ? queueAfterTurnCompleted(event.snapshot, completedTurnId) : event.snapshot;
+          setQueues((current) => ({
+            ...current,
+            [event.snapshot.agentId]: snapshot,
+          }));
+        }
         return;
       case "routines-changed":
         refreshRoutineIds(event.agentId, activeServerId());
@@ -179,6 +183,8 @@ export function AgentEventBridge() {
         return;
       case "turn-completed":
         completedTurnByAgent.set(event.agentId, event.turnId);
+        // A listQueue request can have started before completion and return this stale turn later.
+        queueSnapshotRequests.set(event.agentId, (queueSnapshotRequests.get(event.agentId) ?? 0) + 1);
         setTurnProgress((current) =>
           current[event.agentId]?.turnId === event.turnId ? withoutAgent(current, event.agentId) : current,
         );
@@ -303,7 +309,11 @@ export function AgentEventBridge() {
   }
 
   function applyAgentRuntimeSnapshot(snapshot: AgentRuntimeSnapshot): void {
-    const runtimeTurns = new Map(snapshot.activeTurns.map((turn) => [turn.agentId, turn.turnId]));
+    const runtimeTurns = new Map(
+      snapshot.activeTurns
+        .filter((turn) => completedTurnByAgent.get(turn.agentId) !== turn.turnId)
+        .map((turn) => [turn.agentId, turn.turnId]),
+    );
     setActiveTurns(Object.fromEntries(runtimeTurns));
     setTurnProgress((current) =>
       Object.fromEntries(
@@ -312,7 +322,19 @@ export function AgentEventBridge() {
     );
     setFailedTurns(Object.fromEntries(snapshot.failedTurns.map((turn) => [turn.agentId, turn.turnId])));
     setUsageLimits(Object.fromEntries((snapshot.usageLimits ?? []).map((limit) => [limit.agentId, limit.resetsAt])));
-    setQueues((current) => reconcileQueuesWithRuntimeWork(current, snapshot.work, runtimeTurns));
+    setQueues((current) => {
+      const reconciled = reconcileQueuesWithRuntimeWork(current, snapshot.work, runtimeTurns);
+      let next = reconciled;
+      for (const [agentId, turnId] of completedTurnByAgent) {
+        const queue = reconciled[agentId];
+        if (!queue) continue;
+        const sanitized = queueAfterTurnCompleted(queue, turnId);
+        if (sanitized === queue) continue;
+        if (next === reconciled) next = { ...reconciled };
+        next[agentId] = sanitized;
+      }
+      return next;
+    });
     setPendingPrompts((current) => reconcileAttentionPrompts(current, snapshot, submittedPromptRequests()));
     setPendingApprovals((current) => reconcileAttentionApprovals(current, snapshot));
     applyRuntimeMessages(snapshot.latestMessages);

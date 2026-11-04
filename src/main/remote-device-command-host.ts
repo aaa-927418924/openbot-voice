@@ -8,12 +8,14 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type {
   RemoteDeviceCommandInput,
   RemoteDeviceCommandPermission,
+  RemoteDeviceCommandPolicy,
   RemoteDeviceCommandResult,
   RemoteDeviceComputerUseCallInput,
   RemoteDeviceComputerUseContentItem,
   RemoteDeviceComputerUseResult,
   RemoteDeviceComputerUseTool,
   UpdateRemoteDeviceCommandPermissionInput,
+  UpdateRemoteDeviceCommandPolicyInput,
 } from "@openbot/contracts/ipc";
 import { isBoolean, isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { Effect, Result, Schema, Semaphore } from "effect";
@@ -21,6 +23,8 @@ import { writeJsonFileAtomically } from "../backend/atomic-json-file";
 import { isMissingFileError } from "../backend/file-errors";
 import type { CuaDriverRuntime } from "./cua-driver-runtime";
 import { readPreferenceFile } from "./preference-file";
+import type { CodexAutoReview } from "./remote-device-codex-review";
+import { CodexAutoReviewDenied, CodexAutoReviewUnavailable } from "./remote-device-codex-review";
 import { remoteCommandRequiresAutoReview } from "./remote-device-command-risk";
 
 const MAX_COMMAND_RUNTIME_MS = 45_000;
@@ -33,12 +37,29 @@ const MAX_CUA_IMAGE_URL = 5_600_000;
 const POLICY_VERSION = 2;
 const EMBEDDED_DRIVER_ENV = "CUA_DRIVER_EMBEDDED";
 
-type FailureReason = "unsupported" | "permission" | "review" | "invalid" | "unavailable" | "storage" | "execution";
+type FailureReason =
+  | "unsupported"
+  | "permission"
+  | "review"
+  | "auto_review"
+  | "invalid"
+  | "unavailable"
+  | "storage"
+  | "execution";
 
 export class RemoteDeviceCommandHostError extends Schema.TaggedError<RemoteDeviceCommandHostError>()(
   "RemoteDeviceCommandHostError",
   {
-    reason: Schema.Literals(["unsupported", "permission", "review", "invalid", "unavailable", "storage", "execution"]),
+    reason: Schema.Literals([
+      "unsupported",
+      "permission",
+      "review",
+      "auto_review",
+      "invalid",
+      "unavailable",
+      "storage",
+      "execution",
+    ]),
     cause: Schema.Defect(),
   },
 ) {
@@ -62,6 +83,13 @@ interface DeviceCommandPolicyFile {
   agents: Record<string, StoredPermission>;
 }
 
+interface DeviceWidePolicyFile {
+  version: 1;
+  commandsEnabled: boolean;
+  computerUseEnabled: boolean;
+  updatedAt: string;
+}
+
 export interface RemoteDeviceCommandHostOptions {
   /** A private file in this OpenBot profile. It stores grants on the target computer. */
   userDataPath: string;
@@ -69,6 +97,7 @@ export interface RemoteDeviceCommandHostOptions {
   getServerName: () => string;
   cuaDriver: Pick<CuaDriverRuntime, "mcpServerForProviders">;
   platform?: NodeJS.Platform;
+  autoReview?: Pick<CodexAutoReview, "available" | "run">;
 }
 
 export interface DeviceCommandTargetService {
@@ -87,6 +116,30 @@ export interface DeviceCommandTargetService {
   ) => Effect.Effect<RemoteDeviceComputerUseResult, RemoteDeviceCommandHostError>;
 }
 
+export interface DeviceCommandTargetServiceV2 {
+  infoV2: () => Effect.Effect<
+    {
+      serverId: string;
+      name: string;
+      platform: "windows" | "linux";
+      computerUseAvailable: boolean;
+      autoReviewAvailable: boolean;
+    },
+    RemoteDeviceCommandHostError
+  >;
+  getPolicy: () => Effect.Effect<RemoteDeviceCommandPolicy, RemoteDeviceCommandHostError>;
+  updatePolicy: (
+    input: UpdateRemoteDeviceCommandPolicyInput,
+  ) => Effect.Effect<RemoteDeviceCommandPolicy, RemoteDeviceCommandHostError>;
+  runWithAutoReview: (
+    input: RemoteDeviceCommandInput,
+  ) => Effect.Effect<RemoteDeviceCommandResult, RemoteDeviceCommandHostError>;
+  listComputerUseToolsDeviceWide: () => Effect.Effect<RemoteDeviceComputerUseTool[], RemoteDeviceCommandHostError>;
+  callComputerUseDeviceWide: (
+    input: DeviceCommandComputerUseInput,
+  ) => Effect.Effect<RemoteDeviceComputerUseResult, RemoteDeviceCommandHostError>;
+}
+
 /**
  * Owns the target computer's command grants and process launches.
  *
@@ -95,21 +148,179 @@ export interface DeviceCommandTargetService {
  * files that this user can reach. Computer Use reuses the CUA driver's separate agent cursor and
  * background actions; it does not move the user's system cursor.
  */
-export class RemoteDeviceCommandHost implements DeviceCommandTargetService {
+export class RemoteDeviceCommandHost implements DeviceCommandTargetService, DeviceCommandTargetServiceV2 {
   readonly #path: string;
   readonly #getServerId: RemoteDeviceCommandHostOptions["getServerId"];
   readonly #getServerName: RemoteDeviceCommandHostOptions["getServerName"];
   readonly #cuaDriver: RemoteDeviceCommandHostOptions["cuaDriver"];
   readonly #platform: NodeJS.Platform;
+  readonly #autoReview: RemoteDeviceCommandHostOptions["autoReview"] | null;
+  readonly #devicePolicyPath: string;
   readonly #writes = Semaphore.makeUnsafe(1);
 
   constructor(options: RemoteDeviceCommandHostOptions) {
     this.#path = join(options.userDataPath, "openbot-device-command-policy-v2.json");
+    this.#devicePolicyPath = join(options.userDataPath, "openbot-device-command-policy-v3.json");
     this.#getServerId = options.getServerId;
     this.#getServerName = options.getServerName;
     this.#cuaDriver = options.cuaDriver;
     this.#platform = options.platform ?? process.platform;
+    this.#autoReview = options.autoReview ?? null;
   }
+
+  readonly infoV2 = Effect.fn("RemoteDeviceCommandHost.infoV2")(function* (
+    this: RemoteDeviceCommandHost,
+  ): Effect.fn.Return<
+    {
+      serverId: string;
+      name: string;
+      platform: "windows" | "linux";
+      computerUseAvailable: boolean;
+      autoReviewAvailable: boolean;
+    },
+    RemoteDeviceCommandHostError
+  > {
+    const info = yield* this.info();
+    const autoReviewAvailable = yield* Effect.tryPromise({
+      try: () => this.#autoReview?.available() ?? Promise.resolve(false),
+      catch: () => new RemoteDeviceCommandHostError("unavailable"),
+    });
+    return { ...info, autoReviewAvailable };
+  });
+
+  readonly getPolicy = Effect.fn("RemoteDeviceCommandHost.getPolicy")(function* (
+    this: RemoteDeviceCommandHost,
+  ): Effect.fn.Return<RemoteDeviceCommandPolicy, RemoteDeviceCommandHostError> {
+    const policy = yield* this.#readDevicePolicy();
+    return {
+      commandsEnabled: policy.commandsEnabled,
+      computerUseEnabled: policy.computerUseEnabled,
+      updatedAt: policy.updatedAt || null,
+    };
+  });
+
+  readonly updatePolicy = Effect.fn("RemoteDeviceCommandHost.updatePolicy")(function* (
+    this: RemoteDeviceCommandHost,
+    input: UpdateRemoteDeviceCommandPolicyInput,
+  ): Effect.fn.Return<RemoteDeviceCommandPolicy, RemoteDeviceCommandHostError> {
+    if (
+      (this.#platform !== "win32" && this.#platform !== "linux") ||
+      !isBoolean(input.commandsEnabled) ||
+      !isBoolean(input.computerUseEnabled)
+    ) {
+      return yield* new RemoteDeviceCommandHostError("invalid");
+    }
+    const stored = yield* this.#writes.withPermit(
+      Effect.gen({ self: this }, function* () {
+        const next: DeviceWidePolicyFile = {
+          version: 1,
+          commandsEnabled: input.commandsEnabled,
+          computerUseEnabled: input.computerUseEnabled,
+          updatedAt: new Date().toISOString(),
+        };
+        yield* writeJsonFileAtomically(this.#devicePolicyPath, next, { createDirectory: true }).pipe(
+          Effect.mapError((failure) => new RemoteDeviceCommandHostError("storage", failure.cause)),
+        );
+        return next;
+      }),
+    );
+    return {
+      commandsEnabled: stored.commandsEnabled,
+      computerUseEnabled: stored.computerUseEnabled,
+      updatedAt: stored.updatedAt,
+    };
+  });
+
+  readonly runWithAutoReview = Effect.fn("RemoteDeviceCommandHost.runWithAutoReview")(function* (
+    this: RemoteDeviceCommandHost,
+    input: RemoteDeviceCommandInput,
+  ): Effect.fn.Return<RemoteDeviceCommandResult, RemoteDeviceCommandHostError> {
+    if (!isAgentId(input.agentId) || !validExecutableName(input.executable) || !validArgs(input.args)) {
+      return yield* new RemoteDeviceCommandHostError("invalid");
+    }
+    if (this.#platform !== "win32" && this.#platform !== "linux") {
+      return yield* new RemoteDeviceCommandHostError("unsupported");
+    }
+    const policy = yield* this.#readDevicePolicy();
+    if (!policy.commandsEnabled) return yield* new RemoteDeviceCommandHostError("permission");
+    if (!this.#autoReview) return yield* new RemoteDeviceCommandHostError("auto_review");
+    const workingDirectory = yield* Effect.tryPromise({
+      try: () => canonicalWorkingDirectoryUnrestricted(input.workingDirectory),
+      catch: (cause) =>
+        cause instanceof RemoteDeviceCommandHostError ? cause : new RemoteDeviceCommandHostError("invalid", cause),
+    });
+    return yield* Effect.tryPromise({
+      try: () =>
+        this.#autoReview?.run({ ...input, workingDirectory }) ?? Promise.reject(new CodexAutoReviewUnavailable()),
+      catch: (cause) =>
+        new RemoteDeviceCommandHostError(
+          cause instanceof CodexAutoReviewDenied
+            ? "review"
+            : cause instanceof CodexAutoReviewUnavailable
+              ? "auto_review"
+              : "execution",
+          cause,
+        ),
+    });
+  });
+
+  readonly listComputerUseToolsDeviceWide = Effect.fn("RemoteDeviceCommandHost.listComputerUseToolsDeviceWide")(
+    function* (
+      this: RemoteDeviceCommandHost,
+    ): Effect.fn.Return<RemoteDeviceComputerUseTool[], RemoteDeviceCommandHostError> {
+      const policy = yield* this.#readDevicePolicy();
+      if (!policy.computerUseEnabled) return yield* new RemoteDeviceCommandHostError("permission");
+      const config = this.#cuaDriver.mcpServerForProviders();
+      if (!config) return yield* new RemoteDeviceCommandHostError("unavailable");
+      return yield* Effect.tryPromise({
+        try: (signal) =>
+          withCuaClient(
+            config,
+            async (client, signal) => {
+              const { tools } = await client.listTools(undefined, { signal });
+              return tools.slice(0, 128).map((tool) => ({
+                name: tool.name.slice(0, 128),
+                description: (tool.description ?? "").slice(0, 2_048),
+              }));
+            },
+            signal,
+          ),
+        catch: () => new RemoteDeviceCommandHostError("unavailable"),
+      });
+    },
+  );
+
+  readonly callComputerUseDeviceWide = Effect.fn("RemoteDeviceCommandHost.callComputerUseDeviceWide")(function* (
+    this: RemoteDeviceCommandHost,
+    input: DeviceCommandComputerUseInput,
+  ): Effect.fn.Return<RemoteDeviceComputerUseResult, RemoteDeviceCommandHostError> {
+    if (!isAgentId(input.agentId) || input.tool.length === 0 || input.tool.length > 128 || input.tool.includes("\0")) {
+      return yield* new RemoteDeviceCommandHostError("invalid");
+    }
+    const policy = yield* this.#readDevicePolicy();
+    if (!policy.computerUseEnabled) return yield* new RemoteDeviceCommandHostError("permission");
+    const config = this.#cuaDriver.mcpServerForProviders();
+    if (!config) return yield* new RemoteDeviceCommandHostError("unavailable");
+    return yield* Effect.tryPromise({
+      try: (signal) =>
+        withCuaClient(
+          config,
+          async (client, signal) => {
+            const { tools } = await client.listTools(undefined, { signal });
+            if (!tools.some((candidate) => candidate.name === input.tool)) {
+              throw new Error("Requested Computer Use tool is not available.");
+            }
+            const result = await client.callTool({ name: input.tool, arguments: input.arguments }, undefined, {
+              signal,
+            });
+            if (!isCallToolResult(result)) throw new Error("Computer Use returned no tool result.");
+            return { success: !result.isError, contentItems: cuaContentItems(result) };
+          },
+          signal,
+        ),
+      catch: () => new RemoteDeviceCommandHostError("unavailable"),
+    });
+  });
 
   readonly info = Effect.fn("RemoteDeviceCommandHost.info")(function* (
     this: RemoteDeviceCommandHost,
@@ -291,6 +502,18 @@ export class RemoteDeviceCommandHost implements DeviceCommandTargetService {
     return yield* new RemoteDeviceCommandHostError("storage", failure);
   });
 
+  readonly #readDevicePolicy = Effect.fn("RemoteDeviceCommandHost.readDevicePolicy")(function* (
+    this: RemoteDeviceCommandHost,
+  ): Effect.fn.Return<DeviceWidePolicyFile, RemoteDeviceCommandHostError> {
+    const loaded = yield* Effect.result(readPreferenceFile(this.#devicePolicyPath, decodeDeviceWidePolicy));
+    if (Result.isSuccess(loaded)) return loaded.success;
+    const failure = loaded.failure;
+    if (failure._tag === "PreferenceFileFailure" && isMissingFileError(failure.cause)) {
+      return { version: 1, commandsEnabled: false, computerUseEnabled: false, updatedAt: "" };
+    }
+    return yield* new RemoteDeviceCommandHostError("storage", failure);
+  });
+
   #permission(agentId: string, stored?: StoredPermission): RemoteDeviceCommandPermission {
     return {
       agentId,
@@ -333,6 +556,25 @@ function decodePolicyFile(value: unknown): DeviceCommandPolicyFile {
     };
   }
   return { version: POLICY_VERSION, agents };
+}
+
+function decodeDeviceWidePolicy(value: unknown): DeviceWidePolicyFile {
+  if (
+    !isDynamicRecord(value) ||
+    value.version !== 1 ||
+    !isBoolean(value.commandsEnabled) ||
+    !isBoolean(value.computerUseEnabled) ||
+    !isString(value.updatedAt) ||
+    value.updatedAt.length > 64
+  ) {
+    throw new Error("Invalid device-wide remote permissions.");
+  }
+  return {
+    version: 1,
+    commandsEnabled: value.commandsEnabled,
+    computerUseEnabled: value.computerUseEnabled,
+    updatedAt: value.updatedAt,
+  };
 }
 
 function defaultEnvironment(platform: NodeJS.Platform): Record<string, string> {
@@ -425,6 +667,19 @@ async function canonicalWorkingDirectory(
     return path;
   } catch {
     throw new RemoteDeviceCommandHostError("permission");
+  }
+}
+
+async function canonicalWorkingDirectoryUnrestricted(value: string): Promise<string> {
+  if (!isAbsolute(value) || value.length > 4_096 || value.includes("\0")) {
+    throw new RemoteDeviceCommandHostError("invalid");
+  }
+  try {
+    const path = await realpath(value);
+    if (!(await stat(path)).isDirectory()) throw new Error("Not a directory.");
+    return path;
+  } catch {
+    throw new RemoteDeviceCommandHostError("invalid");
   }
 }
 

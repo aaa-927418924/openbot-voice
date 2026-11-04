@@ -19,5 +19,7 @@ export const messages = {
   "error.computerUse.remoteCommandBlocked":
     "AutoReview が危険度の高いリモートコマンドをブロックしました。再試行したり、別のコマンドで回避したりしないでください。",
   "error.computerUse.remoteCommandInvalid": "リモートコマンドの内容が無効です。",
+  "error.computerUse.remoteAutoReviewUnavailable":
+    "対象PCのOpenBotでCodex CLIにサインインしていないか、AutoReviewを利用できないため、コマンドを拒否しました。",
   "error.computerUse.remoteOperationUnavailable": "リモートデバイス操作を利用できません。",
 } as const satisfies PartialTranslation<typeof source>;

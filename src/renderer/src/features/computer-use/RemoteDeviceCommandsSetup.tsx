@@ -1,6 +1,5 @@
 import type {
-  AgentSummary,
-  RemoteDeviceCommandPermission,
+  RemoteDeviceCommandPolicy,
   RemoteDeviceCommandTarget,
   ServerConnectionState,
 } from "@openbot/contracts/ipc";
@@ -14,25 +13,20 @@ import {
   SelectValue,
   SettingsSection,
   SwitchField,
-  Textarea,
 } from "@openbot/ui";
 import { useText } from "@openbot/ui/text";
 import { createEffect, createSignal, createStore, onCleanup, onSettled, Show } from "solid-js";
 import { remoteDeviceCommandsPort } from "./remote-device-commands-port";
 
 interface RemoteDeviceCommandsState {
-  agents: AgentSummary[];
   targets: RemoteDeviceCommandTarget[];
-  agentId: string;
   serverId: string;
-  permission: RemoteDeviceCommandPermission | null;
-  executablesText: string;
-  directoriesText: string;
+  policy: RemoteDeviceCommandPolicy | null;
   loading: boolean;
-  loadingPermission: boolean;
-  localHostSettings: { supported: boolean; enabled: boolean } | null;
-  savingLocalHost: boolean;
-  saving: boolean;
+  loadingPolicy: boolean;
+  share: { supported: boolean; enabled: boolean } | null;
+  savingShare: boolean;
+  savingPolicy: boolean;
   error: string | null;
   notice: string | null;
 }
@@ -52,32 +46,17 @@ const SERVER_STATE_KEYS: Record<
   incompatible: "server.state.incompatible",
 };
 
-function lines(value: string): string[] {
-  return [
-    ...new Set(
-      value
-        .split(/\r?\n/u)
-        .map((line) => line.trim())
-        .filter(Boolean),
-    ),
-  ];
-}
-
 export function RemoteDeviceCommandsSetup() {
   const { t, errorMessage } = useText();
   const [state, setState] = createStore<RemoteDeviceCommandsState>({
-    agents: [],
     targets: [],
-    agentId: "",
     serverId: "",
-    permission: null,
-    executablesText: "",
-    directoriesText: "",
+    policy: null,
     loading: true,
-    loadingPermission: false,
-    localHostSettings: null,
-    savingLocalHost: false,
-    saving: false,
+    loadingPolicy: false,
+    share: null,
+    savingShare: false,
+    savingPolicy: false,
     error: null,
     notice: null,
   });
@@ -85,22 +64,21 @@ export function RemoteDeviceCommandsSetup() {
   let root: HTMLElement | undefined;
   let disposed = false;
 
-  const selectedAgent = () => state.agents.find((agent) => agent.id === state.agentId) ?? null;
   const selectedTarget = () => state.targets.find((target) => target.serverId === state.serverId) ?? null;
+  const canEditSelectedTarget = () => selectedTarget()?.isLocal === true || selectedTarget()?.state === "online";
   const patchState = (patch: Partial<RemoteDeviceCommandsState>) => setState((current) => ({ ...current, ...patch }));
+
   async function loadDevices(preferLocalTarget = false): Promise<void> {
     patchState({ loading: true, error: null });
     try {
-      const [agents, targets, localHostSettings] = await Promise.all([
-        remoteDeviceCommandsPort().listAgents(),
+      const [targets, share] = await Promise.all([
         remoteDeviceCommandsPort().deviceCommands.listTargets(),
-        remoteDeviceCommandsPort().getLocalHostSettings(),
+        remoteDeviceCommandsPort().deviceCommands.getShareSettings(),
       ]);
       if (disposed) return;
-      patchState({ agents, targets, localHostSettings });
+      patchState({ targets, share });
       setState((current) => ({
         ...current,
-        agentId: agents.some((agent) => agent.id === current.agentId) ? current.agentId : (agents[0]?.id ?? ""),
         serverId:
           !preferLocalTarget &&
           targets.some(
@@ -118,82 +96,66 @@ export function RemoteDeviceCommandsSetup() {
     }
   }
 
-  async function setLocalHostEnabled(enabled: boolean): Promise<void> {
-    if (state.savingLocalHost) return;
-    patchState({ savingLocalHost: true, error: null, notice: null });
-    try {
-      const localHostSettings = await remoteDeviceCommandsPort().setLocalHostSettings({ enabled });
-      if (disposed) return;
-      patchState({ localHostSettings });
-      await loadDevices(enabled);
-    } catch (cause) {
-      if (!disposed) patchState({ error: errorMessage(cause, t("computerUse.remote.error.localServer")) });
-    } finally {
-      if (!disposed) patchState({ savingLocalHost: false });
-    }
-  }
-
-  const canEditSelectedTarget = () => selectedTarget()?.isLocal === true || selectedTarget()?.state === "online";
-
-  async function loadPermission(serverId: string, agentId: string): Promise<void> {
-    patchState({ permission: null, executablesText: "", directoriesText: "", notice: null });
-    if (!serverId || !agentId || !canEditSelectedTarget()) {
-      patchState({ loadingPermission: false });
+  async function loadPolicy(serverId: string): Promise<void> {
+    patchState({ policy: null, notice: null });
+    const target = state.targets.find((candidate) => candidate.serverId === serverId);
+    if (!serverId || !target || (target.state !== "online" && !target.isLocal)) {
+      patchState({ loadingPolicy: false });
       return;
     }
-
-    patchState({ loadingPermission: true, error: null });
+    patchState({ loadingPolicy: true, error: null });
     try {
-      const permission = await remoteDeviceCommandsPort().deviceCommands.getPermission({ serverId, agentId });
-      if (disposed || state.serverId !== serverId || state.agentId !== agentId) return;
-      patchState({
-        permission,
-        executablesText: permission.allowedExecutables.join("\n"),
-        directoriesText: permission.allowedDirectories.join("\n"),
-      });
+      const policy = await remoteDeviceCommandsPort().deviceCommands.getPermission({ serverId });
+      if (disposed || state.serverId !== serverId) return;
+      patchState({ policy });
     } catch (cause) {
-      if (!disposed && state.serverId === serverId && state.agentId === agentId) {
+      if (!disposed && state.serverId === serverId) {
         patchState({ error: errorMessage(cause, t("computerUse.remote.error.permission")) });
       }
     } finally {
-      if (!disposed && state.serverId === serverId && state.agentId === agentId)
-        patchState({ loadingPermission: false });
+      if (!disposed && state.serverId === serverId) patchState({ loadingPolicy: false });
     }
   }
 
-  createEffect(
-    () => [state.serverId, state.agentId] as const,
-    ([serverId, agentId]) => void loadPermission(serverId, agentId),
-  );
+  createEffect(() => {
+    const serverId = state.serverId;
+    void loadPolicy(serverId);
+  });
 
-  async function savePermission(): Promise<void> {
-    const target = selectedTarget();
-    const agent = selectedAgent();
-    const permission = state.permission;
-    if (!target || (!target.isLocal && target.state !== "online") || !agent || !permission || state.saving) return;
-    patchState({ saving: true, error: null, notice: null });
+  async function setShareEnabled(enabled: boolean): Promise<void> {
+    if (state.savingShare) return;
+    patchState({ savingShare: true, error: null, notice: null });
     try {
-      const saved = await remoteDeviceCommandsPort().deviceCommands.updatePermission({
+      const share = await remoteDeviceCommandsPort().deviceCommands.setShareSettings({ enabled });
+      if (disposed) return;
+      patchState({ share });
+      await loadDevices(enabled);
+    } catch (cause) {
+      if (!disposed) patchState({ error: errorMessage(cause, t("computerUse.remote.error.share")) });
+    } finally {
+      if (!disposed) patchState({ savingShare: false });
+    }
+  }
+
+  async function updatePolicy(
+    patch: Partial<Pick<RemoteDeviceCommandPolicy, "commandsEnabled" | "computerUseEnabled">>,
+  ) {
+    const target = selectedTarget();
+    const current = state.policy;
+    if (!target || !current || !canEditSelectedTarget() || state.savingPolicy) return;
+    patchState({ savingPolicy: true, error: null, notice: null });
+    const next = { commandsEnabled: current.commandsEnabled, computerUseEnabled: current.computerUseEnabled, ...patch };
+    try {
+      const policy = await remoteDeviceCommandsPort().deviceCommands.updatePermission({
         serverId: target.serverId,
-        permission: {
-          agentId: agent.id,
-          commandsEnabled: permission.commandsEnabled,
-          computerUseEnabled: permission.computerUseEnabled,
-          allowedExecutables: lines(state.executablesText),
-          allowedDirectories: lines(state.directoriesText),
-        },
+        policy: next,
       });
-      if (disposed || state.serverId !== target.serverId || state.agentId !== agent.id) return;
-      patchState({
-        permission: saved,
-        executablesText: saved.allowedExecutables.join("\n"),
-        directoriesText: saved.allowedDirectories.join("\n"),
-        notice: t("computerUse.remote.saved"),
-      });
+      if (disposed || state.serverId !== target.serverId) return;
+      patchState({ policy, notice: t("computerUse.remote.saved") });
     } catch (cause) {
       if (!disposed) patchState({ error: errorMessage(cause, t("computerUse.remote.error.save")) });
     } finally {
-      if (!disposed) patchState({ saving: false });
+      if (!disposed) patchState({ savingPolicy: false });
     }
   }
 
@@ -233,56 +195,25 @@ export function RemoteDeviceCommandsSetup() {
             {state.notice}
           </p>
         </Show>
-        <Show when={state.localHostSettings?.supported}>
-          <ItemGroup class="settings-modal-card remote-device-commands-local-host">
+
+        <Show when={state.share?.supported}>
+          <ItemGroup class="settings-modal-card remote-device-commands-permissions">
             <SwitchField
-              checked={state.localHostSettings?.enabled === true}
-              disabled={state.savingLocalHost}
-              onChange={(enabled) => void setLocalHostEnabled(enabled)}
-              label={t("computerUse.remote.localServer.title")}
-              description={t("computerUse.remote.localServer.description")}
+              checked={state.share?.enabled === true}
+              disabled={state.savingShare}
+              onChange={(enabled) => void setShareEnabled(enabled)}
+              label={t("computerUse.remote.share.title")}
+              description={t("computerUse.remote.share.description")}
             />
-            <Show when={state.localHostSettings?.enabled}>
-              <div class="remote-device-commands-save">
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  loading={state.savingLocalHost}
-                  disabled={state.savingLocalHost}
-                  onClick={() => void setLocalHostEnabled(true)}
-                >
-                  {t("computerUse.remote.localServer.reconnect")}
-                </Button>
-              </div>
-            </Show>
           </ItemGroup>
         </Show>
-        <Show when={!state.loading && state.error === null && state.agents.length === 0}>
-          <p class="remote-device-commands-message">{t("computerUse.remote.empty.agents")}</p>
-        </Show>
+
         <Show when={!state.loading && state.error === null && state.targets.length === 0}>
           <p class="remote-device-commands-message">{t("computerUse.remote.empty.targets")}</p>
         </Show>
-        <Show when={state.agents.length > 0 && state.targets.length > 0}>
+
+        <Show when={state.targets.length > 0}>
           <div class="remote-device-commands-selectors">
-            <div class="remote-device-commands-select-field">
-              <span>{t("computerUse.remote.agent")}</span>
-              <Select<AgentSummary>
-                options={state.agents}
-                value={selectedAgent() ?? undefined}
-                optionValue="id"
-                optionTextValue="name"
-                onOpenChange={onSelectOpen}
-                onChange={(agent) => agent && patchState({ agentId: agent.id })}
-                itemComponent={(item) => <SelectItem item={item.item}>{item.item.rawValue.name}</SelectItem>}
-              >
-                <SelectTrigger size="sm" aria-label={t("computerUse.remote.agent")}>
-                  <SelectValue<AgentSummary>>{(option) => option.selectedOption()?.name}</SelectValue>
-                </SelectTrigger>
-                <SelectContent mount={selectMount()} />
-              </Select>
-            </div>
             <div class="remote-device-commands-select-field">
               <span>{t("computerUse.remote.device")}</span>
               <Select<RemoteDeviceCommandTarget>
@@ -319,82 +250,40 @@ export function RemoteDeviceCommandsSetup() {
           <Show when={selectedTarget()?.isLocal === false && selectedTarget()?.state !== "online"}>
             <p class="remote-device-commands-message">{t("computerUse.remote.deviceOffline")}</p>
           </Show>
-          <Show when={selectedTarget()?.isLocal === true && state.localHostSettings?.enabled === false}>
-            <p class="remote-device-commands-message">{t("computerUse.remote.localServer.disabledNotice")}</p>
+          <Show when={selectedTarget()?.autoReviewAvailable === false}>
+            <p class="remote-device-commands-message">{t("computerUse.remote.autoReviewUnavailable")}</p>
           </Show>
           <Show when={selectedTarget()?.state === "online" && selectedTarget()?.computerUseAvailable !== true}>
             <p class="remote-device-commands-message">{t("computerUse.remote.computerUseUnavailable")}</p>
           </Show>
-
-          <Show when={state.loadingPermission}>
+          <Show when={state.loadingPolicy}>
             <p class="remote-device-commands-message" role="status">
               {t("computerUse.remote.loading")}
             </p>
           </Show>
-
-          <Show when={state.permission}>
-            {(permission) => (
-              <>
-                <ItemGroup class="settings-modal-card remote-device-commands-permissions">
-                  <SwitchField
-                    checked={permission().commandsEnabled}
-                    disabled={state.loadingPermission || state.saving || !canEditSelectedTarget()}
-                    onChange={(commandsEnabled) => patchState({ permission: { ...permission(), commandsEnabled } })}
-                    label={t("computerUse.remote.commands.title")}
-                    description={t("computerUse.remote.commands.description")}
-                  />
-                  <SwitchField
-                    checked={permission().computerUseEnabled}
-                    disabled={
-                      state.loadingPermission ||
-                      state.saving ||
-                      !canEditSelectedTarget() ||
-                      (selectedTarget()?.computerUseAvailable !== true && !permission().computerUseEnabled)
-                    }
-                    onChange={(computerUseEnabled) =>
-                      patchState({ permission: { ...permission(), computerUseEnabled } })
-                    }
-                    label={t("computerUse.remote.computerUse.title")}
-                    description={t("computerUse.remote.computerUse.description")}
-                  />
-                </ItemGroup>
-                <div class="remote-device-commands-fields">
-                  <label class="remote-device-commands-field">
-                    <span>{t("computerUse.remote.executables.title")}</span>
-                    <small>{t("computerUse.remote.executables.description")}</small>
-                    <Textarea
-                      rows={3}
-                      value={state.executablesText}
-                      disabled={state.loadingPermission || state.saving || !canEditSelectedTarget()}
-                      aria-label={t("computerUse.remote.executables.title")}
-                      onValueChange={(value) => patchState({ executablesText: value })}
-                    />
-                  </label>
-                  <label class="remote-device-commands-field">
-                    <span>{t("computerUse.remote.directories.title")}</span>
-                    <small>{t("computerUse.remote.directories.description")}</small>
-                    <Textarea
-                      rows={3}
-                      value={state.directoriesText}
-                      disabled={state.loadingPermission || state.saving || !canEditSelectedTarget()}
-                      aria-label={t("computerUse.remote.directories.title")}
-                      onValueChange={(value) => patchState({ directoriesText: value })}
-                    />
-                  </label>
-                </div>
-                <p class="remote-device-commands-warning">{t("computerUse.remote.allowlistNotice")}</p>
-                <div class="remote-device-commands-save">
-                  <Button
-                    type="button"
-                    size="sm"
-                    loading={state.saving}
-                    disabled={state.loadingPermission || !canEditSelectedTarget()}
-                    onClick={() => void savePermission()}
-                  >
-                    {t("computerUse.remote.save")}
-                  </Button>
-                </div>
-              </>
+          <Show when={state.policy}>
+            {(policy) => (
+              <ItemGroup class="settings-modal-card remote-device-commands-permissions">
+                <SwitchField
+                  checked={policy().commandsEnabled}
+                  disabled={state.loadingPolicy || state.savingPolicy || !canEditSelectedTarget()}
+                  onChange={(commandsEnabled) => void updatePolicy({ commandsEnabled })}
+                  label={t("computerUse.remote.commands.title")}
+                  description={t("computerUse.remote.commands.description")}
+                />
+                <SwitchField
+                  checked={policy().computerUseEnabled}
+                  disabled={
+                    state.loadingPolicy ||
+                    state.savingPolicy ||
+                    !canEditSelectedTarget() ||
+                    (selectedTarget()?.computerUseAvailable !== true && !policy().computerUseEnabled)
+                  }
+                  onChange={(computerUseEnabled) => void updatePolicy({ computerUseEnabled })}
+                  label={t("computerUse.remote.computerUse.title")}
+                  description={t("computerUse.remote.computerUse.description")}
+                />
+              </ItemGroup>
             )}
           </Show>
         </Show>

@@ -1,45 +1,39 @@
 import type {
-  RemoteDeviceCommandPermission,
   RemoteDeviceCommandTargetInput,
+  SetRemoteDeviceShareSettingsInput,
   UpdateRemoteDeviceCommandTargetInput,
 } from "@openbot/contracts/ipc";
 import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 
 export function decodeRemoteDeviceCommandTargetInput(value: unknown): RemoteDeviceCommandTargetInput {
-  if (!isDynamicRecord(value) || !isString(value.serverId) || !isString(value.agentId)) {
-    throw new Error("Invalid remote device target.");
-  }
-  return { serverId: identifier(value.serverId), agentId: identifier(value.agentId) };
+  if (!isDynamicRecord(value) || !isString(value.serverId)) throw new Error("Invalid remote device target.");
+  return { serverId: identifier(value.serverId) };
 }
 
 export function decodeUpdateRemoteDeviceCommandTargetInput(value: unknown): UpdateRemoteDeviceCommandTargetInput {
-  if (!isDynamicRecord(value) || !isString(value.serverId)) throw new Error("Invalid remote device target.");
-  return {
-    serverId: identifier(value.serverId),
-    permission: decodePermission(value.permission),
-  };
-}
-
-function decodePermission(value: unknown): Omit<RemoteDeviceCommandPermission, "updatedAt"> {
   if (
     !isDynamicRecord(value) ||
-    !isString(value.agentId) ||
-    typeof value.commandsEnabled !== "boolean" ||
-    typeof value.computerUseEnabled !== "boolean" ||
-    !Array.isArray(value.allowedExecutables) ||
-    !Array.isArray(value.allowedDirectories) ||
-    value.allowedExecutables.length > 64 ||
-    value.allowedDirectories.length > 32
+    !isString(value.serverId) ||
+    !isDynamicRecord(value.policy) ||
+    typeof value.policy.commandsEnabled !== "boolean" ||
+    typeof value.policy.computerUseEnabled !== "boolean"
   ) {
     throw new Error("Invalid remote device permissions.");
   }
   return {
-    agentId: identifier(value.agentId),
-    commandsEnabled: value.commandsEnabled,
-    computerUseEnabled: value.computerUseEnabled,
-    allowedExecutables: value.allowedExecutables.map((item) => executable(item)),
-    allowedDirectories: value.allowedDirectories.map((item) => directory(item)),
+    serverId: identifier(value.serverId),
+    policy: {
+      commandsEnabled: value.policy.commandsEnabled,
+      computerUseEnabled: value.policy.computerUseEnabled,
+    },
   };
+}
+
+export function decodeSetRemoteDeviceShareSettingsInput(value: unknown): SetRemoteDeviceShareSettingsInput {
+  if (!isDynamicRecord(value) || typeof value.enabled !== "boolean") {
+    throw new Error("Invalid remote device sharing setting.");
+  }
+  return { enabled: value.enabled };
 }
 
 function identifier(value: string): string {
@@ -52,18 +46,4 @@ function hasControlCharacters(value: string): boolean {
     const codePoint = character.codePointAt(0) ?? 0;
     return codePoint < 0x20 || (codePoint >= 0x7f && codePoint <= 0x9f);
   });
-}
-
-function executable(value: unknown): string {
-  if (!isString(value) || !/^[A-Za-z0-9._+-]{1,128}$/u.test(value)) {
-    throw new Error("Executable names must be exact names without path separators.");
-  }
-  return value;
-}
-
-function directory(value: unknown): string {
-  if (!isString(value) || !value.length || value.length > 4_096 || value.includes("\u0000")) {
-    throw new Error("Invalid allowed directory.");
-  }
-  return value;
 }

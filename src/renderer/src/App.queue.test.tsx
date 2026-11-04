@@ -1,6 +1,11 @@
 import { serializeAttachmentReference } from "@openbot/contracts/attachment-references";
 import { serializeChatTagReference } from "@openbot/contracts/chat-tag-references";
-import type { ConversationSnapshot, DirectConversationSnapshot, QueueDelivery } from "@openbot/contracts/ipc";
+import type {
+  ConversationSnapshot,
+  DirectConversationSnapshot,
+  QueueDelivery,
+  QueueSnapshot,
+} from "@openbot/contracts/ipc";
 import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { assert, expect, it, vi } from "vitest";
 import { App } from "./App";
@@ -625,6 +630,39 @@ describe("OpenBot connected desktop shell", () => {
     });
     await screen.findByRole("group", { name: "Queued message 2: Later work" });
     expect(screen.queryByRole("group", { name: /Next work/ })).not.toBeInTheDocument();
+  });
+
+  it("does not restore a completed turn from a stale queue response", async () => {
+    const staleQueueResponses: Array<(snapshot: QueueSnapshot) => void> = [];
+    vi.mocked(window.openbot.agent.listQueue).mockImplementation((agentId) =>
+      agentId === "chief"
+        ? new Promise((resolve) => staleQueueResponses.push(resolve))
+        : Promise.resolve({ agentId, deliveries: [] }),
+    );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await waitFor(() => expect(staleQueueResponses.length).toBeGreaterThan(0));
+
+    const running = queuedDelivery("delivery-finished", "Finished work", null, {
+      status: "running",
+      turnId: "turn-finished",
+    });
+    emitAgentEvent?.({ type: "turn-started", agentId: "chief", threadId: "thread-chief", turnId: "turn-finished" });
+    emitAgentEvent?.({ type: "queue-changed", snapshot: { agentId: "chief", deliveries: [running] } });
+    expect(await screen.findByRole("status", { name: /^Chief is working/u })).toBeVisible();
+
+    emitAgentEvent?.({
+      type: "turn-completed",
+      agentId: "chief",
+      threadId: "thread-chief",
+      turnId: "turn-finished",
+      status: "completed",
+    });
+    await waitFor(() => expect(screen.queryByRole("status", { name: /^Chief is working/u })).not.toBeInTheDocument());
+
+    for (const resolve of staleQueueResponses) resolve({ agentId: "chief", deliveries: [running] });
+    emitAgentEvent?.({ type: "queue-changed", snapshot: { agentId: "chief", deliveries: [running] } });
+    await waitFor(() => expect(screen.queryByRole("status", { name: /^Chief is working/u })).not.toBeInTheDocument());
   });
 
   it("shows the agent working on its channel task, and what waits behind it", async () => {

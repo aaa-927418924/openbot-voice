@@ -1,4 +1,4 @@
-import { isAvatarMimeType } from "@openbot/contracts/avatar-images";
+import { isAvatarMimeType, isValidAvatarImage } from "@openbot/contracts/avatar-images";
 import { ATTACHMENT_LIMITS } from "@openbot/contracts/input-limits";
 import {
   assertStorageUsageScope,
@@ -87,6 +87,7 @@ type HostRequestActions = Pick<
   | "canInstallAgentTemplate"
   | "installAgentTemplate"
   | "loadAgentAvatar"
+  | "loadServerLogo"
   | "duplicateAgent"
   | "loadQueue"
   | "canEditQueue"
@@ -302,6 +303,7 @@ export function createHostRequestActions({
       );
     },
     loadAgentAvatar: (agentId, avatarUrl, serverId) => requestAgentAvatar(request, agentId, avatarUrl, serverId),
+    loadServerLogo: (serverId, logoKey) => requestServerLogo(request, serverId, logoKey),
     duplicateAgent: async (agentId) => {
       await request("POST", TEAM_API_ROUTES.agent.duplicate(agentId), ignoreResponse, {
         operationId: Crypto.randomUUID(),
@@ -479,6 +481,29 @@ export function requestAgentAvatar(
         !isString(value.base64)
       )
         throw new Error("The host returned an invalid avatar.");
+      return `data:${value.mimeType};base64,${value.base64}`;
+    },
+    undefined,
+    serverId,
+  );
+}
+
+/** Reads the logo bytes from the paired host. Account-directory logos use the auth API instead. */
+export function requestServerLogo(request: WorkspaceRequest, serverId: string, logoKey: string): Promise<string> {
+  return request(
+    "GET",
+    `${TEAM_API_ROUTES.team.logo}?${new URLSearchParams({ v: logoKey })}`,
+    (value) => {
+      if (
+        !isDynamicRecord(value) ||
+        !isString(value.mimeType) ||
+        !isAvatarMimeType(value.mimeType) ||
+        !isString(value.base64)
+      )
+        throw new Error("The host returned an invalid server logo.");
+      const binary = atob(value.base64);
+      const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+      if (!isValidAvatarImage(value.mimeType, bytes)) throw new Error("The host returned an invalid server logo.");
       return `data:${value.mimeType};base64,${value.base64}`;
     },
     undefined,

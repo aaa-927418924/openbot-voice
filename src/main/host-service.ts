@@ -79,6 +79,7 @@ interface HostServiceOptions {
   hostedSites?: ForwardedApiOptions["hostedSites"];
   agentImport?: ForwardedApiOptions["agentImport"];
   deviceCommands?: ForwardedApiOptions["deviceCommands"];
+  deviceOnly?: ForwardedApiOptions["deviceOnly"];
   admin?: ForwardedApiOptions["admin"];
   appVersion: string;
   serverOrigin?: ForwardedApiOptions["serverOrigin"];
@@ -320,6 +321,7 @@ export class HostService extends EventEmitter<HostEvents> {
       browserView: this.#browserView,
       remoteScreen: this.#remoteScreen,
       deviceCommands: options.deviceCommands,
+      deviceOnly: options.deviceOnly,
       serverMigration: options.serverMigration,
       redeemCentralTicket: options.redeemCentralTicket,
       chat: options.chat,

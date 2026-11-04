@@ -483,7 +483,7 @@ export class TeamStore {
     nonce: string;
     registration?: Pick<
       AccountServerRegistration,
-      "hostId" | "name" | "apiUrl" | "fingerprint" | "publicKey" | "logoKey" | "membershipId"
+      "hostId" | "name" | "apiUrl" | "fingerprint" | "publicKey" | "logoKey" | "membershipId" | "origin" | "deviceOnly"
     >;
   }): AccountServerVisibilityProof | null {
     const state = this.#state;
