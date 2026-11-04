@@ -230,7 +230,11 @@ export function SettingsModal(props: SettingsModalProps) {
         </Show>
 
         <Tabs.Content value="computer-use" class="settings-modal-tab-panel" data-tab="computer-use">
-          <ComputerUseSetup variant="settings" />
+          {/* Windows and Linux have no OS permission rows. Reading their status starts the native
+              driver, so keep opening device settings from starting Computer Use as a side effect. */}
+          <Show when={props.appInfo?.platform === "darwin"}>
+            <ComputerUseSetup variant="settings" />
+          </Show>
           <RemoteDeviceCommandsSetup />
         </Tabs.Content>
 
