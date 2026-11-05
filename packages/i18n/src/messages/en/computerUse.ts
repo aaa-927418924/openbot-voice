@@ -50,8 +50,9 @@ export const messages = defineMessages("computerUse", {
     "Lets other devices on this account operate this PC without enabling it as a regular OpenBot server.",
   "computerUse.remote.error.share": "OpenBot could not share this PC. Check account sign-in and connection status.",
   "computerUse.remote.autoReviewUnavailable":
-    "Sign in to Codex CLI through OpenBot on this PC. Remote commands are refused until AutoReview is available.",
+    "Codex AutoReview could not be confirmed on this PC. Sign in again through OpenBot; remote commands stay blocked until it is available.",
   "computerUse.remote.signInCodex": "Sign in to Codex CLI",
+  "computerUse.remote.signInCodexAgain": "Sign in to Codex CLI again",
   "computerUse.remote.signingInCodex": "Starting Codex CLI sign-in…",
   "computerUse.remote.signInError": "OpenBot could not start Codex CLI sign-in.",
   "computerUse.remote.signInExpired": "The Codex CLI sign-in expired. Start a new sign-in.",

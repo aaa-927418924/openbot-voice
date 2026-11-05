@@ -1694,6 +1694,11 @@ export async function createApplicationServices({
             codexHome: codexHome.path,
             codexSqliteHome: codexHome.sqlitePath,
             platform: process.platform,
+            isCodexLoginPending: () =>
+              service
+                .getStatus()
+                .providers?.some((provider) => provider.id === "codex" && provider.connectionState === "connecting") ??
+              false,
           }),
         })
       : null;

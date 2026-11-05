@@ -52,8 +52,9 @@ export const messages = {
   "computerUse.remote.error.share":
     "このPCを共有できませんでした。アカウントのサインインと接続状態を確認してください。",
   "computerUse.remote.autoReviewUnavailable":
-    "このPCのOpenBotでCodex CLIにサインインしてください。AutoReviewが使えるようになるまでコマンドは拒否されます。",
+    "このPCでCodex AutoReviewを確認できません。OpenBotからCodex CLIに再サインインしてください。利用可能になるまでリモートコマンドは拒否されます。",
   "computerUse.remote.signInCodex": "Codex CLIにサインイン",
+  "computerUse.remote.signInCodexAgain": "Codex CLIに再サインイン",
   "computerUse.remote.signingInCodex": "Codex CLIのサインインを開始しています…",
   "computerUse.remote.signInError": "Codex CLIのサインインを開始できませんでした。",
   "computerUse.remote.signInExpired": "Codex CLIのサインインコードの期限が切れました。もう一度開始してください。",

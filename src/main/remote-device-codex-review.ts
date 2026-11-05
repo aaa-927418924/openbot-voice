@@ -28,6 +28,7 @@ export type CodexAutoReviewUnavailableStage =
 interface RemoteCommandExecutionDiagnostics {
   cliExitCode: number | null;
   cliTimedOut: boolean;
+  cliFailureCategory: CliFailureCategory;
   stdoutBytes: number;
   stderrBytes: number;
   eventCount: number;
@@ -37,6 +38,16 @@ interface RemoteCommandExecutionDiagnostics {
   turnCompleted: boolean;
   turnFailed: boolean;
 }
+
+type CliFailureCategory =
+  | "authentication"
+  | "reviewer_unavailable"
+  | "cli_configuration"
+  | "sandbox_runtime"
+  | "network"
+  | "timeout"
+  | "process"
+  | "unknown";
 
 export class CodexAutoReviewUnavailable extends Error {
   constructor(readonly stage: CodexAutoReviewUnavailableStage) {
@@ -57,12 +68,16 @@ export interface CodexAutoReviewOptions {
   readonly codexHome: string;
   readonly codexSqliteHome: string;
   readonly platform: NodeJS.Platform;
+  readonly isCodexLoginPending?: () => boolean;
 }
 
 /** Uses the target computer's isolated OpenBot Codex sign-in and the CLI's automatic reviewer. */
 export class CodexAutoReview {
   readonly #options: CodexAutoReviewOptions;
   #availability: { checkedAt: number; available: boolean; ignoreUserConfig: boolean; ephemeral: boolean } | null = null;
+  #requiresSignInAfterRuntimeFailure = false;
+  #loginPendingObservedAfterFailure = false;
+  #availabilityRevision = 0;
 
   constructor(options: CodexAutoReviewOptions) {
     this.#options = options;
@@ -152,11 +167,23 @@ export class CodexAutoReview {
       );
       throw new CodexAutoReviewDenied();
     }
-    if (!command)
-      throw this.#unavailable(
-        "command_result_unrecognized",
-        commandExecutionDiagnostics(result.stdout, result.stderr, result.exitCode, result.timedOut),
-      );
+    if (!command) {
+      this.#requiresSignInAfterRuntimeFailure = true;
+      this.#loginPendingObservedAfterFailure = false;
+      this.#availabilityRevision += 1;
+      const diagnostics = commandExecutionDiagnostics(result.stdout, result.stderr, result.exitCode, result.timedOut);
+      this.#availability = {
+        checkedAt: Date.now(),
+        available: false,
+        ignoreUserConfig: this.#availability?.ignoreUserConfig ?? false,
+        ephemeral: this.#availability?.ephemeral ?? false,
+      };
+      throw this.#unavailable("command_result_unrecognized", diagnostics);
+    }
+    this.#requiresSignInAfterRuntimeFailure = false;
+    this.#loginPendingObservedAfterFailure = false;
+    this.#availabilityRevision += 1;
+    this.#availability = null;
     const commandResult = command.result;
     return {
       exitCode: commandResult.exitCode,
@@ -168,7 +195,36 @@ export class CodexAutoReview {
   }
 
   async #checkAvailability(): Promise<{ available: boolean; ignoreUserConfig: boolean; ephemeral: boolean }> {
+    const loginPending = this.#options.isCodexLoginPending?.() === true;
+    if (loginPending) {
+      if (this.#requiresSignInAfterRuntimeFailure) this.#loginPendingObservedAfterFailure = true;
+      this.#availabilityRevision += 1;
+      this.#availability = {
+        checkedAt: Date.now(),
+        available: false,
+        ignoreUserConfig: this.#availability?.ignoreUserConfig ?? false,
+        ephemeral: this.#availability?.ephemeral ?? false,
+      };
+      return this.#availability;
+    }
+    if (this.#requiresSignInAfterRuntimeFailure) {
+      if (this.#loginPendingObservedAfterFailure) {
+        this.#requiresSignInAfterRuntimeFailure = false;
+        this.#loginPendingObservedAfterFailure = false;
+        this.#availabilityRevision += 1;
+        this.#availability = null;
+      } else {
+        this.#availability = {
+          checkedAt: Date.now(),
+          available: false,
+          ignoreUserConfig: this.#availability?.ignoreUserConfig ?? false,
+          ephemeral: this.#availability?.ephemeral ?? false,
+        };
+        return this.#availability;
+      }
+    }
     if (this.#availability && Date.now() - this.#availability.checkedAt < 5_000) return this.#availability;
+    const revision = this.#availabilityRevision;
     const cli = await this.#resolveCli().catch(() => null);
     if (!cli) {
       this.#availability = { checkedAt: Date.now(), available: false, ignoreUserConfig: false, ephemeral: false };
@@ -179,6 +235,15 @@ export class CodexAutoReview {
       runCli(cli.executable, ["exec", "--help"], env, this.#options.platform, STATUS_TIMEOUT_MS).catch(() => null),
       runCli(cli.executable, ["login", "status"], env, this.#options.platform, STATUS_TIMEOUT_MS).catch(() => null),
     ]);
+    if (revision !== this.#availabilityRevision) {
+      return (
+        this.#availability ?? {
+          available: false,
+          ignoreUserConfig: false,
+          ephemeral: false,
+        }
+      );
+    }
     const helpText = `${help?.stdout ?? ""}\n${help?.stderr ?? ""}`;
     const available =
       help?.exitCode === 0 &&
@@ -420,6 +485,7 @@ function commandExecutionDiagnostics(
   return {
     cliExitCode,
     cliTimedOut,
+    cliFailureCategory: classifyCliFailure(stderr, cliExitCode, cliTimedOut),
     stdoutBytes: Buffer.byteLength(stdout),
     stderrBytes: Buffer.byteLength(stderr),
     eventCount,
@@ -429,6 +495,26 @@ function commandExecutionDiagnostics(
     turnCompleted,
     turnFailed,
   };
+}
+
+/** Keeps the diagnostic useful without retaining paths, prompts, account details, or CLI output. */
+function classifyCliFailure(stderr: string, exitCode: number | null, timedOut: boolean): CliFailureCategory {
+  if (timedOut) return "timeout";
+  if (exitCode === null) return "process";
+  const diagnostic = stderr.toLowerCase();
+  if (/not logged in|logged out|unauthorized|authentication|invalid token|401/u.test(diagnostic))
+    return "authentication";
+  if (/guardian|auto.?review|approve.for.me|approvals_reviewer|reviewer/u.test(diagnostic))
+    return "reviewer_unavailable";
+  if (
+    /unexpected argument|unrecognized option|unknown argument|argument conflict|invalid value|config.*(parse|invalid)/u.test(
+      diagnostic,
+    )
+  )
+    return "cli_configuration";
+  if (/sandbox|unified exec|helper_unknown_error|failed to create.*process/u.test(diagnostic)) return "sandbox_runtime";
+  if (/network|connection|connect|dns|tls|socket|timed out|403|429|500/u.test(diagnostic)) return "network";
+  return "unknown";
 }
 
 function autoReviewDenied(stdout: string, stderr: string): boolean {

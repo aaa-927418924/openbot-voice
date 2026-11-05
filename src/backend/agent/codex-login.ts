@@ -109,20 +109,22 @@ export class CodexLoginFlow {
   readonly startDevice = Effect.fn("CodexLogin.startDevice")(function* (
     this: CodexLoginFlow,
   ): Effect.fn.Return<ProviderCodeLoginStart, CodexLoginFailed> {
-    const started = yield* this.#withLoginClientEffect((client, cli) =>
-      Effect.gen({ self: this }, function* () {
-        const login = yield* client
-          .request("account/login/start", { type: "chatgptDeviceCode" }, decodeAccountDeviceCodeLoginStartResult)
-          .pipe(toCodexLoginFailed);
-        this.#track(client, cli, login.loginId);
-        const result: ProviderCodeLoginStart = {
-          kind: "code",
-          userCode: login.userCode,
-          verificationUrl: login.verificationUrl,
-          expiresAt: Date.now() + CODEX_LOGIN_TIMEOUT_MS,
-        };
-        return result;
-      }),
+    const started = yield* this.#withLoginClientEffect(
+      (client, cli) =>
+        Effect.gen({ self: this }, function* () {
+          const login = yield* client
+            .request("account/login/start", { type: "chatgptDeviceCode" }, decodeAccountDeviceCodeLoginStartResult)
+            .pipe(toCodexLoginFailed);
+          this.#track(client, cli, login.loginId);
+          const result: ProviderCodeLoginStart = {
+            kind: "code",
+            userCode: login.userCode,
+            verificationUrl: login.verificationUrl,
+            expiresAt: Date.now() + CODEX_LOGIN_TIMEOUT_MS,
+          };
+          return result;
+        }),
+      { forceLogin: true },
     );
     return started ?? { kind: "connected" };
   }, Effect.uninterruptible).bind(this);
@@ -221,14 +223,16 @@ export class CodexLoginFlow {
   /**
    * Brings a Codex client up to the point where a sign-in can start, and hands it to `run`.
    *
-   * Returns null when the client turned out to be signed in already: the account was activated and
-   * there is no login to start. Both sign-in shapes share this because everything before the
-   * `account/login/start` call - the CLI, the handshake, the account already on this computer - and
-   * everything the failure path has to undo is the same for a browser hand-off and for a code.
+   * Returns null when the client turned out to be signed in already and `forceLogin` is off: the
+   * account was activated and there is no login to start. Both sign-in shapes share this because
+   * everything before the `account/login/start` call - the CLI, the handshake, the account already
+   * on this computer - and everything the failure path has to undo is the same for a browser
+   * hand-off and for a code.
    */
   readonly #withLoginClientEffect = Effect.fn("CodexLogin.withClient")(function* <T>(
     this: CodexLoginFlow,
     run: (client: AgentClient, cli: CodexCliInfo) => Effect.Effect<T, CodexLoginFailed>,
+    options: { forceLogin?: boolean } = {},
   ) {
     let cli: CodexCliInfo | null = null;
     this.#host.setConnecting();
@@ -254,7 +258,7 @@ export class CodexLoginFlow {
               )
               .pipe(toCodexLoginFailed);
             yield* loginStep(() => client.notify("initialized"));
-            if (!this.#host.hasActiveClient()) {
+            if (!options.forceLogin && !this.#host.hasActiveClient()) {
               const existing = yield* client
                 .request("account/read", { refreshToken: false }, decodeAccountReadResult)
                 .pipe(toCodexLoginFailed);

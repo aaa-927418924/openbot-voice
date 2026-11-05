@@ -286,17 +286,19 @@ export function RemoteDeviceCommandsSetup() {
         <Show when={state.localTarget}>
           <Show when={state.localTarget?.autoReviewAvailable !== true}>
             <p class="remote-device-commands-message">{t("computerUse.remote.autoReviewUnavailable")}</p>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={state.signingInCodex || state.codexLogin !== null}
-              onClick={() => void startCodexLogin()}
-            >
-              {state.signingInCodex || state.codexLogin !== null
-                ? t("computerUse.remote.signingInCodex")
-                : t("computerUse.remote.signInCodex")}
-            </Button>
           </Show>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={state.signingInCodex || state.codexLogin !== null}
+            onClick={() => void startCodexLogin()}
+          >
+            {state.signingInCodex || state.codexLogin !== null
+              ? t("computerUse.remote.signingInCodex")
+              : state.localTarget?.autoReviewAvailable === true
+                ? t("computerUse.remote.signInCodexAgain")
+                : t("computerUse.remote.signInCodex")}
+          </Button>
           <Show when={state.localTarget?.computerUseAvailable !== true}>
             <p class="remote-device-commands-message">{t("computerUse.remote.computerUseUnavailable")}</p>
           </Show>

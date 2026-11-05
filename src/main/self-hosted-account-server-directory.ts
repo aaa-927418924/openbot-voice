@@ -524,7 +524,7 @@ export class SelfHostedAccountServerDirectory {
       if (!existing && !registration) throw new AccountServerDirectoryError(404, "not_found");
       let server: StoredServer;
       if (existing) {
-        server = registration
+        const updated = registration
           ? {
               ...existing,
               name: registration.name,
@@ -533,6 +533,12 @@ export class SelfHostedAccountServerDirectory {
               ...(registration.origin ? { origin: registration.origin } : {}),
             }
           : existing;
+        server =
+          registration?.deviceOnly === true
+            ? { ...updated, deviceOnly: true }
+            : registration?.deviceOnly === false
+              ? (({ deviceOnly: _deviceOnly, ...withoutDeviceOnly }) => withoutDeviceOnly)(updated)
+              : updated;
       } else {
         if (!registration) throw new AccountServerDirectoryError(404, "not_found");
         server = {
@@ -543,6 +549,7 @@ export class SelfHostedAccountServerDirectory {
           publicKey: registration.publicKey,
           logoKey: registration.logoKey,
           ...(registration.origin === undefined ? {} : { origin: registration.origin }),
+          ...(registration.deviceOnly === true ? { deviceOnly: true as const } : {}),
         };
       }
       const membership = this.#state.memberships.find(
