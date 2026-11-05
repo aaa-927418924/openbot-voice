@@ -91,7 +91,9 @@ function AuthenticatedStack() {
             headerBackButtonDisplayMode: "minimal",
             headerShadowVisible: false,
             headerTransparent: isIOS || customBackground,
-            orientation: "portrait",
+            // Keep Android in portrait. iPad supports rotation through its generated
+            // UISupportedInterfaceOrientations~ipad entry; iPhone stays portrait in app.json.
+            orientation: isIOS ? "default" : "portrait",
             sheetExpandsWhenScrolledToEdge: false,
             contentStyle: { backgroundColor: customBackground ? "transparent" : background },
           }}

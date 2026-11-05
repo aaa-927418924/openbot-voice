@@ -1,0 +1,114 @@
+name: Build iOS IPA for AltStore Classic
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/build-ios-altstore.yml"
+      - ".github/actions/setup-bun/**"
+      - "apps/mobile/**"
+      - "packages/brand/**"
+      - "packages/contracts/**"
+      - "packages/i18n/**"
+      - "packages/logging/**"
+      - "packages/team-client/**"
+      - "packages/user-errors/**"
+      - "bun.lock"
+      - "package.json"
+
+permissions: {}
+
+concurrency:
+  group: build-ios-altstore-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build unsigned iOS IPA
+    runs-on: macos-26
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    env:
+      CI: "1"
+      EXPO_NO_TELEMETRY: "1"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Bun and Node
+        uses: ./.github/actions/setup-bun
+        with:
+          install: none
+
+      - name: Select and verify Xcode
+        shell: bash
+        run: |
+          sudo xcode-select --switch /Applications/Xcode_26.6.app/Contents/Developer
+          xcodebuild -version
+          pod --version
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Generate the iOS project
+        working-directory: apps/mobile
+        run: bunx expo prebuild --platform ios --clean --no-install
+
+      - name: Install CocoaPods
+        working-directory: apps/mobile/ios
+        run: pod install
+
+      - name: Archive the iOS app without signing
+        working-directory: apps/mobile/ios
+        env:
+          ARCHIVE_PATH: ${{ runner.temp }}/OpenBot.xcarchive
+        run: >-
+          xcodebuild
+          -workspace OpenBot.xcworkspace
+          -scheme OpenBot
+          -configuration Release
+          -sdk iphoneos
+          -destination 'generic/platform=iOS'
+          -archivePath "$ARCHIVE_PATH"
+          CODE_SIGNING_ALLOWED=NO
+          CODE_SIGNING_REQUIRED=NO
+          archive
+
+      - name: Package an AltStore IPA
+        shell: bash
+        env:
+          ARCHIVE_PATH: ${{ runner.temp }}/OpenBot.xcarchive
+          IPA_PATH: ${{ runner.temp }}/OpenBot-${{ github.sha }}.ipa
+        run: |
+          app_path="$ARCHIVE_PATH/Products/Applications/OpenBot.app"
+          test -d "$app_path"
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          ditto "$app_path" "$RUNNER_TEMP/ipa/Payload/OpenBot.app"
+          (cd "$RUNNER_TEMP/ipa" && zip -qry "$IPA_PATH" Payload)
+          shasum -a 256 "$IPA_PATH" | tee "$IPA_PATH.sha256"
+          echo "IPA_PATH=$IPA_PATH" >> "$GITHUB_ENV"
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: openbot-altstore-${{ github.sha }}
+          path: |
+            ${{ env.IPA_PATH }}
+            ${{ env.IPA_PATH }}.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Summarize sideload instructions
+        shell: bash
+        run: |
+          {
+            echo '## AltStore Classic IPA ready'
+            echo "Commit: $GITHUB_SHA"
+            echo "Artifact: openbot-altstore-$GITHUB_SHA"
+            echo 'Download and extract the artifact, then import the IPA from AltStore Classic > My Apps > +.'
+            echo 'Keep AltServer running on the same Wi-Fi network or connect the device by USB to install and refresh the app.'
+            echo 'This workflow does not store an Apple ID password or upload the app to App Store Connect.'
+          } >> "$GITHUB_STEP_SUMMARY"
