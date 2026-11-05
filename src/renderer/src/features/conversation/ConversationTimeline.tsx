@@ -328,7 +328,11 @@ export function ConversationTimeline() {
                   if (sender) return memberAuthor(sender);
                   return current?.author === "you"
                     ? { kind: "you", name: t("chat.message.you") }
-                    : { kind: "agent", name: props.agent?.name ?? t("chat.message.agentFallback") };
+                    : {
+                        kind: "agent",
+                        name: props.agent?.name ?? t("chat.message.agentFallback"),
+                        agent: props.agent,
+                      };
                 });
                 const referencedMessage = createMemo(() => {
                   const replyToMessageId = message()?.replyToMessageId;
@@ -575,7 +579,7 @@ export function ConversationTimeline() {
                           <ChatMessageRow
                             message={message() ?? initialMessage}
                             author={author()}
-                            showAuthor={author().kind === "member" ? !continuesRun() : undefined}
+                            showAuthor={author().kind === "you" ? undefined : !continuesRun()}
                             showTime={!continuesRun()}
                             animate={animateEntrance}
                             agents={props.agents}

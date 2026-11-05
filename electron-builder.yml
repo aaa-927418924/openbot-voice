@@ -127,6 +127,10 @@ linux:
   icon: build/icon-production.png
   synopsis: A local-first multi-agent desktop workspace.
   extraResources:
+    - from: build/decision-runtime/linux/${arch}
+      to: decision-runtime/linux/${arch}
+      filter:
+        - "**/*"
     - from: build/linux/openbot.apparmor
       to: linux/openbot.apparmor
     # A hosted server installs the packages, scripts and units of the release that it updates to.

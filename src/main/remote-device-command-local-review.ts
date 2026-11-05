@@ -5,6 +5,10 @@ export type LocalCommandReview =
   | { allowed: true; rule: "read_only_powershell_listing" | "read_only_system_command" }
   | { allowed: false; reason: "high_risk" | "unreviewable_command" };
 
+export type RemoteCommandReviewPlan =
+  | { decision: "block"; reason: "catastrophic_operation" }
+  | { decision: "model_review" };
+
 const SAFE_LINUX_COMMANDS = new Set(["ls", "du", "df", "stat", "pwd", "whoami", "hostname", "uname", "date"]);
 const SAFE_WINDOWS_COMMANDS = new Set(["whoami", "hostname", "where", "systeminfo"]);
 const SAFE_PATH_CHARACTERS = /^[A-Za-z0-9_./\\:~$ -]+$/u;
@@ -24,12 +28,46 @@ export function reviewRemoteCommandLocally(
       : { allowed: false, reason: "unreviewable_command" };
   }
   if (remoteCommandRequiresAutoReview(executable, args)) return { allowed: false, reason: "high_risk" };
-
   const safeCommands = platform === "win32" ? SAFE_WINDOWS_COMMANDS : SAFE_LINUX_COMMANDS;
   if (!safeCommands.has(executableName) || !isSafeSystemCommand(executableName, args, platform)) {
     return { allowed: false, reason: "unreviewable_command" };
   }
   return { allowed: true, rule: "read_only_system_command" };
+}
+
+/** Classifies catastrophic commands deterministically and routes other unknown commands to local d1 review. */
+export function planRemoteCommandReview(
+  executable: string,
+  args: readonly string[],
+  _platform: NodeJS.Platform,
+): RemoteCommandReviewPlan {
+  if (isCatastrophicOperation(executable, args)) return { decision: "block", reason: "catastrophic_operation" };
+  return { decision: "model_review" };
+}
+
+function isCatastrophicOperation(executable: string, args: readonly string[]): boolean {
+  const invocation = [executable, ...args].join(" ").toLowerCase().replaceAll("\\", "/");
+  const tokens = [executable, ...args].map((value) => value.toLowerCase().replaceAll("\\", "/"));
+  const knownDiskWipers = /\b(?:diskpart|clear-disk|initialize-disk|format-volume|mkfs(?:\.[a-z0-9_-]+)?|wipefs)\b/u;
+  if (knownDiskWipers.test(invocation)) return true;
+  if (/\bformat(?:\.com)?\s+[a-z]:/u.test(invocation)) return true;
+  if (/\bdd\b[^\n]*\bof=\/dev\//u.test(invocation)) return true;
+  if (/\bfind\b[^\n;]*\s(?:\/|[a-z]:\/)(?:\s|$)[^\n;]*\s-delete(?:\s|$)/u.test(invocation)) return true;
+  if (/\bshred\b[^\n]*\/dev\/(?:sd[a-z]|vd[a-z]|xvd[a-z]|nvme\d+n\d+|mmcblk\d+)/u.test(invocation)) return true;
+
+  const hasRecursiveDelete = tokens.some((token) =>
+    ["-r", "-rf", "-fr", "--recursive", "-recurse", "/s", "/s/q", "/q/s"].includes(token),
+  );
+  const hasDeleteVerb = /\b(?:rm|remove-item|del|erase|rmdir|rd|unlink|shred)\b/u.test(invocation);
+  if (!hasDeleteVerb) return false;
+
+  const protectedRoots =
+    /(?:^|\s)["']?(?:c:)?\/(?:\*)?["']?(?=\s|$)|(?:^|\s)["']?\\\?\\c:\/(?:\*)?["']?(?=\s|$)|(?:^|\s)["']?\/(?:home|root|etc|usr|var|boot|dev|proc|sys|run|system|windows|program files)(?:\/\*)?["']?(?=\s|$)/u;
+  if (protectedRoots.test(invocation)) return true;
+
+  const criticalWindowsRoots =
+    /(?:^|\s)["']?c:\/(?:windows|program files|program files \(x86\))(?:\/\*)?["']?(?=\s|$)/u;
+  return hasRecursiveDelete && criticalWindowsRoots.test(invocation);
 }
 
 function isPowerShell(name: string): boolean {

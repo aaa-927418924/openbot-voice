@@ -41,7 +41,7 @@ export const messages = defineMessages("computerUse", {
   "computerUse.highlight.working": "OpenBot is working in {title}",
   "computerUse.remote.title": "This PC’s operation permissions",
   "computerUse.remote.description":
-    "Set permissions for this PC. They apply to operations from every agent. Commands receive a deterministic safety review on this PC without a model call; scripts, unknown commands, and destructive operations are blocked.",
+    "Set permissions for this PC. They apply to every agent. OpenBot Cloud’s Linux host reviews remote commands. It automatically downloads about 1.1 GB of model weights on first review and unloads the review process after 3 idle minutes. Regular local servers are excluded as operation targets.",
   "computerUse.remote.refresh": "Refresh status",
   "computerUse.remote.empty.local":
     "This PC’s operation details are not available yet. Turn on remote device sharing to prepare this PC as a target.",
@@ -55,7 +55,7 @@ export const messages = defineMessages("computerUse", {
   "computerUse.remote.loading": "Loading this PC’s permissions…",
   "computerUse.remote.commands.title": "Allow command execution",
   "computerUse.remote.commands.description":
-    "Let all agents run commands on this PC. A local rule-based review blocks scripts, unknown commands, and destructive operations without using a model call.",
+    "Let all agents run commands on this PC. Fixed rules block catastrophic operations; OpenBot Cloud’s Linux host reviews other commands with Liquid AI d1-2B. The model downloads automatically to the Cloud host the first time it is needed.",
   "computerUse.remote.computerUse.title": "Allow Computer Use",
   "computerUse.remote.computerUse.description":
     "Let all agents use this PC’s screen tools. This is separate from command execution.",

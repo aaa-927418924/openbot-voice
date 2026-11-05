@@ -1255,6 +1255,69 @@ describe("remote connection failures", () => {
 });
 
 describe("remote control capability discovery", () => {
+  it("renews a device-only account session without exposing the target in the server list", async () => {
+    const hostId = "44444444-4444-4444-8444-444444444444";
+    const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+    const publicKeyPem = publicKey.export({ type: "spki", format: "pem" }).toString();
+    const hostFingerprint = fingerprint(publicKeyPem);
+    const host = stubTeamFetch({
+      routes: {
+        "/v1/identity": ({ url }) => {
+          const challenge = url.searchParams.get("challenge") ?? "";
+          return Response.json({
+            serverId: hostId,
+            publicKey: publicKeyPem,
+            serverName: "Windows device",
+            fingerprint: hostFingerprint,
+            challenge,
+            signature: sign(null, Buffer.from(challenge), privateKey).toString("base64url"),
+            enabledOnLaunch: true,
+            logoVersion: null,
+          });
+        },
+        [TEAM_API_ROUTES.auth.account]: () =>
+          Response.json({
+            member: {
+              id: "member-id",
+              username: "member",
+              email: "person@example.com",
+              name: null,
+              avatarUrl: null,
+              role: "member",
+              createdAt: new Date().toISOString(),
+              disabled: false,
+            },
+            sessionToken: "refreshed-session-token",
+            sessionExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+          }),
+        [TEAM_API_ROUTES.agents.all]: () =>
+          Response.json({ error: "Workspace routes are unavailable for device-only hosts." }, { status: 404 }),
+      },
+    });
+    const { sockets } = stubEventSockets();
+    const fixture = await createRemoteManager({
+      servers: [
+        storedHttpsServer(hostId, {
+          fingerprint: hostFingerprint,
+          publicKey: publicKeyPem,
+          deviceOnly: true,
+          encryptedToken: Buffer.from("expired-device-token").toString("base64"),
+        }),
+      ],
+    });
+
+    const refreshed = await runCauseEffect(fixture.manager.login({ serverId: hostId }));
+
+    expect(refreshed).toMatchObject({ id: hostId, state: "online" });
+    expect(fixture.manager.list().map((server) => server.id)).not.toContain(hostId);
+    expect(host.requests(TEAM_API_ROUTES.auth.account)).toHaveLength(1);
+    expect(host.requests(TEAM_API_ROUTES.agents.all)).toHaveLength(0);
+    expect(sockets).toHaveLength(0);
+    expect(JSON.parse(await readFile(fixture.statePath, "utf8")).servers).toMatchObject([
+      { id: hostId, deviceOnly: true, username: "person@example.com" },
+    ]);
+  });
+
   it("does not import or prune a host with a pending rejoin for another account", async () => {
     const hostId = "22222222-2222-4222-8222-222222222222";
     const registerAccountServer = vi.fn(() => authCall(async () => []));

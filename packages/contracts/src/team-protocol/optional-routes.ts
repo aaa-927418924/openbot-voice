@@ -13,6 +13,7 @@ import { CONVERSATION_HISTORY_DELETE_CODECS } from "./conversation-history-delet
 import { DEVICE_COMMAND_CODECS } from "./device-commands-v1";
 import { DEVICE_COMMANDS_V2_CODECS } from "./device-commands-v2";
 import { DEVICE_COMMANDS_V3_CODECS } from "./device-commands-v3";
+import { DEVICE_COMMANDS_V4_CODECS } from "./device-commands-v4";
 import { HOST_ADMIN_CODECS } from "./host-admin-v1";
 import { HOST_UPDATE_CODECS } from "./host-update-v1";
 import { HOSTED_SITES_CODECS } from "./hosted-sites-v1";
@@ -57,6 +58,7 @@ const CODECS: ReadonlyMap<string, OptionalRouteCodec> = new Map([
   ...DEVICE_COMMAND_CODECS,
   ...DEVICE_COMMANDS_V2_CODECS,
   ...DEVICE_COMMANDS_V3_CODECS,
+  ...DEVICE_COMMANDS_V4_CODECS,
   ...SERVER_MIGRATION_CODECS,
 ]);
 

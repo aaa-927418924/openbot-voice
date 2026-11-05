@@ -42,7 +42,7 @@ export const messages = {
   "computerUse.highlight.working": "OpenBot が {title} で作業しています",
   "computerUse.remote.title": "このPCの操作権限",
   "computerUse.remote.description":
-    "このPCの権限だけを設定します。すべてのエージェントからの操作に適用されます。コマンドはモデルを呼び出さず、このPC内の固定ルールで安全性を判定します。スクリプト、未確認のコマンド、破壊的な操作は拒否します。",
+    "このPCの権限だけを設定します。すべてのエージェントからの操作に適用されます。リモートコマンドはOpenBot CloudのLinuxサーバーで審査します。初回に約1.1GBのモデルをCloud側へ自動ダウンロードし、審査プロセスは最後の利用から3分後に終了します。通常のローカルサーバーは操作対象に含めません。",
   "computerUse.remote.refresh": "状態を更新",
   "computerUse.remote.empty.local":
     "このPCの操作情報がまだありません。リモートデバイス共有を有効にすると、このPCが操作対象として準備されます。",
@@ -57,7 +57,7 @@ export const messages = {
   "computerUse.remote.loading": "このPCの権限を読み込んでいます…",
   "computerUse.remote.commands.title": "コマンド実行を許可",
   "computerUse.remote.commands.description":
-    "このPCで全エージェントのコマンド実行を許可します。モデルを使わないローカルルール判定で、スクリプト、未確認のコマンド、破壊的な操作を拒否します。",
+    "このPCで全エージェントのコマンド実行を許可します。極端に危険な操作は固定ルールで拒否し、その他はOpenBot CloudのLinuxサーバーでLiquid AI d1-2Bが審査します。モデルはCloud側へ初回利用時に自動ダウンロードされます。",
   "computerUse.remote.computerUse.title": "Computer Use を許可",
   "computerUse.remote.computerUse.description":
     "このPCで全エージェントの画面操作ツールを許可します。コマンド実行とは別の設定です。",

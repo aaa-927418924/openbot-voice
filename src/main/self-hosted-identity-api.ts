@@ -39,6 +39,7 @@ interface IdentityRequestBody {
   publicKey?: unknown;
   logoKey?: unknown;
   origin?: unknown;
+  deviceOnly?: unknown;
   membershipId?: unknown;
   role?: unknown;
   legacyImport?: unknown;
@@ -180,6 +181,7 @@ async function readJson(request: IncomingMessage): Promise<IdentityRequestBody> 
     origin: value.origin,
     membershipId: value.membershipId,
     role: value.role,
+    deviceOnly: value.deviceOnly,
     legacyImport: value.legacyImport,
     rejoin: value.rejoin,
     visible: value.visible,
@@ -553,6 +555,9 @@ export class SelfHostedIdentityApiServer {
         if (body.rejoin !== undefined && typeof body.rejoin !== "boolean") {
           throw new ApiError(400, "invalid_request");
         }
+        if (body.deviceOnly !== undefined && typeof body.deviceOnly !== "boolean") {
+          throw new ApiError(400, "invalid_request");
+        }
         if (body.origin !== undefined && body.origin !== "cloud") throw new ApiError(400, "invalid_request");
         const registration: AccountServerRegistration = {
           hostId: stringField(body, "hostId", 128),
@@ -566,6 +571,7 @@ export class SelfHostedIdentityApiServer {
           // authority for real role checks; clients apply their locally paired role on this device.
           role: "member" satisfies TeamRole,
           ...(body.origin === "cloud" ? { origin: "cloud" as const } : {}),
+          ...(body.deviceOnly === undefined ? {} : { deviceOnly: body.deviceOnly }),
           ...(body.legacyImport === true ? { legacyImport: true } : {}),
           ...(body.rejoin === true ? { rejoin: true } : {}),
         };

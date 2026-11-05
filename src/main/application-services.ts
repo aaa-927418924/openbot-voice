@@ -12,6 +12,7 @@ import { LocalSkillLibrary } from "./local-skill-library";
 import { localSkillTools } from "./local-skill-tools";
 import { MAC_PERMISSION_URLS } from "./mac-permission-urls";
 import {
+  RemoteDeviceDiagnosticError,
   remoteDeviceDiagnosticsLogger,
   remoteDeviceEndpointTag,
   remoteDeviceFailureDetails,
@@ -181,6 +182,7 @@ import { resolveRemoteDesktopRuntime } from "./remote-desktop-runtime-artifact";
 import { loadOrCreateRemoteDesktopCredentials } from "./remote-desktop-secret-store";
 import { CodexAutoReview } from "./remote-device-codex-review";
 import { RemoteDeviceCommandClient } from "./remote-device-command-client";
+import { RemoteDeviceCommandDecisionReviewer } from "./remote-device-command-decision-reviewer";
 import { RemoteDeviceCommandHost } from "./remote-device-command-host";
 import { appendRemoteDiagnosticLog } from "./remote-diagnostics";
 import { decodeVoid } from "./remote-host-decoding";
@@ -311,6 +313,7 @@ const TEARDOWN_ORDER = {
   automation: 108,
   storageUsage: 109,
   service: 110,
+  localDecisionReviewer: 111,
   mcpOAuth: 111,
   analytics: 112,
   // After all account consumers have stopped.
@@ -1695,6 +1698,19 @@ export async function createApplicationServices({
           },
         })
       : null;
+  const localDecisionReviewer =
+    cloudHostMode && process.platform === "linux"
+      ? new RemoteDeviceCommandDecisionReviewer({
+          modelPath: join(app.getPath("userData"), "runtimes", "liquid-d1-2b", "d1-2B-Q4_K_M.gguf"),
+          runtimeDirectory: join(
+            app.isPackaged ? process.resourcesPath : resolve("build"),
+            "decision-runtime",
+            process.platform,
+            process.arch,
+          ),
+          platform: process.platform,
+        })
+      : null;
   const deviceCommandHost =
     process.platform === "win32" || process.platform === "linux"
       ? new RemoteDeviceCommandHost({
@@ -1907,6 +1923,11 @@ export async function createApplicationServices({
   });
   getHostStatusForAccountDirectory = () => host.getStatus();
   teardown.push(TEARDOWN_ORDER.host, "the local host", () => runCauseEffect(host.shutdown()));
+  if (localDecisionReviewer) {
+    teardown.push(TEARDOWN_ORDER.localDecisionReviewer, "the local command decision model", () =>
+      localDecisionReviewer.shutdown(),
+    );
+  }
   const signedInState = localOnlyNetworking ? selfHostedDesktopAccount.getState() : centralAuth.getState();
   if (!localOnlyNetworking && signedInState.status === "signed_in") {
     await runCauseEffect(host.applySignedInAccount(signedInState.user));
@@ -2391,6 +2412,41 @@ export async function createApplicationServices({
         enabled: deviceSharePreference.enabled,
       }),
       set: setRemoteDeviceShareSettings,
+    },
+    {
+      cloudHostMode,
+      refreshAccountSession: async (serverId) => {
+        const serverTag = remoteDeviceTag(serverId);
+        const accountState = localOnlyNetworking
+          ? selfHostedDesktopAccount.getState()
+          : await runCauseEffect(centralAuthInitialization);
+        remoteDeviceDiagnosticsLogger.info("Remote device account session refresh started.", {
+          serverTag,
+          accountAuthority: localOnlyNetworking ? "self_hosted" : "central",
+          accountState: accountState.status,
+        });
+        if (accountState.status !== "signed_in") {
+          throw new RemoteDeviceDiagnosticError("account_session_refresh_account_unavailable");
+        }
+        try {
+          const summary = await runCauseEffect(remoteServers.login({ serverId }));
+          remoteDeviceDiagnosticsLogger.info("Remote device account session refresh returned.", {
+            serverTag,
+            state: summary.state,
+            issueCode: summary.issue?.code ?? null,
+          });
+          if (summary.state !== "online") {
+            throw new RemoteDeviceDiagnosticError("account_session_refresh_incomplete");
+          }
+        } catch (error) {
+          remoteDeviceDiagnosticsLogger.warn("Remote device account session refresh failed.", {
+            serverTag,
+            ...remoteDeviceFailureDetails(error),
+          });
+          throw error;
+        }
+      },
+      ...(localDecisionReviewer ? { localDecisionReviewer } : {}),
     },
   );
   criticalActionTargets = { agents: service, remoteServers };

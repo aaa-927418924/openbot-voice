@@ -256,6 +256,7 @@ type ChatUpload = NonNullable<ChatMessageListProps["upload"]>;
 interface MessageRowShared {
   agents: MobileAgent[];
   agentsById: ReadonlyMap<string, MobileAgent>;
+  targetAgent?: Extract<ChatTarget, { kind: "agent" }>;
   serverId: string;
   canSend: boolean;
   muted: ViewStyle["backgroundColor"];
@@ -443,6 +444,9 @@ const MessageRow = memo(function MessageRow({
   );
   const waiting = awaitingFirstWord(message, shared);
   const speaker = message.kind === "message" && message.speaker ? agentsById.get(message.speaker.id) : undefined;
+  const directAgent =
+    message.kind === "message" && message.author === "agent" && !message.speaker ? shared.targetAgent : undefined;
+  const speakerAgent = message.kind === "message" && message.speaker?.kind === "agent" ? speaker : directAgent;
   // Member colours and generated avatars use the shared channel identity, not a device membership.
   const memberColor =
     message.kind === "message"
@@ -543,19 +547,27 @@ const MessageRow = memo(function MessageRow({
             {message.sender.name.trim() || t("mobile.chat.speaker.memberFallback")}
           </Typography.Paragraph>
         ) : null}
-        {message.speaker && message.author !== "user" ? (
+        {(message.speaker || directAgent) && message.author !== "user" ? (
           <View className="flex-row items-center gap-1 px-1">
-            {message.speaker.kind === "agent" ? (
+            {message.speaker?.kind === "agent" ? (
               <BloubAvatarThumbnail
-                agentId={speaker?.id}
-                serverId={speaker?.serverId}
-                seed={speaker?.avatarSeed ?? message.speaker.id}
-                hue={speaker?.avatarHue ?? null}
+                agentId={speakerAgent?.id}
+                serverId={speakerAgent?.serverId}
+                seed={speakerAgent?.avatarSeed ?? message.speaker.id}
+                hue={speakerAgent?.avatarHue ?? null}
                 size={20}
               />
-            ) : (
+            ) : message.speaker?.kind === "member" ? (
               <BloubAvatarThumbnail seed={message.speaker.identityId ?? message.speaker.id} hue={null} size={20} />
-            )}
+            ) : speakerAgent ? (
+              <BloubAvatarThumbnail
+                agentId={speakerAgent.id}
+                serverId={speakerAgent.serverId}
+                seed={speakerAgent.avatarSeed}
+                hue={speakerAgent.avatarHue}
+                size={20}
+              />
+            ) : null}
             <Typography.Paragraph
               type="body-xs"
               className={memberColor ? "shrink" : "shrink text-muted"}
@@ -563,8 +575,10 @@ const MessageRow = memo(function MessageRow({
               style={memberColor ? { color: memberColor } : undefined}
             >
               {message.superseded
-                ? t("mobile.chat.speaker.superseded", { name: message.speaker.name })
-                : message.speaker.name}
+                ? t("mobile.chat.speaker.superseded", {
+                    name: message.speaker?.name ?? shared.targetAgent?.name ?? "",
+                  })
+                : (message.speaker?.name ?? shared.targetAgent?.name ?? "")}
             </Typography.Paragraph>
           </View>
         ) : null}
@@ -864,17 +878,21 @@ export function ChatMessageList({
     [],
   );
   const animationActive = animateMessages && motion.responseVisible;
+  const targetAgent = target.kind === "agent" ? target : undefined;
+  const targetServerId = target.serverId;
+  const targetIsAgent = target.kind === "agent";
   const shared = useMemo<MessageRowShared>(
     () => ({
       agents,
       agentsById,
-      serverId: target.serverId,
+      targetAgent,
+      serverId: targetServerId,
       canSend,
       muted,
       themeMuted,
       foreground,
       userForeground,
-      userBubbleStyle: target.kind === "agent" && agentColorMessages ? userBubbleStyle : undefined,
+      userBubbleStyle: targetIsAgent && agentColorMessages ? userBubbleStyle : undefined,
       firstMessageStyle: motion.firstMessageStyle,
       onUserLayout: motion.onUserLayout,
       screenReaderEnabled,
@@ -892,8 +910,9 @@ export function ChatMessageList({
     [
       agents,
       agentsById,
-      target.kind,
-      target.serverId,
+      targetAgent,
+      targetServerId,
+      targetIsAgent,
       canSend,
       muted,
       themeMuted,

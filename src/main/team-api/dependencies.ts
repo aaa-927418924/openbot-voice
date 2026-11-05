@@ -44,6 +44,7 @@ import type {
   DeviceCommandTargetService,
   DeviceCommandTargetServiceV2,
   DeviceCommandTargetServiceV3,
+  DeviceCommandTargetServiceV4,
 } from "../remote-device-command-host";
 import type { RemoteScreenGateway } from "../remote-screen-gateway";
 import type { ServerMigrationSnapshotManifest } from "../server-migration-snapshot";
@@ -289,7 +290,11 @@ export interface TeamApiOptions {
   browserView?: TeamApiBrowserView;
   remoteScreen?: TeamApiRemoteScreen;
   /** Target-local permissions and execution for explicitly granted remote device operations. */
-  deviceCommands?: DeviceCommandTargetService | DeviceCommandTargetServiceV2 | DeviceCommandTargetServiceV3;
+  deviceCommands?:
+    | DeviceCommandTargetService
+    | DeviceCommandTargetServiceV2
+    | DeviceCommandTargetServiceV3
+    | DeviceCommandTargetServiceV4;
   /** When true, expose only account identity and device-command routes; do not serve a Team host. */
   deviceOnly?: () => boolean;
   redeemCentralTicket?: (

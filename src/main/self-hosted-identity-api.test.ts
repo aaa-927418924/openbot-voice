@@ -416,6 +416,7 @@ describe("SelfHostedIdentityApiServer", () => {
           membershipId: "owner-membership",
           role: "owner",
           origin: "cloud",
+          deviceOnly: true,
         }),
       });
       expect(registration.status).toBe(200);
@@ -427,6 +428,7 @@ describe("SelfHostedIdentityApiServer", () => {
             isOwner: true,
             role: "owner",
             origin: "cloud",
+            deviceOnly: true,
           },
         ],
       });

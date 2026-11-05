@@ -238,6 +238,12 @@ export function stringField(
   return item;
 }
 
+export function booleanField(value: DynamicRecord, field: string): boolean {
+  const item = value[field];
+  if (!isBoolean(item)) throw new HttpError(400, `${field} must be a boolean.`);
+  return item;
+}
+
 export function nullableString(
   value: DynamicRecord,
   field: string,

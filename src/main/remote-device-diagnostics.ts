@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createOpenBotLogger } from "@openbot/logging";
+import { CentralAuthOperationError } from "./central-auth-effects";
 import { RemoteProtocolError, RemoteRequestError } from "./remote-server-errors";
 import { RemoteWorkflowError } from "./remote-service-effects";
 
@@ -12,7 +13,12 @@ const REMOTE_DEVICE_OPERATION_ID_PATTERN =
 
 export class RemoteDeviceDiagnosticError extends Error {
   constructor(
-    readonly diagnosticKind: "invalid_target_info" | "invalid_policy_response" | "capability_unavailable",
+    readonly diagnosticKind:
+      | "account_session_refresh_incomplete"
+      | "account_session_refresh_account_unavailable"
+      | "invalid_target_info"
+      | "invalid_policy_response"
+      | "capability_unavailable",
     message = "Remote device response did not match the expected shape.",
   ) {
     super(message);
@@ -50,7 +56,7 @@ export function remoteDeviceFailureDetails(error: unknown): {
 } {
   let cause = error;
   for (let depth = 0; depth < 4; depth += 1) {
-    if (cause instanceof RemoteWorkflowError) {
+    if (cause instanceof RemoteWorkflowError || cause instanceof CentralAuthOperationError) {
       cause = cause.cause;
       continue;
     }
@@ -64,6 +70,18 @@ export function remoteDeviceFailureDetails(error: unknown): {
     }
     return { failureKind: "protocol", protocolCode: cause.code };
   }
+  // Central account API failures are wrapped in CentralAuthOperationError. Keep the diagnostic
+  // useful without recording exception text, endpoint paths, account IDs, or credentials.
+  if (cause instanceof Error && cause.name === "AuthApiError") {
+    const status = "status" in cause && typeof cause.status === "number" ? cause.status : undefined;
+    const code = "code" in cause && typeof cause.code === "string" ? cause.code : undefined;
+    return {
+      failureKind: "account_http",
+      ...(status === undefined ? {} : { httpStatus: status }),
+      ...(code && /^[a-z0-9_]{1,64}$/iu.test(code) ? { protocolCode: code } : {}),
+    };
+  }
   if (cause instanceof TypeError) return { failureKind: "network" };
+  if (cause instanceof Error && cause.name === "Error") return { failureKind: "account_error" };
   return { failureKind: "unexpected" };
 }

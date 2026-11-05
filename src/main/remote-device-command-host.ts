@@ -26,7 +26,7 @@ import type { CuaDriverRuntime } from "./cua-driver-runtime";
 import { readPreferenceFile } from "./preference-file";
 import type { CodexAutoReview } from "./remote-device-codex-review";
 import { CodexAutoReviewDenied, CodexAutoReviewUnavailable } from "./remote-device-codex-review";
-import { reviewRemoteCommandLocally } from "./remote-device-command-local-review";
+import { planRemoteCommandReview, reviewRemoteCommandLocally } from "./remote-device-command-local-review";
 import { remoteCommandRequiresAutoReview } from "./remote-device-command-risk";
 import { remoteDeviceDiagnosticsLogger as logger, remoteDeviceTag } from "./remote-device-diagnostics";
 
@@ -163,15 +163,25 @@ export interface DeviceCommandTargetServiceV3 extends DeviceCommandTargetService
   ) => Effect.Effect<RemoteDeviceCommandResult, RemoteDeviceCommandHostError>;
 }
 
+export interface DeviceCommandTargetServiceV4 extends DeviceCommandTargetServiceV3 {
+  runAfterCloudReview: (
+    input: RemoteDeviceCommandInput & { safetyReviewed: boolean },
+  ) => Effect.Effect<RemoteDeviceCommandResult, RemoteDeviceCommandHostError>;
+}
+
 /**
  * Owns the target computer's command grants and process launches.
  *
- * The v3 command route applies deterministic local rules to a small set of read-only commands and
- * bounded PowerShell listings. These application controls are not an operating-system sandbox;
- * processes still run as the OpenBot user. Computer Use uses the separate CUA driver.
+ * V3 uses a deterministic target-local allowlist. V4 accepts Cloud-reviewed commands while this
+ * target still blocks catastrophic operations. These controls are not an operating-system sandbox;
+ * processes run as the OpenBot user. Computer Use uses the separate CUA driver.
  */
 export class RemoteDeviceCommandHost
-  implements DeviceCommandTargetService, DeviceCommandTargetServiceV2, DeviceCommandTargetServiceV3
+  implements
+    DeviceCommandTargetService,
+    DeviceCommandTargetServiceV2,
+    DeviceCommandTargetServiceV3,
+    DeviceCommandTargetServiceV4
 {
   readonly #path: string;
   readonly #getServerId: RemoteDeviceCommandHostOptions["getServerId"];
@@ -347,6 +357,44 @@ export class RemoteDeviceCommandHost
       platform: this.#platform,
     });
     if (!review.allowed) return yield* new RemoteDeviceCommandHostError("review");
+    const workingDirectory = yield* Effect.tryPromise({
+      try: () => canonicalWorkingDirectoryUnrestricted(input.workingDirectory),
+      catch: (cause) =>
+        cause instanceof RemoteDeviceCommandHostError ? cause : new RemoteDeviceCommandHostError("invalid", cause),
+    });
+    const executable = yield* Effect.tryPromise({
+      try: () => resolveExecutable(input.executable, this.#platform),
+      catch: (cause) =>
+        cause instanceof RemoteDeviceCommandHostError ? cause : new RemoteDeviceCommandHostError("unavailable", cause),
+    });
+    return yield* Effect.tryPromise({
+      try: () => runProcess(executable, input.args, workingDirectory, this.#platform),
+      catch: (cause) => new RemoteDeviceCommandHostError("execution", cause),
+    });
+  });
+
+  readonly runAfterCloudReview = Effect.fn("RemoteDeviceCommandHost.runAfterCloudReview")(function* (
+    this: RemoteDeviceCommandHost,
+    input: RemoteDeviceCommandInput & { safetyReviewed: boolean },
+  ): Effect.fn.Return<RemoteDeviceCommandResult, RemoteDeviceCommandHostError> {
+    if (!isAgentId(input.agentId) || !validExecutableName(input.executable) || !validArgs(input.args)) {
+      return yield* new RemoteDeviceCommandHostError("invalid");
+    }
+    if (this.#platform !== "win32" && this.#platform !== "linux") {
+      return yield* new RemoteDeviceCommandHostError("unsupported");
+    }
+    const policy = yield* this.#readDevicePolicy();
+    if (!policy.commandsEnabled) return yield* new RemoteDeviceCommandHostError("permission");
+    const review = planRemoteCommandReview(input.executable, input.args, this.#platform);
+    logger.info("Cloud-reviewed remote command reached target hard-deny checks.", {
+      serverTag: remoteDeviceTag(this.#getServerId() ?? "unknown"),
+      sourceReviewMarkerPresent: input.safetyReviewed,
+      hardDenyMatched: review.decision === "block",
+      platform: this.#platform,
+    });
+    if (!input.safetyReviewed || review.decision === "block") {
+      return yield* new RemoteDeviceCommandHostError("review");
+    }
     const workingDirectory = yield* Effect.tryPromise({
       try: () => canonicalWorkingDirectoryUnrestricted(input.workingDirectory),
       catch: (cause) =>

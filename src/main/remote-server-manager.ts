@@ -315,7 +315,14 @@ const ACCOUNT_SERVER_AUTH_RETRY_MS = 60_000;
 const MIGRATION_CHUNK_TIMEOUT_MS = 4 * 60_000;
 const logger = createOpenBotLogger("remote-account-adoption");
 
-type AccountAdoptionStage = "host_identity" | "account_ticket" | "host_account_login";
+type AccountAdoptionStage =
+  | "server_lookup"
+  | "host_identity"
+  | "account_ticket"
+  | "host_account_login"
+  | "save_host_session"
+  | "agent_roster"
+  | "event_stream";
 
 function accountAdoptionFailureDetails(error: unknown): { kind: string; status?: number; protocolCode?: string } {
   let cause = error;
@@ -791,10 +798,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       };
       this.#connections.setCompatibility(stored.id, identity.compatibility);
       this.#connections.clearIssue(stored.id);
-      // A valid account ticket proves authorization, not that the Team API event data plane is
-      // ready. Stay in `connecting` until the event socket opens; otherwise clients can mount an
-      // empty local-looking workspace while the real host is still unreachable.
-      this.#connections.setState(stored.id, "connecting");
+      // Device-only hosts have no workspace or event stream. A successful account handshake is
+      // sufficient readiness for the direct device-operation API.
+      this.#connections.setState(stored.id, entry.deviceOnly ? "online" : "connecting");
       this.#recordFreshServerSession(stored.id);
       yield* this.#store.adopt(stored, { activate: !entry.deviceOnly });
       const remoteDesktopAvailable = yield* this.#client
@@ -803,7 +809,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       if (remoteDesktopAvailable) {
         yield* this.#store.update(stored.id, { remoteDesktopAvailable }).pipe(Effect.catch(() => Effect.succeed(null)));
       }
-      yield* this.#events.restart(stored.id, true);
+      if (!entry.deviceOnly) yield* this.#events.restart(stored.id, true);
     },
     (operation) => this.#owned(operation),
   ).bind(this);
@@ -887,10 +893,14 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
   #owned<A>(operation: Effect.Effect<A, RemoteWorkflowError, RemoteRequest>): Effect.Effect<A, RemoteWorkflowError> {
     return Effect.suspend(() => {
-      if (this.#stopped)
+      if (this.#stopped) {
+        remoteDeviceDiagnosticsLogger.warn(
+          "Remote device account renewal was rejected because the server manager stopped.",
+        );
         return Effect.fail(
           new RemoteWorkflowError({ cause: new Error(sourceText("error.remote.connectionCancelled")) }),
         );
+      }
       const done = Deferred.makeUnsafe<void>();
       this.#operations.add(done);
       return operation.pipe(
@@ -928,14 +938,16 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     ].sort();
   }
 
-  list(): ServerSummary[] {
+  #summaries(includeDeviceOnly: boolean): ServerSummary[] {
     return remoteServerSummaries(
       this.#servers.servers,
       this.#servers.activeServerId,
       (serverId) => this.#connections.statusFor(serverId),
       this.#localMemberLimit,
     )
-      .filter((server) => server.id === LOCAL_SERVER_ID || !this.#servers.find(server.id)?.deviceOnly)
+      .filter(
+        (server) => includeDeviceOnly || server.id === LOCAL_SERVER_ID || !this.#servers.find(server.id)?.deviceOnly,
+      )
       .map((server) => {
         const mute = this.#store.muteState(server.id);
         return {
@@ -945,6 +957,20 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
           notificationLevel: this.#store.notificationLevel(server.id),
         };
       });
+  }
+
+  #findSummaryForServer(serverId: string): ServerSummary | undefined {
+    return this.#summaries(this.#servers.find(serverId)?.deviceOnly === true).find((server) => server.id === serverId);
+  }
+
+  #summaryForServer(serverId: string): ServerSummary {
+    const summary = this.#findSummaryForServer(serverId);
+    if (!summary) throw new Error("Remote server summary is missing.");
+    return summary;
+  }
+
+  list(): ServerSummary[] {
+    return this.#summaries(false);
   }
 
   /** Online remote hosts that may be targeted by device-operation settings and agent tools. */
@@ -1278,11 +1304,19 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         const existing = this.#store.find(entry.hostId);
         if (existing && (existing.fingerprint !== entry.fingerprint || existing.publicKey !== entry.publicKey))
           continue;
-        if (existing && (existing.origin !== entry.origin || existing.deviceOnly !== entry.deviceOnly)) {
-          yield* this.#store.update(entry.hostId, {
-            origin: entry.origin ?? null,
-            deviceOnly: entry.deviceOnly === true,
-          });
+        if (existing) {
+          const metadataPatch: {
+            name?: string;
+            logoVersion?: string | null;
+            origin?: "cloud" | null;
+            deviceOnly?: boolean;
+          } = {};
+          if (existing.name !== entry.name) metadataPatch.name = entry.name;
+          if ((existing.logoVersion ?? null) !== entry.logoKey) metadataPatch.logoVersion = entry.logoKey;
+          if (existing.origin !== entry.origin) metadataPatch.origin = entry.origin ?? null;
+          if ((existing.deviceOnly === true) !== (entry.deviceOnly === true))
+            metadataPatch.deviceOnly = entry.deviceOnly === true;
+          if (Object.keys(metadataPatch).length > 0) yield* this.#store.update(entry.hostId, metadataPatch);
         }
         if (existing) {
           // A directory poll must not replace a valid per-device Team session. The account entry
@@ -1826,18 +1860,31 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       this: RemoteServerManager,
       input: LoginServerInput,
     ): Effect.fn.Return<ServerSummary, RemoteWorkflowError, RemoteRequest> {
-      const server = yield* remoteDecode(() => this.#servers.require(input.serverId));
-      const summaryBeforeLogin = yield* remoteDecode(() => requiredServerSummary(this.list(), server.id));
+      remoteDeviceDiagnosticsLogger.info("Remote device account renewal entered the server manager.", {
+        serverTag: remoteDeviceTag(input.serverId),
+      });
+      const serverLookup = yield* remoteDecode(() => this.#servers.require(input.serverId)).pipe(Effect.result);
+      if (Result.isFailure(serverLookup)) {
+        remoteDeviceDiagnosticsLogger.warn("Remote device account renewal failed at a specific stage.", {
+          serverTag: remoteDeviceTag(input.serverId),
+          stage: "server_lookup",
+          ...accountAdoptionFailureDetails(serverLookup.failure.cause),
+        });
+        return yield* serverLookup.failure;
+      }
+      const server = serverLookup.success;
+      const summaryBeforeLogin = yield* remoteDecode(() => this.#summaryForServer(server.id));
       const cooldown = this.#accountServerSignInCooldown(server.id);
       if (cooldown) {
         this.#reportAccountSignInCooldown(server.id, cooldown);
-        return yield* remoteDecode(() => requiredServerSummary(this.list(), server.id));
+        return yield* remoteDecode(() => this.#summaryForServer(server.id));
       }
       const startingAccountId = this.#centralAccount.getAccountId?.() ?? null;
       const attemptKey = this.#accountRateLimitKey(server.id, startingAccountId);
       const attemptRevision = (this.#accountSignInAttemptRevision.get(attemptKey) ?? 0) + 1;
       this.#accountSignInAttemptRevision.set(attemptKey, attemptRevision);
       const startingSessionRevision = this.#serverSessionRevision.get(server.id) ?? 0;
+      let accountRefreshStage: AccountAdoptionStage = "host_identity";
       let storedSessionRevision: number | null = null;
       let superseded = false;
       this.#accountDirectoryReauthBlocked.delete(server.id);
@@ -1846,12 +1893,15 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       this.#connections.setState(server.id, "connecting");
       this.#emitChanged();
       const attempt0 = yield* Effect.gen({ self: this }, function* () {
+        accountRefreshStage = "host_identity";
         const identity = yield* this.#client.verifyIdentity(server.apiUrl, server.id, server.fingerprint);
+        accountRefreshStage = "account_ticket";
         const accountTicket = yield* this.#centralAccount.createTeamAuthTicket(server.id).pipe(toRemoteWorkflowError);
         if (!this.#accountIdStillMatches(startingAccountId)) {
           superseded = true;
           return;
         }
+        accountRefreshStage = "host_account_login";
         const result = yield* requestJson(server.apiUrl, TEAM_API_ROUTES.auth.account, decodeJoinResult, {
           method: "POST",
           body: { accountTicket },
@@ -1891,6 +1941,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         storedSessionRevision = this.#recordFreshServerSession(server.id);
         this.#connections.setCompatibility(server.id, identity.compatibility);
         this.#connections.clearIssue(server.id);
+        accountRefreshStage = "save_host_session";
         const signedIn = yield* this.#store.update(server.id, {
           username: this.#centralAccount.getEmail().trim().toLowerCase(),
           accountSignInRetryAt: null,
@@ -1905,18 +1956,23 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
           name: identity.serverName,
           logoVersion: identity.logoVersion,
         });
-        // A valid account session does not prove that the workspace can be loaded. Keep the server
-        // in `connecting` until its roster has been decoded and emitted; otherwise the renderer can
-        // mistake an unavailable roster for a genuinely empty server and offer first-agent setup.
-        // Let roster errors reach the normal login failure path so the connection remains retryable.
-        yield* this.#refresh.refreshAgentRoster(server.id);
-        this.#connections.setState(server.id, "online");
-        // The stream restarts before the probe, not after. `restart(id, true)` lifts the suspension a
-        // previous failure left, and opening the socket clears the recorded issue -- so with the probe
-        // first, a host answering the capabilities route with something no build can read had its
-        // protocol failure wiped by the restart that followed it, and the sign-in ended online. Last
-        // writer wins, so the probe has to be the last writer.
-        yield* this.#events.restart(server.id, true);
+        if (server.deviceOnly) {
+          // Device-only hosts intentionally expose no workspace roster or channel event stream.
+          // The successful account handshake and saved host session are the readiness check for
+          // direct device-operation requests.
+          this.#connections.setState(server.id, "online");
+        } else {
+          // A valid account session does not prove that a regular workspace can be loaded. Keep it
+          // in `connecting` until the roster has been decoded, so the renderer cannot mistake an
+          // unavailable roster for an empty server and offer first-agent setup.
+          accountRefreshStage = "agent_roster";
+          yield* this.#refresh.refreshAgentRoster(server.id);
+          this.#connections.setState(server.id, "online");
+          // Restart the stream before the best-effort screen probe. `restart` lifts any previous
+          // suspension, and the stream's open event clears the recorded issue.
+          accountRefreshStage = "event_stream";
+          yield* this.#events.restart(server.id, true);
+        }
         // The probe authenticates with the session token this sign-in just replaced, so it has to run
         // against the stored server rather than the one `login` was handed. It is also the one step
         // here that may not fail the sign-in: the credentials are already on disk and the user is
@@ -1944,12 +2000,16 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
           !this.#accountIdStillMatches(startingAccountId) ||
           this.#accountSignInAttemptRevision.get(attemptKey) !== attemptRevision
         ) {
-          return yield* remoteDecode(
-            () => this.list().find((candidate) => candidate.id === server.id) ?? summaryBeforeLogin,
-          );
+          return yield* remoteDecode(() => this.#findSummaryForServer(server.id) ?? summaryBeforeLogin);
         }
         const wrappedCause = attempt0.failure.cause;
         const error = wrappedCause instanceof RemoteWorkflowError ? wrappedCause.cause : wrappedCause;
+        remoteDeviceDiagnosticsLogger.warn("Remote device account renewal failed at a specific stage.", {
+          serverTag: remoteDeviceTag(server.id),
+          deviceOnly: server.deviceOnly === true,
+          stage: accountRefreshStage,
+          ...accountAdoptionFailureDetails(error),
+        });
         this.#connections.reportError(server.id, error, "error");
         if (isRetryableAccountAuthRenewalFailure(error)) {
           if (
@@ -1969,14 +2029,11 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         }
         return yield* new RemoteWorkflowError({ cause: error });
       }
-      if (superseded)
-        return yield* remoteDecode(
-          () => this.list().find((candidate) => candidate.id === server.id) ?? summaryBeforeLogin,
-        );
+      if (superseded) return yield* remoteDecode(() => this.#findSummaryForServer(server.id) ?? summaryBeforeLogin);
       // This login minted and stored a fresh host-bound session. Clear any directory recovery
       // request, whether login came from an automatic poll or an explicit Retry action.
       this.#emitChanged();
-      return yield* remoteDecode(() => requiredServerSummary(this.list(), server.id));
+      return yield* remoteDecode(() => this.#summaryForServer(server.id));
     },
     (operation) => this.#owned(operation),
   ).bind(this);

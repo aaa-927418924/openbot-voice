@@ -3,6 +3,7 @@ node_modules/
 out/
 out-*/
 dist/
+build/decision-runtime/
 apps/*/dist/
 apps/*/.wrangler/
 apps/*/worker-configuration.d.ts
