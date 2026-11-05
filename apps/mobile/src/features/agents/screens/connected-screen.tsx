@@ -30,6 +30,7 @@ import { ChannelListRow } from "@/features/channels/components/channel-list";
 import { useChannels } from "@/features/channels/components/use-channels";
 import { MobileChatView } from "@/features/chat/components/agent-chat-view";
 import { useAppDrawer } from "@/features/servers/components/app-drawer-shell";
+import { CustomThemeBackdrop } from "@/features/settings/components/custom-theme-backdrop";
 import { useCustomTheme } from "@/features/settings/model/custom-theme";
 import { ConnectionHeaderStatus } from "@/features/workspace/components/connection-header-status";
 import { useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
@@ -282,6 +283,9 @@ export function ConnectedScreen() {
 
   return (
     <View className={hasCustomBackground ? "flex-1" : "flex-1 bg-background"} onLayout={() => reportContentReady()}>
+      {hasCustomBackground && customTheme.imageUri ? (
+        <CustomThemeBackdrop imageUri={customTheme.imageUri} blur={customTheme.blur} opacity={customTheme.opacity} />
+      ) : null}
       <View className={usesInlineChat ? "flex-1 flex-row" : "flex-1"}>
         <View
           className={usesInlineChat ? "h-full shrink-0 border-r border-grouped-border" : "flex-1"}

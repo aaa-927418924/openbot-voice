@@ -31,6 +31,7 @@ import {
 import { LiveVoiceSessionCard } from "@/features/live-voice/components/live-voice-session-card";
 import { useMobileLiveVoice } from "@/features/live-voice/context/mobile-live-voice-context";
 import type { MobileLiveVoiceTarget } from "@/features/live-voice/model/live-voice";
+import { CustomThemeBackdrop } from "@/features/settings/components/custom-theme-backdrop";
 import { useCustomTheme } from "@/features/settings/model/custom-theme";
 import { ConnectionStatus } from "@/features/workspace/components/connection-status";
 import { useBrowserRequests } from "@/features/workspace/components/use-live-workspace";
@@ -529,6 +530,9 @@ export function ChatView({
   return (
     <GestureDetector gesture={edgeBackGesture}>
       <View className="flex-1" style={{ backgroundColor: hasCustomBackground ? "transparent" : background }}>
+        {!embedded && hasCustomBackground && customTheme.imageUri ? (
+          <CustomThemeBackdrop imageUri={customTheme.imageUri} blur={customTheme.blur} opacity={customTheme.opacity} />
+        ) : null}
         <View
           className="flex-1"
           // Nothing here may switch on the card: this view is an ancestor of

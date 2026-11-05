@@ -1,9 +1,8 @@
-import { Image } from "expo-image";
 import { router, useGlobalSearchParams, useSegments } from "expo-router";
 import { Stack } from "expo-router/stack";
 import { useThemeColor } from "heroui-native/hooks";
 import { useEffect, useRef, useState } from "react";
-import { Platform, StyleSheet, TextInput, View } from "react-native";
+import { Platform, TextInput, View } from "react-native";
 import { useCSSVariable } from "uniwind";
 import { AgentPinTransitionProvider } from "@/features/agents/components/agent-pin-transition";
 import { ChatNavigationGateContext } from "@/features/agents/components/chat-link-pressable";
@@ -64,15 +63,6 @@ function AuthenticatedStack() {
   return (
     <ChatNavigationGateContext value={navigationGate}>
       <View className="flex-1" style={{ backgroundColor: customBackground ? "transparent" : background }}>
-        {customBackground ? (
-          <Image
-            source={{ uri: customTheme.imageUri ?? undefined }}
-            contentFit="cover"
-            blurRadius={customTheme.blur}
-            style={[StyleSheet.absoluteFill, { opacity: customTheme.opacity / 100 }]}
-            pointerEvents="none"
-          />
-        ) : null}
         <Stack
           initialRouteName="connected"
           screenListeners={({ route }) =>
