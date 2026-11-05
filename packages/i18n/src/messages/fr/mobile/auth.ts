@@ -40,6 +40,7 @@ export const messages = {
   "mobile.auth.signIn.helpStep1": "1. Ouvrez OpenBot sur votre ordinateur.",
   "mobile.auth.signIn.helpStep2": "2. Allez dans Réglages → Mobile Connect.",
   "mobile.auth.signIn.helpStep3": "3. Choisissez Générer un code QR, puis scannez-le ici.",
+  "mobile.auth.signIn.saveDiagnostics": "Enregistrer le journal de diagnostic",
   "mobile.auth.error.sessionEnded":
     "Votre session est terminée. Scannez un nouveau code depuis OpenBot sur votre ordinateur.",
   "mobile.auth.error.connectionInProgress": "Une autre connexion est en cours. Attendez qu’elle se termine.",

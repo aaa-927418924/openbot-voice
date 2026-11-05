@@ -39,6 +39,7 @@ export const messages = {
   "mobile.auth.signIn.helpStep1": "1. Abra o OpenBot no seu computador.",
   "mobile.auth.signIn.helpStep2": "2. Acesse Configurações → Conectar celular.",
   "mobile.auth.signIn.helpStep3": "3. Escolha Gerar código QR e leia-o aqui.",
+  "mobile.auth.signIn.saveDiagnostics": "Salvar log de diagnóstico",
   "mobile.auth.error.sessionEnded": "Sua sessão terminou. Leia um novo código do OpenBot no computador.",
   "mobile.auth.error.connectionInProgress": "Outra conexão está em andamento. Aguarde a conclusão.",
   "mobile.auth.error.invalidCode": "Este não é um código válido de Conectar celular do OpenBot.",

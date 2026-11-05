@@ -3,7 +3,7 @@ import { Accordion, Button, Typography } from "heroui-native";
 import { useThemeColor } from "heroui-native/hooks";
 import { type LucideIcon, X } from "lucide-react-native";
 import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Pressable, ScrollView, useWindowDimensions, View } from "react-native";
+import { Alert, Pressable, ScrollView, useWindowDimensions, View } from "react-native";
 import Animated, { useAnimatedStyle } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -18,6 +18,7 @@ import { AppLogo } from "@/features/auth/components/app-logo";
 import { ScanQrButton } from "@/features/auth/components/scan-qr-button";
 import { type ScannerOrigin, ScanQrSheet } from "@/features/auth/components/scan-qr-sheet";
 import { useMobileSession } from "@/features/auth/context/mobile-session-context";
+import { shareSupportLog } from "@/features/support/model/share-support-log";
 import { SheetFormField } from "@/shared/components/sheet-form-field";
 import { SplashWallpaper } from "@/shared/components/splash-backdrop";
 import { SPLASH_LOGO_SIZE, SPLASH_MORPH_START, splashReveal, splashTravel } from "@/shared/lib/splash-motion";
@@ -116,6 +117,7 @@ export function SignInScreen({ notice }: { notice?: SignInNotice }) {
   const [accountName, setAccountName] = useState("");
   const [signInBusy, setSignInBusy] = useState(false);
   const [signInError, setSignInError] = useState<string | null>(null);
+  const [savingSupportLog, setSavingSupportLog] = useState(false);
   const measurementDeadline = useRef<ReturnType<typeof setTimeout> | null>(null);
   const root = useRef<View>(null);
   const button = useRef<View>(null);
@@ -194,6 +196,20 @@ export function SignInScreen({ notice }: { notice?: SignInNotice }) {
       setSignInError(errorMessage(cause, t("mobile.auth.error.identityServerUnreachable")));
     } finally {
       setSignInBusy(false);
+    }
+  }
+
+  async function saveDiagnostics() {
+    if (savingSupportLog) return;
+    setSavingSupportLog(true);
+    try {
+      if (!(await shareSupportLog(t("mobile.auth.signIn.saveDiagnostics")))) {
+        Alert.alert(t("mobile.settings.support.sharingUnavailable"));
+      }
+    } catch {
+      Alert.alert(t("mobile.settings.support.saveFailed"));
+    } finally {
+      setSavingSupportLog(false);
     }
   }
 
@@ -297,7 +313,20 @@ export function SignInScreen({ notice }: { notice?: SignInNotice }) {
                   onSubmitEditing={() => void submitCredentials()}
                 />
                 {signInError ? (
-                  <Typography.Paragraph className="text-danger-text">{signInError}</Typography.Paragraph>
+                  <View className="gap-1">
+                    <Typography.Paragraph className="text-danger-text">{signInError}</Typography.Paragraph>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityState={{ disabled: savingSupportLog || signInBusy || scannerOpen }}
+                      disabled={savingSupportLog || signInBusy || scannerOpen}
+                      onPress={() => void saveDiagnostics()}
+                      className="self-start py-1"
+                    >
+                      <Typography.Paragraph type="body-sm" color="muted">
+                        {t("mobile.auth.signIn.saveDiagnostics")}
+                      </Typography.Paragraph>
+                    </Pressable>
+                  </View>
                 ) : null}
                 <Button isDisabled={signInBusy || scannerOpen} onPress={() => void submitCredentials()}>
                   <Button.Label>

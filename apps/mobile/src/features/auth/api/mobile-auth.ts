@@ -27,6 +27,7 @@ import { isAndroid, isIOS } from "@/shared/lib/platform";
 import { currentText } from "@/shared/lib/text";
 // Relative: the Node test project resolves no `@/` path that the test does not mock.
 import { fetch } from "../../support/model/logged-fetch";
+import { supportLog } from "../../support/model/support-log";
 import { serverOrderKey } from "../../workspace/model/server-order";
 import { normalizeMobileConnectLink } from "../model/mobile-connect-url";
 
@@ -479,10 +480,19 @@ export async function loginToSelfHostedIdentityServer(
     if (!normalizedEmail || !password)
       throw new Error(currentText().t("mobile.auth.error.identityCredentialsRequired"));
 
+    supportLog.add("info", "app", "Self-hosted sign-in started");
+    let device: Awaited<ReturnType<typeof mobileDeviceIdentity>>;
+    try {
+      device = await mobileDeviceIdentity();
+    } catch (cause) {
+      const kind = cause instanceof Error ? cause.name : typeof cause;
+      supportLog.add("warn", "app", `Self-hosted sign-in device identity failed (${kind})`);
+      throw new Error(currentText().t("mobile.auth.error.identityServerUnreachable"));
+    }
+
     let response: Response;
     let body: unknown;
     try {
-      const device = await mobileDeviceIdentity();
       ({ response, body } = await withMobileAuthRequestTimeout(async (signal) => {
         const request = await fetch(new URL("/v1/auth/login", apiUrl).toString(), {
           method: "POST",

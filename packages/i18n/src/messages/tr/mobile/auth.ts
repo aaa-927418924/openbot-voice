@@ -39,6 +39,7 @@ export const messages = {
   "mobile.auth.signIn.helpStep1": "1. Bilgisayarınızda OpenBot'u açın.",
   "mobile.auth.signIn.helpStep2": "2. Ayarlar → Mobile Connect bölümüne gidin.",
   "mobile.auth.signIn.helpStep3": "3. QR kodu oluştur'u seçin, ardından buradan tarayın.",
+  "mobile.auth.signIn.saveDiagnostics": "Tanılama günlüğünü kaydet",
   "mobile.auth.error.sessionEnded": "Oturumunuz sona erdi. Masaüstünüzdeki OpenBot'tan yeni bir kod tarayın.",
   "mobile.auth.error.connectionInProgress": "Başka bir bağlantı işlemi sürüyor. Bitmesini bekleyin.",
   "mobile.auth.error.invalidCode": "Bu geçerli bir OpenBot Mobile Connect kodu değil.",

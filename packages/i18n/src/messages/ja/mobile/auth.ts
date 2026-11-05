@@ -44,6 +44,7 @@ export const messages = {
   "mobile.auth.signIn.helpStep1": "1. コンピューターで OpenBot を開きます。",
   "mobile.auth.signIn.helpStep2": "2. 設定 → Mobile Connect に移動します。",
   "mobile.auth.signIn.helpStep3": "3. 「QRコードを生成」を選択して、ここでスキャンします。",
+  "mobile.auth.signIn.saveDiagnostics": "診断ログを保存",
   "mobile.auth.error.sessionEnded":
     "セッションが終了しました。デスクトップの OpenBot から新しいコードをスキャンしてください。",
   "mobile.auth.error.connectionInProgress": "別の接続が進行中です。完了するまでお待ちください。",

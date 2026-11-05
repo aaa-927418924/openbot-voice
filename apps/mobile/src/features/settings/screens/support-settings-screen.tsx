@@ -1,5 +1,3 @@
-import { File, Paths } from "expo-file-system";
-import * as Sharing from "expo-sharing";
 import { Typography } from "heroui-native";
 import { useState, useSyncExternalStore } from "react";
 import { Alert, Linking } from "react-native";
@@ -9,8 +7,9 @@ import {
   SettingsRow,
   SettingsSection,
 } from "@/features/settings/components/settings-content";
+import { shareSupportLog } from "@/features/support/model/share-support-log";
 import { formatSupportLogEntry, type SupportLogLevel, supportLog } from "@/features/support/model/support-log";
-import { clearSupportLog, supportLogFileText } from "@/features/support/model/support-log-capture";
+import { clearSupportLog } from "@/features/support/model/support-log-capture";
 import { useText } from "@/shared/lib/text";
 
 /** The OpenBot account, the same contact as the website. */
@@ -39,23 +38,13 @@ export function SupportSettingsScreen() {
 
   async function save() {
     setSaveError(null);
-    if (!(await Sharing.isAvailableAsync())) {
-      setSaveError(t("mobile.settings.support.sharingUnavailable"));
-      return;
-    }
     setSaving(true);
-    const file = new File(Paths.cache, `openbot-support-log-${new Date().toISOString().replace(/[:.]/gu, "-")}.txt`);
     try {
-      file.write(supportLogFileText());
-      await Sharing.shareAsync(file.uri, {
-        mimeType: "text/plain",
-        UTI: "public.plain-text",
-        dialogTitle: t("mobile.settings.support.save"),
-      });
+      if (!(await shareSupportLog(t("mobile.settings.support.save"))))
+        setSaveError(t("mobile.settings.support.sharingUnavailable"));
     } catch {
       setSaveError(t("mobile.settings.support.saveFailed"));
     } finally {
-      if (file.exists) file.delete();
       setSaving(false);
     }
   }
