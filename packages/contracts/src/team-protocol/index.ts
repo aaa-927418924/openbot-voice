@@ -1,6 +1,7 @@
 export * from "./current";
 export * from "./device-commands-v1";
 export * from "./device-commands-v2";
+export * from "./device-commands-v3";
 export * from "./v1";
 export * from "./v1-adapter";
 export * from "./v2";

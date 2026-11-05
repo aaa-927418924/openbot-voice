@@ -252,6 +252,8 @@ interface RemoteServerManagerOptions {
   localOnlyNetworking?: boolean;
   /** Whether this desktop publishes its Local host into the server list. */
   isLocalServerEnabled?: () => boolean;
+  /** Whether this desktop still publishes its host for either chat or device operations. */
+  isLocalHostPublished?: () => boolean;
   /** Metadata for this device's active, account-owned Local host, when it is ready to publish. */
   getLocalAccountServerRegistration?: (operationId?: string) => AccountServerRegistration | null;
   /** The origin of the self-hosted account service that this app is configured to use. */
@@ -368,6 +370,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   readonly #allowLocalDevelopmentInvites: boolean;
   readonly #localOnlyNetworking: boolean;
   readonly #isLocalServerEnabled: () => boolean;
+  readonly #isLocalHostPublished: () => boolean;
   readonly #getLocalAccountServerRegistration: (operationId?: string) => AccountServerRegistration | null;
   readonly #inviteLinks: InviteLinkOptions;
   readonly #appVersion: string | null;
@@ -419,6 +422,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     this.#store = new RemoteServerStore({ path, cipher });
     this.#localOnlyNetworking = options.localOnlyNetworking ?? false;
     this.#isLocalServerEnabled = options.isLocalServerEnabled ?? (() => true);
+    this.#isLocalHostPublished = options.isLocalHostPublished ?? (() => true);
     this.#getLocalAccountServerRegistration = options.getLocalAccountServerRegistration ?? (() => null);
     this.#servers = this.#localOnlyNetworking
       ? new LocalTailnetRemoteServerDirectory(
@@ -1034,6 +1038,25 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       const previousActive = this.#store.activeServerId;
       const previousUserSelectionRevision = this.#userSelectionRevision;
       let entries = yield* account.listAccountServers().pipe(toRemoteWorkflowError);
+      const localHostId = this.#getLocalHostId();
+      if (
+        localHostId &&
+        !this.#isLocalHostPublished() &&
+        account.removeAccountServer &&
+        entries.some((entry) => entry.hostId === localHostId)
+      ) {
+        remoteDeviceDiagnosticsLogger.info("Disabled local host membership is being withdrawn.", {
+          operationId,
+          serverTag: remoteDeviceTag(localHostId),
+        });
+        yield* account.removeAccountServer(localHostId).pipe(toRemoteWorkflowError);
+        entries = yield* account.listAccountServers().pipe(toRemoteWorkflowError);
+        remoteDeviceDiagnosticsLogger.info("Disabled local host membership was withdrawn.", {
+          operationId,
+          serverTag: remoteDeviceTag(localHostId),
+          remainingEntry: entries.some((entry) => entry.hostId === localHostId),
+        });
+      }
       const localRegistration = this.#getLocalAccountServerRegistration(operationId);
       const logDirectory = (stage: "listed" | "refreshed") => {
         const servers = entries.map((entry) => ({
@@ -1130,7 +1153,6 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       const pendingLegacyImports = new Set<string>();
       const pendingAccountRejoins = new Set<string>();
       const accountId = account.getAccountId?.() ?? null;
-      const localHostId = this.#getLocalHostId();
       for (const server of [...this.#store.servers]) {
         if (
           !accountId ||

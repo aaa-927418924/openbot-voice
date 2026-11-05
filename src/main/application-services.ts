@@ -1518,11 +1518,26 @@ export async function createApplicationServices({
       await serverDirectory.initialize();
       selfHostedAccountServerDirectory = serverDirectory;
       const localHostId = teamStore.getIdentity()?.serverId;
-      if (localHostId)
-        await serverDirectory.setServerVisible(
-          localHostId,
-          localHostPreference.enabled || deviceSharePreference.enabled,
-        );
+      if (localHostId) {
+        const localHostPublished = localHostPreference.enabled || deviceSharePreference.enabled;
+        const ownerAccountId = teamStore.getOwnerAccountId();
+        if (!localHostPublished && ownerAccountId) {
+          await serverDirectory.removeMembership(ownerAccountId, localHostId);
+          if (selfHostedDesktopAccount.isSignedIn) {
+            await Effect.runPromise(selfHostedDesktopAccount.removeAccountServer(localHostId)).catch((error) =>
+              remoteDeviceDiagnosticsLogger.warn(
+                "Could not withdraw the disabled local host from the account server.",
+                {
+                  serverTag: remoteDeviceTag(localHostId),
+                  ...remoteDeviceFailureDetails(error),
+                },
+              ),
+            );
+          }
+        } else {
+          await serverDirectory.setServerVisible(localHostId, localHostPublished);
+        }
+      }
     } catch (error) {
       selfHostedIdentityReady = false;
       logger.error("The self-hosted account server directory could not initialize:", toLogValue(error));
@@ -2017,6 +2032,7 @@ export async function createApplicationServices({
       allowTailscaleApiUrl: localOnlyNetworking,
       localOnlyNetworking,
       isLocalServerEnabled: () => localHostPreference.enabled,
+      isLocalHostPublished: () => localHostPreference.enabled || deviceSharePreference.enabled,
       getLocalAccountServerRegistration: (operationId = remoteDeviceOperationId()) => {
         const account = selfHostedDesktopAccount.getState();
         const accountId = account.status === "signed_in" ? account.user.id : null;
@@ -2150,6 +2166,20 @@ export async function createApplicationServices({
     hostIdentityAvailable: sharingHostId !== undefined,
     ...(sharingHostId ? { serverTag: remoteDeviceTag(sharingHostId) } : {}),
   });
+  const withdrawLocalHostMembership = async (
+    hostId: string,
+    accountId: string,
+    operationId: string,
+    onRequestStarted?: () => void,
+  ) => {
+    onRequestStarted?.();
+    await Effect.runPromise(selfHostedDesktopAccount.removeAccountServer(hostId));
+    await selfHostedAccountServerDirectory?.removeMembership(accountId, hostId);
+    remoteDeviceDiagnosticsLogger.info("Disabled local host account membership was removed.", {
+      operationId,
+      serverTag: remoteDeviceTag(hostId),
+    });
+  };
   const setRemoteDeviceShareSettings = async ({ enabled }: { enabled: boolean }) => {
     const operationId = remoteDeviceOperationId();
     if (!localHostSettingsSupported || !deviceCommandHost) {
@@ -2315,10 +2345,7 @@ export async function createApplicationServices({
       await localHostRetry?.stop();
       await runCauseEffect(host.stop(false));
       await deviceSharePreference.setEnabled(false);
-      await updateVisibility(hostIdBeforeChange, false, registration);
-      await mirrorLocalServerVisibility(selfHostedAccountServerDirectory, hostIdBeforeChange, false, (error) =>
-        logger.warn("Could not update the local server-directory mirror:", toLogValue(error)),
-      );
+      await withdrawLocalHostMembership(hostIdBeforeChange, account.id, operationId);
       await runCauseEffect(remoteServers.localHostVisibilityChanged()).catch(() => undefined);
     } catch (error) {
       logger.error("Could not disable remote device sharing:", toLogValue(error));
@@ -2796,9 +2823,6 @@ export async function createApplicationServices({
         if (selfHostedIdentityApi && !selfHostedAccountServerDirectory) {
           throw new Error(sourceText("error.team.serverDirectoryUnavailable"));
         }
-        // Capture while the host is still online; the registration is needed if the central
-        // directory has not yet recorded this host membership.
-        const registration = getLocalOwnerServerRegistration(account.id, true);
         try {
           await localHostRetry?.stop();
           await runCauseEffect(host.stop(false));
@@ -2806,20 +2830,17 @@ export async function createApplicationServices({
           await runCauseEffect(remoteServers.localHostVisibilityChanged()).catch((error) =>
             logger.warn("Could not refresh the local server list while disabling the host:", toLogValue(error)),
           );
-          await updateAccountServerVisibility(hostId, false, registration, () => {
+          await withdrawLocalHostMembership(hostId, account.id, remoteDeviceOperationId(), () => {
             accountVisibilityUpdateStarted = true;
           });
-          await mirrorLocalServerVisibility(selfHostedAccountServerDirectory, hostId, false, (error) =>
-            logger.warn("Could not update the local server-directory mirror:", toLogValue(error)),
-          );
           await runCauseEffect(remoteServers.localHostVisibilityChanged()).catch((error) =>
             logger.warn("Could not refresh the local server list after disabling the host:", toLogValue(error)),
           );
         } catch (error) {
           logger.error("Could not disable the local server:", toLogValue(error));
-          // Before account visibility changes, restore a prior enabled desired state if local stop
-          // failed. Once the remote update begins its outcome may be ambiguous, so keep disabled
-          // locally and let another idempotent disable retry the account-wide hide.
+          // Before account membership withdrawal begins, restore a prior enabled desired state if
+          // local stop failed. Once the request starts, its outcome may be ambiguous, so keep this
+          // host disabled and let startup reconciliation retry the withdrawal.
           if (previousPreference && !accountVisibilityUpdateStarted) {
             await localHostPreference.setEnabled(true).catch(() => undefined);
             void localHostRetry?.start();

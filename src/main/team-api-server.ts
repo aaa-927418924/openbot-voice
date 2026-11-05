@@ -33,6 +33,7 @@ import {
   AGENT_UPDATE_CAPABILITY,
   CHANNEL_DELETE_CAPABILITY,
   DEVICE_COMMANDS_V2_CAPABILITY,
+  DEVICE_COMMANDS_V3_CAPABILITY,
   HOST_ADMIN_CAPABILITY,
   HOST_UPDATE_CAPABILITY,
   HOSTED_SITES_CAPABILITY,
@@ -58,6 +59,7 @@ import {
   type TeamCurrentCapability,
 } from "@openbot/contracts/team-protocol/current";
 import { DEVICE_COMMANDS_V2_ROUTES } from "@openbot/contracts/team-protocol/device-commands-v2";
+import { DEVICE_COMMANDS_V3_ROUTES } from "@openbot/contracts/team-protocol/device-commands-v3";
 import {
   HOST_RESTART_EVENT,
   type HostRestartEvent,
@@ -139,6 +141,7 @@ import { routeChannels } from "./team-api/route-channels";
 import { routeContextReset } from "./team-api/route-context-reset";
 import { routeConversationHistoryDelete } from "./team-api/route-conversation-history-delete";
 import { isDeviceCommandV2Service, routeDeviceCommandsV2 } from "./team-api/route-device-commands-v2";
+import { isDeviceCommandV3Service, routeDeviceCommandsV3 } from "./team-api/route-device-commands-v3";
 import { routeDirect } from "./team-api/route-direct";
 import { routeFiles } from "./team-api/route-files";
 import { routeHostAdmin } from "./team-api/route-host-admin";
@@ -167,7 +170,10 @@ const RUNTIME_SNAPSHOT_REQUEST_INTERVAL_MS = 1_000;
 const TEST_LEGACY_EVENT_PROTOCOL = "openbot-events";
 const TEST_LEGACY_SNAPSHOT_PROTOCOL = "openbot-events-v2";
 
-function isDeviceCommandV2Request(method: string, path: string): boolean {
+function isDeviceCommandRequest(method: string, path: string): boolean {
+  if (Object.values(DEVICE_COMMANDS_V3_ROUTES).some((route) => route === path)) {
+    return path === DEVICE_COMMANDS_V3_ROUTES.info ? method === "GET" : method === "POST";
+  }
   if (!Object.values(DEVICE_COMMANDS_V2_ROUTES).some((route) => route === path)) return false;
   const getRoutes = new Set<string>([
     DEVICE_COMMANDS_V2_ROUTES.info,
@@ -178,6 +184,9 @@ function isDeviceCommandV2Request(method: string, path: string): boolean {
 }
 
 function deviceCommandRouteLabelForDiagnostics(path: string): string {
+  for (const [name, route] of Object.entries(DEVICE_COMMANDS_V3_ROUTES)) {
+    if (route === path) return `v3_${name}`;
+  }
   for (const [name, route] of Object.entries(DEVICE_COMMANDS_V2_ROUTES)) {
     if (route === path) return name;
   }
@@ -576,7 +585,8 @@ export class TeamApiServer {
         capabilities: requestCapabilities(request),
       });
 
-      const isDeviceCommandPath = url.pathname.startsWith("/v2/device-commands/");
+      const isDeviceCommandPath =
+        url.pathname.startsWith("/v2/device-commands/") || url.pathname.startsWith("/v3/device-commands/");
       const deviceOperationId = remoteDeviceOperationId(request.headers[REMOTE_DEVICE_DIAGNOSTIC_OPERATION_HEADER]);
       if (isDeviceCommandPath) {
         const identity = this.#options.store.getIdentity();
@@ -586,7 +596,9 @@ export class TeamApiServer {
           method,
           deviceOnlyHost: this.#options.deviceOnly?.() ?? false,
           protocol: requestProtocol(request),
-          hasDeviceCommandCapability: requestCapabilities(request).has(DEVICE_COMMANDS_V2_CAPABILITY),
+          hasDeviceCommandCapability:
+            requestCapabilities(request).has(DEVICE_COMMANDS_V2_CAPABILITY) ||
+            requestCapabilities(request).has(DEVICE_COMMANDS_V3_CAPABILITY),
           authorizationPresent:
             typeof request.headers.authorization === "string" && request.headers.authorization.length > 0,
           operationIdHeaderPresent: request.headers[REMOTE_DEVICE_DIAGNOSTIC_OPERATION_HEADER] !== undefined,
@@ -613,7 +625,7 @@ export class TeamApiServer {
         !(
           (method === "GET" && url.pathname === TEAM_API_ROUTES.identity) ||
           (method === "POST" && url.pathname === TEAM_API_ROUTES.auth.account) ||
-          isDeviceCommandV2Request(method, url.pathname)
+          isDeviceCommandRequest(method, url.pathname)
         )
       ) {
         if (isDeviceCommandPath) {
@@ -788,6 +800,8 @@ export class TeamApiServer {
       if (isClientUse(method, url.pathname)) this.#lastClientUseAt = Date.now();
       const context = this.#requestContext(request, response, url, token, authenticated);
       if (this.#options.deviceOnly?.()) {
+        if ((await routeDeviceCommandsV3(context, { deviceCommands: this.#options.deviceCommands })) === "handled")
+          return;
         if ((await routeDeviceCommandsV2(context, { deviceCommands: this.#options.deviceCommands })) === "handled")
           return;
         if (isDeviceCommandPath) {
@@ -840,6 +854,8 @@ export class TeamApiServer {
         return;
       if ((await routeStorage(context, this.#options.storage)) === "handled") return;
       if ((await routeHostedSites(context, this.#options.hostedSites)) === "handled") return;
+      if ((await routeDeviceCommandsV3(context, { deviceCommands: this.#options.deviceCommands })) === "handled")
+        return;
       if ((await routeDeviceCommandsV2(context, { deviceCommands: this.#options.deviceCommands })) === "handled")
         return;
       if (isDeviceCommandPath) {
@@ -1182,7 +1198,9 @@ export class TeamApiServer {
               event.capabilities.filter(
                 (capability) =>
                   isTeamCurrentCapability(capability) &&
-                  (!connection.deviceOnly || capability === DEVICE_COMMANDS_V2_CAPABILITY),
+                  (!connection.deviceOnly ||
+                    capability === DEVICE_COMMANDS_V2_CAPABILITY ||
+                    capability === DEVICE_COMMANDS_V3_CAPABILITY),
               ),
             );
             if (connection.capabilities.has("agent-runtime-snapshots") && !snapshotsWereEnabled) {
@@ -1523,7 +1541,10 @@ export class TeamApiServer {
       protocol: { minimum: TEAM_PROTOCOL_V1, maximum: TEAM_PROTOCOL_V6 },
       capabilities: TEAM_CURRENT_CAPABILITIES.filter((capability) => {
         if (this.#options.deviceOnly?.())
-          return capability === DEVICE_COMMANDS_V2_CAPABILITY && isDeviceCommandV2Service(this.#options.deviceCommands);
+          return (
+            (capability === DEVICE_COMMANDS_V2_CAPABILITY && isDeviceCommandV2Service(this.#options.deviceCommands)) ||
+            (capability === DEVICE_COMMANDS_V3_CAPABILITY && isDeviceCommandV3Service(this.#options.deviceCommands))
+          );
         if (capability === "channel-chats-v1" || capability === CHANNEL_DELETE_CAPABILITY)
           return this.#options.channels !== undefined;
         // Advertised only when this host can serve it: a client that negotiated it gets a route,
@@ -1534,6 +1555,7 @@ export class TeamApiServer {
         if (capability === STORAGE_CAPABILITY) return this.#options.storage !== undefined;
         if (capability === HOSTED_SITES_CAPABILITY) return this.#options.hostedSites !== undefined;
         if (capability === DEVICE_COMMANDS_V2_CAPABILITY) return isDeviceCommandV2Service(this.#options.deviceCommands);
+        if (capability === DEVICE_COMMANDS_V3_CAPABILITY) return isDeviceCommandV3Service(this.#options.deviceCommands);
         if (capability === AGENT_ADMIN_CAPABILITY) return this.#options.admin?.agents !== undefined;
         if (capability === SKILLS_ADMIN_CAPABILITY) return this.#options.admin?.skills !== undefined;
         if (capability === SKILLS_EVENTS_CAPABILITY) return this.#options.skills !== undefined;

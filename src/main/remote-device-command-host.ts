@@ -26,6 +26,7 @@ import type { CuaDriverRuntime } from "./cua-driver-runtime";
 import { readPreferenceFile } from "./preference-file";
 import type { CodexAutoReview } from "./remote-device-codex-review";
 import { CodexAutoReviewDenied, CodexAutoReviewUnavailable } from "./remote-device-codex-review";
+import { reviewRemoteCommandLocally } from "./remote-device-command-local-review";
 import { remoteCommandRequiresAutoReview } from "./remote-device-command-risk";
 import { remoteDeviceDiagnosticsLogger as logger, remoteDeviceTag } from "./remote-device-diagnostics";
 
@@ -145,15 +146,33 @@ export interface DeviceCommandTargetServiceV2 {
   ) => Effect.Effect<RemoteDeviceComputerUseResult, RemoteDeviceCommandHostError>;
 }
 
+export interface DeviceCommandTargetServiceV3 extends DeviceCommandTargetServiceV2 {
+  infoV3: () => Effect.Effect<
+    {
+      serverId: string;
+      name: string;
+      deviceName: string;
+      platform: "windows" | "linux";
+      computerUseAvailable: boolean;
+      localReviewAvailable: true;
+    },
+    RemoteDeviceCommandHostError
+  >;
+  runWithLocalReview: (
+    input: RemoteDeviceCommandInput,
+  ) => Effect.Effect<RemoteDeviceCommandResult, RemoteDeviceCommandHostError>;
+}
+
 /**
  * Owns the target computer's command grants and process launches.
  *
- * The executable list, working-directory list, and risk checks are application controls. They are
- * not an operating-system sandbox. Commands run as the OpenBot user and may still affect other
- * files that this user can reach. Computer Use reuses the CUA driver's separate agent cursor and
- * background actions; it does not move the user's system cursor.
+ * The v3 command route applies deterministic local rules to a small set of read-only commands and
+ * bounded PowerShell listings. These application controls are not an operating-system sandbox;
+ * processes still run as the OpenBot user. Computer Use uses the separate CUA driver.
  */
-export class RemoteDeviceCommandHost implements DeviceCommandTargetService, DeviceCommandTargetServiceV2 {
+export class RemoteDeviceCommandHost
+  implements DeviceCommandTargetService, DeviceCommandTargetServiceV2, DeviceCommandTargetServiceV3
+{
   readonly #path: string;
   readonly #getServerId: RemoteDeviceCommandHostOptions["getServerId"];
   readonly #getServerName: RemoteDeviceCommandHostOptions["getServerName"];
@@ -205,6 +224,30 @@ export class RemoteDeviceCommandHost implements DeviceCommandTargetService, Devi
       autoReviewAvailable,
     });
     return { ...info, deviceName, autoReviewAvailable };
+  });
+
+  readonly infoV3 = Effect.fn("RemoteDeviceCommandHost.infoV3")(function* (
+    this: RemoteDeviceCommandHost,
+  ): Effect.fn.Return<
+    {
+      serverId: string;
+      name: string;
+      deviceName: string;
+      platform: "windows" | "linux";
+      computerUseAvailable: boolean;
+      localReviewAvailable: true;
+    },
+    RemoteDeviceCommandHostError
+  > {
+    const info = yield* this.info();
+    const deviceName = hostname().trim().slice(0, 128);
+    logger.info("Remote device local-review information was served.", {
+      serverTag: remoteDeviceTag(info.serverId),
+      platform: info.platform,
+      deviceNameAvailable: deviceName.length > 0,
+      computerUseAvailable: info.computerUseAvailable,
+    });
+    return { ...info, deviceName, localReviewAvailable: true };
   });
 
   readonly getPolicy = Effect.fn("RemoteDeviceCommandHost.getPolicy")(function* (
@@ -281,6 +324,42 @@ export class RemoteDeviceCommandHost implements DeviceCommandTargetService, Devi
               : "execution",
           cause,
         ),
+    });
+  });
+
+  readonly runWithLocalReview = Effect.fn("RemoteDeviceCommandHost.runWithLocalReview")(function* (
+    this: RemoteDeviceCommandHost,
+    input: RemoteDeviceCommandInput,
+  ): Effect.fn.Return<RemoteDeviceCommandResult, RemoteDeviceCommandHostError> {
+    if (!isAgentId(input.agentId) || !validExecutableName(input.executable) || !validArgs(input.args)) {
+      return yield* new RemoteDeviceCommandHostError("invalid");
+    }
+    if (this.#platform !== "win32" && this.#platform !== "linux") {
+      return yield* new RemoteDeviceCommandHostError("unsupported");
+    }
+    const policy = yield* this.#readDevicePolicy();
+    if (!policy.commandsEnabled) return yield* new RemoteDeviceCommandHostError("permission");
+    const review = reviewRemoteCommandLocally(input.executable, input.args, this.#platform);
+    logger.info("Remote device command received a local safety review.", {
+      serverTag: remoteDeviceTag(this.#getServerId() ?? "unknown"),
+      decision: review.allowed ? "allow" : "block",
+      rule: review.allowed ? review.rule : review.reason,
+      platform: this.#platform,
+    });
+    if (!review.allowed) return yield* new RemoteDeviceCommandHostError("review");
+    const workingDirectory = yield* Effect.tryPromise({
+      try: () => canonicalWorkingDirectoryUnrestricted(input.workingDirectory),
+      catch: (cause) =>
+        cause instanceof RemoteDeviceCommandHostError ? cause : new RemoteDeviceCommandHostError("invalid", cause),
+    });
+    const executable = yield* Effect.tryPromise({
+      try: () => resolveExecutable(input.executable, this.#platform),
+      catch: (cause) =>
+        cause instanceof RemoteDeviceCommandHostError ? cause : new RemoteDeviceCommandHostError("unavailable", cause),
+    });
+    return yield* Effect.tryPromise({
+      try: () => runProcess(executable, input.args, workingDirectory, this.#platform),
+      catch: (cause) => new RemoteDeviceCommandHostError("execution", cause),
     });
   });
 

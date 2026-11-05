@@ -18,6 +18,8 @@ export const messages = {
   "error.computerUse.remoteDevicePermission": "このエージェントには対象デバイスでの操作権限がありません。",
   "error.computerUse.remoteCommandBlocked":
     "AutoReview が危険度の高いリモートコマンドをブロックしました。再試行したり、別のコマンドで回避したりしないでください。",
+  "error.computerUse.remoteCommandReviewBlocked":
+    "対象PCのローカル安全ルールがこのコマンドを拒否しました。別のコマンドで回避せず、許可された読み取り専用コマンドか、利用可能ならComputer Useを使ってください。",
   "error.computerUse.remoteCommandInvalid": "リモートコマンドの内容が無効です。",
   "error.computerUse.remoteAutoReviewUnavailable":
     "対象PCのOpenBotでCodex CLIにサインインしていないか、AutoReviewを利用できないため、コマンドを拒否しました。",

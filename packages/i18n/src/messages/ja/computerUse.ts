@@ -42,7 +42,7 @@ export const messages = {
   "computerUse.highlight.working": "OpenBot が {title} で作業しています",
   "computerUse.remote.title": "このPCの操作権限",
   "computerUse.remote.description":
-    "このPCの権限だけを設定します。すべてのエージェントからの操作に適用されます。コマンドはこのPCのOpenBotにサインインしたCodex CLIでAutoReviewし、利用できない場合は拒否します。",
+    "このPCの権限だけを設定します。すべてのエージェントからの操作に適用されます。コマンドはモデルを呼び出さず、このPC内の固定ルールで安全性を判定します。スクリプト、未確認のコマンド、破壊的な操作は拒否します。",
   "computerUse.remote.refresh": "状態を更新",
   "computerUse.remote.empty.local":
     "このPCの操作情報がまだありません。リモートデバイス共有を有効にすると、このPCが操作対象として準備されます。",
@@ -51,20 +51,13 @@ export const messages = {
     "通常のOpenBotサーバーとして有効にせず、このアカウントの他デバイスから操作できるようにします。",
   "computerUse.remote.error.share":
     "このPCを共有できませんでした。アカウントのサインインと接続状態を確認してください。",
-  "computerUse.remote.autoReviewUnavailable":
-    "このPCでCodex AutoReviewを確認できません。OpenBotからCodex CLIに再サインインしてください。利用可能になるまでリモートコマンドは拒否されます。",
-  "computerUse.remote.signInCodex": "Codex CLIにサインイン",
-  "computerUse.remote.signInCodexAgain": "Codex CLIに再サインイン",
-  "computerUse.remote.signingInCodex": "Codex CLIのサインインを開始しています…",
-  "computerUse.remote.signInError": "Codex CLIのサインインを開始できませんでした。",
-  "computerUse.remote.signInExpired": "Codex CLIのサインインコードの期限が切れました。もう一度開始してください。",
-  "computerUse.remote.signInUnsupported": "Codex CLIのサインインを開始できませんでした。",
-  "computerUse.remote.autoReviewReady": "このPCでCodex CLIのサインインが完了し、AutoReviewを利用できます。",
+  "computerUse.remote.localReviewUnavailable":
+    "このPCはローカル安全判定にまだ対応していません。コマンド実行を許可する前に、対象PCのOpenBotを更新してください。",
   "computerUse.remote.computerUseUnavailable": "このPCでは Computer Use を利用できません。",
   "computerUse.remote.loading": "このPCの権限を読み込んでいます…",
   "computerUse.remote.commands.title": "コマンド実行を許可",
   "computerUse.remote.commands.description":
-    "このPCで全エージェントのコマンド実行を許可します。このPCのOpenBotでサインインしたCodex CLIが実行し、権限要求はAutoReviewで審査します。利用できない場合は拒否します。",
+    "このPCで全エージェントのコマンド実行を許可します。モデルを使わないローカルルール判定で、スクリプト、未確認のコマンド、破壊的な操作を拒否します。",
   "computerUse.remote.computerUse.title": "Computer Use を許可",
   "computerUse.remote.computerUse.description":
     "このPCで全エージェントの画面操作ツールを許可します。コマンド実行とは別の設定です。",

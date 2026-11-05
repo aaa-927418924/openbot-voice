@@ -41,7 +41,7 @@ export const messages = defineMessages("computerUse", {
   "computerUse.highlight.working": "OpenBot is working in {title}",
   "computerUse.remote.title": "This PC’s operation permissions",
   "computerUse.remote.description":
-    "Set permissions for this PC. They apply to operations from every agent. Commands run through the Codex CLI signed in through OpenBot on this PC; AutoReview checks them, and they are refused if it is unavailable.",
+    "Set permissions for this PC. They apply to operations from every agent. Commands receive a deterministic safety review on this PC without a model call; scripts, unknown commands, and destructive operations are blocked.",
   "computerUse.remote.refresh": "Refresh status",
   "computerUse.remote.empty.local":
     "This PC’s operation details are not available yet. Turn on remote device sharing to prepare this PC as a target.",
@@ -49,20 +49,13 @@ export const messages = defineMessages("computerUse", {
   "computerUse.remote.share.description":
     "Lets other devices on this account operate this PC without enabling it as a regular OpenBot server.",
   "computerUse.remote.error.share": "OpenBot could not share this PC. Check account sign-in and connection status.",
-  "computerUse.remote.autoReviewUnavailable":
-    "Codex AutoReview could not be confirmed on this PC. Sign in again through OpenBot; remote commands stay blocked until it is available.",
-  "computerUse.remote.signInCodex": "Sign in to Codex CLI",
-  "computerUse.remote.signInCodexAgain": "Sign in to Codex CLI again",
-  "computerUse.remote.signingInCodex": "Starting Codex CLI sign-in…",
-  "computerUse.remote.signInError": "OpenBot could not start Codex CLI sign-in.",
-  "computerUse.remote.signInExpired": "The Codex CLI sign-in expired. Start a new sign-in.",
-  "computerUse.remote.signInUnsupported": "OpenBot could not start the Codex CLI sign-in flow.",
-  "computerUse.remote.autoReviewReady": "Codex CLI sign-in is ready for AutoReview on this PC.",
+  "computerUse.remote.localReviewUnavailable":
+    "This PC does not support local command review yet. Update OpenBot on the target PC before enabling command execution.",
   "computerUse.remote.computerUseUnavailable": "Computer Use is not available on this PC.",
   "computerUse.remote.loading": "Loading this PC’s permissions…",
   "computerUse.remote.commands.title": "Allow command execution",
   "computerUse.remote.commands.description":
-    "Let all agents run commands on this PC. They run through the Codex CLI signed in through OpenBot here; AutoReview checks them, and they are refused if it is unavailable.",
+    "Let all agents run commands on this PC. A local rule-based review blocks scripts, unknown commands, and destructive operations without using a model call.",
   "computerUse.remote.computerUse.title": "Allow Computer Use",
   "computerUse.remote.computerUse.description":
     "Let all agents use this PC’s screen tools. This is separate from command execution.",

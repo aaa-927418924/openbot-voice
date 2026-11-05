@@ -48,6 +48,7 @@
     "./team-protocol/capability-limits": "./src/team-protocol/capability-limits.ts",
     "./team-protocol/device-commands-v1": "./src/team-protocol/device-commands-v1.ts",
     "./team-protocol/device-commands-v2": "./src/team-protocol/device-commands-v2.ts",
+    "./team-protocol/device-commands-v3": "./src/team-protocol/device-commands-v3.ts",
     "./team-protocol/live-voice-channel-v1": "./src/team-protocol/live-voice-channel-v1.ts",
     "./team-protocol/http-codecs": "./src/team-protocol/http-codecs.ts",
     "./team-protocol/side-routes": "./src/team-protocol/side-routes.ts",

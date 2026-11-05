@@ -19,8 +19,12 @@ import {
   DEVICE_COMMANDS_V2_CAPABILITY,
   DEVICE_COMMANDS_V2_ROUTES,
 } from "@openbot/contracts/team-protocol/device-commands-v2";
+import {
+  DEVICE_COMMANDS_V3_CAPABILITY,
+  DEVICE_COMMANDS_V3_ROUTES,
+} from "@openbot/contracts/team-protocol/device-commands-v3";
 import { runCauseEffect } from "../backend/effect-boundary";
-import type { DeviceCommandTargetServiceV2 } from "./remote-device-command-host";
+import type { DeviceCommandTargetServiceV3 } from "./remote-device-command-host";
 import {
   remoteDeviceDiagnosticsLogger as logger,
   RemoteDeviceDiagnosticError,
@@ -42,11 +46,11 @@ interface DeviceCommandTargetInfo {
   deviceName: string | null;
   platform: "windows" | "linux";
   computerUseAvailable: boolean;
-  autoReviewAvailable: boolean;
+  localReviewAvailable: boolean;
 }
 
 export interface LocalDeviceCommandTargetOptions {
-  service: Pick<DeviceCommandTargetServiceV2, "infoV2" | "getPolicy" | "updatePolicy">;
+  service: Pick<DeviceCommandTargetServiceV3, "infoV3" | "getPolicy" | "updatePolicy">;
   getState: () => ServerConnectionState;
 }
 
@@ -65,7 +69,7 @@ function decodeTargetInfo(value: unknown): DeviceCommandTargetInfo {
     (value.platform !== "windows" && value.platform !== "linux") ||
     (deviceName !== undefined && (!isString(deviceName) || deviceName.length === 0 || deviceName.length > 128)) ||
     typeof value.computerUseAvailable !== "boolean" ||
-    typeof value.autoReviewAvailable !== "boolean"
+    typeof value.localReviewAvailable !== "boolean"
   ) {
     throw new RemoteDeviceDiagnosticError("invalid_target_info");
   }
@@ -75,7 +79,7 @@ function decodeTargetInfo(value: unknown): DeviceCommandTargetInfo {
     deviceName: isString(deviceName) ? deviceName : null,
     platform: value.platform,
     computerUseAvailable: value.computerUseAvailable,
-    autoReviewAvailable: value.autoReviewAvailable,
+    localReviewAvailable: value.localReviewAvailable,
   };
 }
 
@@ -214,7 +218,7 @@ export class RemoteDeviceCommandClient {
       try {
         const info = await this.#request(
           server.id,
-          DEVICE_COMMANDS_V2_ROUTES.info,
+          DEVICE_COMMANDS_V3_ROUTES.info,
           decodeTargetInfo,
           undefined,
           operationId,
@@ -226,7 +230,7 @@ export class RemoteDeviceCommandClient {
           name: agentDeviceName(info.deviceName, info.platform, info.serverId),
           platform: info.platform,
           computerUseAvailable: info.computerUseAvailable,
-          autoReviewAvailable: info.autoReviewAvailable,
+          localReviewAvailable: info.localReviewAvailable,
           state: "online",
           isLocal: false,
         });
@@ -236,7 +240,7 @@ export class RemoteDeviceCommandClient {
           platform: info.platform,
           deviceNameAvailable: info.deviceName !== null,
           computerUseAvailable: info.computerUseAvailable,
-          autoReviewAvailable: info.autoReviewAvailable,
+          localReviewAvailable: info.localReviewAvailable,
         });
       } catch (error) {
         // A host can be unsupported or unreachable. Keep the rest of the list usable.
@@ -274,7 +278,7 @@ export class RemoteDeviceCommandClient {
         platform: target.platform,
         state: target.state,
         computerUseAvailable: target.computerUseAvailable,
-        autoReviewAvailable: target.autoReviewAvailable,
+        localReviewAvailable: target.localReviewAvailable,
         policy,
       });
     }
@@ -318,7 +322,7 @@ export class RemoteDeviceCommandClient {
   async #localTargetInfo(): Promise<RemoteDeviceCommandTarget | null> {
     if (!this.#localTarget) return null;
     try {
-      const info = await runCauseEffect(this.#localTarget.service.infoV2());
+      const info = await runCauseEffect(this.#localTarget.service.infoV3());
       return { ...info, state: this.#localTarget.getState(), isLocal: true };
     } catch {
       // A local identity is not guaranteed before the user creates a local server.
@@ -340,7 +344,7 @@ export class RemoteDeviceCommandClient {
   ): Promise<RemoteDeviceCommandResult> {
     return this.#request(
       input.serverId,
-      DEVICE_COMMANDS_V2_ROUTES.run,
+      DEVICE_COMMANDS_V3_ROUTES.run,
       decodeCommandResult,
       {
         method: "POST",
@@ -398,7 +402,10 @@ export class RemoteDeviceCommandClient {
     const candidate = this.#servers.listDeviceCommandServers().find((server) => server.id === serverId);
     const route = deviceCommandRouteLabel(path);
     const method = init?.method ?? "GET";
-    const capabilityCached = this.#servers.supportsCapability(serverId, DEVICE_COMMANDS_V2_CAPABILITY);
+    const capability = path.startsWith("/v3/device-commands/")
+      ? DEVICE_COMMANDS_V3_CAPABILITY
+      : DEVICE_COMMANDS_V2_CAPABILITY;
+    const capabilityCached = this.#servers.supportsCapability(serverId, capability);
     let stage = "capability_check";
     logger.info("Remote device API request started.", {
       operationId,
@@ -419,7 +426,7 @@ export class RemoteDeviceCommandClient {
     try {
       if (!capabilityCached) {
         stage = "capability_refresh";
-        const supported = await runCauseEffect(this.#servers.ensureCapability(serverId, DEVICE_COMMANDS_V2_CAPABILITY));
+        const supported = await runCauseEffect(this.#servers.ensureCapability(serverId, capability));
         if (!supported) {
           logger.warn("Remote device capability is unavailable.", {
             operationId,
@@ -462,6 +469,8 @@ export class RemoteDeviceCommandClient {
 }
 
 function deviceCommandRouteLabel(path: string) {
+  if (path === DEVICE_COMMANDS_V3_ROUTES.info) return "target_info_local_review";
+  if (path === DEVICE_COMMANDS_V3_ROUTES.run) return "run_local_review";
   if (path === DEVICE_COMMANDS_V2_ROUTES.info) return "target_info";
   if (path === DEVICE_COMMANDS_V2_ROUTES.policy) return "policy";
   if (path === DEVICE_COMMANDS_V2_ROUTES.updatePolicy) return "update_policy";

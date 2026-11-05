@@ -40,7 +40,11 @@ import type { BrowserViewGateway } from "../browser-view-gateway";
 import type { HostedSiteDesktopService } from "../hosted-site-service";
 import type { McpToolRuntimePreparation } from "../ipc/mcp-server-handlers";
 import type { LiveActivityPushService } from "../live-activity-push";
-import type { DeviceCommandTargetService, DeviceCommandTargetServiceV2 } from "../remote-device-command-host";
+import type {
+  DeviceCommandTargetService,
+  DeviceCommandTargetServiceV2,
+  DeviceCommandTargetServiceV3,
+} from "../remote-device-command-host";
 import type { RemoteScreenGateway } from "../remote-screen-gateway";
 import type { ServerMigrationSnapshotManifest } from "../server-migration-snapshot";
 import type { ServerMigrationTransferService } from "../server-migration-transfer";
@@ -285,7 +289,7 @@ export interface TeamApiOptions {
   browserView?: TeamApiBrowserView;
   remoteScreen?: TeamApiRemoteScreen;
   /** Target-local permissions and execution for explicitly granted remote device operations. */
-  deviceCommands?: DeviceCommandTargetService | DeviceCommandTargetServiceV2;
+  deviceCommands?: DeviceCommandTargetService | DeviceCommandTargetServiceV2 | DeviceCommandTargetServiceV3;
   /** When true, expose only account identity and device-command routes; do not serve a Team host. */
   deviceOnly?: () => boolean;
   redeemCentralTicket?: (

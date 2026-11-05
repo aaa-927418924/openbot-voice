@@ -1,10 +1,7 @@
 import type { RemoteDeviceCommandPolicy, RemoteDeviceCommandTarget } from "@openbot/contracts/ipc";
-import { Button, ItemGroup, SettingsSection, SwitchField } from "@openbot/ui";
-import { ProviderCodeLoginDialog, type ProviderCodeLoginState } from "@openbot/ui/components/ProviderCodeLoginDialog";
+import { ItemGroup, SettingsSection, SwitchField } from "@openbot/ui";
 import { useText } from "@openbot/ui/text";
 import { createEffect, createStore, onCleanup, onSettled, Show } from "solid-js";
-import { appPort } from "../../app-port";
-import { providersPort } from "../../providers-port";
 import { remoteDeviceCommandsPort } from "./remote-device-commands-port";
 
 interface RemoteDeviceCommandsState {
@@ -17,8 +14,6 @@ interface RemoteDeviceCommandsState {
   savingPolicy: boolean;
   error: string | null;
   notice: string | null;
-  codexLogin: ProviderCodeLoginState | null;
-  signingInCodex: boolean;
 }
 
 export function RemoteDeviceCommandsSetup() {
@@ -33,15 +28,8 @@ export function RemoteDeviceCommandsSetup() {
     savingPolicy: false,
     error: null,
     notice: null,
-    codexLogin: null,
-    signingInCodex: false,
   });
   let disposed = false;
-  let loginPoll: number | undefined;
-  let loginExpiry: number | undefined;
-  let loginNoticeTimeout: number | undefined;
-  let ownsCodexLogin = false;
-  let codexLoginGeneration = 0;
 
   const canEditLocalTarget = () => state.localTarget?.isLocal === true;
   const patchState = (patch: Partial<RemoteDeviceCommandsState>) => setState((current) => ({ ...current, ...patch }));
@@ -60,119 +48,6 @@ export function RemoteDeviceCommandsSetup() {
     } finally {
       if (!disposed) patchState({ loading: false });
     }
-  }
-
-  function clearCodexLoginTimers(): void {
-    if (loginPoll !== undefined) window.clearInterval(loginPoll);
-    if (loginExpiry !== undefined) window.clearTimeout(loginExpiry);
-    if (loginNoticeTimeout !== undefined) window.clearTimeout(loginNoticeTimeout);
-    loginPoll = undefined;
-    loginExpiry = undefined;
-    loginNoticeTimeout = undefined;
-  }
-
-  async function refreshAutoReviewStatus(): Promise<boolean> {
-    const targets = await remoteDeviceCommandsPort().deviceCommands.listTargets();
-    if (disposed) return false;
-    const localTarget = targets.find((target) => target.isLocal) ?? null;
-    patchState({ localTarget });
-    return localTarget?.autoReviewAvailable === true;
-  }
-
-  function finishCodexLogin(): void {
-    clearCodexLoginTimers();
-    ownsCodexLogin = false;
-    patchState({
-      codexLogin: { phase: "verifying" },
-      signingInCodex: false,
-      notice: t("computerUse.remote.autoReviewReady"),
-    });
-    loginNoticeTimeout = window.setTimeout(() => {
-      if (!disposed) patchState({ codexLogin: null });
-      loginNoticeTimeout = undefined;
-    }, 900);
-  }
-
-  async function checkCodexLogin(): Promise<void> {
-    if (!ownsCodexLogin || state.codexLogin?.phase !== "waiting") return;
-    try {
-      if (await refreshAutoReviewStatus()) finishCodexLogin();
-    } catch {
-      // Leave the code flow open. Its expiry message is more useful than a transient status read.
-    }
-  }
-
-  async function startCodexLogin(): Promise<void> {
-    if (state.signingInCodex || state.codexLogin) return;
-    const generation = ++codexLoginGeneration;
-    clearCodexLoginTimers();
-    patchState({ codexLogin: { phase: "starting" }, signingInCodex: true, error: null, notice: null });
-    try {
-      const started = await providersPort().startProviderCodeLogin("codex");
-      if (disposed || generation !== codexLoginGeneration) {
-        if (started.kind !== "connected")
-          void providersPort()
-            .cancelProviderCodeLogin("codex")
-            .catch(() => undefined);
-        return;
-      }
-      if (started.kind === "connected") {
-        ownsCodexLogin = false;
-        patchState({ codexLogin: null, signingInCodex: false });
-        await loadDevices();
-        return;
-      }
-      if (started.kind !== "code") throw new Error(t("computerUse.remote.signInUnsupported"));
-      ownsCodexLogin = true;
-      patchState({
-        codexLogin: {
-          phase: "waiting",
-          userCode: started.userCode,
-          verificationUrl: started.verificationUrl,
-          ...(started.verificationUrlComplete === undefined
-            ? {}
-            : { verificationUrlComplete: started.verificationUrlComplete }),
-          expiresAt: started.expiresAt,
-        },
-        signingInCodex: false,
-      });
-      loginPoll = window.setInterval(() => void checkCodexLogin(), 5_000);
-      loginExpiry = window.setTimeout(
-        () => {
-          if (loginPoll !== undefined) window.clearInterval(loginPoll);
-          loginPoll = undefined;
-          ownsCodexLogin = false;
-          if (!disposed) {
-            patchState({ codexLogin: null, error: t("computerUse.remote.signInExpired") });
-            void providersPort()
-              .cancelProviderCodeLogin("codex")
-              .catch(() => undefined);
-          }
-          loginExpiry = undefined;
-        },
-        Math.max(0, started.expiresAt - Date.now()),
-      );
-    } catch (cause) {
-      if (!disposed && generation === codexLoginGeneration) {
-        patchState({
-          codexLogin: null,
-          signingInCodex: false,
-          error: errorMessage(cause, t("computerUse.remote.signInError")),
-        });
-      }
-    }
-  }
-
-  function cancelCodexLogin(): void {
-    codexLoginGeneration += 1;
-    const shouldCancel = ownsCodexLogin || state.signingInCodex;
-    ownsCodexLogin = false;
-    clearCodexLoginTimers();
-    patchState({ codexLogin: null, signingInCodex: false });
-    if (shouldCancel)
-      void providersPort()
-        .cancelProviderCodeLogin("codex")
-        .catch(() => undefined);
   }
 
   async function loadPolicy(serverId: string | undefined): Promise<void> {
@@ -243,14 +118,6 @@ export function RemoteDeviceCommandsSetup() {
   onSettled(() => void loadDevices());
   onCleanup(() => {
     disposed = true;
-    codexLoginGeneration += 1;
-    const shouldCancelCodexLogin = ownsCodexLogin || state.signingInCodex;
-    ownsCodexLogin = false;
-    clearCodexLoginTimers();
-    if (shouldCancelCodexLogin)
-      void providersPort()
-        .cancelProviderCodeLogin("codex")
-        .catch(() => undefined);
   });
 
   return (
@@ -284,21 +151,9 @@ export function RemoteDeviceCommandsSetup() {
         </Show>
 
         <Show when={state.localTarget}>
-          <Show when={state.localTarget?.autoReviewAvailable !== true}>
-            <p class="remote-device-commands-message">{t("computerUse.remote.autoReviewUnavailable")}</p>
+          <Show when={state.localTarget?.localReviewAvailable !== true}>
+            <p class="remote-device-commands-message">{t("computerUse.remote.localReviewUnavailable")}</p>
           </Show>
-          <Button
-            type="button"
-            variant="outline"
-            disabled={state.signingInCodex || state.codexLogin !== null}
-            onClick={() => void startCodexLogin()}
-          >
-            {state.signingInCodex || state.codexLogin !== null
-              ? t("computerUse.remote.signingInCodex")
-              : state.localTarget?.autoReviewAvailable === true
-                ? t("computerUse.remote.signInCodexAgain")
-                : t("computerUse.remote.signInCodex")}
-          </Button>
           <Show when={state.localTarget?.computerUseAvailable !== true}>
             <p class="remote-device-commands-message">{t("computerUse.remote.computerUseUnavailable")}</p>
           </Show>
@@ -334,17 +189,6 @@ export function RemoteDeviceCommandsSetup() {
           </Show>
         </Show>
       </SettingsSection>
-      <Show when={state.codexLogin}>
-        {(login) => (
-          <ProviderCodeLoginDialog
-            open={true}
-            providerName="Codex CLI"
-            state={login()}
-            onOpenVerificationUrl={(url) => void appPort().openUrl(url)}
-            onCancel={cancelCodexLogin}
-          />
-        )}
-      </Show>
     </div>
   );
 }

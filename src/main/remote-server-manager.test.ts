@@ -3149,6 +3149,50 @@ describe("self-hosted account server directory", () => {
     expect(registerAccountServer).not.toHaveBeenCalled();
   });
 
+  it("withdraws this PC's local host membership when the host is no longer published", async () => {
+    const hostId = "disabled-local-host";
+    const entry: AccountServerDirectoryEntry = {
+      hostId,
+      name: "Stale local server",
+      apiUrl: "http://100.100.100.107:43123/",
+      fingerprint: "pinned-fingerprint",
+      publicKey: "pinned-public-key",
+      logoKey: null,
+      membershipId: "owner-member",
+      role: "owner",
+      isOwner: true,
+    };
+    let entries = [entry];
+    const removeAccountServer = vi.fn(() =>
+      authCall(async () => {
+        entries = [];
+      }),
+    );
+    const fixture = await createRemoteManager({
+      servers: [storedHttpsServer(hostId)],
+      account: {
+        createTeamAuthTicket: () => authCall(async () => "account-ticket"),
+        getAccountId: () => "account-owner",
+        isSelfHostedSignedIn: () => true,
+        listAccountServers: () => authCall(async () => entries),
+        registerAccountServer: () => authCall(async () => undefined),
+        removeAccountServer,
+      },
+      managerOptions: {
+        localOnlyNetworking: true,
+        allowTailscaleApiUrl: true,
+        getLocalHostId: () => hostId,
+        isLocalHostPublished: () => false,
+      },
+    });
+
+    await runCauseEffect(fixture.manager.syncAccountDirectory());
+
+    expect(removeAccountServer).toHaveBeenCalledExactlyOnceWith(hostId);
+    expect(entries).toEqual([]);
+    expect(fixture.server(hostId)).toBeUndefined();
+  });
+
   it("removes a non-owner membership from the signed-in account directory", async () => {
     const hostId = "leave-directory-host";
     const removeAccountServer = vi.fn(() => authCall(async () => undefined));

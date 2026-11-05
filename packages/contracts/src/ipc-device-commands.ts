@@ -25,8 +25,8 @@ export interface RemoteDeviceCommandTarget {
   platform: "windows" | "linux";
   state: ServerConnectionState;
   computerUseAvailable: boolean;
-  /** The target has a signed-in Codex CLI with the AutoReview command path available. */
-  autoReviewAvailable: boolean;
+  /** The target can review commands with local deterministic rules without a model call. */
+  localReviewAvailable: boolean;
   /** True only for the local settings target. Local targets are never exposed to agents. */
   isLocal: boolean;
 }
