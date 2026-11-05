@@ -65,6 +65,7 @@ export interface ChatViewProps {
   ready: boolean;
   historyLoadFailed: boolean;
   canSend: boolean;
+  embedded?: boolean;
   readOnly?: boolean;
   activity?: MobileAgentActivity;
   activities?: MobileAgentActivity[];
@@ -114,6 +115,7 @@ export function ChatView({
   ready,
   historyLoadFailed,
   canSend,
+  embedded = false,
   readOnly = false,
   activity,
   activities,
@@ -558,7 +560,8 @@ export function ChatView({
               liquidGlassAvailable={liquidGlassAvailable}
               customBackground={hasCustomBackground}
               topInset={insets.top}
-              onBack={leaveConversation}
+              onBack={embedded ? () => undefined : leaveConversation}
+              showBackButton={!embedded}
             />
             {isFocused ? <LiveVoiceSessionCard topInset={insets.top} /> : null}
             <ChatMessageList

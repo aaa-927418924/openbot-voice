@@ -9,7 +9,7 @@ import { ChatView } from "./chat-view";
 import { useChatQueue } from "./use-chat-queue";
 import { useQuestionPrompt } from "./use-question-prompt";
 
-export function MobileChatView({ agent }: { agent: MobileAgent }) {
+export function MobileChatView({ agent, embedded = false }: { agent: MobileAgent; embedded?: boolean }) {
   const {
     agents,
     conversationStore,
@@ -118,6 +118,7 @@ export function MobileChatView({ agent }: { agent: MobileAgent }) {
       ready={Boolean(conversation)}
       historyLoadFailed={historyLoadFailed}
       canSend={online}
+      embedded={embedded}
       activity={activity}
       activeTurnId={conversation?.activeTurnId ?? null}
       stopTurn={stopTurn}

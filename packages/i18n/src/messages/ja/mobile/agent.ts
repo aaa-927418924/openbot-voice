@@ -323,6 +323,7 @@ export const messages = {
   "mobile.agent.home.noServers": "利用できるサーバーはありません",
   "mobile.agent.home.noServersBody": "デスクトップアプリに再接続するか、リモートサーバーに参加してください。",
   "mobile.agent.home.chooseServer": "サーバーを選択",
+  "mobile.agent.home.selectAgent": "チャットするBotを選択",
   "mobile.agent.home.openServers": "サーバーを開く",
   "mobile.agent.home.waiting": "接続を待っています",
   "mobile.agent.home.waitingBody": "このサーバーが接続されると、エージェントの一覧が読み込まれます。",

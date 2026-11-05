@@ -25,6 +25,7 @@ interface ChatHeaderProps {
   customBackground?: boolean;
   topInset: number;
   onBack: () => void;
+  showBackButton?: boolean;
   needsAction?: boolean;
   readOnly?: boolean;
 }
@@ -37,6 +38,7 @@ export function ChatHeader({
   customBackground = false,
   topInset,
   onBack,
+  showBackButton = true,
   needsAction = false,
   readOnly = false,
 }: ChatHeaderProps) {
@@ -57,18 +59,20 @@ export function ChatHeader({
         pointerEvents="box-none"
         style={{ top: topInset + 8 }}
       >
-        <ChatGlassIconButton
-          accessibilityLabel={t("common.back")}
-          fallbackBackground={fallbackBackground}
-          liquidGlassAvailable={liquidGlassAvailable}
-          transparentSurface={customBackground}
-          onPress={() => {
-            void haptics.impact("soft");
-            onBack();
-          }}
-        >
-          <ArrowLeft color={iconColor} size={24} strokeWidth={2} />
-        </ChatGlassIconButton>
+        {showBackButton ? (
+          <ChatGlassIconButton
+            accessibilityLabel={t("common.back")}
+            fallbackBackground={fallbackBackground}
+            liquidGlassAvailable={liquidGlassAvailable}
+            transparentSurface={customBackground}
+            onPress={() => {
+              void haptics.impact("soft");
+              onBack();
+            }}
+          >
+            <ArrowLeft color={iconColor} size={24} strokeWidth={2} />
+          </ChatGlassIconButton>
+        ) : null}
 
         <GlassView
           glassEffectStyle={liquidGlassAvailable && !customBackground ? "regular" : "none"}

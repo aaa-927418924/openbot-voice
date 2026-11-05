@@ -5,7 +5,7 @@ import { Button, Typography } from "heroui-native";
 import { useThemeColor } from "heroui-native/hooks";
 import { Bot, Layers3, Plus, Search, WifiOff } from "lucide-react-native";
 import { useContext, useLayoutEffect, useMemo, useState } from "react";
-import { Modal, Pressable, View } from "react-native";
+import { Modal, Pressable, useWindowDimensions, View } from "react-native";
 import Animated, {
   cancelAnimation,
   Easing,
@@ -28,10 +28,12 @@ import { PinnedAgentsGrid } from "@/features/agents/components/pinned-agents-gri
 import { SidebarSectionHeader } from "@/features/agents/components/sidebar-section-header";
 import { ChannelListRow } from "@/features/channels/components/channel-list";
 import { useChannels } from "@/features/channels/components/use-channels";
+import { MobileChatView } from "@/features/chat/components/agent-chat-view";
 import { useAppDrawer } from "@/features/servers/components/app-drawer-shell";
 import { useCustomTheme } from "@/features/settings/model/custom-theme";
 import { ConnectionHeaderStatus } from "@/features/workspace/components/connection-header-status";
 import { useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
+import { responsiveWorkspaceLayout } from "@/features/workspace/model/responsive-workspace-layout";
 import { mobileSidebarItems } from "@/features/workspace/model/sidebar-layout";
 import { useAppLoadingOverlay, useScreenLoadingLabel } from "@/shared/components/app-loading-overlay";
 import { haptics } from "@/shared/lib/haptics";
@@ -163,6 +165,8 @@ function openFromMenu(href: Href): void {
 }
 
 export function ConnectedScreen() {
+  const { width } = useWindowDimensions();
+  const workspaceLayout = responsiveWorkspaceLayout(width, isIOS);
   const reportContentReady = useContext(SplashContentReadyContext);
   const { t, sourceText } = useText();
   const headerHeight = useHeaderHeight();
@@ -183,8 +187,16 @@ export function ConnectedScreen() {
     serverDirectoryState,
     servers,
   } = useMobileWorkspace();
+  // Reserve the split view for a populated agent list. Empty, loading, and
+  // no-server states keep their full-width recovery and onboarding content.
+  const usesInlineChat = workspaceLayout !== "compact" && activeAgents.length > 0;
   const [collapsedByServer, setCollapsedByServer] = useState<Record<string, ReadonlySet<string>>>({});
   const [optionsOpen, setOptionsOpen] = useState(false);
+  const [selectedAgentKey, setSelectedAgentKey] = useState<{ serverId: string; agentId: string } | null>(null);
+  const selectedAgent =
+    selectedAgentKey?.serverId === activeServer.id
+      ? activeAgents.find((agent) => agent.id === selectedAgentKey.agentId)
+      : undefined;
   const collapsedSectionIds = collapsedByServer[activeServer.id];
   const channels = useChannels(activeServer.id);
   const channelAgents = useMemo(
@@ -270,157 +282,205 @@ export function ConnectedScreen() {
 
   return (
     <View className={hasCustomBackground ? "flex-1" : "flex-1 bg-background"} onLayout={() => reportContentReady()}>
-      {listReady ? (
-        <Animated.FlatList
-          key={activeServer.id}
-          onLayout={listReveal.onLayout}
-          itemLayoutAnimation={listReveal.finished && sidebar?.layout !== collapseLayout ? LIST_REFLOW : undefined}
-          skipEnteringExitingAnimations
-          removeClippedSubviews={false}
-          className={hasCustomBackground ? "flex-1 bg-transparent" : "flex-1 bg-background"}
-          alwaysBounceVertical={false}
-          contentContainerClassName={items.length > 0 ? "pb-safe-offset-4" : "grow pb-safe-offset-4"}
-          contentContainerStyle={isAndroid ? { paddingTop: (hasCustomBackground ? headerHeight : 0) + 16 } : undefined}
-          // Keep the native header inset even when short content cannot scroll or bounce.
-          contentInsetAdjustmentBehavior="always"
-          data={items}
-          keyExtractor={(item) => `${item.kind}:${item.id}`}
-          renderItem={({ item, index }) =>
-            item.kind === "section" ? (
-              <AgentListRowReveal index={index + (hasPins ? 1 : 0)} reveal={listReveal}>
-                <SidebarSectionHeader
-                  key={`${activeServer.id}:${item.id}`}
-                  id={item.id}
-                  name={item.name}
-                  empty={item.empty}
-                  visibleSectionIds={visibleSectionIds}
-                  collapsed={collapsedSectionIds?.has(item.id) ?? false}
-                  onToggle={() => {
-                    setCollapseLayout(sidebar?.layout ?? null);
-                    setCollapsedByServer((current) => {
-                      const next = new Set(current[activeServer.id]);
-                      if (next.has(item.id)) next.delete(item.id);
-                      else next.add(item.id);
-                      return { ...current, [activeServer.id]: next };
-                    });
-                  }}
-                />
-              </AgentListRowReveal>
-            ) : (
-              <TransitioningChatRow
-                chatId={item.kind === "agent" ? item.agent.id : item.channel.id}
-                index={index + (hasPins ? 1 : 0)}
-                reveal={listReveal}
-                collapsed={collapsedChatIds.has(item.id)}
-              >
-                {item.kind === "channel" ? (
-                  <ChannelListRow channel={item.channel} serverId={activeServer.id} agents={channelAgents} />
+      <View className={usesInlineChat ? "flex-1 flex-row" : "flex-1"}>
+        <View
+          className={usesInlineChat ? "h-full shrink-0 border-r border-grouped-border" : "flex-1"}
+          style={
+            usesInlineChat
+              ? { width: Math.min(390, Math.max(300, width * (workspaceLayout === "three-pane" ? 0.3 : 0.38))) }
+              : undefined
+          }
+        >
+          {listReady ? (
+            <Animated.FlatList
+              key={activeServer.id}
+              onLayout={listReveal.onLayout}
+              itemLayoutAnimation={listReveal.finished && sidebar?.layout !== collapseLayout ? LIST_REFLOW : undefined}
+              skipEnteringExitingAnimations
+              removeClippedSubviews={false}
+              className={hasCustomBackground ? "flex-1 bg-transparent" : "flex-1 bg-background"}
+              alwaysBounceVertical={false}
+              contentContainerClassName={items.length > 0 ? "pb-safe-offset-4" : "grow pb-safe-offset-4"}
+              contentContainerStyle={
+                isAndroid ? { paddingTop: (hasCustomBackground ? headerHeight : 0) + 16 } : undefined
+              }
+              // Keep the native header inset even when short content cannot scroll or bounce.
+              contentInsetAdjustmentBehavior="always"
+              data={items}
+              keyExtractor={(item) => `${item.kind}:${item.id}`}
+              renderItem={({ item, index }) =>
+                item.kind === "section" ? (
+                  <AgentListRowReveal index={index + (hasPins ? 1 : 0)} reveal={listReveal}>
+                    <SidebarSectionHeader
+                      key={`${activeServer.id}:${item.id}`}
+                      id={item.id}
+                      name={item.name}
+                      empty={item.empty}
+                      visibleSectionIds={visibleSectionIds}
+                      collapsed={collapsedSectionIds?.has(item.id) ?? false}
+                      onToggle={() => {
+                        setCollapseLayout(sidebar?.layout ?? null);
+                        setCollapsedByServer((current) => {
+                          const next = new Set(current[activeServer.id]);
+                          if (next.has(item.id)) next.delete(item.id);
+                          else next.add(item.id);
+                          return { ...current, [activeServer.id]: next };
+                        });
+                      }}
+                    />
+                  </AgentListRowReveal>
                 ) : (
-                  <AgentListRow agent={item.agent} leftInset={15} rightInset={24} />
-                )}
-              </TransitioningChatRow>
-            )
-          }
-          ListHeaderComponent={
-            <AgentListRowReveal index={0} reveal={listReveal}>
-              {sidebar?.error ? (
-                <View className="gap-2 px-4">
-                  <Typography.Paragraph className="text-danger-text">{sourceText(sidebar.error)}</Typography.Paragraph>
-                  <Button
-                    variant="secondary"
-                    onPress={() => void refreshServer(activeServer.id).catch(() => undefined)}
+                  <TransitioningChatRow
+                    chatId={item.kind === "agent" ? item.agent.id : item.channel.id}
+                    index={index + (hasPins ? 1 : 0)}
+                    reveal={listReveal}
+                    collapsed={collapsedChatIds.has(item.id)}
                   >
-                    <Button.Label>{t("mobile.agent.home.retrySections")}</Button.Label>
-                  </Button>
-                </View>
-              ) : null}
-              <PinnedAgentsGrid agents={pinnedAgents}>
-                {pinnedChannels.length
-                  ? pinnedChannels.map((channel) => (
-                      <ChannelListRow
-                        key={channel.id}
-                        channel={channel}
-                        serverId={activeServer.id}
-                        agents={channelAgents}
-                        pinned
+                    {item.kind === "channel" ? (
+                      <ChannelListRow channel={item.channel} serverId={activeServer.id} agents={channelAgents} />
+                    ) : (
+                      <AgentListRow
+                        agent={item.agent}
+                        leftInset={15}
+                        rightInset={24}
+                        selected={
+                          selectedAgentKey?.serverId === activeServer.id && selectedAgentKey.agentId === item.agent.id
+                        }
+                        onOpen={
+                          usesInlineChat
+                            ? () => {
+                                void haptics.impact("soft");
+                                setSelectedAgentKey({ serverId: activeServer.id, agentId: item.agent.id });
+                              }
+                            : undefined
+                        }
                       />
-                    ))
-                  : null}
-              </PinnedAgentsGrid>
-            </AgentListRowReveal>
-          }
-          ListEmptyComponent={
-            serverDirectoryState === "error" && servers.length === 0 ? (
-              <View className="flex-1 items-center justify-center gap-5 px-8 py-16">
-                <View className="size-16 items-center justify-center rounded-3xl bg-control">
-                  <WifiOff color={mutedColor} size={28} strokeWidth={1.6} />
-                </View>
-                <View className="items-center gap-1.5">
-                  <Typography.Heading type="h4">{t("mobile.agent.home.serversFailed")}</Typography.Heading>
-                  <Typography.Paragraph align="center" className="text-text-secondary">
-                    {serverDirectoryError ? sourceText(serverDirectoryError) : t("mobile.agent.home.serversFailedBody")}
-                  </Typography.Paragraph>
-                </View>
-                <Button size="md" variant="secondary" onPress={() => void refreshServers().catch(() => undefined)}>
-                  <Button.Label>{t("common.tryAgain")}</Button.Label>
-                </Button>
-              </View>
-            ) : servers.length === 0 ? (
-              <View className="flex-1 items-center justify-center gap-5 px-8 py-16">
-                <View className="size-16 items-center justify-center rounded-3xl bg-control">
-                  <Layers3 color={mutedColor} size={28} strokeWidth={1.6} />
-                </View>
-                <View className="items-center gap-1.5">
-                  <Typography.Heading type="h4">{t("mobile.agent.home.noServers")}</Typography.Heading>
-                  <Typography.Paragraph align="center" className="text-text-secondary">
-                    {t("mobile.agent.home.noServersBody")}
-                  </Typography.Paragraph>
-                </View>
-              </View>
-            ) : !hasSelectedServer ? (
-              <View className="flex-1 items-center justify-center gap-5 px-8 py-16">
-                <Typography.Heading type="h4">{t("mobile.agent.home.chooseServer")}</Typography.Heading>
-                <Button size="md" variant="secondary" onPress={openDrawer}>
-                  <Button.Label>{t("mobile.agent.home.openServers")}</Button.Label>
-                </Button>
-              </View>
-            ) : activeAgents.length === 0 && activeServer.state !== "online" ? (
-              <View className="flex-1 items-center justify-center gap-5 px-8 py-16">
-                <WifiOff color={mutedColor} size={28} strokeWidth={1.6} />
-                <View className="items-center gap-1.5">
-                  <Typography.Heading type="h4">{t("mobile.agent.home.waiting")}</Typography.Heading>
-                  <Typography.Paragraph align="center" className="text-text-secondary">
-                    {t("mobile.agent.home.waitingBody")}
-                  </Typography.Paragraph>
-                </View>
-              </View>
-            ) : activeAgents.length === 0 ? (
-              <View className="flex-1 items-center justify-center gap-5 px-8 py-16">
-                <View className="size-16 items-center justify-center rounded-3xl bg-control">
+                    )}
+                  </TransitioningChatRow>
+                )
+              }
+              ListHeaderComponent={
+                <AgentListRowReveal index={0} reveal={listReveal}>
+                  {sidebar?.error ? (
+                    <View className="gap-2 px-4">
+                      <Typography.Paragraph className="text-danger-text">
+                        {sourceText(sidebar.error)}
+                      </Typography.Paragraph>
+                      <Button
+                        variant="secondary"
+                        onPress={() => void refreshServer(activeServer.id).catch(() => undefined)}
+                      >
+                        <Button.Label>{t("mobile.agent.home.retrySections")}</Button.Label>
+                      </Button>
+                    </View>
+                  ) : null}
+                  <PinnedAgentsGrid agents={pinnedAgents}>
+                    {pinnedChannels.length
+                      ? pinnedChannels.map((channel) => (
+                          <ChannelListRow
+                            key={channel.id}
+                            channel={channel}
+                            serverId={activeServer.id}
+                            agents={channelAgents}
+                            pinned
+                          />
+                        ))
+                      : null}
+                  </PinnedAgentsGrid>
+                </AgentListRowReveal>
+              }
+              ListEmptyComponent={
+                serverDirectoryState === "error" && servers.length === 0 ? (
+                  <View className="flex-1 items-center justify-center gap-5 px-8 py-16">
+                    <View className="size-16 items-center justify-center rounded-3xl bg-control">
+                      <WifiOff color={mutedColor} size={28} strokeWidth={1.6} />
+                    </View>
+                    <View className="items-center gap-1.5">
+                      <Typography.Heading type="h4">{t("mobile.agent.home.serversFailed")}</Typography.Heading>
+                      <Typography.Paragraph align="center" className="text-text-secondary">
+                        {serverDirectoryError
+                          ? sourceText(serverDirectoryError)
+                          : t("mobile.agent.home.serversFailedBody")}
+                      </Typography.Paragraph>
+                    </View>
+                    <Button size="md" variant="secondary" onPress={() => void refreshServers().catch(() => undefined)}>
+                      <Button.Label>{t("common.tryAgain")}</Button.Label>
+                    </Button>
+                  </View>
+                ) : servers.length === 0 ? (
+                  <View className="flex-1 items-center justify-center gap-5 px-8 py-16">
+                    <View className="size-16 items-center justify-center rounded-3xl bg-control">
+                      <Layers3 color={mutedColor} size={28} strokeWidth={1.6} />
+                    </View>
+                    <View className="items-center gap-1.5">
+                      <Typography.Heading type="h4">{t("mobile.agent.home.noServers")}</Typography.Heading>
+                      <Typography.Paragraph align="center" className="text-text-secondary">
+                        {t("mobile.agent.home.noServersBody")}
+                      </Typography.Paragraph>
+                    </View>
+                  </View>
+                ) : !hasSelectedServer ? (
+                  <View className="flex-1 items-center justify-center gap-5 px-8 py-16">
+                    <Typography.Heading type="h4">{t("mobile.agent.home.chooseServer")}</Typography.Heading>
+                    <Button size="md" variant="secondary" onPress={openDrawer}>
+                      <Button.Label>{t("mobile.agent.home.openServers")}</Button.Label>
+                    </Button>
+                  </View>
+                ) : activeAgents.length === 0 && activeServer.state !== "online" ? (
+                  <View className="flex-1 items-center justify-center gap-5 px-8 py-16">
+                    <WifiOff color={mutedColor} size={28} strokeWidth={1.6} />
+                    <View className="items-center gap-1.5">
+                      <Typography.Heading type="h4">{t("mobile.agent.home.waiting")}</Typography.Heading>
+                      <Typography.Paragraph align="center" className="text-text-secondary">
+                        {t("mobile.agent.home.waitingBody")}
+                      </Typography.Paragraph>
+                    </View>
+                  </View>
+                ) : activeAgents.length === 0 ? (
+                  <View className="flex-1 items-center justify-center gap-5 px-8 py-16">
+                    <View className="size-16 items-center justify-center rounded-3xl bg-control">
+                      <Bot color={mutedColor} size={30} strokeWidth={1.6} />
+                    </View>
+                    <View className="items-center gap-1.5">
+                      <Typography.Heading type="h4">{t("mobile.agent.home.noAgents")}</Typography.Heading>
+                      <Typography.Paragraph align="center" className="text-text-secondary">
+                        {t("mobile.agent.home.noAgentsBody")}
+                      </Typography.Paragraph>
+                    </View>
+                    <Button
+                      size="md"
+                      variant="secondary"
+                      onPress={() => {
+                        void haptics.impact("soft");
+                        router.push("/add-agent");
+                      }}
+                    >
+                      <Plus color={iconColor} size={18} strokeWidth={2} />
+                      <Button.Label>{t("mobile.agent.home.addAgent")}</Button.Label>
+                    </Button>
+                  </View>
+                ) : null
+              }
+            />
+          ) : null}
+        </View>
+        {usesInlineChat ? (
+          <View className={hasCustomBackground ? "min-w-0 flex-1" : "min-w-0 flex-1 bg-background"}>
+            {selectedAgent ? (
+              <MobileChatView key={`${selectedAgent.serverId}:${selectedAgent.id}`} agent={selectedAgent} embedded />
+            ) : (
+              <View className="flex-1 items-center justify-center gap-3 px-8">
+                <View className="size-16 items-center justify-center rounded-full bg-control">
                   <Bot color={mutedColor} size={30} strokeWidth={1.6} />
                 </View>
-                <View className="items-center gap-1.5">
-                  <Typography.Heading type="h4">{t("mobile.agent.home.noAgents")}</Typography.Heading>
-                  <Typography.Paragraph align="center" className="text-text-secondary">
-                    {t("mobile.agent.home.noAgentsBody")}
-                  </Typography.Paragraph>
-                </View>
-                <Button
-                  size="md"
-                  variant="secondary"
-                  onPress={() => {
-                    void haptics.impact("soft");
-                    router.push("/add-agent");
-                  }}
-                >
-                  <Plus color={iconColor} size={18} strokeWidth={2} />
-                  <Button.Label>{t("mobile.agent.home.addAgent")}</Button.Label>
-                </Button>
+                <Typography.Paragraph align="center" className="text-text-secondary">
+                  {t("mobile.agent.home.selectAgent")}
+                </Typography.Paragraph>
               </View>
-            ) : null
-          }
-        />
-      ) : null}
+            )}
+          </View>
+        ) : null}
+      </View>
 
       <Stack.Screen
         options={{
@@ -489,7 +549,9 @@ export function ConnectedScreen() {
       {isIOS ? (
         <>
           <Stack.Toolbar placement="left">
-            <Stack.Toolbar.Button icon="square.stack.3d.up.fill" onPress={openDrawer} />
+            {workspaceLayout !== "three-pane" ? (
+              <Stack.Toolbar.Button icon="square.stack.3d.up.fill" onPress={openDrawer} />
+            ) : null}
             <Stack.Toolbar.View hidesSharedBackground>
               <ConnectionHeaderStatus server={hasSelectedServer ? activeServer : undefined} />
             </Stack.Toolbar.View>

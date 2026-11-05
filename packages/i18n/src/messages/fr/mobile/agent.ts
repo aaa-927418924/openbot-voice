@@ -332,6 +332,7 @@ export const messages = {
   "mobile.agent.home.noServers": "Aucun serveur disponible",
   "mobile.agent.home.noServersBody": "Reconnectez l’application de bureau ou rejoignez un serveur distant.",
   "mobile.agent.home.chooseServer": "Choisir un serveur",
+  "mobile.agent.home.selectAgent": "Choisissez un bot pour démarrer une conversation",
   "mobile.agent.home.openServers": "Ouvrir les serveurs",
   "mobile.agent.home.waiting": "En attente de connexion",
   "mobile.agent.home.waitingBody": "La liste des agents se chargera une fois ce serveur connecté.",

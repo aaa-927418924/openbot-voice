@@ -332,6 +332,7 @@ export const messages = {
   "mobile.agent.home.noServers": "Kullanılabilir sunucu yok",
   "mobile.agent.home.noServersBody": "Masaüstü uygulamasını tekrar bağlayın veya uzak bir sunucuya katılın.",
   "mobile.agent.home.chooseServer": "Bir sunucu seçin",
+  "mobile.agent.home.selectAgent": "Sohbete başlamak için bir bot seçin",
   "mobile.agent.home.openServers": "Sunucuları aç",
   "mobile.agent.home.waiting": "Bağlantı bekleniyor",
   "mobile.agent.home.waitingBody": "Ajan listesi bu sunucu bağlandığında yüklenecektir.",

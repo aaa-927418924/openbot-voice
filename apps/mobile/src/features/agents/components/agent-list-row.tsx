@@ -94,6 +94,7 @@ interface AgentListRowProps {
    * has no zoom source and does not stand in for the home row's avatar.
    */
   onOpen?: () => void;
+  selected?: boolean;
   leftInset?: number;
   rightInset?: number;
 }
@@ -102,6 +103,7 @@ export function AgentListRow({
   agent,
   enableActions = true,
   onOpen,
+  selected = false,
   leftInset = 20,
   rightInset = 20,
 }: AgentListRowProps) {
@@ -146,6 +148,7 @@ export function AgentListRow({
           : t("mobile.agent.list.open", { name: agent.name })
       }
       accessibilityRole="button"
+      accessibilityState={{ selected }}
       accessibilityActions={
         enableActions ? [{ name: "pin", label: t("mobile.agent.pin.pinNamed", { name: agent.name }) }] : undefined
       }
@@ -163,10 +166,14 @@ export function AgentListRow({
     >
       {({ pressed }) => (
         <View
-          className="min-h-[72px] w-full flex-row items-center gap-3 py-1"
+          className={`min-h-[72px] w-full flex-row items-center gap-3 py-1 ${selected ? "rounded-2xl bg-control" : ""}`}
           style={{
             // In the Android search sheet the row shows the sheet color, not the home list color.
-            backgroundColor: (onOpen && isAndroid) || hasCustomBackground ? "transparent" : background,
+            backgroundColor: selected
+              ? undefined
+              : (onOpen && isAndroid) || hasCustomBackground
+                ? "transparent"
+                : background,
             opacity: pressed ? 0.58 : 1,
             paddingLeft: leftInset,
             paddingRight: rightInset,

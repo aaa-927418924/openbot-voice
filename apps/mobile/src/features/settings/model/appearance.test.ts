@@ -1,9 +1,12 @@
 import { beforeEach, expect, it, vi } from "vitest";
-import { loadAppearance, saveAppearance, useAppearance } from "./appearance";
+import { defaultAppearanceForPlatform, loadAppearance, saveAppearance, useAppearance } from "./appearance";
 
 // Device storage and the native theme runtime are the integration boundary.
 const native = vi.hoisted(() => {
-  const storage: { stored: string | null; fail: boolean } = { stored: null, fail: false };
+  const storage: { stored: string | null; fail: boolean } = {
+    stored: null,
+    fail: false,
+  };
   return { ...storage, setTheme: vi.fn() };
 });
 vi.mock("expo-secure-store", () => ({
@@ -14,11 +17,17 @@ vi.mock("expo-secure-store", () => ({
   },
 }));
 vi.mock("uniwind", () => ({ Uniwind: { setTheme: native.setTheme } }));
+vi.mock("react-native", () => ({ Platform: { OS: "ios" } }));
 beforeEach(() => {
   native.stored = null;
   native.fail = false;
   native.setTheme.mockClear();
-  useAppearance.setState({ value: "system", ready: false, saving: false });
+  useAppearance.setState({ value: "dark", ready: false, saving: false });
+});
+it("defaults to dark on iOS and system appearance on other platforms", () => {
+  expect(defaultAppearanceForPlatform("ios")).toBe("dark");
+  expect(defaultAppearanceForPlatform("android")).toBe("system");
+  expect(defaultAppearanceForPlatform("web")).toBe("system");
 });
 it("restores the chosen appearance after restart and can return to system", async () => {
   await loadAppearance();
@@ -33,10 +42,11 @@ it("restores the chosen appearance after restart and can return to system", asyn
   expect(native.setTheme).toHaveBeenLastCalledWith("system");
 });
 it("keeps the previous appearance on storage failure and permits retry", async () => {
+  native.stored = "dark";
   await loadAppearance();
   native.fail = true;
   await expect(saveAppearance("light")).rejects.toThrow("Storage unavailable");
-  expect(useAppearance.getState().value).toBe("system");
+  expect(useAppearance.getState().value).toBe("dark");
   native.fail = false;
   await saveAppearance("light");
   expect(native.stored).toBe("light");

@@ -1,11 +1,17 @@
 import * as SecureStore from "expo-secure-store";
+import { Platform } from "react-native";
 import { Uniwind } from "uniwind";
 import { create } from "zustand";
 
 export type Appearance = "system" | "light" | "dark";
 const key = "openbot.mobile.appearance.v1";
+export function defaultAppearanceForPlatform(platform: string): Appearance {
+  return platform === "ios" ? "dark" : "system";
+}
+
+const defaultAppearance = (): Appearance => defaultAppearanceForPlatform(Platform.OS);
 export const useAppearance = create<{ value: Appearance; ready: boolean; saving: boolean }>(() => ({
-  value: "system",
+  value: defaultAppearance(),
   ready: false,
   saving: false,
 }));
@@ -13,7 +19,8 @@ export const useAppearance = create<{ value: Appearance; ready: boolean; saving:
 export async function loadAppearance(): Promise<void> {
   try {
     const stored = await SecureStore.getItemAsync(key);
-    const value = stored === "light" || stored === "dark" ? stored : "system";
+    const value =
+      stored === "light" || stored === "dark" ? stored : stored === "system" ? "system" : defaultAppearance();
     Uniwind.setTheme(value);
     useAppearance.setState({ value });
   } finally {
