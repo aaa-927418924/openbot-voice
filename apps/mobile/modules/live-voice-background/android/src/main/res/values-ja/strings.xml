@@ -2,4 +2,12 @@
   <string name="live_voice_notification_channel_name">Live Voice</string>
   <string name="live_voice_notification_title">Live Voice通話中</string>
   <string name="live_voice_notification_text">音声会話のためマイクを使用しています。</string>
+  <string name="live_voice_notification_hang_up">音声会話を終了</string>
+  <string name="wake_word_notification_channel_name">Hey OpenBot</string>
+  <string name="wake_word_notification_title">Hey OpenBot</string>
+  <string name="wake_word_notification_listening">このスマートフォンで待ち受け中</string>
+  <string name="wake_word_notification_paused">音声会話中はウェイクワードを一時停止しています</string>
+  <string name="wake_word_notification_detected">呼びかけを検出しました。タップして %1$s との音声会話を開始します。</string>
+  <string name="wake_word_notification_failed">ウェイクワード待受が停止しました。OpenBotを開いて再度お試しください。</string>
+  <string name="wake_word_notification_stop">待受を停止</string>
 </resources>

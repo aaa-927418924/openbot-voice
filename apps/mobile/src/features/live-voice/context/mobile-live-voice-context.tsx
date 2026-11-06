@@ -1,4 +1,5 @@
 import * as Crypto from "expo-crypto";
+import { router } from "expo-router";
 import {
   createContext,
   type PropsWithChildren,
@@ -27,7 +28,9 @@ import {
   routesComposerToLiveVoice,
 } from "../model/live-voice";
 import {
+  consumePendingVoiceEndAction,
   isLiveVoiceBackgroundServiceAvailable,
+  pauseWakeWordCapture,
   startLiveVoiceBackgroundService,
   stopLiveVoiceBackgroundService,
 } from "../model/live-voice-background-service";
@@ -105,10 +108,10 @@ export function MobileLiveVoiceProvider({
     });
   }, []);
 
-  const startBackgroundService = useCallback(async (sessionId: string) => {
+  const startBackgroundService = useCallback(async (sessionId: string, target: MobileLiveVoiceTarget) => {
     if (!isLiveVoiceBackgroundServiceAvailable()) return;
     backgroundServiceSessionIdRef.current = sessionId;
-    await startLiveVoiceBackgroundService();
+    await startLiveVoiceBackgroundService(target);
   }, []);
   const [commands, setCommands] = useState<MobileLiveVoiceCommand[]>([]);
   const mailboxRef = useRef<ReturnType<typeof createMobileLiveVoiceCommandMailbox> | null>(null);
@@ -192,7 +195,12 @@ export function MobileLiveVoiceProvider({
               return;
             }
           }
-          await startBackgroundService(nextOrigin.sessionId);
+          if (Platform.OS === "android") {
+            await pauseWakeWordCapture().catch(() => {
+              supportLog.add("warn", "connection", "Android wake-word listener could not pause for Live Voice");
+            });
+          }
+          await startBackgroundService(nextOrigin.sessionId, target);
           if (
             originRef.current?.sessionId !== nextOrigin.sessionId ||
             stateRef.current.phase === "stopping" ||
@@ -262,6 +270,34 @@ export function MobileLiveVoiceProvider({
       else if (!result.ok) publish(EMPTY_LIVE_VOICE_STATE);
     });
   }, [mailbox, publish]);
+
+  useEffect(() => {
+    if (Platform.OS !== "android" || !foreground) return;
+    let polling = false;
+    const pollPendingEndAction = async () => {
+      if (polling) return;
+      polling = true;
+      try {
+        if (!(await consumePendingVoiceEndAction())) return;
+        const target = originRef.current?.target;
+        if (!target || !isLiveVoiceBusy(stateRef.current)) return;
+        router.dismissAll();
+        router.push({ pathname: "/chat/[agentId]", params: { agentId: target.agentId } });
+        stop();
+      } catch {
+        supportLog.add(
+          "warn",
+          "connection",
+          "Live Voice end action from the Android notification could not be handled",
+        );
+      } finally {
+        polling = false;
+      }
+    };
+    const timer = setInterval(() => void pollPendingEndAction(), 750);
+    void pollPendingEndAction();
+    return () => clearInterval(timer);
+  }, [foreground, stop]);
 
   const toggleMute = useCallback(() => {
     if (!originRef.current || !isLiveVoiceBusy(stateRef.current)) return;

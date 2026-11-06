@@ -1,5 +1,6 @@
 import { router } from "expo-router";
 import { Typography } from "heroui-native";
+import { Platform } from "react-native";
 import { mobileUserName } from "@/features/auth/api/mobile-user-name";
 import { useMobileSession } from "@/features/auth/context/mobile-session-context";
 import { SettingsContent, SettingsRow, SettingsSection } from "@/features/settings/components/settings-content";
@@ -47,6 +48,14 @@ export function SettingsScreen() {
         </SettingsSection>
       ) : null}
       <SettingsSection title={t("mobile.settings.home.preferences")}>
+        {Platform.OS === "android" ? (
+          <SettingsRow
+            onPress={() => router.push("/settings/wake-word")}
+            supportingText={t("mobile.settings.home.wakeWordHint")}
+          >
+            <Typography.Paragraph type="body-sm">{t("mobile.settings.home.wakeWord")}</Typography.Paragraph>
+          </SettingsRow>
+        ) : null}
         <SettingsRow
           onPress={() => router.push("/settings/theme")}
           supportingText={t("mobile.settings.home.themeHint")}

@@ -1,3 +1,6 @@
+import java.security.MessageDigest
+import java.util.zip.ZipFile
+
 plugins {
   id 'com.android.library'
   id 'expo-module-gradle-plugin'
@@ -12,4 +15,71 @@ expoModule {
 
 android {
   namespace 'run.openbot.mobile.livevoice'
+
+  sourceSets {
+    main {
+      jniLibs.srcDir(layout.buildDirectory.dir('generated/sherpa-onnx/jniLibs'))
+    }
+  }
 }
+
+def sherpaVersion = '2.0.1'
+def sherpaSha256 = 'a8d09d1d32f3eb8520482c6d3d43fae674681c5b050385967c70a3c2c9bf0ee7'
+def sherpaAar = layout.buildDirectory.file("downloads/sherpa-onnx-${sherpaVersion}.aar")
+def sherpaOutput = layout.buildDirectory.dir('generated/sherpa-onnx')
+
+def prepareSherpaOnnx = tasks.register('prepareSherpaOnnxRuntime') {
+  inputs.property('version', sherpaVersion)
+  inputs.property('sha256', sherpaSha256)
+  outputs.file(sherpaOutput.map { it.file("sherpa-onnx-${sherpaVersion}.jar") })
+  outputs.dir(sherpaOutput.map { it.dir('jniLibs') })
+
+  doLast {
+    def aarFile = sherpaAar.get().asFile
+    if (!aarFile.exists()) {
+      aarFile.parentFile.mkdirs()
+      def connection = new URL("https://github.com/k2-fsa/sherpa-onnx/releases/download/v${sherpaVersion}/sherpa-onnx-${sherpaVersion}.aar").openConnection()
+      connection.connectTimeout = 15000
+      connection.readTimeout = 120000
+      connection.getInputStream().withCloseable { input ->
+        aarFile.withOutputStream { output -> output << input }
+      }
+    }
+
+    def digest = MessageDigest.getInstance('SHA-256').digest(aarFile.bytes).collect { String.format('%02x', it) }.join()
+    if (digest != sherpaSha256) {
+      aarFile.delete()
+      throw new GradleException("Sherpa-ONNX ${sherpaVersion} checksum mismatch")
+    }
+
+    def outputDir = sherpaOutput.get().asFile
+    outputDir.mkdirs()
+    def archive = new ZipFile(aarFile)
+    try {
+      def classes = archive.getEntry('classes.jar')
+      if (classes == null) throw new GradleException('Sherpa-ONNX AAR does not contain classes.jar')
+      archive.getInputStream(classes).withCloseable { input ->
+        new File(outputDir, "sherpa-onnx-${sherpaVersion}.jar").withOutputStream { output -> output << input }
+      }
+
+      // Keep the app focused on current ARM phones/tablets while preserving 32-bit ARM support.
+      ['arm64-v8a', 'armeabi-v7a'].each { abi ->
+        ['libonnxruntime.so', 'libsherpa-onnx-jni.so'].each { library ->
+          def entry = archive.getEntry("jni/${abi}/${library}")
+          if (entry == null) throw new GradleException("Sherpa-ONNX AAR is missing ${abi}/${library}")
+          def target = new File(outputDir, "jniLibs/${abi}/${library}")
+          target.parentFile.mkdirs()
+          archive.getInputStream(entry).withCloseable { input -> target.withOutputStream { output -> output << input } }
+        }
+      }
+    } finally {
+      archive.close()
+    }
+  }
+}
+
+dependencies {
+  api files(sherpaOutput.map { it.file("sherpa-onnx-${sherpaVersion}.jar") })
+}
+
+tasks.named('preBuild').configure { dependsOn(prepareSherpaOnnx) }

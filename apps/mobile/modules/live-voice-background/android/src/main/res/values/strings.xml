@@ -2,4 +2,12 @@
   <string name="live_voice_notification_channel_name">Live Voice</string>
   <string name="live_voice_notification_title">Live Voice is active</string>
   <string name="live_voice_notification_text">Microphone in use for a voice conversation.</string>
+  <string name="live_voice_notification_hang_up">End voice conversation</string>
+  <string name="wake_word_notification_channel_name">Hey OpenBot</string>
+  <string name="wake_word_notification_title">Hey OpenBot</string>
+  <string name="wake_word_notification_listening">Listening on this phone</string>
+  <string name="wake_word_notification_paused">Wake word is paused during your voice conversation</string>
+  <string name="wake_word_notification_detected">Heard you. Tap to start a voice conversation with %1$s.</string>
+  <string name="wake_word_notification_failed">Wake word listening stopped. Open OpenBot to try again.</string>
+  <string name="wake_word_notification_stop">Stop listening</string>
 </resources>

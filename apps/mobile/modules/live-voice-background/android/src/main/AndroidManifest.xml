@@ -1,6 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+  <uses-permission android:name="android.permission.WAKE_LOCK" />
 
   <application>
     <service
@@ -8,5 +10,13 @@
       android:exported="false"
       android:foregroundServiceType="microphone"
       android:stopWithTask="false" />
+    <service
+      android:name="run.openbot.mobile.livevoice.WakeWordForegroundService"
+      android:exported="false"
+      android:foregroundServiceType="microphone"
+      android:stopWithTask="false" />
+    <receiver
+      android:name="run.openbot.mobile.livevoice.LiveVoiceNotificationActionReceiver"
+      android:exported="false" />
   </application>
 </manifest>

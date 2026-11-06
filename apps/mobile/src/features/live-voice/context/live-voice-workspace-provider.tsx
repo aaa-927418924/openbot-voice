@@ -1,6 +1,7 @@
 import { type PropsWithChildren, useMemo } from "react";
 import { useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
 import { MobileLiveVoiceProvider } from "./mobile-live-voice-context";
+import { WakeWordLiveVoiceController } from "./wake-word-live-voice-controller";
 
 export function LiveVoiceWorkspaceProvider({ children }: PropsWithChildren) {
   const workspace = useMobileWorkspace();
@@ -23,6 +24,7 @@ export function LiveVoiceWorkspaceProvider({ children }: PropsWithChildren) {
 
   return (
     <MobileLiveVoiceProvider host={host} servers={workspace.servers}>
+      <WakeWordLiveVoiceController />
       {children}
     </MobileLiveVoiceProvider>
   );

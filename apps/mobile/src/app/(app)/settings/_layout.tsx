@@ -30,6 +30,7 @@ export default function SettingsLayout() {
       <Stack.Screen name="index" options={{ title: t("mobile.app.route.settings") }} />
       <Stack.Screen name="profile" options={{ title: t("mobile.app.route.profile") }} />
       <Stack.Screen name="general" options={{ title: t("mobile.app.route.general") }} />
+      <Stack.Screen name="wake-word" options={{ title: t("mobile.settings.wakeWord.title") }} />
       <Stack.Screen name="theme" options={{ title: t("mobile.settings.home.theme") }} />
       <Stack.Screen name="server-address" options={{ title: t("mobile.settings.identityServer.title") }} />
       <Stack.Protected guard={!session?.localOnly}>
