@@ -127,6 +127,7 @@ import { DynamicIslandFailed, DynamicIslandWindowController, toDynamicIslandFail
 import { githubAppConfig } from "./github-connector-config";
 import { GitHubConnectorService } from "./github-connector-service";
 import { GitHubConnectorStore } from "./github-connector-store";
+import { watchGlobalAgentInstructions } from "./global-agent-instructions-watcher";
 import { HostService } from "./host-service";
 import { HostUpdateCoordinator } from "./host-update-coordinator";
 import { CLIENT_USE_WINDOW_MS, HostedServerActivity } from "./hosted-server-activity";
@@ -312,6 +313,7 @@ const TEARDOWN_ORDER = {
   // Before the agent service, so no script starts a run while the service stops.
   automation: 108,
   storageUsage: 109,
+  globalAgentInstructions: 109.5,
   service: 110,
   localDecisionReviewer: 111,
   mcpOAuth: 111,
@@ -1167,6 +1169,7 @@ export async function createApplicationServices({
     ...(cloudHostMode ? { codexHomeUserDataPath: join(app.getPath("appData"), app.getName()) } : {}),
   });
   codexHome.ensure();
+  const globalInstructionsPath = cloudHostMode ? join(dirname(store.sharedRoot), "AGENTS.md") : undefined;
   const service: AgentService = new AgentService({
     store,
     mailbox,
@@ -1229,11 +1232,28 @@ export async function createApplicationServices({
     remoteDeviceCommands: () => remoteDeviceCommandClient,
     approvalAutomation,
     busyMessageMode: () => busyMessageMode.get().mode,
+    ...(globalInstructionsPath ? { globalInstructionsPath } : {}),
     deleteWithRevokedApproval: (agentId, remove) =>
       approvalAutomation.deleteAgent(agentId, remove).pipe(toAgentRemovalFailed),
     tables,
   });
   teardown.push(TEARDOWN_ORDER.service, "the agent service", () => runCauseEffect(service.stop()));
+  if (globalInstructionsPath) {
+    const stopWatchingGlobalInstructions = watchGlobalAgentInstructions(
+      globalInstructionsPath,
+      () => {
+        void runCauseEffect(service.refreshAllAgentRuntimes()).catch((error) =>
+          logger.warn("OpenBot global AGENTS.md changes did not refresh provider sessions.", toLogValue(error)),
+        );
+      },
+      (error) => logger.warn("Could not watch OpenBot global AGENTS.md.", toLogValue(error)),
+    );
+    teardown.push(
+      TEARDOWN_ORDER.globalAgentInstructions,
+      "the global AGENTS.md watcher",
+      stopWatchingGlobalInstructions,
+    );
+  }
   // Listens only while an agent allows local scripts; see `AutomationServer`.
   const automation = new AutomationServer({
     root: store.automationRoot,

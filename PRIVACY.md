@@ -415,6 +415,12 @@ R2. The Signal service does not proxy them or write them to logs. The host does 
 inbound port. The one thing Signal passes to a host is the Slack events of an agent's Slack app, in
 transit; see [Slack connections](#slack-connections).
 
+On the Linux TUI Cloud host, an administrator may add `AGENTS.md` at `$OPENBOT_DATA_ROOT/AGENTS.md`
+(by default, `~/OpenBot/AGENTS.md`). The host includes its contents in developer instructions for
+every Bot and channel provider session. The file stays on the host, but its text is sent to the
+provider selected by each Bot with that provider's requests; the provider's data and retention
+policies apply. The file is not sent to clients, the account service, or Signal.
+
 An owner or admin of a joined server can manage its host from their own computer, or from the
 browser client at `/app`. A provider API key, a custom endpoint key or header, the code that a
 provider sign-in page shows, and a new server logo then travel from that computer or browser to the host over the same encrypted team connection. The

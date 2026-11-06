@@ -359,6 +359,8 @@ export interface AgentServiceOptions {
    * while memory is low, and only a fixed number of turns run at the same time.
    */
   hostMemory?: HostMemory | null;
+  /** Administrator-managed AGENTS.md path. Set only for the Linux TUI Cloud host. */
+  globalInstructionsPath?: string;
 }
 
 /** How long a user send's `clientMessageId` answers a retry. A retry follows a lost reply, not a day. */
@@ -445,6 +447,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       githubConnector = null,
       hostMemory = null,
       busyMessageMode = () => DEFAULT_BUSY_MESSAGE_MODE,
+      globalInstructionsPath,
     } = options;
     this.#developmentDefaults = developmentDefaults;
     this.#busyMessageMode = busyMessageMode;
@@ -797,6 +800,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           ),
         ),
       passwordVaultConnected: () => options.passwordVault?.connected() ?? false,
+      ...(globalInstructionsPath ? { globalInstructionsPath } : {}),
       hooks: {
         logRecovery: (agentId, provider, outcome) =>
           logger.warn("Recovered an unavailable provider session.", { agentId, provider, outcome }),

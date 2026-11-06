@@ -52,6 +52,7 @@ import {
   summarizeOldMessages,
 } from "./delivery-content";
 import { developerInstructions } from "./developer-instructions";
+import { readGlobalAgentInstructions } from "./global-agent-instructions";
 import {
   decodeCapturedSteps,
   decodeProviderTurns,
@@ -137,6 +138,8 @@ export interface ThreadLifecycleOptions {
   ) => Effect.Effect<ProviderTurnSteps[], ThreadOperationFailed>;
   /** Whether a password vault is connected, read at each start and resume of a session. */
   passwordVaultConnected?: () => boolean;
+  /** Present only on the Linux TUI Cloud host. */
+  globalInstructionsPath?: string;
 }
 
 /**
@@ -162,6 +165,7 @@ export class ThreadLifecycle {
   readonly #agentEnvironment: () => Readonly<Record<string, string>>;
   readonly #readProviderTurns: ThreadLifecycleOptions["readProviderTurns"];
   readonly #passwordVaultConnected: () => boolean;
+  readonly #globalInstructionsPath: string | undefined;
   readonly #pendingHandoffs = new Map<string, string>();
   readonly #pendingRuntimeRefreshes = new Set<string>();
   /**
@@ -187,6 +191,7 @@ export class ThreadLifecycle {
     this.#agentEnvironment = options.agentEnvironment ?? (() => ({}));
     this.#readProviderTurns = options.readProviderTurns;
     this.#passwordVaultConnected = options.passwordVaultConnected ?? (() => false);
+    this.#globalInstructionsPath = options.globalInstructionsPath;
   }
 
   /**
@@ -434,7 +439,7 @@ export class ThreadLifecycle {
           sandbox: codexSandboxMode(agent),
           ...this.#workspaceOnlyParam(agent, client),
           ...this.#computerUseParam(agent, client),
-          developerInstructions: this.#instructions(agent),
+          developerInstructions: yield* this.#instructions(agent),
           ephemeral: false,
           serviceName: "openbot",
           dynamicTools: [...BROWSER_DYNAMIC_TOOLS, OPENBOT_DYNAMIC_TOOLS],
@@ -702,14 +707,23 @@ export class ThreadLifecycle {
   });
 
   /** The developer instructions of a session start or resume, with what is connected now. */
-  #instructions(agent: AgentSummary): string {
-    return developerInstructions(
-      agent,
-      this.#store.sharedRoot,
-      this.#memories.listFor(agent.id),
-      this.#store.automationRoot,
-      { passwordVault: this.#passwordVaultConnected() },
-    );
+  #instructions(agent: AgentSummary): Effect.Effect<string, ThreadOperationFailed> {
+    return Effect.gen({ self: this }, function* () {
+      const instructionsPath = this.#globalInstructionsPath;
+      const globalInstructions = instructionsPath
+        ? yield* threadIo(() => readGlobalAgentInstructions(instructionsPath))
+        : undefined;
+      return developerInstructions(
+        agent,
+        this.#store.sharedRoot,
+        this.#memories.listFor(agent.id),
+        this.#store.automationRoot,
+        {
+          passwordVault: this.#passwordVaultConnected(),
+          ...(globalInstructions ? { globalInstructions } : {}),
+        },
+      );
+    });
   }
 
   /**
@@ -734,7 +748,7 @@ export class ThreadLifecycle {
       sandbox: codexSandboxMode(agent),
       ...this.#workspaceOnlyParam(agent, client),
       ...this.#computerUseParam(agent, client),
-      developerInstructions: this.#instructions(agent),
+      developerInstructions: yield* this.#instructions(agent),
       ...(client.provider === "codex" ? {} : { dynamicTools: [...BROWSER_DYNAMIC_TOOLS, OPENBOT_DYNAMIC_TOOLS] }),
       ...(yield* this.codexConfigEffect(
         agent,
