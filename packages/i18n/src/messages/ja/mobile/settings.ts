@@ -33,6 +33,7 @@ export const messages = {
   "mobile.settings.wakeWord.selectBot": "Bot",
   "mobile.settings.wakeWord.start": "待受を開始",
   "mobile.settings.wakeWord.stop": "待受を停止",
+  "mobile.settings.wakeWord.starting": "マイクを起動しています",
   "mobile.settings.wakeWord.listening": "このスマートフォンで待受中",
   "mobile.settings.wakeWord.pausedCall": "音声会話中は一時停止しています",
   "mobile.settings.wakeWord.heard": "呼びかけを検出しました。音声会話を待っています",

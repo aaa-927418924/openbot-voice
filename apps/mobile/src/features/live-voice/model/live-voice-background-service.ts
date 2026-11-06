@@ -17,6 +17,7 @@ interface LiveVoiceBackgroundServiceModule {
 export interface WakeWordStatus {
   armed: boolean;
   listening: boolean;
+  starting: boolean;
   serverId: string | null;
   agentId: string | null;
   agentName: string | null;
@@ -70,6 +71,7 @@ export async function getWakeWordStatus(): Promise<WakeWordStatus> {
     (await getAndroidModule()?.getWakeWordStatus()) ?? {
       armed: false,
       listening: false,
+      starting: false,
       serverId: null,
       agentId: null,
       agentName: null,

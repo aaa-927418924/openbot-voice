@@ -1,9 +1,11 @@
 package run.openbot.mobile.livevoice
 
 import android.Manifest
+import android.app.ActivityManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.SystemClock
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 
@@ -56,9 +58,27 @@ class LiveVoiceBackgroundModule : Module() {
       val context = appContext.reactContext
         ?: throw IllegalStateException("React context is not available")
       val preferences = WakeWordStore.reconcileBoot(context)
+      val serviceRunning = (context.getSystemService(ActivityManager::class.java)
+        ?.getRunningServices(64)
+        ?.any { it.service.className == WakeWordForegroundService::class.java.name }) == true
+      val startRequestedAt = preferences.getLong(WakeWordStore.KEY_START_REQUESTED_AT, 0L)
+      val startPending = preferences.getBoolean(WakeWordStore.KEY_ARMED, false) &&
+        startRequestedAt > 0L &&
+        SystemClock.elapsedRealtime() - startRequestedAt < WakeWordStore.START_REQUEST_GRACE_MILLIS
+      if (!serviceRunning && !startPending &&
+        (preferences.getBoolean(WakeWordStore.KEY_ARMED, false) ||
+          preferences.getBoolean(WakeWordStore.KEY_LISTENING, false) || startRequestedAt > 0L)
+      ) {
+        preferences.edit()
+          .putBoolean(WakeWordStore.KEY_ARMED, false)
+          .putBoolean(WakeWordStore.KEY_LISTENING, false)
+          .remove(WakeWordStore.KEY_START_REQUESTED_AT)
+          .apply()
+      }
       mapOf(
         "armed" to preferences.getBoolean(WakeWordStore.KEY_ARMED, false),
-        "listening" to preferences.getBoolean(WakeWordStore.KEY_LISTENING, false),
+        "listening" to (serviceRunning && preferences.getBoolean(WakeWordStore.KEY_LISTENING, false)),
+        "starting" to startPending,
         "serverId" to preferences.getString(WakeWordStore.KEY_SERVER_ID, null),
         "agentId" to preferences.getString(WakeWordStore.KEY_AGENT_ID, null),
         "agentName" to preferences.getString(WakeWordStore.KEY_AGENT_NAME, null),
@@ -78,7 +98,11 @@ class LiveVoiceBackgroundModule : Module() {
       ) {
         throw IllegalStateException("Select a Bot before starting wake-word listening")
       }
-      preferences.edit().putBoolean(WakeWordStore.KEY_ARMED, true).apply()
+      preferences.edit()
+        .putBoolean(WakeWordStore.KEY_ARMED, true)
+        .putBoolean(WakeWordStore.KEY_LISTENING, false)
+        .putLong(WakeWordStore.KEY_START_REQUESTED_AT, SystemClock.elapsedRealtime())
+        .apply()
       val intent = Intent(context, WakeWordForegroundService::class.java)
         .setAction(WakeWordForegroundService.ACTION_START)
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -94,6 +118,7 @@ class LiveVoiceBackgroundModule : Module() {
       WakeWordStore.preferences(context).edit()
         .putBoolean(WakeWordStore.KEY_ARMED, false)
         .putBoolean(WakeWordStore.KEY_LISTENING, false)
+        .remove(WakeWordStore.KEY_START_REQUESTED_AT)
         .remove(WakeWordStore.KEY_PENDING_DETECTION_AT)
         .remove(WakeWordStore.KEY_PENDING_SERVER_ID)
         .remove(WakeWordStore.KEY_PENDING_AGENT_ID)
@@ -119,6 +144,9 @@ class LiveVoiceBackgroundModule : Module() {
     AsyncFunction("resumeWakeWord") {
       val context = appContext.reactContext ?: return@AsyncFunction null
       if (WakeWordStore.reconcileBoot(context).getBoolean(WakeWordStore.KEY_ARMED, false)) {
+        WakeWordStore.preferences(context).edit()
+          .putLong(WakeWordStore.KEY_START_REQUESTED_AT, SystemClock.elapsedRealtime())
+          .apply()
         val intent = Intent(context, WakeWordForegroundService::class.java)
           .setAction(WakeWordForegroundService.ACTION_RESUME)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(intent)

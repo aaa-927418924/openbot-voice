@@ -13,6 +13,8 @@ internal object WakeWordStore {
   const val KEY_AGENT_ID = "wake_word_agent_id"
   const val KEY_AGENT_NAME = "wake_word_agent_name"
   const val KEY_AVATAR_HUE = "wake_word_avatar_hue"
+  const val KEY_START_REQUESTED_AT = "wake_word_start_requested_at"
+  const val START_REQUEST_GRACE_MILLIS = 15_000L
   const val KEY_PENDING_DETECTION_AT = "wake_word_pending_detection_at"
   const val KEY_PENDING_SERVER_ID = "wake_word_pending_server_id"
   const val KEY_PENDING_AGENT_ID = "wake_word_pending_agent_id"
@@ -34,6 +36,7 @@ internal object WakeWordStore {
         .putInt(KEY_BOOT_COUNT, bootCount)
         .putBoolean(KEY_ARMED, false)
         .putBoolean(KEY_LISTENING, false)
+        .remove(KEY_START_REQUESTED_AT)
         .remove(KEY_PENDING_DETECTION_AT)
         .remove(KEY_PENDING_SERVER_ID)
         .remove(KEY_PENDING_AGENT_ID)

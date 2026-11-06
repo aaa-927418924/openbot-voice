@@ -32,6 +32,7 @@ export const messages = defineMessages("mobile.settings", {
   "mobile.settings.wakeWord.selectBot": "Bot",
   "mobile.settings.wakeWord.start": "Start listening",
   "mobile.settings.wakeWord.stop": "Stop listening",
+  "mobile.settings.wakeWord.starting": "Starting the microphone",
   "mobile.settings.wakeWord.listening": "Listening on this phone",
   "mobile.settings.wakeWord.pausedCall": "Paused during the voice conversation",
   "mobile.settings.wakeWord.heard": "Wake word heard; waiting for the voice conversation",

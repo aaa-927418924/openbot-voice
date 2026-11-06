@@ -1,8 +1,9 @@
 import * as Notifications from "expo-notifications";
+import { useFocusEffect } from "expo-router";
 import { Typography } from "heroui-native";
 import { useThemeColor } from "heroui-native/hooks";
 import { Check, Mic, MicOff } from "lucide-react-native";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Alert, PermissionsAndroid, Platform } from "react-native";
 import { useMobileLiveVoice } from "@/features/live-voice/context/mobile-live-voice-context";
 import { ensureMicrophonePermission } from "@/features/live-voice/model/android-microphone-permission";
@@ -25,6 +26,7 @@ import { useText } from "@/shared/lib/text";
 const EMPTY_STATUS: WakeWordStatus = {
   armed: false,
   listening: false,
+  starting: false,
   serverId: null,
   agentId: null,
   agentName: null,
@@ -62,9 +64,21 @@ export function WakeWordSettingsScreen() {
     setStatus(await getWakeWordStatus());
   }, []);
 
-  useEffect(() => {
-    void refreshStatus();
-  }, [refreshStatus]);
+  useFocusEffect(
+    useCallback(() => {
+      let focused = true;
+      const pollStatus = async () => {
+        const current = await getWakeWordStatus();
+        if (focused) setStatus(current);
+      };
+      void pollStatus();
+      const interval = setInterval(() => void pollStatus(), 1500);
+      return () => {
+        focused = false;
+        clearInterval(interval);
+      };
+    }, []),
+  );
 
   const selectAgent = useCallback(
     async (agentId: string, serverId: string) => {
@@ -138,11 +152,13 @@ export function WakeWordSettingsScreen() {
 
   const statusText = status.listening
     ? t("mobile.settings.wakeWord.listening")
-    : status.armed
-      ? voiceActive
-        ? t("mobile.settings.wakeWord.pausedCall")
-        : t("mobile.settings.wakeWord.heard")
-      : t("mobile.settings.wakeWord.stopped");
+    : status.starting
+      ? t("mobile.settings.wakeWord.starting")
+      : status.armed
+        ? voiceActive
+          ? t("mobile.settings.wakeWord.pausedCall")
+          : t("mobile.settings.wakeWord.heard")
+        : t("mobile.settings.wakeWord.stopped");
 
   return (
     <SettingsContent>

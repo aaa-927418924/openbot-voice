@@ -6,6 +6,9 @@
   <string name="wake_word_notification_channel_name">Hey OpenBot</string>
   <string name="wake_word_notification_title">Hey OpenBot</string>
   <string name="wake_word_notification_listening">Listening on this phone</string>
+  <string name="wake_word_notification_model_preparing">Microphone is active; preparing the Japanese wake-word model</string>
+  <string name="wake_word_notification_model_download_progress">Microphone is active; downloading the Japanese wake-word model (%1$d%%)</string>
+  <string name="wake_word_notification_model_unavailable">Japanese recognition is unavailable. Listening stopped; retry when a connection is available.</string>
   <string name="wake_word_notification_paused">Wake word is paused during your voice conversation</string>
   <string name="wake_word_notification_detected">Heard you. Tap to start a voice conversation with %1$s.</string>
   <string name="wake_word_notification_failed">Wake word listening stopped. Open OpenBot to try again.</string>
