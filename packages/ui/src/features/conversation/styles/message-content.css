@@ -740,14 +740,15 @@
 }
 
 .message-code-scroll > code {
-  min-width: 100%;
-  width: max-content;
+  width: 100%;
+  min-width: 0;
   display: block;
   font: inherit;
 }
 
 .message-code-line {
   min-height: 19px;
+  min-width: 0;
   display: flex;
 }
 
@@ -764,7 +765,8 @@
 .message-code-line-source {
   min-width: 0;
   padding-right: 12px;
-  white-space: pre;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .message-code-caret {
