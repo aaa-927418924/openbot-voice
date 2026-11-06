@@ -123,6 +123,7 @@ import { DuplicationGate, toAgentDuplicationFailed } from "./agent/duplication-g
 import { decodeProviderTurns } from "./agent/handoff-tool-steps";
 import { type AgentHostedSites, HostedSiteCoordinator } from "./agent/hosted-site-coordinator";
 import { ImageGenRuntime } from "./agent/image-gen-runtime";
+import { isLiveVoiceStopCommand } from "./agent/live-voice-stop-command";
 import { MailboxSync } from "./agent/mailbox-sync";
 import { type GitHubConnectorSource, McpGateway, type TestMcpServerOptions } from "./agent/mcp-gateway";
 import { MemoryHold } from "./agent/memory-hold";
@@ -268,6 +269,7 @@ interface LiveVoiceSession {
   readonly pendingTranscriptItems: CodexTranscriptSegment[];
   readonly spokenTranscriptContext: CodexTranscriptSegment[];
   readonly finish: (status: "closed" | "error") => void;
+  stopCommandPending: boolean;
   startedAt: number | null;
 }
 
@@ -1419,25 +1421,50 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const liveAdapter = new CodexLiveVoiceAdapter({
         client,
         onEvent: (event) => {
-          if (!session || this.#liveVoiceSessions.get(agent.id) !== session) return;
-          if (event.type === "closed") finish(session, "closed");
+          const activeSession = session;
+          if (!activeSession || this.#liveVoiceSessions.get(agent.id) !== activeSession) return;
+          if (event.type === "closed") finish(activeSession, "closed");
           if (event.type === "error") {
             logger.warn("Codex Live voice provider reported a realtime error.", {
               stage: "realtime-event",
               reason: liveVoiceProviderFailureReason(event.message),
             });
             this.emit("liveVoice", {
-              agentId: session.agentId,
-              threadId: session.threadId,
-              sessionId: session.sessionId,
+              agentId: activeSession.agentId,
+              threadId: activeSession.threadId,
+              sessionId: activeSession.sessionId,
               status: "error",
               message: sourceText("error.liveVoice.unavailable"),
             });
           }
           if (event.type === "item") {
-            rememberLiveVoiceTranscript(session, event.item);
-            if (session.startedAt === null) session.pendingTranscriptItems.push(event.item);
-            else this.#persistLiveVoiceTranscript(agent.id, event.item, session.channel);
+            rememberLiveVoiceTranscript(activeSession, event.item);
+            if (activeSession.startedAt === null) activeSession.pendingTranscriptItems.push(event.item);
+            else this.#persistLiveVoiceTranscript(agent.id, event.item, activeSession.channel);
+            if (
+              event.item.role === "user" &&
+              !activeSession.stopCommandPending &&
+              isLiveVoiceStopCommand(event.item.text)
+            ) {
+              activeSession.stopCommandPending = true;
+              logger.info("Codex Live voice stop requested by speech.", {
+                agentId: activeSession.agentId,
+                sessionId: activeSession.sessionId,
+              });
+              void Effect.runPromise(
+                this.stopLiveVoice({
+                  agentId: activeSession.agentId,
+                  threadId: activeSession.threadId,
+                  sessionId: activeSession.sessionId,
+                }),
+              ).catch((error: unknown) => {
+                if (this.#liveVoiceSessions.get(activeSession.agentId) === activeSession)
+                  activeSession.stopCommandPending = false;
+                logger.warn("Codex Live voice could not stop after a spoken command.", {
+                  reason: liveVoiceFailureReason(error),
+                });
+              });
+            }
           }
         },
       });
@@ -1453,6 +1480,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         ...(input.channelId && channelActor ? { channel: { channelId: input.channelId, actor: channelActor } } : {}),
         pendingTranscriptItems: [],
         spokenTranscriptContext: [],
+        stopCommandPending: false,
         startedAt: null,
         finish: (status) => {
           if (session) finish(session, status);
