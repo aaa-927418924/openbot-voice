@@ -16,9 +16,8 @@ export function MobileSearchResultRow({ result }: { result: MobileSearchResult }
   const { t, format } = useText();
   const [muted, controlBackground] = useThemeColor(["muted", "default"]);
   const gate = useContext(ChatNavigationGateContext);
-  // Close the sheet and open the chat through its home row in one routing queue run. The chat then
-  // has the row's zoom source, so it zooms back into the row when it closes. A chat with no row on
-  // the home screen opens with the normal slide.
+  // Close the sheet and open the chat through its home row in one routing queue run. Bot chats open
+  // immediately and use the normal native transition when they close.
   const openChat = () => {
     const agentId = result.agent.id;
     router.back();

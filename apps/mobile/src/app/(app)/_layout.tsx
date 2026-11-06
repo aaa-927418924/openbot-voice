@@ -47,8 +47,7 @@ function AuthenticatedStack() {
         // The chat opens on top of the main screen, so Back returns there and not to an earlier chat.
         if (router.canDismiss()) router.dismissAll();
         if (agentId === null) return;
-        // The home row opens the chat, as it does for search, so the chat zooms from the row avatar
-        // and back. The gate waits until the list shows. A chat without a row opens without zoom.
+        // The gate waits until the connected list settles before opening the chat.
         navigationGate.request(
           () => {
             if (!navigationGate.openFromHome(agentId))
@@ -65,7 +64,7 @@ function AuthenticatedStack() {
       <View className="flex-1" style={{ backgroundColor: customBackground ? "transparent" : background }}>
         <Stack
           initialRouteName="connected"
-          screenListeners={({ route }) =>
+          screenListeners={({ route, navigation }) =>
             route.name === "connected"
               ? {
                   transitionStart: () => navigationGate.start(),
@@ -73,9 +72,16 @@ function AuthenticatedStack() {
                   focus: () => navigationGate.focus(),
                   blur: () => navigationGate.blur(),
                 }
-              : {
-                  gestureCancel: () => navigationGate.cancel(),
-                }
+              : route.name === "chat/[agentId]"
+                ? {
+                    transitionEnd: (event) => {
+                      if (!event.data.closing) navigation.setOptions({ animation: chatScreenAnimation(Platform.OS) });
+                    },
+                    gestureCancel: () => navigationGate.cancel(),
+                  }
+                : {
+                    gestureCancel: () => navigationGate.cancel(),
+                  }
           }
           screenOptions={{
             headerBackButtonDisplayMode: "minimal",
@@ -100,7 +106,8 @@ function AuthenticatedStack() {
           <Stack.Screen
             name="chat/[agentId]"
             options={{
-              animation: chatScreenAnimation(Platform.OS),
+              // Open Bot chats immediately. The route listener restores the ordinary close animation after entry.
+              animation: Platform.OS === "ios" ? "none" : chatScreenAnimation(Platform.OS),
               contentStyle: { backgroundColor: customBackground ? "transparent" : background },
               fullScreenGestureEnabled: false,
               gestureEnabled: true,

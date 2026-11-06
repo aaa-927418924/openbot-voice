@@ -90,8 +90,7 @@ interface AgentListRowProps {
   agent: MobileAgent;
   enableActions?: boolean;
   /**
-   * Opens the chat instead of the row's own link, for a row outside the home list. Such a row
-   * has no zoom source and does not stand in for the home row's avatar.
+   * Opens the chat instead of the row's own link, for a row outside the home list.
    */
   onOpen?: () => void;
   selected?: boolean;
@@ -132,11 +131,9 @@ export function AgentListRow({
   const avatar = onOpen ? (
     bloub
   ) : (
-    <Link.AppleZoom>
-      <AgentPinAvatar agentId={agent.id} location="row" size={60}>
-        {bloub}
-      </AgentPinAvatar>
-    </Link.AppleZoom>
+    <AgentPinAvatar agentId={agent.id} location="row" size={60}>
+      {bloub}
+    </AgentPinAvatar>
   );
 
   const row = (

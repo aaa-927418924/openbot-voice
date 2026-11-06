@@ -1,11 +1,11 @@
-// AppleZoom reveals tappable agent rows before its native return transition ends.
+// The native chat transition can reveal tappable agent rows before it ends.
 // Navigating during that window can lose the first tap when reopening the same chat,
 // so retain it until transitionEnd and route focus have both settled (in either order).
 export function createChatNavigationGate() {
   let transitioning = false;
   let pending: { navigate: () => void; isFocused: () => boolean } | null = null;
-  // The home rows that open each chat. A chat opened from the search sheet goes through its row, so
-  // the chat has the row's zoom source and zooms back into the row when it closes.
+  // The home rows that open each chat. A chat opened from the search sheet goes through its row so
+  // the same routing gate can protect it during the return transition.
   const openers = new Map<string, () => void>();
 
   function flush() {

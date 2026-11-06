@@ -14,14 +14,14 @@ interface LinkPress {
   press(event?: GestureResponderEvent): void;
 }
 
-// Link injects its handler here, including the AppleZoom source parameters.
-// Defer that exact handler rather than recreating navigation with router.push.
+// Link injects its navigation handler here. Defer that exact handler rather than recreating
+// navigation with router.push.
 export function ChatLinkPressable({
   chatId,
   onPress,
   ...props
 }: ComponentProps<typeof Pressable> & {
-  /** Registers this home row, so the search sheet can open the chat with the row's zoom source. */
+  /** Registers this home row so the search sheet can open the chat through the same routing gate. */
   chatId?: string;
 }) {
   const gate = useContext(ChatNavigationGateContext);

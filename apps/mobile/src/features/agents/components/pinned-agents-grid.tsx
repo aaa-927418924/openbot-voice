@@ -100,24 +100,22 @@ function PinnedAgentItem({ agent }: { agent: MobileAgent }) {
           onLongPress={isAndroid ? () => menu.current?.show() : undefined}
           style={({ pressed }) => ({ opacity: pressed ? 0.58 : 1 })}
         >
-          <Link.AppleZoom>
-            <AgentPinAvatar agentId={agent.id} location="pinned" size={72}>
-              <BloubAvatar
-                agentId={agent.id}
-                serverId={agent.serverId}
-                hue={agent.avatarHue}
-                seed={agent.avatarSeed}
-                size={72}
-                animateIdle={false}
+          <AgentPinAvatar agentId={agent.id} location="pinned" size={72}>
+            <BloubAvatar
+              agentId={agent.id}
+              serverId={agent.serverId}
+              hue={agent.avatarHue}
+              seed={agent.avatarSeed}
+              size={72}
+              animateIdle={false}
+            />
+            {isUnread ? (
+              <View
+                className="absolute right-0 top-0 size-3.5 rounded-full border-2 bg-accent"
+                style={{ borderColor: background, backgroundColor: accent }}
               />
-              {isUnread ? (
-                <View
-                  className="absolute right-0 top-0 size-3.5 rounded-full border-2 bg-accent"
-                  style={{ borderColor: background, backgroundColor: accent }}
-                />
-              ) : null}
-            </AgentPinAvatar>
-          </Link.AppleZoom>
+            ) : null}
+          </AgentPinAvatar>
           <View className="w-full gap-0.5">
             <Typography.Paragraph
               type="body-xs"

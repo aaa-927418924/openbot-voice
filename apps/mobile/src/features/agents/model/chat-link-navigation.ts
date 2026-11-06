@@ -13,7 +13,7 @@ export function openChatFromLink({
   navigate: () => void;
   isFocused: () => boolean;
 }) {
-  // The gate protects iOS AppleZoom transitions. Android has no AppleZoom transition, and a stale
+  // The gate protects iOS native chat transitions. Android has no chat transition, and a stale
   // transition state can otherwise swallow taps on every home-list row.
   if (gate && routeName === "connected" && !isAndroid) gate.request(navigate, isFocused);
   else navigate();
