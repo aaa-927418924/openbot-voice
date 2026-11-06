@@ -156,19 +156,12 @@ export const ChannelListRow = memo(function ChannelListRow({
                 opacity: pressed ? 0.58 : 1,
               }}
             >
-              <Link.AppleZoom>
-                <AgentPinAvatar agentId={channel.id} location={pinned ? "pinned" : "row"} size={pinned ? 72 : 60}>
-                  <ChannelAvatar
-                    channel={channel}
-                    agents={agents}
-                    size={pinned ? 72 : 60}
-                    disconnected={disconnected}
-                  />
-                  {pinned && channel.unreadCount > 0 ? (
-                    <View className="absolute right-0 top-0 size-3.5 rounded-full border-2 border-background bg-accent" />
-                  ) : null}
-                </AgentPinAvatar>
-              </Link.AppleZoom>
+              <AgentPinAvatar agentId={channel.id} location={pinned ? "pinned" : "row"} size={pinned ? 72 : 60}>
+                <ChannelAvatar channel={channel} agents={agents} size={pinned ? 72 : 60} disconnected={disconnected} />
+                {pinned && channel.unreadCount > 0 ? (
+                  <View className="absolute right-0 top-0 size-3.5 rounded-full border-2 border-background bg-accent" />
+                ) : null}
+              </AgentPinAvatar>
               {pinned ? (
                 <View className="w-full gap-0.5">
                   <Typography.Paragraph

@@ -72,7 +72,7 @@ function AuthenticatedStack() {
                   focus: () => navigationGate.focus(),
                   blur: () => navigationGate.blur(),
                 }
-              : route.name === "chat/[agentId]"
+              : route.name === "chat/[agentId]" || route.name === "channel/[channelId]"
                 ? {
                     transitionEnd: (event) => {
                       if (!event.data.closing) navigation.setOptions({ animation: chatScreenAnimation(Platform.OS) });
@@ -140,7 +140,8 @@ function AuthenticatedStack() {
           <Stack.Screen
             name="channel/[channelId]"
             options={{
-              animation: chatScreenAnimation(Platform.OS),
+              // Open channel chats immediately. The route listener restores the ordinary close animation after entry.
+              animation: Platform.OS === "ios" ? "none" : chatScreenAnimation(Platform.OS),
               contentStyle: { backgroundColor: customBackground ? "transparent" : background },
               fullScreenGestureEnabled: false,
               gestureEnabled: true,
