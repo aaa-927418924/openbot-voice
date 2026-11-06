@@ -17,11 +17,13 @@ import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import android.os.Process
+import android.util.Log
 import com.k2fsa.sherpa.onnx.FeatureConfig
 import com.k2fsa.sherpa.onnx.KeywordSpotter
 import com.k2fsa.sherpa.onnx.KeywordSpotterConfig
 import com.k2fsa.sherpa.onnx.OnlineModelConfig
 import com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig
+import kotlin.math.sqrt
 
 class WakeWordForegroundService : Service() {
   @Volatile private var captureRequested = false
@@ -143,6 +145,7 @@ class WakeWordForegroundService : Service() {
 
     try {
       Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO)
+      Log.i(TAG, "Initializing on-device keyword spotter; threshold=$KEYWORD_THRESHOLD")
       val minimumBuffer = AudioRecord.getMinBufferSize(
         SAMPLE_RATE,
         AudioFormat.CHANNEL_IN_MONO,
@@ -168,11 +171,12 @@ class WakeWordForegroundService : Service() {
             bpeVocab = "wake-word/bpe.model",
           ),
           keywordsFile = "wake-word/keywords.txt",
-          keywordsScore = 2.0f,
-          keywordsThreshold = 0.4f,
+          keywordsScore = KEYWORD_SCORE,
+          keywordsThreshold = KEYWORD_THRESHOLD,
         ),
       )
       stream = spotter.createStream()
+      Log.i(TAG, "Keyword spotter initialized")
 
       recorder = AudioRecord(
         MediaRecorder.AudioSource.VOICE_RECOGNITION,
@@ -184,8 +188,13 @@ class WakeWordForegroundService : Service() {
       if (recorder.state != AudioRecord.STATE_INITIALIZED) throw IllegalStateException("Microphone is unavailable")
       audioRecord = recorder
       recorder.startRecording()
+      Log.i(TAG, "Microphone capture active at ${SAMPLE_RATE}Hz")
 
       val pcm = ShortArray(FRAME_SAMPLES)
+      var levelWindowStartedAt = android.os.SystemClock.elapsedRealtime()
+      var levelSampleCount = 0L
+      var levelSquares = 0.0
+      var peakSample = 0
       while (captureRequested && generation == captureGeneration) {
         val count = recorder.read(pcm, 0, pcm.size, AudioRecord.READ_BLOCKING)
         if (count == AudioRecord.ERROR_DEAD_OBJECT || count == AudioRecord.ERROR_INVALID_OPERATION || count < 0) {
@@ -193,10 +202,28 @@ class WakeWordForegroundService : Service() {
         }
         if (count == 0) continue
 
-        val samples = FloatArray(count) { index -> pcm[index] / 32768.0f }
+        val samples = FloatArray(count) { index ->
+          val normalized = pcm[index] / 32768.0f
+          levelSquares += normalized.toDouble() * normalized.toDouble()
+          peakSample = maxOf(peakSample, kotlin.math.abs(pcm[index].toInt()))
+          normalized
+        }
+        levelSampleCount += count
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - levelWindowStartedAt >= LEVEL_LOG_INTERVAL_MILLIS) {
+          val rmsPercent = if (levelSampleCount == 0L) 0 else (sqrt(levelSquares / levelSampleCount.toDouble()) * 100).toInt()
+          val peakPercent = peakSample * 100 / Short.MAX_VALUE.toInt()
+          Log.i(TAG, "Microphone input level (no audio stored): rmsPercent=$rmsPercent peakPercent=$peakPercent")
+          levelWindowStartedAt = now
+          levelSampleCount = 0
+          levelSquares = 0.0
+          peakSample = 0
+        }
         stream.acceptWaveform(samples, SAMPLE_RATE)
         while (spotter.isReady(stream)) spotter.decode(stream)
-        if (spotter.getResult(stream).keyword.isNotBlank()) {
+        val keyword = spotter.getResult(stream).keyword
+        if (keyword.isNotBlank()) {
+          Log.i(TAG, "Wake word detected: $keyword")
           detected = true
           captureRequested = false
           preferences.edit()
@@ -208,9 +235,11 @@ class WakeWordForegroundService : Service() {
           break
         }
       }
-    } catch (_: SecurityException) {
+    } catch (error: SecurityException) {
+      Log.e(TAG, "Microphone permission denied during wake-word capture", error)
       failed = true
-    } catch (_: Exception) {
+    } catch (error: Exception) {
+      Log.e(TAG, "Wake-word capture failed", error)
       failed = true
     } finally {
       try {
@@ -353,5 +382,9 @@ class WakeWordForegroundService : Service() {
     private const val STOP_REQUEST_CODE = 5703
     private const val SAMPLE_RATE = 16_000
     private const val FRAME_SAMPLES = 512
+    private const val KEYWORD_SCORE = 2.0f
+    private const val KEYWORD_THRESHOLD = 0.25f
+    private const val LEVEL_LOG_INTERVAL_MILLIS = 10_000L
+    private const val TAG = "OpenBotWakeWord"
   }
 }
