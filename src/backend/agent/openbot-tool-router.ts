@@ -93,6 +93,8 @@ export interface OpenBotToolRouterHooks {
   interrupt(agentId: string, turnId: string, mayStop: () => boolean): Effect.Effect<boolean, ToolOperationFailed>;
   /** Epoch milliseconds from the turn lifecycle; null when this process has not seen the event. */
   turnActivity(agentId: string, turnId: string | null): { startedAt: number | null; lastEventAt: number | null };
+  /** Schedules an end only when this provider thread owns the active Live Voice call. */
+  requestLiveVoiceStop?(agentId: string, providerThreadId: string): boolean;
 }
 
 export interface OpenBotToolRouterOptions {
@@ -406,6 +408,12 @@ export class OpenBotToolRouter {
   ) {
     const senderAgentId = this.#conversation.agentForThread(params.threadId);
     if (!senderAgentId) throw new Error("The sending OpenBot agent is unknown.");
+
+    if (params.tool === "end_live_voice") {
+      return (this.#hooks.requestLiveVoiceStop?.(senderAgentId, params.threadId) ?? false)
+        ? openBotToolResult({ status: "ending" })
+        : openBotToolFailure("There is no active Live Voice call on this conversation.");
+    }
 
     if (isRemoteDeviceTool(params.tool)) {
       return yield* Effect.promise(() =>

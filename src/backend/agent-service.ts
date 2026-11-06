@@ -1169,6 +1169,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           startedAt: turnId ? this.#turn.turnStartedAt(turnId) : null,
           lastEventAt: this.#turn.lastEventAt(agentId),
         }),
+        requestLiveVoiceStop: (agentId, providerThreadId) =>
+          this.#scheduleLiveVoiceStop(agentId, providerThreadId, "model-tool"),
       },
     });
   }
@@ -1446,24 +1448,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
               !activeSession.stopCommandPending &&
               isLiveVoiceStopCommand(event.item.text)
             ) {
-              activeSession.stopCommandPending = true;
-              logger.info("Codex Live voice stop requested by speech.", {
-                agentId: activeSession.agentId,
-                sessionId: activeSession.sessionId,
-              });
-              void Effect.runPromise(
-                this.stopLiveVoice({
-                  agentId: activeSession.agentId,
-                  threadId: activeSession.threadId,
-                  sessionId: activeSession.sessionId,
-                }),
-              ).catch((error: unknown) => {
-                if (this.#liveVoiceSessions.get(activeSession.agentId) === activeSession)
-                  activeSession.stopCommandPending = false;
-                logger.warn("Codex Live voice could not stop after a spoken command.", {
-                  reason: liveVoiceFailureReason(error),
-                });
-              });
+              this.#scheduleLiveVoiceStop(activeSession.agentId, activeSession.providerThreadId, "transcript-fallback");
             }
           }
         },
@@ -1548,6 +1533,38 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       Effect.ensuring(Effect.asVoid(Deferred.succeed(reservation.completed, undefined))),
     );
   }).bind(this);
+
+  #scheduleLiveVoiceStop(
+    agentId: string,
+    providerThreadId: string,
+    source: "model-tool" | "transcript-fallback",
+  ): boolean {
+    const session = this.#liveVoiceSessions.get(agentId);
+    if (!session || session.providerThreadId !== providerThreadId) return false;
+    if (session.stopCommandPending) return true;
+
+    session.stopCommandPending = true;
+    logger.info("Codex Live voice stop requested.", {
+      agentId: session.agentId,
+      sessionId: session.sessionId,
+      source,
+    });
+    setImmediate(() => {
+      void Effect.runPromise(
+        this.stopLiveVoice({
+          agentId: session.agentId,
+          threadId: session.threadId,
+          sessionId: session.sessionId,
+        }),
+      ).catch((error: unknown) => {
+        if (this.#liveVoiceSessions.get(session.agentId) === session) session.stopCommandPending = false;
+        logger.warn("Codex Live voice could not stop after a spoken request.", {
+          reason: liveVoiceFailureReason(error),
+        });
+      });
+    });
+    return true;
+  }
 
   readonly stopLiveVoice = Effect.fn("AgentService.stopLiveVoice")(function* (
     this: AgentService,

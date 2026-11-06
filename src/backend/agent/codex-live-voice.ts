@@ -20,7 +20,7 @@ const LIVE_VOICE_INITIAL_ITEMS = [
 ];
 
 const LIVE_VOICE_START_INSTRUCTIONS =
-  "Treat each spoken request in this thread's Live Voice conversation as user intent and use the complete request with available Codex tools. Return progress and the result through this same conversation. Composer messages are submitted as user turns directly to this same Codex thread; do not ask the user to repeat them or hand off the same typed message again. Keep later spoken requests working normally.";
+  "Treat each spoken request in this thread's Live Voice conversation as user intent and use the complete request with available Codex tools. Return progress and the result through this same conversation. Composer messages are submitted as user turns directly to this same Codex thread; do not ask the user to repeat them or hand off the same typed message again. Keep later spoken requests working normally. If the user clearly intends to end the current voice call, call openbot.end_live_voice immediately. Detect intent from meaning, including natural paraphrases and minor speech-recognition errors; do not require an exact phrase. Do not call it when the user is discussing the wording, asking hypothetically, or asking to stop a different task. Do not make the user end the call manually.";
 
 const LIVE_VOICE_END_INSTRUCTIONS =
   "When Live Voice ends, return to normal text responses. Continue any delegated work already running in this conversation and report its result here when it finishes. Do not re-review or repeat completed work, or produce a closing recap just because the session ended.";

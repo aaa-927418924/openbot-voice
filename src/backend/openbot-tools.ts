@@ -32,6 +32,12 @@ export const OPENBOT_TOOL_DEFINITIONS: readonly OpenBotToolDefinition[] = [
   ...LOCAL_SKILL_TOOL_DEFINITIONS,
   ...REMOTE_DEVICE_TOOL_DEFINITIONS,
   {
+    name: "end_live_voice",
+    description:
+      "End the current Live Voice call when the user clearly asks to stop, end, hang up, or finish this voice conversation. Understand natural paraphrases and minor speech-recognition errors; do not call this when the user is discussing a phrase, asking a hypothetical question, or asking to end something else.",
+    shape: {},
+  },
+  {
     name: "list_sites",
     description:
       "List the static sites of this OpenBot server, with its site limit and the slots in use. Use this before retrying a hosting mutation.",
