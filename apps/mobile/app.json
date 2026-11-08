@@ -14,6 +14,7 @@
       "requireFullScreen": false,
       "associatedDomains": ["applinks:openbot.run"],
       "infoPlist": {
+        "UIBackgroundModes": ["audio"],
         "NSLocalNetworkUsageDescription": "Allow OpenBot to connect to your desktop during local development.",
         "NSAppTransportSecurity": {
           "NSAllowsLocalNetworking": true,
@@ -66,7 +67,7 @@
         "expo-camera",
         {
           "cameraPermission": "Allow OpenBot to use your camera to scan QR codes.",
-          "microphonePermission": "Allow OpenBot to use the microphone to dictate messages.",
+          "microphonePermission": "Allow OpenBot to use the microphone for voice conversations and dictation.",
           "recordAudioAndroid": false,
           "barcodeScannerEnabled": true
         }
@@ -76,7 +77,7 @@
         {
           "photosPermission": "Allow OpenBot to access the photos you choose to share.",
           "cameraPermission": "Allow OpenBot to use your camera to add photos.",
-          "microphonePermission": "Allow OpenBot to use the microphone to dictate messages."
+          "microphonePermission": "Allow OpenBot to use the microphone for voice conversations and dictation."
         }
       ],
       [
@@ -106,7 +107,7 @@
       [
         "expo-speech-recognition",
         {
-          "microphonePermission": "Allow OpenBot to use the microphone to dictate messages.",
+          "microphonePermission": "Allow OpenBot to use the microphone for voice conversations and dictation.",
           "speechRecognitionPermission": "Allow OpenBot to turn your speech into message text."
         }
       ],

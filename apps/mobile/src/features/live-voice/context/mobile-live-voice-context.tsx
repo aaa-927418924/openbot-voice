@@ -435,7 +435,8 @@ export function MobileLiveVoiceProvider({
   const originServer = origin ? servers.find((server) => server.id === origin.target.serverId) : undefined;
   const liveVoiceContextAvailable = isMobileLiveVoiceContextAvailable(origin, {
     foreground,
-    backgroundSupported: isLiveVoiceBackgroundServiceAvailable(),
+    // iOS uses the audio background mode in app.json; Android needs its native service.
+    backgroundSupported: Platform.OS === "ios" || isLiveVoiceBackgroundServiceAvailable(),
     serverOnline: originServer?.state === "online",
   });
   useEffect(() => {
@@ -479,6 +480,8 @@ export function MobileLiveVoiceProvider({
           currentSessionId={origin?.sessionId ?? null}
           dom={{
             ...expoGoDomOptions,
+            // The bundled Live Voice DOM can capture audio; deny requests from other hosts.
+            mediaCapturePermissionGrantType: Platform.OS === "ios" ? "grantIfSameHostElseDeny" : undefined,
             webviewDebuggingEnabled: true,
             injectedJavaScript: `window.ReactNativeWebView?.postMessage(JSON.stringify({type:${JSON.stringify(LIVE_VOICE_DOM_DIAGNOSTIC_TYPE)},buildId:${JSON.stringify(LIVE_VOICE_DIAGNOSTIC_BUILD_ID)},stage:"webview-page-finished",hasProps:typeof window.$$EXPO_INITIAL_PROPS!=="undefined",hasBridge:typeof window.ReactNativeWebView!=="undefined"}));true;`,
             onLoadEnd: () =>

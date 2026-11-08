@@ -4,3 +4,4 @@
 - Load Cloud Remote Desktop from the host's API address when its session advertises a loopback viewer URL.
 - Show a Cloud icon beside hosted server names.
 - Open Bot and channel chats without an entry animation while keeping their close transitions and other animations.
+- Keep an iOS voice conversation active when you lock the screen or switch apps. After you allow microphone access, the Live Voice screen no longer asks for WebView microphone permission on every call.
