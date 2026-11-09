@@ -61,6 +61,7 @@ export function AgentEventBridge() {
     autoMarkAgentMessageRead,
     applyConversationDelta,
     applyConversationPage,
+    resyncOpenAgentConversation,
     markReplyCompleted,
     clearRecentReply,
   } = useConversation();
@@ -216,6 +217,10 @@ export function AgentEventBridge() {
           markReplyCompleted(event.agentId);
           playCompletionSoundForAgentEvent(event, agentList());
         }
+        // The reply is finished, but the invalidation that carries its final text can be missed or
+        // arrive as a page older than the last streamed revision. Reload the open chat so a turn
+        // that ended without its last words is shown whole.
+        resyncOpenAgentConversation(event.agentId);
         return;
       case "prompt":
         setPendingPrompts((current) => ({ ...current, [event.agentId]: event }));
@@ -248,6 +253,10 @@ export function AgentEventBridge() {
       case "runtime-snapshot":
         void channels.refresh();
         applyAgentRuntimeSnapshot(event.snapshot);
+        // This snapshot is what a reconnect has instead of the events it missed, and its latest
+        // message text is capped. Reload the open chat's page so a reply that streamed while the
+        // socket was down shows its full tail instead of only the snapshot's beginning.
+        resyncOpenAgentConversation();
         return;
       case "browser-takeover-requested":
         setPendingPrompts((current) => ({

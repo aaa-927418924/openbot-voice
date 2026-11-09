@@ -7,6 +7,7 @@ import { AppAccessGate } from "./AppView";
 import { AppProviders } from "./app-providers";
 import {
   AGENTS,
+  agentReply,
   attachment,
   confirmOnboardingModel,
   emitAgentEvent,
@@ -16,6 +17,7 @@ import {
   installOpenbotStub,
   queuedDelivery,
   subscriberCounts,
+  testConversationPage,
   testServer,
   trackAnalytics,
 } from "./app-test-harness";
@@ -659,6 +661,67 @@ describe("OpenBot connected desktop shell", () => {
         message: { messageId: "reply-new", text: "Reply from offline work" },
       }),
     );
+  });
+
+  it("reloads the open chat after a runtime snapshot so a reconnect keeps the reply's tail", async () => {
+    installOpenbotStub();
+    const tail =
+      "。Anthropic自身も、普段の作業は Opus 5.5 から始め、難度の高い大きな課題で Fable に切り替える使い方を勧めている。";
+    const full = `Fable 5.2 は、5.1 から大きく伸びた。${tail}`;
+    const createdAt = "2026-11-09T22:09:27.000Z";
+    let page = testConversationPage("chief", [
+      agentReply("reply-1", "Fable 5.2 は、5.1 から大きく伸びた。", createdAt),
+    ]);
+    vi.mocked(window.openbot.agent.readConversationPage).mockImplementation(async () => page);
+    render(() => <App />);
+    await screen.findByText("Fable 5.2 は、5.1 から大きく伸びた。");
+    const callsBeforeSnapshot = vi.mocked(window.openbot.agent.readConversationPage).mock.calls.length;
+
+    page = testConversationPage("chief", [agentReply("reply-1", full, createdAt)], { revision: 2 });
+    emitAgentEvent?.({
+      type: "runtime-snapshot",
+      snapshot: {
+        agents: [],
+        activeTurns: [],
+        work: [],
+        latestMessages: [{ agentId: "chief", id: "reply-1", text: "Fable 5.2 は、5.1 から大きく伸びた。", createdAt }],
+        attentionComplete: true,
+        pendingPrompts: [],
+        pendingApprovals: [],
+        pendingBrowserTakeovers: [],
+        failedTurns: [],
+      },
+    });
+
+    expect(await screen.findByText(full)).toBeInTheDocument();
+    expect(vi.mocked(window.openbot.agent.readConversationPage).mock.calls.length).toBeGreaterThan(callsBeforeSnapshot);
+  });
+
+  it("reloads the open chat when a turn completes after a missed invalidation", async () => {
+    installOpenbotStub();
+    const tail =
+      "。Anthropic自身も、普段の作業は Opus 5.5 から始め、難度の高い大きな課題で Fable に切り替える使い方を勧めている。";
+    const full = `Fable 5.2 は、5.1 から大きく伸びた。${tail}`;
+    const createdAt = "2026-11-09T22:09:27.000Z";
+    let page = testConversationPage("chief", [
+      agentReply("reply-1", "Fable 5.2 は、5.1 から大きく伸びた。", createdAt),
+    ]);
+    vi.mocked(window.openbot.agent.readConversationPage).mockImplementation(async () => page);
+    render(() => <App />);
+    await screen.findByText("Fable 5.2 は、5.1 から大きく伸びた。");
+    const callsBeforeTurnEnd = vi.mocked(window.openbot.agent.readConversationPage).mock.calls.length;
+
+    page = testConversationPage("chief", [agentReply("reply-1", full, createdAt)], { revision: 2 });
+    emitAgentEvent?.({
+      type: "turn-completed",
+      agentId: "chief",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      status: "completed",
+    });
+
+    expect(await screen.findByText(full)).toBeInTheDocument();
+    expect(vi.mocked(window.openbot.agent.readConversationPage).mock.calls.length).toBeGreaterThan(callsBeforeTurnEnd);
   });
 
   it("keeps muted servers out of the notch and returns one the moment it is unmuted", async () => {

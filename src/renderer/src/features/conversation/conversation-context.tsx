@@ -241,6 +241,7 @@ const Conversation = createSimpleContext({
 
     function applyRuntimeMessages(messages: AgentRuntimeSnapshot["latestMessages"]): void {
       const agentIds = new Set(messages.map((message) => message.agentId));
+      const added = new Set<string>();
       // The draft includes pending page writes from this event batch. Outside
       // the setter, store keys can precede their committed conversation values.
       setConversations((current) => {
@@ -249,14 +250,30 @@ const Conversation = createSimpleContext({
         );
         const next = appendLatestRuntimeMessages(currentMessages, messages);
         for (const agentId of agentIds) {
+          const before = new Set((currentMessages[agentId] ?? []).map((message) => message.id));
           current[agentId] ??= { messages: [] };
           current[agentId].messages = next[agentId] ?? [];
+          for (const message of current[agentId].messages) {
+            if (!before.has(message.id)) added.add(agentMessageKey(agentId, message.id));
+          }
           if (agentId !== activeAgentId()) trimToLatestPage(current[agentId]);
         }
       });
-      for (const agentId of agentIds) deleteAgentMessageBodies(rawAgentMessageBodies, agentId);
+      for (const agentId of agentIds) {
+        const kept = new Set(
+          (conversations[agentId]?.messages ?? []).map((message) => agentMessageKey(agentId, message.id)),
+        );
+        for (const key of rawAgentMessageBodies.keys()) {
+          if (key.startsWith(`${agentId}\0`) && !kept.has(key)) rawAgentMessageBodies.delete(key);
+        }
+      }
+      // The snapshot's copy of a message is capped at AGENT_RUNTIME_TEXT_LIMIT, so it may seed a
+      // message this renderer is meeting for the first time but must not replace the raw body of a
+      // message it already holds: the next streaming delta would then drop the text between the cap
+      // and the stream's position.
       for (const message of messages) {
-        rawAgentMessageBodies.set(agentMessageKey(message.agentId, message.id), message.text);
+        const key = agentMessageKey(message.agentId, message.id);
+        if (added.has(key)) rawAgentMessageBodies.set(key, message.text);
       }
     }
 
@@ -701,6 +718,17 @@ const Conversation = createSimpleContext({
       applyConversationPage(page, "replace", "latest");
     }
 
+    /**
+     * Reloads the open chat from its latest page. The runtime snapshot main sends after a
+     * reconnect carries only the capped start of the latest reply, so a reply that streamed while
+     * the socket was down would otherwise keep its truncated tail until the chat is reopened.
+     */
+    function resyncOpenAgentConversation(agentId = activeAgent()?.id): void {
+      if (!agentId || activeAgent()?.id !== agentId) return;
+      if (!conversations[agentId] || !isAgentChatOpen(agentId)) return;
+      void loadLatestAgentMessages(agentId).catch(() => undefined);
+    }
+
     async function loadAgentMessagePage(agentId: string, messageId: string): Promise<ConversationPage | null> {
       const request = (conversationPageRequests.get(agentId) ?? 0) + 1;
       conversationPageRequests.set(agentId, request);
@@ -941,6 +969,7 @@ const Conversation = createSimpleContext({
       applyConversationPage,
       loadOlderAgentMessages,
       loadLatestAgentMessages,
+      resyncOpenAgentConversation,
       loadAgentMessagePage,
       pruneInactiveAgentHistory,
       markReplyCompleted,
