@@ -16,6 +16,7 @@ import { useBrowserTabs } from "../browser/browser-context";
 import { useChannels } from "../channels/channels-context";
 import { useConversation } from "../conversation/conversation-context";
 import { useConversationController } from "../conversation/conversation-controller-context";
+import { recordTurnCompleted } from "../conversation/conversation-diagnostics";
 import { agentConversationKey, composerDraftKey, promptRequestKey } from "../conversation/conversation-keys";
 import { latestIncomingConversationMessage } from "../conversation/conversation-read-state";
 import { useServers } from "../servers/servers-context";
@@ -183,6 +184,7 @@ export function AgentEventBridge() {
         }));
         return;
       case "turn-completed":
+        recordTurnCompleted(event.agentId, event.turnId, event.status);
         completedTurnByAgent.set(event.agentId, event.turnId);
         // A listQueue request can have started before completion and return this stale turn later.
         queueSnapshotRequests.set(event.agentId, (queueSnapshotRequests.get(event.agentId) ?? 0) + 1);
@@ -220,7 +222,7 @@ export function AgentEventBridge() {
         // The reply is finished, but the invalidation that carries its final text can be missed or
         // arrive as a page older than the last streamed revision. Reload the open chat so a turn
         // that ended without its last words is shown whole.
-        resyncOpenAgentConversation(event.agentId);
+        resyncOpenAgentConversation(event.agentId, "turn_completed");
         return;
       case "prompt":
         setPendingPrompts((current) => ({ ...current, [event.agentId]: event }));
@@ -256,7 +258,7 @@ export function AgentEventBridge() {
         // This snapshot is what a reconnect has instead of the events it missed, and its latest
         // message text is capped. Reload the open chat's page so a reply that streamed while the
         // socket was down shows its full tail instead of only the snapshot's beginning.
-        resyncOpenAgentConversation();
+        resyncOpenAgentConversation(undefined, "runtime_snapshot");
         return;
       case "browser-takeover-requested":
         setPendingPrompts((current) => ({

@@ -846,6 +846,7 @@ const openbotApi: OpenBotDesktopApi = {
     exportData: decodeExportResult,
     exportDiagnostics: decodeExportResult,
     exportRemoteDesktopSupportLog: decodeExportResult,
+    recordDiagnostic: decodeVoid,
   }),
   servers: {
     ...serversGroup,

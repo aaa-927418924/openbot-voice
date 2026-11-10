@@ -1720,6 +1720,7 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
       exportData: async () => ({ saved: true }),
       exportDiagnostics: async () => ({ saved: true }),
       exportRemoteDesktopSupportLog: async () => ({ saved: true }),
+      recordDiagnostic: async () => undefined,
     },
     servers: mockTeam.servers,
     serverMigration: {

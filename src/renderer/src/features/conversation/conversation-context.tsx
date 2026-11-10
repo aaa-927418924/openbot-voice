@@ -32,6 +32,13 @@ import { useServers } from "../servers/servers-context";
 import { notifyTeamTyping } from "../team/team-typing";
 import { useUsage } from "../usage/usage-context";
 import {
+  recordDelta,
+  recordPageApplied,
+  recordPageFailed,
+  recordResync,
+  recordRuntimeMessages,
+} from "./conversation-diagnostics";
+import {
   agentConversationKey,
   agentMessageKey,
   deleteAgentMessageBodies,
@@ -96,7 +103,7 @@ const Conversation = createSimpleContext({
   init: () => {
     const usage = useUsage();
     const { appFocused } = usePlatform();
-    const { activeServerId } = useServers();
+    const { activeServer, activeServerId } = useServers();
     const { agentChatsToMarkRead, agentChatsToRetryRead, autoReadAgentMessages } = useAgentReadTracking();
     const scopeIsCurrent = createScopeGuard();
     const { activeDirectMemberId } = useDirectMessages();
@@ -259,6 +266,7 @@ const Conversation = createSimpleContext({
           if (agentId !== activeAgentId()) trimToLatestPage(current[agentId]);
         }
       });
+      for (const agentId of agentIds) recordRuntimeMessages(agentId, messages);
       for (const agentId of agentIds) {
         const kept = new Set(
           (conversations[agentId]?.messages ?? []).map((message) => agentMessageKey(agentId, message.id)),
@@ -424,7 +432,19 @@ const Conversation = createSimpleContext({
     }
 
     function applyConversationDelta(event: Extract<AgentEvent, { type: "conversation-delta" }>) {
-      if (event.revision <= (conversations[event.agentId]?.revision ?? -1)) return;
+      const revisionBefore = conversations[event.agentId]?.revision ?? -1;
+      if (event.revision <= revisionBefore) {
+        recordDelta({
+          agentId: event.agentId,
+          messageId: event.messageId,
+          revision: event.revision,
+          applied: false,
+          deltaLength: event.delta.length,
+          bodyBefore: 0,
+          bodyAfter: 0,
+        });
+        return;
+      }
       const pendingSnapshot = pendingConversationSnapshots.get(event.agentId);
       if (pendingSnapshot) {
         if (event.revision <= pendingSnapshot.revision) return;
@@ -441,12 +461,22 @@ const Conversation = createSimpleContext({
           ? undefined
           : messages.find((message) => message.kind === "thinking" && message.itemIds?.includes(event.messageId));
         const thinkingItemIndex = thinking?.itemIds?.indexOf(event.messageId) ?? -1;
-        const rawBody =
-          (rawAgentMessageBodies.get(messageKey) ??
-            existing?.body ??
-            (thinkingItemIndex >= 0 ? thinking?.items?.[thinkingItemIndex] : "") ??
-            "") + event.delta;
+        const bodyBefore =
+          rawAgentMessageBodies.get(messageKey) ??
+          existing?.body ??
+          (thinkingItemIndex >= 0 ? thinking?.items?.[thinkingItemIndex] : "") ??
+          "";
+        const rawBody = bodyBefore + event.delta;
         rawAgentMessageBodies.set(messageKey, rawBody);
+        recordDelta({
+          agentId: event.agentId,
+          messageId: event.messageId,
+          revision: event.revision,
+          applied: true,
+          deltaLength: event.delta.length,
+          bodyBefore: bodyBefore.length,
+          bodyAfter: rawBody.length,
+        });
         if (existing) {
           updateStored(existing, {
             ...existing,
@@ -589,7 +619,26 @@ const Conversation = createSimpleContext({
       merge: "replace" | "older" | "latest",
       windowMode?: "latest" | "around",
     ): boolean {
-      if (page.revision < (conversations[page.agentId]?.revision ?? -1)) return false;
+      const previousRevision = conversations[page.agentId]?.revision ?? null;
+      if (page.revision < (previousRevision ?? -1)) {
+        recordPageApplied({
+          agentId: page.agentId,
+          merge,
+          windowMode: windowMode ?? null,
+          page,
+          previousRevision,
+          applied: false,
+        });
+        return false;
+      }
+      recordPageApplied({
+        agentId: page.agentId,
+        merge,
+        windowMode: windowMode ?? null,
+        page,
+        previousRevision,
+        applied: true,
+      });
       for (const message of page.messages) {
         const key = agentMessageKey(page.agentId, message.id);
         if (message.author !== "user" && message.status === "streaming") rawAgentMessageBodies.set(key, message.text);
@@ -723,11 +772,36 @@ const Conversation = createSimpleContext({
      * reconnect carries only the capped start of the latest reply, so a reply that streamed while
      * the socket was down would otherwise keep its truncated tail until the chat is reopened.
      */
-    function resyncOpenAgentConversation(agentId = activeAgent()?.id): void {
+    function resyncOpenAgentConversation(
+      agentId = activeAgent()?.id,
+      reason: "turn_completed" | "runtime_snapshot" | "focus" | "reconnect" = "runtime_snapshot",
+    ): void {
       if (!agentId || activeAgent()?.id !== agentId) return;
       if (!conversations[agentId] || !isAgentChatOpen(agentId)) return;
-      void loadLatestAgentMessages(agentId).catch(() => undefined);
+      recordResync(agentId, reason);
+      void loadLatestAgentMessages(agentId).catch((error) => recordPageFailed(agentId, error));
     }
+
+    // Coming back to the window or to an online host is when a reply that stopped mid-stream is
+    // noticed. Reload the open chat, because a dead socket delivers no event that would.
+    let wasFocused = untrack(() => appFocused());
+    createEffect(
+      () => appFocused(),
+      (focused) => {
+        if (focused && !wasFocused) resyncOpenAgentConversation(undefined, "focus");
+        wasFocused = focused;
+      },
+    );
+    let wasServerState = untrack(() => activeServer()?.state);
+    createEffect(
+      () => activeServer()?.state,
+      (state) => {
+        if (state === "online" && wasServerState !== undefined && wasServerState !== "online") {
+          resyncOpenAgentConversation(undefined, "reconnect");
+        }
+        wasServerState = state;
+      },
+    );
 
     async function loadAgentMessagePage(agentId: string, messageId: string): Promise<ConversationPage | null> {
       const request = (conversationPageRequests.get(agentId) ?? 0) + 1;

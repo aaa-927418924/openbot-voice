@@ -105,6 +105,40 @@ export function formatRemoteDesktopSupportLog(input: {
   ].join("\n");
 }
 
+/**
+ * The whole support export: the remote viewer's allowlisted report, the tail of the app log, and
+ * the conversation sync records (lengths, revisions and fingerprints only). It is one text file the
+ * user asks for by hand, so the sections say what each one can hold.
+ */
+export function formatSupportLogBundle(input: {
+  generatedAt: string;
+  appVersion: string;
+  platform: string;
+  viewerReport: string;
+  appLog: string;
+  conversationLog: string;
+}): string {
+  return [
+    "OpenBot application and connection logs",
+    `Generated: ${safeHeaderValue(input.generatedAt)}`,
+    `OpenBot version: ${safeHeaderValue(input.appVersion)}`,
+    `Platform: ${safeHeaderValue(input.platform)}`,
+    "Privacy: Message text is never recorded. Conversation sync records hold lengths, revisions and short fingerprints only. Credentials and email addresses are redacted; the application log can name local paths and host names.",
+    "",
+    "=== Remote desktop connection log ===",
+    input.viewerReport.trimEnd(),
+    "",
+    "=== Application log (tail) ===",
+    input.appLog.length > 0 ? input.appLog.trimEnd() : "No application log has been recorded yet.",
+    "",
+    "=== Conversation sync diagnostics (no message text) ===",
+    input.conversationLog.length > 0
+      ? input.conversationLog.trimEnd()
+      : "No conversation sync records have been written yet.",
+    "",
+  ].join("\n");
+}
+
 function parseEventLine(line: string): RemoteViewerDiagnosticEvent | null {
   if (line.length === 0 || line.length > 2_000) return null;
   let value: unknown;

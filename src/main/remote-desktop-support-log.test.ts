@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatRemoteDesktopSupportLog } from "./remote-desktop-support-log";
+import { formatRemoteDesktopSupportLog, formatSupportLogBundle } from "./remote-desktop-support-log";
 
 describe("remote desktop support log export", () => {
   it("keeps only allowlisted connection facts and excludes secrets and identifiers", () => {
@@ -93,5 +93,39 @@ describe("remote desktop support log export", () => {
     expect(report).toContain("viewer_state resource=viewer viewerState=error");
     expect(report).not.toContain("private-session-id");
     expect(report).not.toContain("private-viewer-grant");
+  });
+});
+
+describe("support log bundle", () => {
+  it("carries the viewer report, the app log and the conversation records in named sections", () => {
+    const report = formatSupportLogBundle({
+      generatedAt: "2026-11-10T00:00:00.000Z",
+      appVersion: "0.30.0",
+      platform: "win32",
+      viewerReport: "OpenBot remote desktop support log\nEvents: 0\n",
+      appLog: "2026-11-10T00:00:00.000Z INFO [remote-events] A page arrived.",
+      conversationLog: '{"kind":"page_received","latestLength":2398}',
+    });
+
+    expect(report).toContain("=== Remote desktop connection log ===");
+    expect(report).toContain("=== Application log (tail) ===");
+    expect(report).toContain("A page arrived.");
+    expect(report).toContain("=== Conversation sync diagnostics (no message text) ===");
+    expect(report).toContain('"latestLength":2398');
+    expect(report).toContain("Message text is never recorded.");
+  });
+
+  it("says when no log exists yet", () => {
+    const report = formatSupportLogBundle({
+      generatedAt: "2026-11-10T00:00:00.000Z",
+      appVersion: "0.30.0",
+      platform: "win32",
+      viewerReport: "",
+      appLog: "",
+      conversationLog: "",
+    });
+
+    expect(report).toContain("No application log has been recorded yet.");
+    expect(report).toContain("No conversation sync records have been written yet.");
   });
 });

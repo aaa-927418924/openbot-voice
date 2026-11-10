@@ -15,9 +15,11 @@
 // The fallback path is for hosts too old to replay events on connect. It reads the whole agent list
 // and one page each, which is expensive, so it runs once per connection rather than per event.
 
+import { conversationTextTag } from "@openbot/contracts/conversation-diagnostics";
 import type { AgentEvent } from "@openbot/contracts/ipc";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import { Deferred, Effect, Result } from "effect";
+import { recordConversationDiagnostic } from "./conversation-diagnostics";
 import { decodeAgentSummaries, decodeQueueSnapshot } from "./remote-agent-decoding";
 import { decodeConversationPageFromHost } from "./remote-conversation-decoding";
 import type { RemoteRequestFn } from "./remote-server-client";
@@ -190,6 +192,31 @@ export class RemoteEventRefresh {
         }
         const page = result.success;
         if (request.sequence !== requestedSequence) continue;
+        {
+          const latest = page.messages.at(-1);
+          recordConversationDiagnostic({
+            kind: "page_received",
+            source: "refresh",
+            server: conversationTextTag(serverId),
+            agent: conversationTextTag(agentId),
+            requestedRevision: request.revision,
+            revision: page.revision,
+            messages: page.messages.length,
+            latestId: latest ? conversationTextTag(latest.id) : null,
+            latestLength: latest ? latest.text.length : null,
+            latestTag: latest ? conversationTextTag(latest.text) : null,
+            latestStatus: latest?.status ?? null,
+          });
+          if (page.revision < request.revision) {
+            recordConversationDiagnostic({
+              kind: "page_refresh_discarded",
+              server: conversationTextTag(serverId),
+              agent: conversationTextTag(agentId),
+              requestedRevision: request.revision,
+              pageRevision: page.revision,
+            });
+          }
+        }
         if (page.revision >= request.revision) {
           this.#emit(serverId, { type: "conversation-page", page });
           return;

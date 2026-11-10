@@ -18,6 +18,7 @@ import type { ManagedProviderId } from "./agent-providers";
 import type { AppLanguagePreference, SetAppLanguagePreferenceInput } from "./app-language";
 import type { AppLogoColorPreference, SetAppLogoColorPreferenceInput } from "./app-logo-color";
 import type { BillingPortalRequest, BillingState } from "./billing";
+import type { ConversationDiagnosticEvent } from "./conversation-diagnostics";
 import type {
   CreateHostedServerInput,
   DeleteHostedServerInput,
@@ -487,6 +488,8 @@ export const IPC_ENDPOINTS = {
     exportData: request<undefined, ExportResult>()("maintenance:export-data"),
     exportDiagnostics: request<undefined, ExportResult>()("maintenance:export-diagnostics"),
     exportRemoteDesktopSupportLog: request<undefined, ExportResult>()("maintenance:export-remote-desktop-support-log"),
+    /** One conversation sync record from the renderer; main appends it to the support log. */
+    recordDiagnostic: request<ConversationDiagnosticEvent, void>()("maintenance:record-diagnostic"),
   },
   providers: {
     connectProvider: request<AgentProviderId, AgentStatus>()("app:connect-provider"),

@@ -6,13 +6,15 @@ import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import type { AgentSummary, ExportResult } from "@openbot/contracts/ipc";
 import type { AppTranslate } from "@openbot/i18n";
+import { redactText } from "@openbot/logging";
 import { Effect } from "effect";
 import { app, type BrowserWindow, dialog } from "electron";
 import type { AgentService } from "../backend/agent-service";
 import type { BrowserHost } from "../backend/browser-host";
 import type { MailboxStore } from "../backend/mailbox-store";
 import { type ArchiveOperationError, archiveCall, archiveFailure, archiveSync } from "./archive-effects";
-import { formatRemoteDesktopSupportLog } from "./remote-desktop-support-log";
+import { readConversationDiagnostics } from "./conversation-diagnostics";
+import { formatRemoteDesktopSupportLog, formatSupportLogBundle } from "./remote-desktop-support-log";
 import type { TraceFile } from "./trace-file";
 import type { UpdateService } from "./update-service";
 
@@ -218,20 +220,34 @@ export const exportDiagnostics = Effect.fn("Archive.exportDiagnostics")(function
 export const exportRemoteDesktopSupportLog = Effect.fn("Archive.exportRemoteDesktopSupportLog")(function* (
   context: Pick<MaintenanceContext, "parentWindow" | "translate">,
 ): Effect.fn.Return<ExportResult, ArchiveOperationError> {
+  const generatedAt = new Date().toISOString();
+  const logDirectory = join(app.getPath("userData"), "logs");
   const destination = yield* chooseExportDestinationEffect(
     context.parentWindow,
-    `OpenBot-remote-desktop-${new Date().toISOString().slice(0, 10)}.txt`,
+    `OpenBot-logs-${generatedAt.slice(0, 10)}.txt`,
     [{ name: context.translate("dialog.filter.textDocument"), extensions: ["txt"] }],
   );
   if (!destination) return { saved: false };
-
-  const logPath = join(app.getPath("userData"), "logs", "remote", "remote-viewer-proxy.log");
-  const log = yield* archiveCall(() => readRemoteViewerLog(logPath));
-  const text = formatRemoteDesktopSupportLog({
-    generatedAt: new Date().toISOString(),
+  const [log, appLog, previousAppLog, conversationLog] = yield* archiveCall(() =>
+    Promise.all([
+      readTextTail(join(logDirectory, "remote", "remote-viewer-proxy.log"), 1_048_576),
+      readTextTail(join(logDirectory, "openbot.log"), 524_288),
+      readTextTail(join(logDirectory, "openbot.log.1"), 524_288),
+      readConversationDiagnostics(1_048_576),
+    ]),
+  );
+  const text = formatSupportLogBundle({
+    generatedAt,
     appVersion: app.getVersion(),
     platform: process.platform,
-    log,
+    viewerReport: formatRemoteDesktopSupportLog({
+      generatedAt,
+      appVersion: app.getVersion(),
+      platform: process.platform,
+      log,
+    }),
+    appLog: redactText([previousAppLog, appLog].filter((part) => part.length > 0).join("\n")),
+    conversationLog,
   });
   yield* archiveCall(() => writeFile(destination, text, { encoding: "utf8", mode: 0o600 })).pipe(
     Effect.uninterruptible,
@@ -239,9 +255,9 @@ export const exportRemoteDesktopSupportLog = Effect.fn("Archive.exportRemoteDesk
   return { saved: true };
 });
 
-async function readRemoteViewerLog(path: string): Promise<string> {
+async function readTextTail(path: string, limitBytes: number): Promise<string> {
   try {
-    return (await readFile(path, "utf8")).slice(-1_048_576);
+    return (await readFile(path, "utf8")).slice(-limitBytes);
   } catch (cause) {
     if (isMissingFileError(cause)) return "";
     throw cause;

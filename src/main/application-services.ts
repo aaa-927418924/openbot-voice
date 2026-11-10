@@ -109,6 +109,7 @@ import {
   chooseTarget,
   liveSession,
 } from "./computer-use-target-window";
+import { initializeConversationDiagnostics } from "./conversation-diagnostics";
 import { isSupportedCuaDriverTarget, resolveCuaDriver } from "./cua-driver-artifact";
 import { CuaDriverDaemonClient } from "./cua-driver-daemon-client";
 import { CuaDriverRuntime, cuaDriverCommandAlias, resolveCuaDriverEndpoint } from "./cua-driver-runtime";
@@ -2018,6 +2019,7 @@ export async function createApplicationServices({
   // than flushing a queue, so a later call would attribute them to nobody.
   analytics.flushPending();
   const trace = new TraceFile({ directory: join(app.getPath("userData"), "logs") });
+  initializeConversationDiagnostics(join(app.getPath("userData"), "logs"));
   teardown.push(TEARDOWN_ORDER.trace, "the trace file", () => Effect.runPromise(trace.close()));
   let lastLocalRegistrationDiagnosticState: string | null = null;
   const remoteServers = new RemoteServerManager(

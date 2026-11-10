@@ -1,7 +1,10 @@
 import { Effect, Semaphore } from "effect";
+
 // App identity, first-run setup, the analytics preference, external links and the data and
 // diagnostics exports.
 
+import type { ConversationDiagnosticEvent } from "@openbot/contracts/conversation-diagnostics";
+import { parseConversationDiagnosticEvent } from "@openbot/contracts/conversation-diagnostics";
 import { HOSTED_SERVER_CONTACT_URL } from "@openbot/contracts/hosted-servers";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import {
@@ -25,6 +28,7 @@ import {
 } from "../analytics-preference-store";
 import type { ApprovalAutomation } from "../approval-automation-store";
 import type { BusyMessageModePreferenceStore } from "../busy-message-mode-preference-store";
+import { recordRendererConversationDiagnostic } from "../conversation-diagnostics";
 import type { LanguageService } from "../language-service";
 import type { LogoColorService } from "../logo-color-service";
 import { MAC_PERMISSION_URLS } from "../mac-permission-urls";
@@ -74,6 +78,12 @@ type MainWindowControlTarget = Pick<
   BrowserWindow,
   "close" | "isDestroyed" | "isMaximized" | "maximize" | "minimize" | "unmaximize"
 >;
+
+function decodeConversationDiagnostic(value: unknown): ConversationDiagnosticEvent {
+  const event = parseConversationDiagnosticEvent(value);
+  if (!event) throw new Error("Invalid conversation diagnostic.");
+  return event;
+}
 
 export function applyMainWindowControl(window: MainWindowControlTarget | null, action: MainWindowControlAction): void {
   if (!window || window.isDestroyed()) return;
@@ -257,6 +267,9 @@ export function appIpcHandlers({
           }),
         ),
       ),
+      recordDiagnostic: payloadHandler(decodeConversationDiagnostic, (event) => {
+        recordRendererConversationDiagnostic(event);
+      }),
     },
   };
 }

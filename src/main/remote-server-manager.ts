@@ -6,6 +6,7 @@ import type {
   AccountServerRegistration,
 } from "@openbot/contracts/account-server-directory";
 import { isValidAvatarImage } from "@openbot/contracts/avatar-images";
+import { conversationTextTag } from "@openbot/contracts/conversation-diagnostics";
 import {
   createMemberDeviceLinkUrl,
   type InviteLinkOptions,
@@ -87,6 +88,7 @@ import { Deferred, Effect, Exit, Layer, Result, Scope, Semaphore } from "effect"
 import type { CentralAuthOperationError } from "./central-auth-effects";
 import { CentralAuthOperationError as CentralAuthOperationErrorClass } from "./central-auth-effects";
 import { contentDispositionFileName } from "./content-disposition";
+import { recordConversationDiagnostic } from "./conversation-diagnostics";
 import type { HostedServerDesktopService } from "./hosted-server-service";
 import { decodeAgentSummary, decodeDraftAttachment, decodeDuplicateAgentResultFromHost } from "./remote-agent-decoding";
 import { type RemoteAttachment, RemoteAttachmentCache } from "./remote-attachment-cache";
@@ -2459,6 +2461,26 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       serverId,
       `${TEAM_API_ROUTES.agent.conversationPage(agentId)}${pageQuery(anchor, limit)}`,
       decodeConversationPageFromHost,
+    ).pipe(
+      Effect.tap((page) =>
+        Effect.sync(() => {
+          const latest = page.messages.at(-1);
+          recordConversationDiagnostic({
+            kind: "page_received",
+            source: "ipc",
+            server: conversationTextTag(serverId),
+            agent: conversationTextTag(agentId),
+            anchor: anchor.type,
+            limit,
+            revision: page.revision,
+            messages: page.messages.length,
+            latestId: latest ? conversationTextTag(latest.id) : null,
+            latestLength: latest ? latest.text.length : null,
+            latestTag: latest ? conversationTextTag(latest.text) : null,
+            latestStatus: latest?.status ?? null,
+          });
+        }),
+      ),
     );
   }
 

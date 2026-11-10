@@ -22,7 +22,7 @@ export interface AppPort {
   hostedSites: OpenBotDesktopApi["hostedSites"];
   billing: OpenBotDesktopApi["billing"];
   hostedServers: OpenBotDesktopApi["hostedServers"];
-  maintenance: Pick<OpenBotDesktopApi["maintenance"], "exportRemoteDesktopSupportLog">;
+  maintenance: Pick<OpenBotDesktopApi["maintenance"], "exportRemoteDesktopSupportLog" | "recordDiagnostic">;
   routineFeed: OpenBotDesktopApi["routineFeed"];
   plugins: Pick<OpenBotDesktopApi["plugins"], "onOpenListing" | "takePendingListing">;
   servers: Pick<OpenBotDesktopApi["servers"], "onInvite" | "takePendingInvite">;
