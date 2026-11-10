@@ -19,7 +19,7 @@ import {
   toAgentMessages,
   withoutAgent,
 } from "../../app-message-projection";
-import { createStoredMessage, updateStored } from "../../app-stored-values";
+import { createStoredMessage, isStoredValue, updateStored } from "../../app-stored-values";
 import { usePlatform } from "../../platform";
 import { createScopeGuard } from "../../scope-lifetime";
 import { createSimpleContext } from "../../simple-context";
@@ -552,7 +552,9 @@ const Conversation = createSimpleContext({
         );
         const next = mappedMessages.map((mapped) => {
           const existing = previousById.get(mapped.id);
-          if (!existing) return createStoredMessage({ ...mapped, animate: !initialLoad });
+          if (!existing || !isStoredValue(existing)) {
+            return createStoredMessage({ ...mapped, animate: !initialLoad });
+          }
           if (!agentMessagesEqual(existing, mapped)) updateStored(existing, mapped);
           return existing;
         });
@@ -651,7 +653,9 @@ const Conversation = createSimpleContext({
         const currentById = new Map(currentMessages.map((message) => [message.id, message]));
         const pageMessages = mapped.map((message) => {
           const stored = currentById.get(message.id);
-          if (!stored) return createStoredMessage({ ...message, animate: false });
+          // A message seeded outside this module, such as a runtime snapshot's capped tail, cannot
+          // be updated in place; replace it so the page's full text is the value the view holds.
+          if (!stored || !isStoredValue(stored)) return createStoredMessage({ ...message, animate: false });
           if (!agentMessagesEqual(stored, message)) updateStored(stored, { ...message, animate: stored.animate });
           return stored;
         });

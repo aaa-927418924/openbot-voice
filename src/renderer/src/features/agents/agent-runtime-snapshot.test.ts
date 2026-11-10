@@ -1,5 +1,6 @@
 import type { AgentApproval, AgentRuntimeApproval, AgentRuntimeSnapshot } from "@openbot/contracts/ipc";
 import type { AgentMessage } from "@openbot/ui/data";
+import { isStoredValue } from "../../app-stored-values";
 import { promptRequestKey } from "../conversation/conversation-keys";
 import {
   appendLatestRuntimeMessages,
@@ -182,6 +183,14 @@ describe("appendLatestRuntimeMessages", () => {
     const next = appendLatestRuntimeMessages(current, [snapshotMessage("chief", "m1", "The full")]);
 
     expect(next.chief).toEqual([{ id: "m1", author: "agent", body: "The full answer", time: "t" }]);
+  });
+
+  it("returns a message a later page can update in place", () => {
+    // `updateStored` ignores a value it did not create, so a plain object here would keep the
+    // snapshot's capped text forever and a page's full answer could never replace it.
+    const next = appendLatestRuntimeMessages({}, [snapshotMessage("chief", "m1", "The capped start")]);
+
+    expect(next.chief?.[0] && isStoredValue(next.chief[0])).toBe(true);
   });
 
   it("keeps the messages before the one it appends", () => {

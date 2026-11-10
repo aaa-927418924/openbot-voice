@@ -1,6 +1,7 @@
 import type { AgentApproval, AgentEvent, AgentRuntimeSnapshot } from "@openbot/contracts/ipc";
 import { cleanAgentMessageText } from "@openbot/team-client/agent-message-text";
 import type { AgentMessage } from "@openbot/ui/data";
+import { createStoredMessage } from "../../app-stored-values";
 import { promptRequestKey } from "../conversation/conversation-keys";
 
 type PromptEvent = Extract<AgentEvent, { type: "prompt" }>;
@@ -100,15 +101,17 @@ export function appendLatestRuntimeMessages(
   for (const message of latestMessages) {
     const messages = next[message.agentId] ?? [];
     if (messages.some((candidate) => candidate.id === message.id)) continue;
+    // A stored value, not a plain object: a page that later brings the full text replaces this
+    // body in place, and `updateStored` ignores anything this module did not create.
     next[message.agentId] = [
       ...messages,
-      {
+      createStoredMessage({
         id: message.id,
         author: "agent",
         body: cleanAgentMessageText(message.text),
         time: message.createdAt,
         createdAt: message.createdAt,
-      },
+      }),
     ];
   }
   return next;

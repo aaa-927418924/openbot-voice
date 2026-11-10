@@ -39,3 +39,8 @@ export function createStoredMessage(value: AgentMessage): AgentMessage {
 export function updateStored(store: StoredValue, value: StoredValue): void {
   storeSetters.get(store)?.(value);
 }
+
+/** Whether `updateStored` can replace this value in place. */
+export function isStoredValue(store: StoredValue): boolean {
+  return storeSetters.has(store);
+}
