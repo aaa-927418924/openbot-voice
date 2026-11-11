@@ -7,6 +7,14 @@ the [root changelog](../../CHANGELOG.md).
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-11-11
+
+### Fixed
+
+- A received video larger than 10 MB plays inline instead of asking to open it on a computer. iOS
+  downloads the video once and plays it from the cache; the limit for videos is now 50 MB, while
+  documents and images keep their 10 MB limit.
+
 ## [1.1.0] - 2026-09-29
 
 ### Added
