@@ -1,7 +1,7 @@
 import { attachmentFileExtension } from "@openbot/contracts/attachment-files";
 import type { AttachmentSummary } from "@openbot/contracts/ipc";
 import type { MobileTranslate } from "@openbot/i18n/mobile";
-import { MOBILE_ATTACHMENT_BYTES, type RemoteFileUpload } from "@openbot/team-client/remote-peer";
+import { MOBILE_ATTACHMENT_BYTES, MOBILE_VIDEO_BYTES, type RemoteFileUpload } from "@openbot/team-client/remote-peer";
 import { useQuery } from "@tanstack/react-query";
 import { File, Paths } from "expo-file-system";
 import { Image } from "expo-image";
@@ -83,10 +83,11 @@ export function useAttachmentFile(serverId: string, attachment: AttachmentSummar
       : null;
   const canStreamVideo =
     preview && Platform.OS === "android" && isVideo && !local && !pending && attachmentSupport(serverId).videoRanges;
+  const downloadLimit = isVideo ? MOBILE_VIDEO_BYTES : MOBILE_ATTACHMENT_BYTES;
   const query = useQuery({
     queryKey: ["chat-attachment", serverId, attachment.id],
     queryFn: (): Promise<RemoteFileUpload & { localUri?: string }> => {
-      if (attachment.size > MOBILE_ATTACHMENT_BYTES) throw new Error(t("mobile.chat.attachment.tooLargeForMobile"));
+      if (attachment.size > downloadLimit) throw new Error(t("mobile.chat.attachment.tooLargeForMobile"));
       return downloadAttachment(serverId, attachment.id);
     },
     enabled: preview && !local && !pending && !canStreamVideo,

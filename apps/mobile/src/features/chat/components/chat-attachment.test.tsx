@@ -361,6 +361,17 @@ it("plays large remote Android videos from bounded ranges without downloading th
   expect(native.download).not.toHaveBeenCalled();
 });
 
+it("plays a large iOS video from one download instead of sending it to a desktop", async () => {
+  native.platform = "ios";
+  native.videoRanges = false;
+  native.download.mockResolvedValue({ name: "clip.mp4", mimeType: "video/mp4", base64: "AA==" });
+  mount({ ...attachment, name: "clip.mp4", mimeType: "video/mp4", size: 14.7 * 1024 * 1024 });
+
+  await waitFor(() => expect(screen.getByRole("img", { name: "video player" })).toBeTruthy());
+  expect(native.download).toHaveBeenCalledWith("selected-host", "stored-file");
+  expect(screen.queryByText(/Open on your computer|パソコンで開いてください/)).toBeNull();
+});
+
 it("keeps progressive Android playback alive when the workspace refreshes its range action", async () => {
   native.platform = "android";
   native.videoRanges = true;

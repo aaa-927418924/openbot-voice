@@ -1,5 +1,5 @@
 import type { AttachmentSummary } from "@openbot/contracts/ipc";
-import { MOBILE_ATTACHMENT_BYTES } from "@openbot/team-client/remote-peer";
+import { MOBILE_ATTACHMENT_BYTES, MOBILE_VIDEO_BYTES } from "@openbot/team-client/remote-peer";
 import { Image } from "expo-image";
 import { useVideoPlayer, VideoView } from "expo-video";
 import { Button, Skeleton, Typography } from "heroui-native";
@@ -90,12 +90,14 @@ export function ChatAttachmentView({
   const shownUpload = upload ?? (lingering ? 1 : undefined);
   const revealStyle = useUploadRevealStyle(shownUpload ?? 1);
   const { width } = useWindowDimensions();
-  const tooLarge = attachment.size > MOBILE_ATTACHMENT_BYTES;
-  const rangeVideo =
-    Platform.OS === "android" && attachment.mimeType.startsWith("video/") && attachmentSupport(serverId).videoRanges;
+  const isVideo = attachment.mimeType.startsWith("video/");
+  // iOS downloads a video whole and plays it from the cache, so videos may be larger than the
+  // documents and images that share the Base64 bridge.
+  const tooLarge = attachment.size > (isVideo ? MOBILE_VIDEO_BYTES : MOBILE_ATTACHMENT_BYTES);
+  const rangeVideo = Platform.OS === "android" && isVideo && attachmentSupport(serverId).videoRanges;
   // An image above the transfer limit cannot be shown here, so it is a file the user opens on desktop.
   const image = attachment.kind === "image" && !tooLarge;
-  const video = attachment.mimeType.startsWith("video/") && (!tooLarge || rangeVideo);
+  const video = isVideo && (!tooLarge || rangeVideo);
   const {
     pending,
     localUri,

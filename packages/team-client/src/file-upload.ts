@@ -22,6 +22,10 @@ export function fileTransferError(error: unknown): FileTransferError {
 
 // Native/DOM bridge copies Base64 strings. Keep its working set below the host's larger file limit.
 export const MOBILE_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+// iOS has no byte-range player, so a video is downloaded whole and played from the cache. That
+// path holds the file as Base64 in memory, so it gets a larger ceiling than the 10 MB documents
+// and images but stays well below the host's 100 MB file limit.
+export const MOBILE_VIDEO_BYTES = 50 * 1024 * 1024;
 export interface RemoteFileUpload {
   name: string;
   mimeType: string;

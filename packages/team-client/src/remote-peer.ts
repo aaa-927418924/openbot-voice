@@ -47,7 +47,7 @@ import { createRemoteFileReceiver } from "./file-download";
 import { createRemoteFileSender, type RemoteFileUpload } from "./file-upload";
 
 export type { RemoteFileUpload } from "./file-upload";
-export { MOBILE_ATTACHMENT_BYTES } from "./file-upload";
+export { MOBILE_ATTACHMENT_BYTES, MOBILE_VIDEO_BYTES } from "./file-upload";
 
 import { createTeamRequestId } from "./request-id";
 import { encodeTeamWebRtcPayload, TeamWebRtcPayloadDecoder } from "./webrtc-framing";
