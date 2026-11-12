@@ -27,11 +27,14 @@ export const ChannelListRow = memo(function ChannelListRow({
   serverId,
   agents,
   pinned = false,
+  onOpen,
 }: {
   channel: ChannelSummary;
   serverId: string;
   agents: ReadonlyMap<string, MobileAgent>;
   pinned?: boolean;
+  /** Opens the channel in the iPad split view instead of pushing its route. */
+  onOpen?: () => void;
 }) {
   const { t } = useText();
   const customTheme = useCustomTheme();
@@ -122,7 +125,18 @@ export const ChannelListRow = memo(function ChannelListRow({
     ? t("mobile.channel.list.openWithTitle", { name: channel.name, title: channel.title.trim() })
     : t("mobile.channel.list.open", { name: channel.name });
   const link = (
-    <Link href={{ pathname: "/channel/[channelId]", params: { channelId: channel.id, serverId } }} asChild>
+    <Link
+      href={{ pathname: "/channel/[channelId]", params: { channelId: channel.id, serverId } }}
+      asChild
+      onPress={
+        onOpen
+          ? (event) => {
+              event.preventDefault();
+              onOpen();
+            }
+          : undefined
+      }
+    >
       <Link.Trigger>
         <ChatLinkPressable
           accessibilityRole="button"

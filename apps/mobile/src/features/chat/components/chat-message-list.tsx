@@ -56,6 +56,11 @@ import { ChatActivityRow, type ChatActivitySpec } from "@/features/chat/componen
 import { ChatMarkdown } from "@/features/chat/components/chat-markdown";
 import { ChatPlan } from "@/features/chat/components/chat-plan";
 import { ChatQuestionPrompt } from "@/features/chat/components/chat-question-prompt";
+import {
+  type PencilAnnotationImage,
+  PencilSurface,
+  type PencilSurfaceHandle,
+} from "@/features/chat/components/pencil-surface";
 import { useActivityPresence } from "@/features/chat/components/use-activity-presence";
 import type { ChatMotion } from "@/features/chat/components/use-chat-motion";
 import { useMessageArrivals } from "@/features/chat/components/use-message-arrivals";
@@ -241,6 +246,8 @@ interface ChatMessageListProps {
   onRetryHistory: () => void;
   onReply?: (message: ChatBubbleMessage) => void;
   onOpenActions: (message: ChatBubbleMessage) => void;
+  /** Sends one annotated message, captured as a PNG, without opening a dialog. */
+  onSendAnnotation?: (image: PencilAnnotationImage) => Promise<void>;
   /** The message whose files are uploading, how many finished, and how to stop the rest. */
   upload?: {
     messageId: string;
@@ -289,6 +296,12 @@ interface MessageRowShared {
     reply: (message: ChatBubbleMessage) => void;
     openActions: (message: ChatBubbleMessage) => void;
     selectQuestion: (messageId: string) => void;
+  };
+  /** Apple Pencil marker surfaces, on iPad only. */
+  pencil?: {
+    register: (messageId: string, handle: PencilSurfaceHandle | null) => void;
+    onSqueeze: (messageId: string) => void;
+    onInkChange: (messageId: string, hasInk: boolean) => void;
   };
 }
 
@@ -645,6 +658,17 @@ const MessageRow = memo(function MessageRow({
               playback={playback}
               animationEnabled={shared.animationActive && arrivals.has(message.id)}
             />
+            {shared.pencil && message.author === "agent" ? (
+              <PencilSurface
+                ref={(handle) => {
+                  shared.pencil?.register(message.id, handle);
+                }}
+                strokeColor="#E53935"
+                strokeWidth={3.5}
+                onSqueeze={() => shared.pencil?.onSqueeze(message.id)}
+                onInkChange={(event) => shared.pencil?.onInkChange(message.id, event.hasInk)}
+              />
+            ) : null}
           </ChatBubble>
         ) : null}
       </Animated.View>
@@ -750,6 +774,7 @@ export function ChatMessageList({
   onRetryHistory,
   onReply,
   onOpenActions,
+  onSendAnnotation,
 }: ChatMessageListProps) {
   const { t, sourceText } = useText();
   const isFocused = useIsFocused();
@@ -886,6 +911,42 @@ export function ChatMessageList({
   const targetAgent = target.kind === "agent" ? target : undefined;
   const targetServerId = target.serverId;
   const targetIsAgent = target.kind === "agent";
+  const pencilSurfaces = useRef(new Map<string, PencilSurfaceHandle>());
+  const lastInkedMessageId = useRef<string | null>(null);
+  const annotationBusy = useRef(false);
+  const pencil = useMemo<MessageRowShared["pencil"]>(() => {
+    // The marker belongs to the iPad: the native surface exists only in the iOS build, and a phone
+    // has no room for a second pane or an Apple Pencil Pro.
+    if (!(Platform.OS === "ios" && Platform.isPad) || !onSendAnnotation) return undefined;
+    return {
+      register: (messageId, handle) => {
+        if (handle) pencilSurfaces.current.set(messageId, handle);
+        else pencilSurfaces.current.delete(messageId);
+      },
+      onInkChange: (messageId, hasInk) => {
+        if (hasInk) lastInkedMessageId.current = messageId;
+      },
+      onSqueeze: (messageId) => {
+        if (annotationBusy.current) return;
+        const targetId = lastInkedMessageId.current ?? messageId;
+        const surface = pencilSurfaces.current.get(targetId);
+        if (!surface) return;
+        annotationBusy.current = true;
+        void surface
+          .capture()
+          .then(async (image) => {
+            await onSendAnnotation(image);
+            await surface.clear();
+            lastInkedMessageId.current = null;
+          })
+          .catch(() => undefined)
+          .finally(() => {
+            annotationBusy.current = false;
+          });
+      },
+    };
+  }, [onSendAnnotation]);
+
   const shared = useMemo<MessageRowShared>(
     () => ({
       agents,
@@ -911,6 +972,7 @@ export function ChatMessageList({
       canReply: Boolean(onReply),
       canSelectQuestion: Boolean(onSelectQuestion),
       actions,
+      pencil,
     }),
     [
       agents,
@@ -938,6 +1000,7 @@ export function ChatMessageList({
       onReply,
       onSelectQuestion,
       actions,
+      pencil,
     ],
   );
   const listRef = useRef<FlatList<VisibleMessage>>(null);

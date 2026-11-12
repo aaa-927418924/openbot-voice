@@ -1,4 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
+import { File } from "expo-file-system";
 import { isLiquidGlassAvailable } from "expo-glass-effect";
 import { router, useIsFocused } from "expo-router";
 import { Button, Typography } from "heroui-native";
@@ -17,6 +18,7 @@ import { ChatComposer } from "@/features/chat/components/chat-composer";
 import { ChatGlassIconButton } from "@/features/chat/components/chat-glass-icon-button";
 import { ChatHeader } from "@/features/chat/components/chat-header";
 import { ChatMessageList } from "@/features/chat/components/chat-message-list";
+import type { PencilAnnotationImage } from "@/features/chat/components/pencil-surface";
 import { type ChatAttachment, useChatAttachments } from "@/features/chat/components/use-chat-attachments";
 import { useChatMotion } from "@/features/chat/components/use-chat-motion";
 import type { QuestionPromptController } from "@/features/chat/components/use-question-prompt";
@@ -40,6 +42,7 @@ import { useMobileWorkspace } from "@/features/workspace/context/mobile-workspac
 import type { MobileAgentActivity } from "@/features/workspace/model/agent-activity";
 import { haptics } from "@/shared/lib/haptics";
 import { isIOS } from "@/shared/lib/platform";
+import { readFileBase64 } from "@/shared/lib/read-file-base64";
 import { useText } from "@/shared/lib/text";
 import { useAppForeground } from "@/shared/lib/use-app-foreground";
 import { mentionDraft } from "../model/chat-mentions";
@@ -378,6 +381,31 @@ export function ChatView({
     };
   }, [stopTurn, activeTurnId, target.id, errorMessage, t]);
 
+  async function sendPencilAnnotation(image: PencilAnnotationImage): Promise<void> {
+    try {
+      const file = new File(image.uri);
+      const base64 = await readFileBase64(file);
+      const attachment: ChatAttachment = {
+        id: `pencil-annotation-${Date.now()}`,
+        name: `annotation-${new Date().toISOString().replace(/[:.]/gu, "-")}.png`,
+        mimeType: "image/png",
+        base64,
+        size: file.size,
+        uri: image.uri,
+        dimensions: { width: image.width, height: image.height },
+      };
+      await send("", [attachment], null, {
+        cancelled: () => false,
+        progress: () => undefined,
+        fileProgress: () => undefined,
+      });
+      void haptics.notification("success");
+    } catch (error) {
+      void haptics.notification("error");
+      throw error;
+    }
+  }
+
   function sendMessage(value: string): void {
     if (!serverOnline || !canSend || sendingRef.current || pendingMessage) return;
     const body = value.trim();
@@ -569,6 +597,7 @@ export function ChatView({
             />
             {isFocused ? <LiveVoiceSessionCard topInset={insets.top} /> : null}
             <ChatMessageList
+              onSendAnnotation={sendPencilAnnotation}
               agents={serverAgents}
               target={target}
               motion={motion}

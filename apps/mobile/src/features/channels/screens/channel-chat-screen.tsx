@@ -14,10 +14,10 @@ import { channelTaskActivities, channelTasksNeedingAction } from "../model/chann
 export function ChannelChatScreen() {
   usePreventZoomTransitionDismissal({ unstable_dismissalBoundsRect: { minX: 0, maxX: 24 } });
   const { channelId, serverId } = useLocalSearchParams<{ channelId: string; serverId: string }>();
-  return <ChannelChat key={`${serverId}:${channelId}`} channelId={channelId} serverId={serverId} />;
+  return <ChannelChatView key={`${serverId}:${channelId}`} channelId={channelId} serverId={serverId} />;
 }
 
-function ChannelChat({ channelId, serverId }: { channelId: string; serverId: string }) {
+export function ChannelChatView({ channelId, serverId }: { channelId: string; serverId: string }) {
   const { t } = useText();
   const { agents, servers } = useMobileWorkspace();
   // A sheet removes focus, but the chat remains mounted behind it. Release history

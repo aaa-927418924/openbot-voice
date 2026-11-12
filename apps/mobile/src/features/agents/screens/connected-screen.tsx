@@ -28,6 +28,7 @@ import { PinnedAgentsGrid } from "@/features/agents/components/pinned-agents-gri
 import { SidebarSectionHeader } from "@/features/agents/components/sidebar-section-header";
 import { ChannelListRow } from "@/features/channels/components/channel-list";
 import { useChannels } from "@/features/channels/components/use-channels";
+import { ChannelChatView } from "@/features/channels/screens/channel-chat-screen";
 import { MobileChatView } from "@/features/chat/components/agent-chat-view";
 import { useAppDrawer } from "@/features/servers/components/app-drawer-shell";
 import { CustomThemeBackdrop } from "@/features/settings/components/custom-theme-backdrop";
@@ -190,7 +191,6 @@ export function ConnectedScreen() {
   } = useMobileWorkspace();
   // Reserve the split view for a populated agent list. Empty, loading, and
   // no-server states keep their full-width recovery and onboarding content.
-  const usesInlineChat = workspaceLayout !== "compact" && activeAgents.length > 0;
   const [collapsedByServer, setCollapsedByServer] = useState<Record<string, ReadonlySet<string>>>({});
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [selectedAgentKey, setSelectedAgentKey] = useState<{ serverId: string; agentId: string } | null>(null);
@@ -200,6 +200,13 @@ export function ConnectedScreen() {
       : undefined;
   const collapsedSectionIds = collapsedByServer[activeServer.id];
   const channels = useChannels(activeServer.id);
+  // The iPad keeps the list and the selected chat side by side, for agents and channels alike.
+  const usesInlineChat = workspaceLayout !== "compact" && (activeAgents.length > 0 || channels.channels.length > 0);
+  const [selectedChannelKey, setSelectedChannelKey] = useState<{ serverId: string; channelId: string } | null>(null);
+  const selectedChannel =
+    selectedChannelKey?.serverId === activeServer.id
+      ? channels.channels.find((channel) => channel.id === selectedChannelKey.channelId)
+      : undefined;
   const channelAgents = useMemo(
     () => new Map(agents.filter((agent) => agent.serverId === activeServer.id).map((agent) => [agent.id, agent])),
     [agents, activeServer.id],
@@ -341,7 +348,20 @@ export function ConnectedScreen() {
                     collapsed={collapsedChatIds.has(item.id)}
                   >
                     {item.kind === "channel" ? (
-                      <ChannelListRow channel={item.channel} serverId={activeServer.id} agents={channelAgents} />
+                      <ChannelListRow
+                        channel={item.channel}
+                        serverId={activeServer.id}
+                        agents={channelAgents}
+                        onOpen={
+                          usesInlineChat
+                            ? () => {
+                                void haptics.impact("soft");
+                                setSelectedAgentKey(null);
+                                setSelectedChannelKey({ serverId: activeServer.id, channelId: item.channel.id });
+                              }
+                            : undefined
+                        }
+                      />
                     ) : (
                       <AgentListRow
                         agent={item.agent}
@@ -354,6 +374,7 @@ export function ConnectedScreen() {
                           usesInlineChat
                             ? () => {
                                 void haptics.impact("soft");
+                                setSelectedChannelKey(null);
                                 setSelectedAgentKey({ serverId: activeServer.id, agentId: item.agent.id });
                               }
                             : undefined
@@ -472,6 +493,12 @@ export function ConnectedScreen() {
           <View className={hasCustomBackground ? "min-w-0 flex-1" : "min-w-0 flex-1 bg-background"}>
             {selectedAgent ? (
               <MobileChatView key={`${selectedAgent.serverId}:${selectedAgent.id}`} agent={selectedAgent} embedded />
+            ) : selectedChannel ? (
+              <ChannelChatView
+                key={`${activeServer.id}:${selectedChannel.id}`}
+                channelId={selectedChannel.id}
+                serverId={activeServer.id}
+              />
             ) : (
               <View className="flex-1 items-center justify-center gap-3 px-8">
                 <View className="size-16 items-center justify-center rounded-full bg-control">

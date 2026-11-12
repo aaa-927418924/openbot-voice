@@ -7,6 +7,20 @@ the [root changelog](../../CHANGELOG.md).
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-11-12
+
+### Added
+
+- On iPad, the agent and channel list stays on the left and the selected chat opens on the right,
+  like the desktop window.
+- On iPad with Apple Pencil Pro, write on an AI message with a red marker. A squeeze sends the
+  whole annotated message as an image, without a dialog; the marker clears after sending.
+
+### Fixed
+
+- A long thinking message no longer pushes the avatar down the chat; the activity line shows the
+  first two lines, as on desktop.
+
 ## [1.1.1] - 2026-11-11
 
 ### Fixed
