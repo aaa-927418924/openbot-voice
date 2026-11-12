@@ -11,6 +11,7 @@ import {
   messageIdForHistoryMutation,
   projectChannelMessages,
   projectChatMessages,
+  thinkingPreview,
   withFailureReasons,
 } from "./chat-messages";
 
@@ -255,5 +256,21 @@ describe("Live Voice history markers", () => {
 
     expect(botReply).not.toHaveProperty("speaker");
     expect(humanReply).toMatchObject({ speaker: { kind: "member", id: "member-one", name: "Alex" } });
+  });
+});
+
+describe("thinking preview", () => {
+  it("keeps a short thought whole", () => {
+    expect(thinkingPreview("Checking the sources.")).toBe("Checking the sources.");
+  });
+
+  it("keeps only the beginning of a long thought", () => {
+    const preview = thinkingPreview("あ".repeat(500));
+    expect(preview?.endsWith("…")).toBe(true);
+    expect(preview?.length).toBe(241);
+  });
+
+  it("has nothing to show for an empty thought", () => {
+    expect(thinkingPreview("   ")).toBeNull();
   });
 });

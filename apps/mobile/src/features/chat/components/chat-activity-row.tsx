@@ -1,10 +1,9 @@
 import type { AvatarMood } from "@openbot/brand/bloub-avatar-motion";
 import { Typography } from "heroui-native";
-import type { ColorValue } from "react-native";
+import { type ColorValue, View } from "react-native";
 import Animated, { Easing, ReduceMotion, withTiming } from "react-native-reanimated";
 import { BloubAvatarPreview } from "@/features/agents/components/bloub-avatar";
 import type { MobileAgent } from "@/features/workspace/model/workspace-types";
-import { StreamingTailText, StreamRevealProvider } from "./streaming-tail-text";
 import { ThinkingTextGradient } from "./thinking-text-gradient";
 
 const EASE_OUT = Easing.bezier(0.23, 1, 0.32, 1);
@@ -106,19 +105,15 @@ export function ChatActivityRow({
           animateIdle={spec.animateAvatar}
         />
       ) : null}
-      <StreamRevealProvider>
+      {/* Two lines, like the desktop activity line: the footer must not grow with a long thought
+          and move the avatar down the chat. The beginning is what the reader needs here. */}
+      <View className="min-w-0 flex-1">
         <ThinkingTextGradient text={spec.label} foreground={foreground} muted={muted} enabled={spec.shimmer}>
-          <Typography.Paragraph type="body-sm" style={{ color: muted }}>
-            <StreamingTailText
-              key={spec.labelKey}
-              body={spec.label}
-              type="body-sm"
-              style={{ color: muted }}
-              enabled={spec.reveal}
-            />
+          <Typography.Paragraph type="body-sm" numberOfLines={2} ellipsizeMode="tail" style={{ color: muted }}>
+            {spec.label}
           </Typography.Paragraph>
         </ThinkingTextGradient>
-      </StreamRevealProvider>
+      </View>
     </Animated.View>
   );
 }

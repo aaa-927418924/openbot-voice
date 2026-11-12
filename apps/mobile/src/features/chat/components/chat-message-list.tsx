@@ -60,7 +60,12 @@ import { useActivityPresence } from "@/features/chat/components/use-activity-pre
 import type { ChatMotion } from "@/features/chat/components/use-chat-motion";
 import { useMessageArrivals } from "@/features/chat/components/use-message-arrivals";
 import type { QuestionPromptController } from "@/features/chat/components/use-question-prompt";
-import { type ChatMessage, indexChatMessages, type RoutineMarkerEvent } from "@/features/chat/model/chat-messages";
+import {
+  type ChatMessage,
+  indexChatMessages,
+  type RoutineMarkerEvent,
+  thinkingPreview,
+} from "@/features/chat/model/chat-messages";
 import { useAgentColorMessages } from "@/features/settings/model/message-color";
 import { useConnectionAppearance } from "@/features/workspace/components/use-connection-appearance";
 import type { MobileAgent } from "@/features/workspace/context/mobile-workspace-context";
@@ -995,7 +1000,8 @@ export function ChatMessageList({
         message.body.trim() &&
         (!activity?.agentId || !message.speaker || message.speaker.id === activity.agentId),
     );
-    const thinkingDetail = !replying && latestThinking?.kind === "thinking" ? latestThinking.steps.at(-1)?.text : null;
+    const thinkingDetail =
+      !replying && latestThinking?.kind === "thinking" ? thinkingPreview(latestThinking.steps.at(-1)?.text) : null;
     const activityLabel =
       sending && !activity
         ? t("common.sending")

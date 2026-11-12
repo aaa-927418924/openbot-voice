@@ -79,6 +79,16 @@ export interface PendingChatMessage {
   serverId: string | null;
 }
 
+/**
+ * The beginning of a thinking step, for the activity line. Desktop shows two lines of the latest
+ * commentary; the row is a footer, so an unbounded text moves the avatar and the chat under it.
+ */
+export function thinkingPreview(text: string | undefined, limit = 240): string | null {
+  const trimmed = text?.trim();
+  if (!trimmed) return null;
+  return trimmed.length > limit ? `${trimmed.slice(0, limit).trimEnd()}…` : trimmed;
+}
+
 export function indexChatMessages(
   messages: readonly ChatMessage[],
   aliases: ReadonlyMap<string, string>,
