@@ -18,6 +18,7 @@ const native = vi.hoisted(() => {
 });
 
 vi.mock("react-native", () => ({
+  Platform: { OS: "ios" },
   Keyboard: {
     addListener: (_event: string, callback: () => void) => {
       native.hidden = callback;
@@ -85,6 +86,24 @@ function keyboard(name: "onStart" | "onMove" | "onInteractive" | "onEnd") {
   assert(handler);
   return handler;
 }
+
+it("leaves a short agent-only history without a bottom inset", async () => {
+  let motion: ChatMotion | undefined;
+  function Chat() {
+    const current = useChatMotion(100, 0, true, null);
+    useLayoutEffect(() => {
+      motion = current;
+    });
+    return null;
+  }
+  await act(() => root.render(<Chat />));
+  if (!motion) throw new Error("Chat motion is not mounted");
+  motion.onViewportLayout(layout(800));
+  motion.onTailLayout("agent-1", layout(300, 100));
+  expect(motion.blankSpace.get()).toBe(0);
+  motion.onTailLayout("agent-2", layout(300, 900));
+  expect(motion.blankSpace.get()).toBe(400);
+});
 
 it("keeps replies visible and does not scroll after keyboard dismissal, including an interrupted final frame", async () => {
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {

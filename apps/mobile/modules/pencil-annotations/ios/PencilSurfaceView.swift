@@ -11,6 +11,9 @@ public final class PencilSurfaceView: ExpoView, UIPencilInteractionDelegate {
   private let inkView = InkCanvasView()
   private var squeezeInteraction: UIPencilInteraction?
   private var hasInk = false
+  /// The bubble the pencil wrote on last. A squeeze is delivered to one of the many interactions in
+  /// the list, so capturing `self` could photograph an unrelated row; this keeps the target exact.
+  private static weak var lastInkedSurface: PencilSurfaceView?
 
   public required init(appContext: AppContext? = nil) {
     super.init(appContext: appContext)
@@ -23,12 +26,28 @@ public final class PencilSurfaceView: ExpoView, UIPencilInteractionDelegate {
     addSubview(inkView)
 
     // `allowedTouchTypes` is what keeps the feature out of the finger's way: the recognizer never
-    // begins for a finger, so the chat's scroll view receives that touch as usual.
-    let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
-    pan.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.pencil.rawValue)]
-    pan.maximumNumberOfTouches = 1
-    pan.cancelsTouchesInView = false
-    addGestureRecognizer(pan)
+    // begins for a finger, so the chat's scroll view receives that touch as usual. A pan would wait
+    // for the pencil to move a few points before it begins, which dropped the start of every line;
+    // this recognizer begins on the first pencil touch instead.
+    let stroke = PencilStrokeRecognizer()
+    stroke.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.pencil.rawValue)]
+    stroke.cancelsTouchesInView = false
+    stroke.onBegan = { [weak self] point in
+      guard let self else { return }
+      PencilSurfaceView.lastInkedSurface = self
+      self.inkView.beginStroke(at: point, color: self.markerColor(), width: self.strokeWidth)
+    }
+    stroke.onMoved = { [weak self] point in
+      self?.inkView.addPoint(point)
+    }
+    stroke.onEnded = { [weak self] in
+      guard let self else { return }
+      self.inkView.endStroke()
+      guard !self.hasInk else { return }
+      self.hasInk = true
+      self.dispatchEvent("onInkChange", payload: ["hasInk": true])
+    }
+    addGestureRecognizer(stroke)
 
     if #available(iOS 17.5, *) {
       let interaction = UIPencilInteraction()
@@ -49,26 +68,11 @@ public final class PencilSurfaceView: ExpoView, UIPencilInteractionDelegate {
     inkView.frame = bounds
   }
 
-  @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
-    let point = gesture.location(in: self)
-    switch gesture.state {
-    case .began:
-      inkView.beginStroke(at: point, color: markerColor(), width: strokeWidth)
-    case .changed:
-      inkView.addPoint(point)
-    case .ended, .cancelled, .failed:
-      inkView.endStroke()
-      if !hasInk {
-        hasInk = true
-        dispatchEvent("onInkChange", payload: ["hasInk": true])
-      }
-    default:
-      break
-    }
-  }
-
   func clearInk() {
     inkView.clear()
+    if PencilSurfaceView.lastInkedSurface === self {
+      PencilSurfaceView.lastInkedSurface = nil
+    }
     guard hasInk else { return }
     hasInk = false
     dispatchEvent("onInkChange", payload: ["hasInk": false])
@@ -98,12 +102,14 @@ public final class PencilSurfaceView: ExpoView, UIPencilInteractionDelegate {
 
   @available(iOS 17.5, *)
   public func pencilInteraction(_ interaction: UIPencilInteraction, didReceiveSqueeze squeeze: UIPencilInteraction.Squeeze) {
-    // Capture from the surface that received the squeeze. Its superview is the bubble it currently
-    // sits in, so the image cannot belong to a row that the list has since recycled.
+    // Send the event to the bubble that was written on, not necessarily the view that received the
+    // squeeze. Its own row then clears that bubble after the send.
+    let target = PencilSurfaceView.lastInkedSurface ?? self
+    guard target.hasInk else { return }
     do {
-      dispatchEvent("onSqueeze", payload: try capture())
+      target.dispatchEvent("onSqueeze", payload: try target.capture())
     } catch {
-      dispatchEvent("onSqueeze", payload: [:])
+      target.dispatchEvent("onSqueeze", payload: [:])
     }
   }
 
@@ -135,6 +141,53 @@ public final class PencilSurfaceView: ExpoView, UIPencilInteractionDelegate {
 private enum PencilAnnotationError: Error {
   case noMessage
   case encodeFailed
+}
+
+/// Begins on the first pencil touch rather than after a movement threshold, so the start of a line
+/// is drawn immediately. The system still sends it only pencil touches.
+private final class PencilStrokeRecognizer: UIGestureRecognizer {
+  var onBegan: ((CGPoint) -> Void)?
+  var onMoved: ((CGPoint) -> Void)?
+  var onEnded: (() -> Void)?
+
+  init() {
+    super.init(target: nil, action: nil)
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) {
+    fatalError("init(coder:) has not been implemented")
+  }
+
+  override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+    super.touchesBegan(touches, with: event)
+    guard state == .possible, let touch = touches.first else { return }
+    state = .began
+    onBegan?(touch.location(in: view))
+  }
+
+  override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
+    super.touchesMoved(touches, with: event)
+    guard state == .began || state == .changed else { return }
+    state = .changed
+    for touch in touches {
+      onMoved?(touch.location(in: view))
+    }
+  }
+
+  override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
+    super.touchesEnded(touches, with: event)
+    guard state == .began || state == .changed else { return }
+    state = .ended
+    onEnded?()
+  }
+
+  override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
+    super.touchesCancelled(touches, with: event)
+    guard state == .began || state == .changed else { return }
+    state = .cancelled
+    onEnded?()
+  }
 }
 
 /// The strokes themselves. A plain `draw(_:)` view keeps the code small and renders the same in the

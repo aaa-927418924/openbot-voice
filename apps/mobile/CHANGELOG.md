@@ -7,6 +7,19 @@ the [root changelog](../../CHANGELOG.md).
 
 ## [Unreleased]
 
+## [1.1.4] - 2026-11-13
+
+### Fixed
+
+- A short chat or channel keeps its newest message just above the composer instead of leaving a
+  large empty area below it. The agent and channel chats share the same list layout.
+- An Apple Pencil Pro squeeze sends the message that was written on, with the ink included, and
+  clears that message afterwards.
+- The first part of an Apple Pencil stroke is drawn immediately; starting a line no longer loses
+  the points before the gesture begins.
+- A self-hosted server reached over plain HTTP no longer fails the App Transport Security check.
+  The local-networking exception had made iOS ignore the arbitrary-loads setting.
+
 ## [1.1.3] - 2026-11-13
 
 ### Added

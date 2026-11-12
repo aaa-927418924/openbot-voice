@@ -118,9 +118,14 @@ export function useChatMotion(
   }));
   const layout = useSharedValue<ChatLayout>({ viewport: 0, content: 0, header, tailY: 0, tailHeight: 0 });
   const composerHeight = useSharedValue(0);
-  const blankSpace = useDerivedValue(() =>
-    lastUserId && layout.get().tailHeight > 0 ? chatBlankSpace(layout.get(), MAX_CHAT_BLANK_SPACE) : 0,
-  );
+  // A short history is bottom-aligned by the list's `flexGrow`, so it needs no bottom inset. A
+  // long history keeps the blank space that lets the newest message sit at the top after a send.
+  const blankSpace = useDerivedValue(() => {
+    const current = layout.get();
+    if (current.tailHeight <= 0) return 0;
+    if (current.tailY + current.tailHeight <= current.viewport) return 0;
+    return chatBlankSpace(current, MAX_CHAT_BLANK_SPACE);
+  });
   const scrollY = useSharedValue(0);
   const firstOffset = useSharedValue(0);
   const firstOpacity = useSharedValue(1);
@@ -170,7 +175,10 @@ export function useChatMotion(
       if (!current.current.ready || !m.layout.viewport || !m.composer) return;
       if (current.current.lastUserId && (m.tailId !== current.current.lastUserId || !m.layout.tailHeight)) return;
       if (m.layout.content + 2 < m.layout.tailY + m.layout.tailHeight) return;
-      const floor = current.current.lastUserId ? chatBlankSpace(m.layout, MAX_CHAT_BLANK_SPACE) : 0;
+      const floor =
+        m.layout.tailHeight > 0 && m.layout.tailY + m.layout.tailHeight > m.layout.viewport
+          ? chatBlankSpace(m.layout, MAX_CHAT_BLANK_SPACE)
+          : 0;
       // Wait for the native inset commit; Android otherwise clamps to the old range.
       if (m.inset + 2 < Math.max(floor, m.composer)) return;
       const requiredInput = pendingRequiredInput.current;

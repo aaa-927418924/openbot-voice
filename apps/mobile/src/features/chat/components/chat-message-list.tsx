@@ -1133,7 +1133,14 @@ export function ChatMessageList({
             />
           )}
           style={{ flex: 1 }}
-          contentContainerStyle={{ paddingHorizontal: 16, paddingTop: topInset + 84 }}
+          // A short history sits at the bottom, just above the composer, instead of at the top
+          // with a large empty area below it. The container only grows when the content is short.
+          contentContainerStyle={{
+            flexGrow: 1,
+            justifyContent: "flex-end",
+            paddingHorizontal: 16,
+            paddingTop: topInset + 84,
+          }}
           contentInsetAdjustmentBehavior="never"
           keyboardDismissMode="interactive"
           keyboardShouldPersistTaps="handled"
