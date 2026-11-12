@@ -238,8 +238,12 @@ export function ChatComposer({
     inputRef.current?.setNativeProps({ selection: { start: position, end: position } });
   }, [displayText]);
   const { fontScale, width: windowWidth } = useWindowDimensions();
+  // The composer sits in the chat pane, which is narrower than the window on an iPad. Measuring
+  // this view keeps the card inside that pane; the window width is only the first frame's guess.
+  const [containerWidth, setContainerWidth] = useState(0);
+  const width = containerWidth > 0 ? containerWidth : windowWidth;
   const lineHeight = 22 * fontScale;
-  const rowTextWidth = windowWidth - BAR_INSET * 2 - ROW_CONTROL_INSET * 2;
+  const rowTextWidth = width - BAR_INSET * 2 - ROW_CONTROL_INSET * 2;
   // One reading drives both the shape and the height. Measuring the two widths
   // separately gave the card two targets in two frames, so it animated twice.
   const [wrap, setWrap] = useState({ lines: 1, width: 0 });
@@ -259,7 +263,7 @@ export function ChatComposer({
   // full field as the keyboard rises, so an interactive dismissal closes it
   // frame by frame instead of snapping when the keyboard finally commits.
   const [placeholderWidth, setPlaceholderWidth] = useState(0);
-  const cardWidth = windowWidth - BAR_INSET * 2;
+  const cardWidth = width - BAR_INSET * 2;
   const restHeight = Math.max(TOOLBAR_HEIGHT, lineHeight + FIELD_VERTICAL_PADDING) - REST_HEIGHT_LOSS;
   // The toolbar keeps its height and the control rides down into the smaller
   // bar, so the box fills that bar's height.
@@ -534,7 +538,12 @@ export function ChatComposer({
   );
 
   return (
-    <View>
+    <View
+      onLayout={(event) => {
+        const next = event.nativeEvent.layout.width;
+        setContainerWidth((current) => (Math.abs(current - next) < 1 ? current : next));
+      }}
+    >
       {suggestionsVisible && query ? (
         <GlassView
           glassEffectStyle={liquidGlassAvailable ? "regular" : "none"}

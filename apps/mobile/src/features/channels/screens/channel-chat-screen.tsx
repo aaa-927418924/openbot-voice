@@ -17,7 +17,17 @@ export function ChannelChatScreen() {
   return <ChannelChatView key={`${serverId}:${channelId}`} channelId={channelId} serverId={serverId} />;
 }
 
-export function ChannelChatView({ channelId, serverId }: { channelId: string; serverId: string }) {
+export function ChannelChatView({
+  channelId,
+  serverId,
+  embedded = false,
+  onClose,
+}: {
+  channelId: string;
+  serverId: string;
+  embedded?: boolean;
+  onClose?: () => void;
+}) {
   const { t } = useText();
   const { agents, servers } = useMobileWorkspace();
   // A sheet removes focus, but the chat remains mounted behind it. Release history
@@ -90,6 +100,8 @@ export function ChannelChatView({ channelId, serverId }: { channelId: string; se
   );
   return (
     <ChatView
+      embedded={embedded}
+      onClose={onClose}
       liveVoiceTarget={liveVoiceTarget}
       refreshLiveVoiceHistory={() => state.store.refresh(serverId, channelId)}
       target={{

@@ -17,9 +17,7 @@ import { scheduleOnRN } from "react-native-worklets";
 import { useMobileSession } from "@/features/auth/context/mobile-session-context";
 import { ServerDrawerContent } from "@/features/servers/components/server-drawer-content";
 import { useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
-import { responsiveWorkspaceLayout } from "@/features/workspace/model/responsive-workspace-layout";
 import { haptics } from "@/shared/lib/haptics";
-import { isIOS } from "@/shared/lib/platform";
 import { useText } from "@/shared/lib/text";
 
 interface AppDrawerContextValue {
@@ -38,7 +36,6 @@ const DRAWER_SPRING = {
   overshootClamping: true,
   reduceMotion: ReduceMotion.System,
 } as const;
-const PERSISTENT_SERVER_RAIL_WIDTH = 280;
 
 function triggerDrawerHaptic(): void {
   void haptics.impact();
@@ -47,8 +44,6 @@ function triggerDrawerHaptic(): void {
 export function AppDrawerShell({ children }: PropsWithChildren) {
   const pathname = usePathname();
   const { width } = useWindowDimensions();
-  const workspaceLayout = responsiveWorkspaceLayout(width, isIOS);
-  const persistentServerRail = workspaceLayout === "three-pane";
   const insets = useSafeAreaInsets();
   const { session } = useMobileSession();
   const { t } = useText();
@@ -93,8 +88,8 @@ export function AppDrawerShell({ children }: PropsWithChildren) {
   // navigation or drawer change would rebuild the swipe of every row.
   const openingEnabled = useSharedValue(false);
   useEffect(() => {
-    openingEnabled.set(!persistentServerRail && !drawerOpen && pathname === "/connected");
-  }, [drawerOpen, openingEnabled, pathname, persistentServerRail]);
+    openingEnabled.set(!drawerOpen && pathname === "/connected");
+  }, [drawerOpen, openingEnabled, pathname]);
   const openingGesture = useMemo(
     () =>
       Gesture.Pan()
@@ -186,42 +181,6 @@ export function AppDrawerShell({ children }: PropsWithChildren) {
 
   if (!session) {
     return <AppDrawerContext.Provider value={contextValue}>{children}</AppDrawerContext.Provider>;
-  }
-
-  if (persistentServerRail) {
-    return (
-      <AppDrawerContext.Provider value={contextValue}>
-        <View className="flex-1 flex-row bg-sidebar">
-          <View
-            className="bg-sidebar"
-            style={{
-              paddingBottom: Math.max(insets.bottom, 12),
-              paddingLeft: drawerSideInset,
-              width: PERSISTENT_SERVER_RAIL_WIDTH,
-            }}
-          >
-            <ServerDrawerContent
-              activeServerId={activeServer.id}
-              headerHeight={drawerHeaderHeight}
-              listTopInset={drawerListTopInset}
-              muted={muted}
-              open
-              servers={servers}
-              session={session}
-              sideInset={0}
-              topInset={insets.top}
-              onNavigate={(href) => router.push(href)}
-              onReorder={reorderServers}
-              onSelectServer={(serverId) => {
-                selectServer(serverId);
-                closeDrawer();
-              }}
-            />
-          </View>
-          <View className="min-w-0 flex-1 bg-background">{children}</View>
-        </View>
-      </AppDrawerContext.Provider>
-    );
   }
 
   return (

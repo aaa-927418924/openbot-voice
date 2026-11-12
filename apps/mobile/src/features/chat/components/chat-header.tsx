@@ -83,6 +83,9 @@ export function ChatHeader({
             borderCurve: "continuous",
             borderRadius: 24,
             flexDirection: "row",
+            // A fixed height keeps the capsule identical whether or not the back button shares the
+            // row. Without it the capsule collapses to its avatar and clips the title.
+            height: 48,
             maxWidth: 220,
             flexShrink: 1,
             overflow: "hidden",

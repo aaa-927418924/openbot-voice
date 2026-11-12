@@ -98,7 +98,13 @@ public final class PencilSurfaceView: ExpoView, UIPencilInteractionDelegate {
 
   @available(iOS 17.5, *)
   public func pencilInteraction(_ interaction: UIPencilInteraction, didReceiveSqueeze squeeze: UIPencilInteraction.Squeeze) {
-    dispatchEvent("onSqueeze", payload: [:])
+    // Capture from the surface that received the squeeze. Its superview is the bubble it currently
+    // sits in, so the image cannot belong to a row that the list has since recycled.
+    do {
+      dispatchEvent("onSqueeze", payload: try capture())
+    } catch {
+      dispatchEvent("onSqueeze", payload: [:])
+    }
   }
 
   private func markerColor() -> UIColor {

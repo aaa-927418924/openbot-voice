@@ -293,7 +293,7 @@ export function ServerDrawerContent({
       </ScrollView>
 
       <SheetScrollEdgeEffect
-        style={{ height: headerHeight + 20, left: -sideInset, position: "absolute", right: -34, top: 0, zIndex: 10 }}
+        style={{ height: headerHeight + 20, left: -sideInset, position: "absolute", right: 0, top: 0, zIndex: 10 }}
       />
 
       <View

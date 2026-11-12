@@ -7,6 +7,26 @@ the [root changelog](../../CHANGELOG.md).
 
 ## [Unreleased]
 
+## [1.1.3] - 2026-11-13
+
+### Added
+
+- A video in a chat opens fullscreen from its own button, on iPhone and iPad.
+
+### Fixed
+
+- On iPad, the server list stays out of the way and opens from the menu button, as on iPhone.
+- On iPad, a channel opens beside the list like an agent instead of covering the whole screen.
+  Agents and channels now share the same back button, title capsule, chat and message box.
+- The title capsule no longer collapses and clips the name when it has no back button beside it.
+- The message box keeps the width of the chat pane in the iPad split view, so tapping it no longer
+  pushes it over the list.
+- The top fade of the server drawer no longer spills past the drawer edge.
+- An Apple Pencil Pro squeeze now captures the message the pencil is on, not a different message,
+  and clears the ink of that message.
+- A self-hosted server reached over plain HTTP keeps its connection instead of failing the App
+  Transport Security check.
+
 ## [1.1.2] - 2026-11-12
 
 ### Added

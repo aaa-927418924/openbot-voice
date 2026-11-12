@@ -411,23 +411,21 @@ function InlineVideo({
           fullscreenOptions={{ enable: true }}
           style={{ flex: 1 }}
         />
-        {Platform.OS === "android" ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={fullscreenLabel}
-            onPress={() => void videoViewRef.current?.enterFullscreen()}
-            style={{
-              position: "absolute",
-              right: 8,
-              bottom: 8,
-              padding: 8,
-              borderRadius: 999,
-              backgroundColor: "rgba(0, 0, 0, 0.6)",
-            }}
-          >
-            <Maximize color="white" size={16} strokeWidth={2.5} />
-          </Pressable>
-        ) : null}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={fullscreenLabel}
+          onPress={() => void videoViewRef.current?.enterFullscreen()}
+          style={{
+            position: "absolute",
+            right: 8,
+            top: 8,
+            padding: 8,
+            borderRadius: 999,
+            backgroundColor: "rgba(0, 0, 0, 0.6)",
+          }}
+        >
+          <Maximize color="white" size={16} strokeWidth={2.5} />
+        </Pressable>
         {upload !== undefined ? (
           <View
             pointerEvents="none"

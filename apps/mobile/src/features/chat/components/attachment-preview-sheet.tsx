@@ -158,5 +158,13 @@ function VideoPlayer({ uri, active }: { uri: string; active: boolean }) {
   useEffect(() => {
     if (!active) player.pause();
   }, [active, player]);
-  return <VideoView player={player} contentFit="contain" nativeControls style={{ flex: 1 }} />;
+  return (
+    <VideoView
+      player={player}
+      contentFit="contain"
+      nativeControls
+      fullscreenOptions={{ enable: true }}
+      style={{ flex: 1 }}
+    />
+  );
 }

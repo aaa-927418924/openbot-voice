@@ -70,6 +70,8 @@ export interface ChatViewProps {
   historyLoadFailed: boolean;
   canSend: boolean;
   embedded?: boolean;
+  /** A split-view close action; the header then shows the same back button as a pushed chat. */
+  onClose?: () => void;
   readOnly?: boolean;
   activity?: MobileAgentActivity;
   activities?: MobileAgentActivity[];
@@ -120,6 +122,7 @@ export function ChatView({
   historyLoadFailed,
   canSend,
   embedded = false,
+  onClose,
   readOnly = false,
   activity,
   activities,
@@ -592,8 +595,8 @@ export function ChatView({
               liquidGlassAvailable={liquidGlassAvailable}
               customBackground={hasCustomBackground}
               topInset={insets.top}
-              onBack={embedded ? () => undefined : leaveConversation}
-              showBackButton={!embedded}
+              onBack={onClose ?? (embedded ? () => undefined : leaveConversation)}
+              showBackButton={!embedded || onClose !== undefined}
             />
             {isFocused ? <LiveVoiceSessionCard topInset={insets.top} /> : null}
             <ChatMessageList

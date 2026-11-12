@@ -492,12 +492,19 @@ export function ConnectedScreen() {
         {usesInlineChat ? (
           <View className={hasCustomBackground ? "min-w-0 flex-1" : "min-w-0 flex-1 bg-background"}>
             {selectedAgent ? (
-              <MobileChatView key={`${selectedAgent.serverId}:${selectedAgent.id}`} agent={selectedAgent} embedded />
+              <MobileChatView
+                key={`${selectedAgent.serverId}:${selectedAgent.id}`}
+                agent={selectedAgent}
+                embedded
+                onClose={() => setSelectedAgentKey(null)}
+              />
             ) : selectedChannel ? (
               <ChannelChatView
                 key={`${activeServer.id}:${selectedChannel.id}`}
                 channelId={selectedChannel.id}
                 serverId={activeServer.id}
+                embedded
+                onClose={() => setSelectedChannelKey(null)}
               />
             ) : (
               <View className="flex-1 items-center justify-center gap-3 px-8">
@@ -580,9 +587,7 @@ export function ConnectedScreen() {
       {isIOS ? (
         <>
           <Stack.Toolbar placement="left">
-            {workspaceLayout !== "three-pane" ? (
-              <Stack.Toolbar.Button icon="square.stack.3d.up.fill" onPress={openDrawer} />
-            ) : null}
+            <Stack.Toolbar.Button icon="square.stack.3d.up.fill" onPress={openDrawer} />
             <Stack.Toolbar.View hidesSharedBackground>
               <ConnectionHeaderStatus server={hasSelectedServer ? activeServer : undefined} />
             </Stack.Toolbar.View>

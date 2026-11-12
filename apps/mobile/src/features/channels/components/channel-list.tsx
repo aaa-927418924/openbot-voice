@@ -124,105 +124,98 @@ export const ChannelListRow = memo(function ChannelListRow({
   const openLabel = channel.title.trim()
     ? t("mobile.channel.list.openWithTitle", { name: channel.name, title: channel.title.trim() })
     : t("mobile.channel.list.open", { name: channel.name });
-  const link = (
-    <Link
-      href={{ pathname: "/channel/[channelId]", params: { channelId: channel.id, serverId } }}
-      asChild
-      onPress={
-        onOpen
-          ? (event) => {
-              event.preventDefault();
-              onOpen();
-            }
-          : undefined
+  const row = (
+    <ChatLinkPressable
+      accessibilityRole="button"
+      accessibilityLabel={
+        channel.unreadCount
+          ? `${openLabel}, ${t("mobile.channel.list.unread", { count: channel.unreadCount })}`
+          : openLabel
       }
+      className="w-full"
+      onPress={onOpen}
+      onLongPress={isAndroid ? () => menu.current?.show() : undefined}
+      accessibilityActions={[
+        {
+          name: "pin",
+          label: t(isPinned ? "mobile.agent.pin.unpinNamed" : "mobile.agent.pin.pinNamed", { name: channel.name }),
+        },
+      ]}
+      onAccessibilityAction={(event) => {
+        if (event.nativeEvent.actionName === "pin") togglePin();
+      }}
     >
-      <Link.Trigger>
-        <ChatLinkPressable
-          accessibilityRole="button"
-          accessibilityLabel={
-            channel.unreadCount
-              ? `${openLabel}, ${t("mobile.channel.list.unread", { count: channel.unreadCount })}`
-              : openLabel
+      {({ pressed }) => (
+        <View
+          className={
+            pinned
+              ? "w-full items-center gap-2 px-1"
+              : `min-h-[72px] w-full flex-row items-center gap-3 py-1${hasCustomBackground ? "" : " bg-background"}`
           }
-          className="w-full"
-          onLongPress={isAndroid ? () => menu.current?.show() : undefined}
-          accessibilityActions={[
-            {
-              name: "pin",
-              label: t(isPinned ? "mobile.agent.pin.unpinNamed" : "mobile.agent.pin.pinNamed", { name: channel.name }),
-            },
-          ]}
-          onAccessibilityAction={(event) => {
-            if (event.nativeEvent.actionName === "pin") togglePin();
+          style={{
+            paddingLeft: pinned ? 4 : 15,
+            paddingRight: pinned ? 4 : 24,
+            opacity: pressed ? 0.58 : 1,
           }}
         >
-          {({ pressed }) => (
-            <View
-              className={
-                pinned
-                  ? "w-full items-center gap-2 px-1"
-                  : `min-h-[72px] w-full flex-row items-center gap-3 py-1${hasCustomBackground ? "" : " bg-background"}`
-              }
-              style={{
-                paddingLeft: pinned ? 4 : 15,
-                paddingRight: pinned ? 4 : 24,
-                opacity: pressed ? 0.58 : 1,
-              }}
-            >
-              <AgentPinAvatar agentId={channel.id} location={pinned ? "pinned" : "row"} size={pinned ? 72 : 60}>
-                <ChannelAvatar channel={channel} agents={agents} size={pinned ? 72 : 60} disconnected={disconnected} />
-                {pinned && channel.unreadCount > 0 ? (
-                  <View className="absolute right-0 top-0 size-3.5 rounded-full border-2 border-background bg-accent" />
-                ) : null}
-              </AgentPinAvatar>
-              {pinned ? (
-                <View className="w-full gap-0.5">
-                  <Typography.Paragraph
-                    type="body-xs"
-                    align="center"
-                    className="w-full text-text-secondary"
-                    numberOfLines={1}
-                  >
+          <AgentPinAvatar agentId={channel.id} location={pinned ? "pinned" : "row"} size={pinned ? 72 : 60}>
+            <ChannelAvatar channel={channel} agents={agents} size={pinned ? 72 : 60} disconnected={disconnected} />
+            {pinned && channel.unreadCount > 0 ? (
+              <View className="absolute right-0 top-0 size-3.5 rounded-full border-2 border-background bg-accent" />
+            ) : null}
+          </AgentPinAvatar>
+          {pinned ? (
+            <View className="w-full gap-0.5">
+              <Typography.Paragraph
+                type="body-xs"
+                align="center"
+                className="w-full text-text-secondary"
+                numberOfLines={1}
+              >
+                {channel.name}
+              </Typography.Paragraph>
+              {channel.title.trim() ? (
+                <Typography.Paragraph type="body-xs" align="center" className="w-full text-muted" numberOfLines={1}>
+                  {channel.title.trim()}
+                </Typography.Paragraph>
+              ) : null}
+            </View>
+          ) : (
+            <View className="min-w-0 flex-1 gap-1">
+              <View className="gap-0">
+                <View className="flex-row items-center gap-2">
+                  {channel.unreadCount > 0 ? <View className="size-2 rounded-full bg-accent" /> : null}
+                  <Typography.Paragraph className="min-w-0 flex-1" weight="semibold" numberOfLines={2}>
                     {channel.name}
                   </Typography.Paragraph>
-                  {channel.title.trim() ? (
-                    <Typography.Paragraph type="body-xs" align="center" className="w-full text-muted" numberOfLines={1}>
-                      {channel.title.trim()}
-                    </Typography.Paragraph>
-                  ) : null}
                 </View>
-              ) : (
-                <View className="min-w-0 flex-1 gap-1">
-                  <View className="gap-0">
-                    <View className="flex-row items-center gap-2">
-                      {channel.unreadCount > 0 ? <View className="size-2 rounded-full bg-accent" /> : null}
-                      <Typography.Paragraph className="min-w-0 flex-1" weight="semibold" numberOfLines={2}>
-                        {channel.name}
-                      </Typography.Paragraph>
-                    </View>
-                    {channel.title.trim() ? (
-                      <Typography.Paragraph type="body-xs" className="-mt-1.5 text-muted" numberOfLines={2}>
-                        {channel.title.trim()}
-                      </Typography.Paragraph>
-                    ) : null}
-                  </View>
-                  <View className="mx-1 min-w-0">
-                    <Typography.Paragraph
-                      type="body-xs"
-                      className="text-text-secondary -mt-1"
-                      numberOfLines={1}
-                      ellipsizeMode="tail"
-                    >
-                      {channel.lastMessage?.text ?? t("mobile.channel.list.noMessages")}
-                    </Typography.Paragraph>
-                  </View>
-                </View>
-              )}
+                {channel.title.trim() ? (
+                  <Typography.Paragraph type="body-xs" className="-mt-1.5 text-muted" numberOfLines={2}>
+                    {channel.title.trim()}
+                  </Typography.Paragraph>
+                ) : null}
+              </View>
+              <View className="mx-1 min-w-0">
+                <Typography.Paragraph
+                  type="body-xs"
+                  className="text-text-secondary -mt-1"
+                  numberOfLines={1}
+                  ellipsizeMode="tail"
+                >
+                  {channel.lastMessage?.text ?? t("mobile.channel.list.noMessages")}
+                </Typography.Paragraph>
+              </View>
             </View>
           )}
-        </ChatLinkPressable>
-      </Link.Trigger>
+        </View>
+      )}
+    </ChatLinkPressable>
+  );
+  const link = onOpen ? (
+    row
+  ) : (
+    <Link href={{ pathname: "/channel/[channelId]", params: { channelId: channel.id, serverId } }} asChild>
+      <Link.Trigger>{row}</Link.Trigger>
       {!isAndroid ? (
         <Link.Menu>
           <Link.MenuAction

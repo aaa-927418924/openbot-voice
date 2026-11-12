@@ -299,9 +299,7 @@ interface MessageRowShared {
   };
   /** Apple Pencil marker surfaces, on iPad only. */
   pencil?: {
-    register: (messageId: string, handle: PencilSurfaceHandle | null) => void;
-    onSqueeze: (messageId: string) => void;
-    onInkChange: (messageId: string, hasInk: boolean) => void;
+    send: (image: PencilAnnotationImage, clear: () => Promise<void> | void) => void;
   };
 }
 
@@ -440,6 +438,7 @@ const MessageRow = memo(function MessageRow({
     replyHaptics,
     actions,
   } = shared;
+  const pencilRef = useRef<PencilSurfaceHandle | null>(null);
   const eligible = playbackEligible(message);
   const enabled = playbackEnabled(message, shared);
   const complete = message.kind === "message" && message.status === "completed";
@@ -660,13 +659,15 @@ const MessageRow = memo(function MessageRow({
             />
             {shared.pencil && message.author === "agent" ? (
               <PencilSurface
-                ref={(handle) => {
-                  shared.pencil?.register(message.id, handle);
-                }}
+                ref={pencilRef}
                 strokeColor="#E53935"
                 strokeWidth={3.5}
-                onSqueeze={() => shared.pencil?.onSqueeze(message.id)}
-                onInkChange={(event) => shared.pencil?.onInkChange(message.id, event.hasInk)}
+                onSqueeze={(image) => {
+                  if (!image.uri || image.width === undefined || image.height === undefined) return;
+                  shared.pencil?.send({ uri: image.uri, width: image.width, height: image.height }, () =>
+                    pencilRef.current?.clear(),
+                  );
+                }}
               />
             ) : null}
           </ChatBubble>
@@ -911,33 +912,18 @@ export function ChatMessageList({
   const targetAgent = target.kind === "agent" ? target : undefined;
   const targetServerId = target.serverId;
   const targetIsAgent = target.kind === "agent";
-  const pencilSurfaces = useRef(new Map<string, PencilSurfaceHandle>());
-  const lastInkedMessageId = useRef<string | null>(null);
   const annotationBusy = useRef(false);
   const pencil = useMemo<MessageRowShared["pencil"]>(() => {
     // The marker belongs to the iPad: the native surface exists only in the iOS build, and a phone
     // has no room for a second pane or an Apple Pencil Pro.
     if (!(Platform.OS === "ios" && Platform.isPad) || !onSendAnnotation) return undefined;
     return {
-      register: (messageId, handle) => {
-        if (handle) pencilSurfaces.current.set(messageId, handle);
-        else pencilSurfaces.current.delete(messageId);
-      },
-      onInkChange: (messageId, hasInk) => {
-        if (hasInk) lastInkedMessageId.current = messageId;
-      },
-      onSqueeze: (messageId) => {
+      send: (image, clear) => {
         if (annotationBusy.current) return;
-        const targetId = lastInkedMessageId.current ?? messageId;
-        const surface = pencilSurfaces.current.get(targetId);
-        if (!surface) return;
         annotationBusy.current = true;
-        void surface
-          .capture()
-          .then(async (image) => {
-            await onSendAnnotation(image);
-            await surface.clear();
-            lastInkedMessageId.current = null;
+        void onSendAnnotation(image)
+          .then(async () => {
+            await clear();
           })
           .catch(() => undefined)
           .finally(() => {
