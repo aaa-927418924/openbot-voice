@@ -133,7 +133,10 @@ export function useChatMotion(
   const adjustTopSpacer = useCallback((tailY: number, tailHeight: number) => {
     const m = measurements.current;
     if (!m.tailId || !m.layout.viewport || !m.composer || tailHeight <= 0) return;
-    const delta = m.layout.viewport - m.composer - (tailY + tailHeight);
+    // Align the whole bottom of the content, including the activity row or starter card that
+    // follows the last message. `layout.content - tailY` overcounted that footer and kept the
+    // spacer at zero.
+    const delta = m.layout.viewport - m.composer - (tailY + tailHeight + m.footerHeight);
     if (Math.abs(delta) < 1) return;
     setTopSpacer((current) => Math.max(0, current + delta));
   }, []);
@@ -160,6 +163,9 @@ export function useChatMotion(
     composer: number;
     userHeight: number;
     tailId: string | null;
+    /** The tail cell's own height, without the footer the old virtualized estimate included. */
+    tailCellHeight: number;
+    footerHeight: number;
     contentRevision: number;
     initialized: boolean;
     virtualized: boolean;
@@ -169,6 +175,8 @@ export function useChatMotion(
     composer: 0,
     userHeight: 0,
     tailId: null,
+    tailCellHeight: 0,
+    footerHeight: 0,
     contentRevision: 0,
     initialized: false,
     virtualized: false,
@@ -282,7 +290,7 @@ export function useChatMotion(
         header,
       };
       layout.set(measurements.current.layout);
-      adjustTopSpacer(measurements.current.layout.tailY, measurements.current.layout.tailHeight);
+      adjustTopSpacer(measurements.current.layout.tailY, measurements.current.tailCellHeight);
       position();
     },
     [adjustTopSpacer, header, layout, position],
@@ -306,6 +314,7 @@ export function useChatMotion(
     (id: string, event: Pick<LayoutChangeEvent, "nativeEvent">) => {
       const { y, height } = event.nativeEvent.layout;
       measurements.current.tailId = id;
+      measurements.current.tailCellHeight = height;
       measurements.current.layout = { ...measurements.current.layout, tailY: y, tailHeight: height };
       layout.set(measurements.current.layout);
       adjustTopSpacer(y, height);
@@ -318,13 +327,14 @@ export function useChatMotion(
       const m = measurements.current;
       m.virtualized = true;
       m.tailId = id;
+      m.tailCellHeight = event.nativeEvent.layout.height;
       m.layout = {
         ...m.layout,
         tailY: event.nativeEvent.layout.y,
         tailHeight: Math.max(event.nativeEvent.layout.height, m.layout.content - event.nativeEvent.layout.y),
       };
       layout.set(m.layout);
-      adjustTopSpacer(m.layout.tailY, m.layout.tailHeight);
+      adjustTopSpacer(m.layout.tailY, m.tailCellHeight);
       position();
     },
     [adjustTopSpacer, layout, position],
@@ -342,10 +352,17 @@ export function useChatMotion(
       const height = event.nativeEvent.layout.height + 20;
       measurements.current.composer = height;
       composerHeight.set(height);
-      adjustTopSpacer(measurements.current.layout.tailY, measurements.current.layout.tailHeight);
+      adjustTopSpacer(measurements.current.layout.tailY, measurements.current.tailCellHeight);
       position();
     },
     [adjustTopSpacer, composerHeight, position],
+  );
+  const onFooterLayout = useCallback(
+    (event: Pick<LayoutChangeEvent, "nativeEvent">) => {
+      measurements.current.footerHeight = event.nativeEvent.layout.height;
+      adjustTopSpacer(measurements.current.layout.tailY, measurements.current.tailCellHeight);
+    },
+    [adjustTopSpacer],
   );
   const onContentInsetChange = useCallback(
     (inset: { bottom: number }) => {
@@ -465,6 +482,7 @@ export function useChatMotion(
     onTailStartLayout,
     onUserLayout,
     onComposerLayout,
+    onFooterLayout,
     onContentInsetChange,
     onScroll,
     onScrollBeginDrag,

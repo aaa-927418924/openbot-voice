@@ -1216,7 +1216,7 @@ export function ChatMessageList({
             </>
           }
           ListFooterComponent={
-            <>
+            <View onLayout={motion.onFooterLayout}>
               <Animated.View style={motion.responseStyle}>
                 {activityRows.map((spec) => (
                   <ChatActivityRow
@@ -1287,7 +1287,7 @@ export function ChatMessageList({
                   </Typography.Paragraph>
                 </View>
               ) : null}
-            </>
+            </View>
           }
         />
       </TailLayoutContext.Provider>
