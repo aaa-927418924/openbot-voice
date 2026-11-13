@@ -7,6 +7,16 @@ the [root changelog](../../CHANGELOG.md).
 
 ## [Unreleased]
 
+## [1.1.5] - 2026-11-13
+
+### Fixed
+
+- A short chat or channel now really keeps its newest message above the composer. The list gets a
+  measured top spacer, and the position correction that scrolled it away is disabled while it is
+  present.
+- An Apple Pencil Pro squeeze no longer freezes the app. Only the message that was written on is
+  captured, once, and the PNG is capped in size so encoding cannot block the main thread.
+
 ## [1.1.4] - 2026-11-13
 
 ### Fixed
