@@ -3,7 +3,7 @@
     "name": "OpenBot",
     "slug": "openbot",
     "platforms": ["ios", "android"],
-    "version": "1.1.5",
+    "version": "1.1.6",
     "orientation": "portrait",
     "icon": "./assets/icons/app-icon.png",
     "scheme": "openbot",
@@ -22,7 +22,7 @@
         "ITSAppUsesNonExemptEncryption": false
       },
       "icon": "./assets/icons/app-icon.icon",
-      "buildNumber": "6"
+      "buildNumber": "7"
     },
     "android": {
       "package": "run.openbot.mobile",

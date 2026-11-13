@@ -7,6 +7,18 @@ the [root changelog](../../CHANGELOG.md).
 
 ## [Unreleased]
 
+## [1.1.6] - 2026-11-13
+
+### Fixed
+
+- A short chat now keeps its last row, including the thinking or activity row below it, just above
+  the composer. This also covers chats whose newest message is from the agent and chats right
+  after a send.
+- A streamed reply follows the bottom when the reader is at the latest message; loading older pages
+  keeps the reader's place.
+- The empty composer shows the voice button again, and typing turns it into the send button. Live
+  Voice takes the button when it can start; otherwise the microphone dictation fallback is used.
+
 ## [1.1.5] - 2026-11-13
 
 ### Fixed
