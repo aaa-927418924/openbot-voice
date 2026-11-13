@@ -793,7 +793,9 @@ export function ChatView({
                       liveVoiceTarget && liveVoice.routesComposer(liveVoiceTarget) && liveVoice.state.phase !== "live",
                     )
                   }
-                  dictationEnabled={false}
+                  // Live Voice takes the control when it can start; otherwise the microphone
+                  // dictation fallback keeps the empty composer's voice button available.
+                  dictationEnabled={!liveVoiceCanStart}
                   liveVoiceAvailable={liveVoiceCanStart}
                   onStartLiveVoice={
                     liveVoiceCanStart && liveVoiceTarget ? () => liveVoice.start(liveVoiceTarget) : undefined
