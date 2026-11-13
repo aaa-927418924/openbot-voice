@@ -325,7 +325,7 @@ export function useChatMotion(
         m.initialized &&
         !pending.current &&
         followLatest.current &&
-        !chatContentIsVisible(m.layout, scrollY.get(), m.inset)
+        !chatContentIsVisible(m.layout, scrollY.get(), m.composer)
       ) {
         ref.current?.scrollTo({ y: chatEndOffset(m.layout, m.inset), animated: false });
       }
