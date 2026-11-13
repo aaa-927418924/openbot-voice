@@ -20,8 +20,8 @@ export interface PencilSurfaceHandle {
 interface PencilSurfaceProps extends ViewProps {
   strokeColor?: string;
   strokeWidth?: number;
-  /** The native view captures the bubble it sits in before it sends this. */
-  onSqueeze?: (image: Partial<PencilAnnotationImage>) => void;
+  /** The native view forwards the squeeze of the bubble that was written on. */
+  onSqueeze?: () => void;
 }
 
 const NativePencilSurface: ComponentType<PencilSurfaceProps & { ref?: Ref<PencilSurfaceHandle> }> =

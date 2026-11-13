@@ -126,6 +126,17 @@ export function useChatMotion(
     if (current.tailY + current.tailHeight <= current.viewport) return 0;
     return chatBlankSpace(current, MAX_CHAT_BLANK_SPACE);
   });
+  // A short history is pushed down by a spacer at the top of the list, so its newest message sits
+  // just above the composer. Measuring the tail and adding the missing height is deterministic;
+  // flexGrow/justifyContent did not stretch the virtualized list on the device.
+  const [topSpacer, setTopSpacer] = useState(0);
+  const adjustTopSpacer = useCallback((tailY: number, tailHeight: number) => {
+    const m = measurements.current;
+    if (!m.tailId || !m.layout.viewport || !m.composer || tailHeight <= 0) return;
+    const delta = m.layout.viewport - m.composer - (tailY + tailHeight);
+    if (Math.abs(delta) < 1) return;
+    setTopSpacer((current) => Math.max(0, current + delta));
+  }, []);
   const scrollY = useSharedValue(0);
   const firstOffset = useSharedValue(0);
   const firstOpacity = useSharedValue(1);
@@ -271,9 +282,10 @@ export function useChatMotion(
         header,
       };
       layout.set(measurements.current.layout);
+      adjustTopSpacer(measurements.current.layout.tailY, measurements.current.layout.tailHeight);
       position();
     },
-    [header, layout, position],
+    [adjustTopSpacer, header, layout, position],
   );
   const onContentSizeChange = useCallback(
     (_width: number, height: number) => {
@@ -296,9 +308,10 @@ export function useChatMotion(
       measurements.current.tailId = id;
       measurements.current.layout = { ...measurements.current.layout, tailY: y, tailHeight: height };
       layout.set(measurements.current.layout);
+      adjustTopSpacer(y, height);
       position();
     },
-    [layout, position],
+    [adjustTopSpacer, layout, position],
   );
   const onTailStartLayout = useCallback(
     (id: string, event: Pick<LayoutChangeEvent, "nativeEvent">) => {
@@ -311,9 +324,10 @@ export function useChatMotion(
         tailHeight: Math.max(event.nativeEvent.layout.height, m.layout.content - event.nativeEvent.layout.y),
       };
       layout.set(m.layout);
+      adjustTopSpacer(m.layout.tailY, m.layout.tailHeight);
       position();
     },
-    [layout, position],
+    [adjustTopSpacer, layout, position],
   );
 
   const onUserLayout = useCallback(
@@ -328,9 +342,10 @@ export function useChatMotion(
       const height = event.nativeEvent.layout.height + 20;
       measurements.current.composer = height;
       composerHeight.set(height);
+      adjustTopSpacer(measurements.current.layout.tailY, measurements.current.layout.tailHeight);
       position();
     },
-    [composerHeight, position],
+    [adjustTopSpacer, composerHeight, position],
   );
   const onContentInsetChange = useCallback(
     (inset: { bottom: number }) => {
@@ -440,6 +455,7 @@ export function useChatMotion(
     keyboardProgress,
     keyboardLiftBehavior,
     blankSpace,
+    topSpacer,
     historyStyle,
     firstMessageStyle,
     responseStyle,

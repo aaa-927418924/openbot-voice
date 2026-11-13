@@ -299,7 +299,7 @@ interface MessageRowShared {
   };
   /** Apple Pencil marker surfaces, on iPad only. */
   pencil?: {
-    send: (image: PencilAnnotationImage, clear: () => Promise<void> | void) => void;
+    send: (surface: PencilSurfaceHandle) => void;
   };
 }
 
@@ -662,11 +662,9 @@ const MessageRow = memo(function MessageRow({
                 ref={pencilRef}
                 strokeColor="#E53935"
                 strokeWidth={3.5}
-                onSqueeze={(image) => {
-                  if (!image.uri || image.width === undefined || image.height === undefined) return;
-                  shared.pencil?.send({ uri: image.uri, width: image.width, height: image.height }, () =>
-                    pencilRef.current?.clear(),
-                  );
+                onSqueeze={() => {
+                  const surface = pencilRef.current;
+                  if (surface) shared.pencil?.send(surface);
                 }}
               />
             ) : null}
@@ -918,12 +916,16 @@ export function ChatMessageList({
     // has no room for a second pane or an Apple Pencil Pro.
     if (!(Platform.OS === "ios" && Platform.isPad) || !onSendAnnotation) return undefined;
     return {
-      send: (image, clear) => {
+      // The native squeeze event is delivered to the row that was written on. Capture here, once:
+      // the previous native-side capture ran for every interaction in the list and froze the app.
+      send: (surface) => {
         if (annotationBusy.current) return;
         annotationBusy.current = true;
-        void onSendAnnotation(image)
-          .then(async () => {
-            await clear();
+        void surface
+          .capture()
+          .then(async (image) => {
+            await onSendAnnotation(image);
+            await surface.clear();
           })
           .catch(() => undefined)
           .finally(() => {
@@ -1133,14 +1135,7 @@ export function ChatMessageList({
             />
           )}
           style={{ flex: 1 }}
-          // A short history sits at the bottom, just above the composer, instead of at the top
-          // with a large empty area below it. The container only grows when the content is short.
-          contentContainerStyle={{
-            flexGrow: 1,
-            justifyContent: "flex-end",
-            paddingHorizontal: 16,
-            paddingTop: topInset + 84,
-          }}
+          contentContainerStyle={{ paddingHorizontal: 16, paddingTop: topInset + 84 }}
           contentInsetAdjustmentBehavior="never"
           keyboardDismissMode="interactive"
           keyboardShouldPersistTaps="handled"
@@ -1214,6 +1209,8 @@ export function ChatMessageList({
                   ) : null}
                 </View>
               ) : null}
+              {/* A short history is pushed down so its newest message sits above the composer. */}
+              {historyState === "ready" && motion.topSpacer > 0 ? <View style={{ height: motion.topSpacer }} /> : null}
             </>
           }
           ListFooterComponent={

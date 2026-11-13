@@ -86,7 +86,11 @@ public final class PencilSurfaceView: ExpoView, UIPencilInteractionDelegate {
     let bounds = target.bounds
     let format = UIGraphicsImageRendererFormat.default()
     format.opaque = false
-    format.scale = UIScreen.main.scale
+    // A long message at 2x can produce a 6000 px tall PNG. Cap the long side so encoding stays
+    // quick enough for the main thread that owns the squeeze event.
+    let longestSide = max(bounds.width, bounds.height)
+    let cappedScale = longestSide > 0 ? min(UIScreen.main.scale, 1600 / longestSide) : UIScreen.main.scale
+    format.scale = max(0.5, cappedScale)
     let renderer = UIGraphicsImageRenderer(bounds: bounds, format: format)
     let image = renderer.image { context in
       target.layer.render(in: context.cgContext)
@@ -102,15 +106,11 @@ public final class PencilSurfaceView: ExpoView, UIPencilInteractionDelegate {
 
   @available(iOS 17.5, *)
   public func pencilInteraction(_ interaction: UIPencilInteraction, didReceiveSqueeze squeeze: UIPencilInteraction.Squeeze) {
-    // Send the event to the bubble that was written on, not necessarily the view that received the
-    // squeeze. Its own row then clears that bubble after the send.
+    // Every surface carries an interaction, so a squeeze can arrive here more than once. Capture
+    // only in the JS row that owns the written bubble, and let its busy flag drop the extra events.
     let target = PencilSurfaceView.lastInkedSurface ?? self
     guard target.hasInk else { return }
-    do {
-      target.dispatchEvent("onSqueeze", payload: try target.capture())
-    } catch {
-      target.dispatchEvent("onSqueeze", payload: [:])
-    }
+    target.dispatchEvent("onSqueeze", payload: [:])
   }
 
   private func markerColor() -> UIColor {

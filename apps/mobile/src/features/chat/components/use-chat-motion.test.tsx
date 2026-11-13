@@ -105,6 +105,25 @@ it("leaves a short agent-only history without a bottom inset", async () => {
   expect(motion.blankSpace.get()).toBe(400);
 });
 
+it("adds a top spacer so a short history ends above the composer", async () => {
+  let motion: ChatMotion | undefined;
+  function Chat() {
+    const current = useChatMotion(100, 0, true, null);
+    useLayoutEffect(() => {
+      motion = current;
+    });
+    return null;
+  }
+  await act(() => root.render(<Chat />));
+  if (!motion) throw new Error("Chat motion is not mounted");
+  motion.onViewportLayout(layout(800));
+  motion.onComposerLayout(layout(60));
+  await act(() => motion?.onTailStartLayout("tail", layout(300, 100)));
+  expect(motion.topSpacer).toBe(320);
+  await act(() => motion?.onTailStartLayout("tail", layout(300, 420)));
+  expect(motion.topSpacer).toBe(320);
+});
+
 it("keeps replies visible and does not scroll after keyboard dismissal, including an interrupted final frame", async () => {
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
     const id = ++native.nextFrame;
