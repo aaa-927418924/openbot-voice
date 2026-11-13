@@ -1119,7 +1119,9 @@ export function ChatMessageList({
           maxToRenderPerBatch={8}
           windowSize={7}
           removeClippedSubviews={false}
-          maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+          // The top spacer moves the first cell down; letting the list keep the old cell position
+          // would scroll the spacer away and leave the history at the top again.
+          maintainVisibleContentPosition={motion.topSpacer > 0 ? undefined : { minIndexForVisible: 0 }}
           renderItem={renderItem}
           renderScrollComponent={(props) => (
             <ChatScrollView
