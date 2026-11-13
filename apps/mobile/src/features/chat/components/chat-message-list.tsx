@@ -96,7 +96,9 @@ import { useReplyHaptics } from "./use-reply-haptics";
 type VisibleMessage = Exclude<ChatMessage, { kind: "thinking" }>;
 const TailLayoutContext = createContext<{
   id: string | null;
+  lastId: string | null;
   onTailStartLayout: ChatMotion["onTailStartLayout"];
+  onLastRowStartLayout: ChatMotion["onLastRowStartLayout"];
 } | null>(null);
 
 function MessageCell({ children, item, onLayout, onFocusCapture, style }: CellRendererProps<VisibleMessage>) {
@@ -108,6 +110,7 @@ function MessageCell({ children, item, onLayout, onFocusCapture, style }: CellRe
       onLayout={(event) => {
         onLayout?.(event);
         if (item.id === tail?.id) tail.onTailStartLayout(item.id, event);
+        if (item.id === tail?.lastId) tail.onLastRowStartLayout(item.id, event);
       }}
     >
       {children}
@@ -851,6 +854,7 @@ export function ChatMessageList({
   const visibleMessages = useMemo(() => messages.filter((message) => message.kind !== "thinking"), [messages]);
   const tailIndex = visibleMessages.findLastIndex((message) => message.kind === "message" && message.author === "user");
   const tailId = visibleMessages[tailIndex]?.id ?? null;
+  const lastRowId = visibleMessages.at(-1)?.id ?? null;
   const [boundary, setBoundary] = useState<ChatHistoryBoundary>({ firstId: null, headId: null });
   const promptIndex = visibleMessages.findIndex((message) => message.id === questionForm?.messageId);
   const historyStart = chatHistoryStart(visibleMessages, tailIndex, boundary);
@@ -993,8 +997,13 @@ export function ChatMessageList({
   );
   const listRef = useRef<FlatList<VisibleMessage>>(null);
   const tailLayout = useMemo(
-    () => ({ id: tailId, onTailStartLayout: motion.onTailStartLayout }),
-    [tailId, motion.onTailStartLayout],
+    () => ({
+      id: tailId,
+      lastId: lastRowId,
+      onTailStartLayout: motion.onTailStartLayout,
+      onLastRowStartLayout: motion.onLastRowStartLayout,
+    }),
+    [lastRowId, motion.onLastRowStartLayout, motion.onTailStartLayout, tailId],
   );
   const seekLatest = useCallback(() => {
     if (motion.needsInitialPosition() && visibleMessages.length) listRef.current?.scrollToEnd({ animated: false });

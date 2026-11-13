@@ -118,16 +118,16 @@ it("adds a top spacer so a short history ends above the composer", async () => {
   if (!motion) throw new Error("Chat motion is not mounted");
   motion.onViewportLayout(layout(800));
   motion.onComposerLayout(layout(60));
-  await act(() => motion?.onTailStartLayout("tail", layout(300, 100)));
+  await act(() => motion?.onLastRowStartLayout("tail", layout(300, 100)));
   expect(motion.topSpacer).toBe(320);
-  // The spacer moved the cell down; its next layout confirms the new position.
-  await act(() => motion?.onTailStartLayout("tail", layout(300, 420)));
+  // The spacer moved the row down; its next layout confirms the new position.
+  await act(() => motion?.onLastRowStartLayout("tail", layout(300, 420)));
   expect(motion.topSpacer).toBe(320);
   // The activity row below the last message is part of the bottom that must stay visible.
   await act(() => motion?.onFooterLayout(layout(40)));
   expect(motion.topSpacer).toBe(280);
-  await act(() => motion?.onTailStartLayout("tail", layout(300, 380)));
-  // A virtualized content estimate must not inflate the tail cell height.
+  await act(() => motion?.onLastRowStartLayout("tail", layout(300, 380)));
+  // A virtualized content estimate must not inflate the last row height.
   motion.onContentSizeChange(390, 900);
   await act(() => motion?.onViewportLayout(layout(800)));
   expect(motion.topSpacer).toBe(280);
